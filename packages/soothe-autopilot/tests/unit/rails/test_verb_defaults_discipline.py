@@ -42,6 +42,14 @@ def test_scout_and_plan_implement_briefs() -> None:
     assert "Systematic debugging" in scout
     assert "auth tests" in scout
     assert "do not implement fixes" in scout.lower() or "Do not implement fixes" in scout
+    # Adaptive: classify from evidence, not goal text (no keyword heuristics).
+    assert "from evidence (not from the goal text)" in scout
+    assert "Feature build" in scout
+    assert "classification (defect | feature)" in scout
+
+    # domain_index fallback when no domain_hint is supplied.
+    fallback = scout_explore_brief(job_id="j1", domain_index=2)
+    assert "independent domain 2" in fallback
 
     plan = plan_implementation_brief(job_id="j1")
     assert "Parallel dispatch:" in plan

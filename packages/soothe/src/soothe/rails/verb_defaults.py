@@ -149,21 +149,31 @@ def apply_planner_waveplan_hints(brief: str) -> str:
 
 
 def scout_explore_brief(*, job_id: str, domain_index: int, domain_hint: str | None = None) -> str:
-    """Default scout brief for `decompose_parallel` (systematic debugging)."""
+    """Adaptive scout brief for `decompose_parallel`.
+
+    The scout classifies its scope as a defect/regression or a feature build
+    from observed evidence, then follows the matching investigation path.
+    """
     domain = (domain_hint or "").strip() or f"independent domain {domain_index}"
     return (
-        f"Systematic debugging / exploration scout for job {job_id}. "
+        f"Exploration scout for job {job_id}. "
         f"Scope: ONE independent domain — {domain}. "
         "Do not edit production code; do not implement fixes.\n\n"
-        "Follow four phases before proposing any fix:\n"
-        "1) Root cause — reproduce, read errors in full, gather evidence at "
-        "component boundaries\n"
-        "2) Pattern — compare working vs broken references\n"
-        "3) Single hypothesis — state it; test minimally if needed\n"
-        "4) Report only — evidence + hypothesis for the planner/maker\n\n"
-        "Iron law: no fixes without root-cause investigation first.\n"
-        "Return: domain name, repro steps, failing command output (if any), "
-        "root-cause statement, related files. "
+        "Classify this scope first, from evidence (not from the goal text):\n"
+        "- Defect / regression / failing test: apply Systematic debugging — "
+        "reproduce, read errors in full, gather evidence at component "
+        "boundaries; compare working vs broken references; state one "
+        "root-cause hypothesis; test minimally if needed. "
+        "Iron law: no fixes without root-cause evidence first.\n"
+        "- Feature build (no failure to reproduce): map the target domain — "
+        "component boundaries, existing patterns and conventions, the "
+        "interfaces and files the plan must touch, and a first verifiable "
+        "acceptance check per area.\n\n"
+        "Report only — classification plus the matching evidence set for the "
+        "planner/maker.\n"
+        "Return: domain name, classification (defect | feature), repro steps "
+        "and failing command output (if any), root-cause statement (if defect) "
+        "or domain map + first acceptance check (if feature), related files. "
         "If multiple unrelated domains exist, cover only this domain — "
         "parallel scouts handle the others."
     )
