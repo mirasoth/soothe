@@ -39,7 +39,7 @@ def test_autopilot_help_is_concise() -> None:
 
 def test_submit_help_documents_async_and_wait() -> None:
     result = runner.invoke(app, ["autopilot", "submit", "--help"])
-    assert result.exit_code == 0
+    assert result.exit_code == 0, result.output
     output = _strip_ansi(result.output)
     # Check for async behavior mention
     assert "async" in output
@@ -50,7 +50,10 @@ def test_submit_help_documents_async_and_wait() -> None:
     assert "-w" in output
     assert "--file" in output
     assert "-f" in output
-    assert "TASK" in output or "task" in output.lower()
+    # Task must be supplied via -t/--task (no positional TASK argument).
+    assert "--task" in output
+    assert "-t" in output
+    assert "task" in output.lower()
     assert "max-iterations" not in output
 
 
@@ -96,7 +99,7 @@ def mock_autopilot_client(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
 
 
 def test_submit_is_async_by_default(mock_autopilot_client: MagicMock) -> None:
-    result = runner.invoke(app, ["autopilot", "submit", "do the thing"])
+    result = runner.invoke(app, ["autopilot", "submit", "-t", "do the thing"])
     assert result.exit_code == 0, result.output
     mock_autopilot_client.autopilot_submit.assert_called_once()
     mock_autopilot_client.autopilot_get_goal.assert_not_called()
@@ -104,7 +107,7 @@ def test_submit_is_async_by_default(mock_autopilot_client: MagicMock) -> None:
 
 
 def test_submit_wait_polls_until_done(mock_autopilot_client: MagicMock) -> None:
-    result = runner.invoke(app, ["autopilot", "submit", "do the thing", "--wait"])
+    result = runner.invoke(app, ["autopilot", "submit", "-t", "do the thing", "--wait"])
     assert result.exit_code == 0, result.output
     mock_autopilot_client.autopilot_submit.assert_called_once()
     mock_autopilot_client.autopilot_get_goal.assert_called()
@@ -117,6 +120,7 @@ def test_submit_passes_priority_and_rail(mock_autopilot_client: MagicMock) -> No
         [
             "autopilot",
             "submit",
+            "-t",
             "task",
             "--priority",
             "80",
@@ -201,10 +205,17 @@ def test_submit_rejects_task_and_file(mock_autopilot_client: MagicMock, tmp_path
     path.write_text("file task\n", encoding="utf-8")
     result = runner.invoke(
         app,
-        ["autopilot", "submit", "inline task", "--file", str(path)],
+        ["autopilot", "submit", "-t", "inline task", "--file", str(path)],
     )
     assert result.exit_code == 1
-    assert "exactly one of: TASK or --file" in result.output
+    assert "exactly one of: -t/--task or --file" in result.output
+    mock_autopilot_client.autopilot_submit.assert_not_called()
+
+
+def test_submit_rejects_positional_task(mock_autopilot_client: MagicMock) -> None:
+    """Inline task text must come via -t/--task, not a positional argument."""
+    result = runner.invoke(app, ["autopilot", "submit", "do the thing"])
+    assert result.exit_code != 0
     mock_autopilot_client.autopilot_submit.assert_not_called()
 
 

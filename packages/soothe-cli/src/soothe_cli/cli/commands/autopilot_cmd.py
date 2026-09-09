@@ -144,13 +144,13 @@ def _wait_for_goal(client: Any, goal_id: str, *, timeout_s: float = _WAIT_TIMEOU
 
 
 def _resolve_submit_task(task: str | None, file: str | None) -> str:
-    """Resolve task text from an inline argument or `--file`.
+    """Resolve task text from an inline `-t/--task` argument or `--file`.
 
     Exactly one of `task` or `file` is required. Does not read a workspace
     `GOAL.md` by default.
 
     Args:
-    task: Optional inline task description.
+    task: Optional inline task description (``-t``/``--task``).
     file: Optional path to a UTF-8 file (or `-` for stdin).
 
     Returns:
@@ -164,7 +164,7 @@ def _resolve_submit_task(task: str | None, file: str | None) -> str:
     has_file = bool(file and file.strip())
     if has_task and has_file:
         typer.echo(
-            "Specify exactly one of: TASK or --file <path>.",
+            "Specify exactly one of: -t/--task or --file <path>.",
             err=True,
         )
         raise typer.Exit(1)
@@ -175,7 +175,7 @@ def _resolve_submit_task(task: str | None, file: str | None) -> str:
 
     if not has_file:
         typer.echo(
-            'Specify a task: soothe autopilot submit "TASK" or --file <path>',
+            'Specify a task: soothe autopilot submit -t "TASK" or --file <path>',
             err=True,
         )
         raise typer.Exit(1)
@@ -224,15 +224,17 @@ def _submit_impl(
 
 @app.command("submit")
 def submit(
-    task: str | None = typer.Argument(
+    task: str | None = typer.Option(
         None,
-        help='Task description (required unless --file; e.g. "ship OAuth").',
+        "--task",
+        "-t",
+        help='Task description (required unless --file; e.g. -t "ship OAuth").',
     ),
     file: str | None = typer.Option(
         None,
         "--file",
         "-f",
-        help="Read task from a UTF-8 file (required unless TASK; - for stdin).",
+        help="Read task from a UTF-8 file (required unless -t/--task; - for stdin).",
     ),
     priority: int = typer.Option(50, "--priority", "-p", help="Goal priority (0-100)."),
     workspace: str | None = typer.Option(
