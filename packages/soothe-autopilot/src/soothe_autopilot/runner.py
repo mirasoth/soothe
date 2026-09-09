@@ -127,7 +127,6 @@ class AutopilotSootheRunner(SootheRunner):
 
         strange_loop = StrangeLoop(
             core_agent=self._agent,  # type: ignore[attr-defined]
-            loop_planner=self._planner,  # type: ignore[attr-defined]
             config=self._config,  # type: ignore[attr-defined]
         )
 
