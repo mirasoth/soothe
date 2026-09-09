@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Fix plan-mode approve resume misrouting to `END`. `route_after_clarification` checked `plan_approved_follow_on` (set only *inside* `node_plan_review`, which runs after routing) and `_pending_clarification` (False on resume because `await_user` flags `resume_turn` so the policy consumes the relay inbox head into the `answer` slot), so an approve resume silently dropped to END — the follow-on exec goal was never enqueued, `scratch.plan_result` never set, and the next continue fataled with "Goal completion reached without plan result". Routing now detects the populated `relay_state.answer` and routes to `PLAN_REVIEW` so `handle_plan_mode_review_answer` processes the approve/reject/refine and sets `plan_approved_follow_on` / `scratch.plan_result` / `scratch.follow_on_exec`; `route_after_plan_review` then routes to FINALIZE.
+
 ## [v1.0.7] - 2026-09-08
 
 ### Changed

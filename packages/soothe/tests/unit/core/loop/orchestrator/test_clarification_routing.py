@@ -36,6 +36,23 @@ def _relay_active(origin: str) -> dict:
     return {"relay_state": {"active_origin": origin}}
 
 
+def _relay_answered(origin: str, answer: dict | None = None) -> dict:
+    """relay_state with a resume-turn answer populated (inbox head consumed).
+
+    Models the real plan-mode approve/reject/refine resume: ``await_user``
+    sets ``resume_turn`` so the policy moves the inbox head into the ``answer``
+    slot. ``_pending_clarification`` returns False here (its ``answer is None``
+    guard fails), so routing must detect the answer via ``_has_relay_answer``.
+    """
+    return {
+        "relay_state": {
+            "inbox": [{"request": {"origin_node": origin}}],
+            "answer": answer if answer is not None else {"answers": ["approve"]},
+            "active_origin": origin,
+        }
+    }
+
+
 def test_route_after_execute_short_circuits_on_pending_clarification() -> None:
     assert route_after_execute(_relay_pending()) == "await_user"
 
@@ -100,6 +117,36 @@ def test_route_after_clarification_finalizes_on_plan_mode_follow_on() -> None:
             {"plan_approved_follow_on": True, **_relay_active(ORIGIN_PLAN_MODE_REVIEW)}
         )
         == "finalize"
+    )
+
+
+def test_route_after_clarification_routes_answered_plan_review_to_plan_review() -> None:
+    """Plan-mode approve resume populates relay_state.answer → PLAN_REVIEW.
+
+    Regression for loop 621a: on a real approve resume ``await_user`` flags
+    ``resume_turn`` so the policy consumes the inbox head into the ``answer``
+    slot. ``_pending_clarification`` then returns False (its ``answer is None``
+    guard fails) and ``plan_approved_follow_on`` is not set yet (it is set
+    INSIDE ``node_plan_review`` by ``handle_plan_mode_review_answer``, which
+    runs only after routing). Without detecting the answer, routing fell to
+    END and the approve was silently dropped — the follow-on exec goal never
+    enqueued, ``scratch.plan_result`` never set, and the next continue fataled
+    with "Goal completion reached without plan result".
+
+    The fix routes to PLAN_REVIEW so ``handle_plan_mode_review_answer``
+    (gated on ``relay_state.answer``) processes the approve and sets
+    ``plan_approved_follow_on`` / ``scratch.plan_result`` /
+    ``scratch.follow_on_exec``; ``route_after_plan_review`` then routes to
+    FINALIZE.
+    """
+    from soothe.sloop.clarification.origins import ORIGIN_PLAN_MODE_REVIEW
+
+    assert route_after_clarification(_relay_answered(ORIGIN_PLAN_MODE_REVIEW)) == "plan_review"
+    assert (
+        route_after_clarification(
+            _relay_answered(ORIGIN_PLAN_MODE_REVIEW, answer={"answers": ["refine", "widen scope"]})
+        )
+        == "plan_review"
     )
 
 
