@@ -36,6 +36,21 @@ def _pending_clarification(state: dict[str, Any]) -> bool:
     return relay_state.get("answer") is None
 
 
+def _has_relay_answer(state: dict[str, Any]) -> bool:
+    """True when a resume turn populated the relay answer slot.
+
+    On a clarification resume, ``await_user`` flags ``resume_turn`` so the
+    policy consumes the relay inbox head into the ``answer`` slot. This makes
+    ``_pending_clarification`` return False (its ``answer is None`` guard
+    fails), so callers that need to route to the node which *processes* the
+    answer must check this instead.
+    """
+    relay_state = state.get("relay_state")
+    if not isinstance(relay_state, dict):
+        return False
+    return relay_state.get("answer") is not None
+
+
 def route_after_preprocess(state: dict[str, Any]) -> str:
     """Branch after enter_loop: chitchat END, wired delegate, or DISPATCH."""
     label = state.get("intake_label")
@@ -152,7 +167,7 @@ def route_after_clarification(state: dict[str, Any]) -> str:
                 "[routing] route_after_clarification → finalize (plan approved; exec goal follows)"
             )
             return FINALIZE
-        if _pending_clarification(state):
+        if _pending_clarification(state) or _has_relay_answer(state):
             logger.debug("[routing] route_after_clarification → plan_review (process plan action)")
             return PLAN_REVIEW
         logger.debug("[routing] route_after_clarification → END (no pending, no approve)")
