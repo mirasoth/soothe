@@ -66,6 +66,39 @@ def _parse_cron_slash_prompt(prompt: str) -> str | None:
     return rest
 
 
+def _parse_autopilot_slash_prompt(prompt: str) -> tuple[str | None, str] | None:
+    """Parse a ``/autopilot`` slash command from headless input.
+
+    Mirrors the TUI ``/autopilot [rail_name] <goal description>`` syntax.
+    When the first token after ``/autopilot`` matches a builtin rail id,
+    it is used as the rail; otherwise the full text is the goal (no rail).
+
+    Args:
+    prompt: User input (e.g. ``/autopilot hotfix fix the login bug``).
+
+    Returns:
+    ``(rail_id, goal_text)`` tuple, or ``None`` if not an autopilot slash
+    command. ``rail_id`` is ``None`` when no rail prefix is present.
+    """
+    stripped = prompt.strip()
+    if not stripped.lower().startswith("/autopilot"):
+        return None
+    rest = stripped[len("/autopilot") :].strip()
+    if not rest:
+        return None
+    try:
+        from soothe.rails.catalog import BUILTIN_RAIL_IDS
+
+        tokens = rest.split(None, 1)
+        if len(tokens) >= 2 and tokens[0] in BUILTIN_RAIL_IDS:
+            return tokens[0], tokens[1].strip()
+    except Exception:
+        pass
+    # No rail prefix matched — return "auto" so the StrangeLoop auto-picks
+    # a rail via ``resolve_rail_for_job`` instead of running without one.
+    return "auto", rest
+
+
 async def _run_headless_session_once(
     cfg: Any,
     prompt: str,
@@ -97,6 +130,24 @@ async def _run_headless_session_once(
         typer.echo(f"  Description: {job.get('description', cron_text)}")
         typer.echo(f"  Next run: {str(job.get('next_run', ''))[:19]}")
         return 0, False
+
+    # Parse /autopilot slash command (headless equivalent of the TUI handler).
+    # When the first token matches a builtin rail id, it is used as the rail;
+    # otherwise the full text is the goal (no rail).
+    autopilot_parsed = _parse_autopilot_slash_prompt(prompt)
+    autopilot_rail_id: str | None = None
+    if autopilot_parsed is not None:
+        autopilot_rail_id, autopilot_goal = autopilot_parsed
+        if not autopilot_goal:
+            _emit_headless_error(
+                "Usage: /autopilot [rail_name] <task description>\n"
+                "Example: /autopilot refactor the auth module\n"
+                "Example: /autopilot hotfix fix the login bug"
+            )
+            return 1, False
+        # Replace the prompt with the goal text so subagent parsing and
+        # send_turn operate on the clean goal, not the slash command.
+        prompt = autopilot_goal
 
     try:
         cli_ws = resolve_cli_loop_workspace()
@@ -138,6 +189,7 @@ async def _run_headless_session_once(
             session.send_turn(
                 effective_prompt,
                 preferred_subagent=subagent_name,
+                autopilot_rail_id=autopilot_rail_id,
             ),
             timeout=_SESSION_BOOTSTRAP_TIMEOUT_S,
         )
