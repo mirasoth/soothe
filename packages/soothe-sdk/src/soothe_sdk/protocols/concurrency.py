@@ -14,8 +14,9 @@ class ConcurrencyPolicy(BaseModel):
     When set to 0, the corresponding concurrency layer disables its semaphore
     and allows unbounded parallel execution.
 
-    Goal fan-out across Autopilot workers is not modeled here — that lives on
-    host config ``agent.autopilot.max_parallel_goals``.
+    Goal fan-out across loop-native rail workers is not modeled here — that
+    lives on host config ``agent.rail`` (the retired ``soothe-autopilot``
+    package's ``max_parallel_goals`` field was removed with the package).
 
     Args:
         max_parallel_steps: Max plan steps concurrent in one batch; the runner / agent-loop

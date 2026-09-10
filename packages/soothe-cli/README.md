@@ -19,10 +19,10 @@ soothe
 # Headless single-prompt mode
 soothe -p "Research AI advances"
 
-# Autopilot job from GOAL.md (greenfield-system rail)
+# Autopilot goal via the TUI /autopilot slash command (loop-native rail)
 cd /path/to/repo
-soothe autopilot submit -f GOAL.md --rail greenfield-system
-soothe autopilot top
+soothe
+# Inside the TUI: /autopilot greenfield-system Refactor the auth module
 
 # Loop management
 soothe loop list

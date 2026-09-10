@@ -62,5 +62,5 @@ def test_split_templates_compose(monkeypatch: pytest.MonkeyPatch) -> None:
     assert loaded.agent.loop.enabled is True
     assert loaded.cron.max_jobs == 100
     assert loaded.vector_store_router.default == "sqlite_vec_default:soothe_default"
-    assert loaded.agent.autopilot.notify.sinks.email.smtp_password == "${SOOTHE_SMTP_PASSWORD}"
-    assert loaded.agent.autopilot.notify.sinks.feishu.app_secret == "${FEISHU_APP_SECRET}"
+    assert loaded.agent.rail.notify.sinks.email.smtp_password == "${SOOTHE_SMTP_PASSWORD}"
+    assert loaded.agent.rail.notify.sinks.feishu.app_secret == "${FEISHU_APP_SECRET}"

@@ -252,12 +252,6 @@ COMMANDS: dict[str, dict[str, Any]] = {
         "description": "Resume a loop by id",
         "params_schema": {"loop_id": {"type": "string", "required": True}},
     },
-    "/autopilot": {
-        "location": "daemon",
-        "type": "routing",
-        "description": "Submit autopilot job (usage: /autopilot <task>)",
-        "requires_query": True,
-    },
     "/cron": {
         "location": "daemon",
         "type": "rpc",

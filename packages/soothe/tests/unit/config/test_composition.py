@@ -14,7 +14,7 @@ def test_compose_host_agent_config_merges_disjoint_sections() -> None:
         "agent": {"runtime": {"recursion_limit": 300}},
     }
     soothe_data = {
-        "agent": {"loop": {"max_iterations": 77}, "autopilot": {"enabled": True}},
+        "agent": {"loop": {"max_iterations": 77}, "rail": {"default_rail": None}},
         "cron": {"max_jobs": 50},
     }
 

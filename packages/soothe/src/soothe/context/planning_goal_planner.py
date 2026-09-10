@@ -129,7 +129,7 @@ class GoalPlanningSubengine:
         max_subgoals: int = 5,
         reasoning: str = "",
     ) -> list[GoalNode]:
-        """Create child goals from LLM decomposition payloads (AutopilotMonitor / verifier).
+        """Create child goals from LLM decomposition payloads (ContextEngine / verifier).
 
         Args:
             parent_id: Parent goal to attach subgoals under.

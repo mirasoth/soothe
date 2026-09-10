@@ -1,4 +1,4 @@
-"""Internal EventBus for StrangeLoop, ContextEngine, and AutopilotService coordination."""
+"""Internal EventBus for StrangeLoop, ContextEngine, and daemon scheduler coordination."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 class InternalEventBus:
-    """In-memory async event dispatch for StrangeLoop, ContextEngine, and AutopilotService coordination."""
+    """In-memory async event dispatch for StrangeLoop, ContextEngine, and daemon scheduler coordination."""
 
     def __init__(self) -> None:
         """Initialize the internal event bus."""
@@ -59,7 +59,7 @@ class InternalEventBus:
 
         The internal lock is held ONLY long enough to snapshot the handler
         list — it is released before any handler runs. This is critical:
-        handlers commonly emit further events (e.g. AutopilotService's
+        handlers commonly emit further events (e.g. the daemon scheduler's
         `_handle_goal_state_changed` calls `_mark_loop_idle` which
         emits more events), and holding the lock across handler execution
         would deadlock the bus.

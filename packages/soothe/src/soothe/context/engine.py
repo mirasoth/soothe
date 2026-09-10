@@ -588,7 +588,7 @@ class ContextEngine:
     def claim_goal(self, goal_id: str, loop_id: str | None = None) -> GoalNode | None:
         """Atomically transition goal to active (dispatch claim).
 
-        Used by AutopilotService after peek_ready_goals selected a
+        Used by the daemon scheduler after peek_ready_goals selected a
         candidate and a loop was assigned. Re-checks conflicts at
         claim time to prevent race conditions.
 
@@ -796,7 +796,7 @@ class ContextEngine:
         Args:
             goal_id: Failed worker goal to recover.
             reason: Health / deadlock reason for the recovery.
-            max_engine_recoveries: Cap from AutopilotConfig.
+            max_engine_recoveries: Cap from RailConfig.
 
         Returns:
             The updated GoalNode in `pending` status.

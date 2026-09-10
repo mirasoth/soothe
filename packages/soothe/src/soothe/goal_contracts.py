@@ -1,4 +1,4 @@
-"""Goal wire/contract types shared between the host and soothe-autopilot."""
+"""Goal wire/contract types shared between the host and daemon scheduler."""
 
 from __future__ import annotations
 
@@ -8,9 +8,9 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
-# Canonical evidence bundle for StrangeLoop → AutopilotMonitor integration
+# Canonical evidence bundle for StrangeLoop → ContextEngine integration
 class EvidenceBundle(BaseModel):
-    """Canonical evidence payload exchanged between StrangeLoop and Autopilot."""
+    """Canonical evidence payload exchanged between StrangeLoop and ContextEngine."""
 
     structured: dict[str, Any] = Field(
         description="Machine-readable execution metrics/state for deterministic processing"
@@ -42,7 +42,7 @@ class BackoffDecision(BaseModel):
 
 # ---------------------------------------------------------------------------
 # RFC-222 (revised): GoalDispatchContext* — bounded summary types that flow
-# between the daemon's AutopilotService and subprocess StrangeLoop workers.
+# between the daemon's scheduler and subprocess StrangeLoop workers.
 # Distinct from RFC-217 GoalContext (thread ecosystem) and RFC-200 GoalContext
 # (DAG snapshot for backoff) — see RFC-222 §"GoalDispatchContext".
 # ---------------------------------------------------------------------------

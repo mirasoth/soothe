@@ -281,50 +281,18 @@ class AutopilotNotifyConfig(BaseModel):
     )
 
 
-class AutopilotConfig(BaseModel):
-    """Autopilot scheduling and self-running configuration.
+class RailConfig(BaseModel):
+    """Loop-native rail and goal-execution configuration.
 
-    Controls 24/7 self-running behavior for both goal-level and daemon-level.
+    Holds the fields consumed by the loop-native path (LoopRail selection,
+    intake scope, engine recovery budgets). Legacy daemon-only scheduling
+    fields (enabled, max_retries, max_parallel_goals, gc_*, dreaming_enabled,
+    monitor_model_role, consensus_model_role, judge_allow_structural_dag_ops,
+    verify_*, max_loops, workspace_reservation, context_projection) were
+    removed when the legacy autopilot service was retired.
     """
 
-    # === Autopilot scheduling (daemon-level) ===
-    enabled: bool = Field(
-        default=True,
-        description=(
-            "Enable the AutopilotService scheduling loop. When True (default), the "
-            "daemon starts the scheduling loop on startup for 24/7 autonomous "
-            "operation. When False, the service is constructed but the scheduling "
-            "loop does not start automatically; goals must be dispatched manually."
-        ),
-    )
-    max_retries: int = 2
-    max_parallel_goals: int = Field(default=3, ge=1, le=32)
-    # Cap on goals scheduled at once (``AutopilotService._schedule_via_worker_pool``).
-    # Independent of ``max_loops`` (WorkerPool capacity). Autopilot owns goal
-    # fan-out; StrangeLoop runners are single-goal workers.
-
-    # === Goal GC (orphan reclamation) ===
-    gc_enabled: bool = Field(
-        default=True,
-        description=(
-            "Enable the periodic goal-GC scan. When True (default), the "
-            "autopilot watchdog cancels non-terminal goals whose job root is "
-            "already terminal (completed/cancelled/failed), so orphaned "
-            "children cannot linger forever under a dead job."
-        ),
-    )
-    gc_interval_seconds: int = Field(
-        default=120,
-        ge=10,
-        le=3600,
-        description=(
-            "Minimum interval between goal-GC scans. The scan piggybacks on "
-            "the monitor watchdog tick, so the effective cadence is the "
-            "larger of this and verify_interval/verify_idle_interval."
-        ),
-    )
-
-    # === Orchestration (from old autopilot) ===
+    # === Orchestration budgets (loop-native) ===
     max_send_backs: int = Field(default=3, ge=1, le=10)
     max_engine_recoveries: int = Field(
         default=2,
@@ -332,30 +300,7 @@ class AutopilotConfig(BaseModel):
         le=10,
         description=(
             "Max engine-driven recoveries per failed goal (deadlock/health "
-            "backstop). Separate from max_retries and max_send_backs."
-        ),
-    )
-
-    # === Dreaming ===
-    dreaming_enabled: bool = True
-
-    monitor_model_role: ModelRole = Field(
-        default="think",
-        description=(
-            "Router model role for AutopilotMonitor LLM reasoners (backoff, DAG verification)."
-        ),
-    )
-
-    consensus_model_role: ModelRole = Field(
-        default="think",
-        description="Router model role for report-commit judgment.",
-    )
-    judge_allow_structural_dag_ops: list[str] = Field(
-        default_factory=list,
-        description=(
-            "Allowlisted structural dag_ops from report-commit judgment "
-            "(spawn_goal, cancel_goal). Empty denies both — LoopRail owns "
-            "structural fan-out."
+            "backstop). Separate from max_send_backs."
         ),
     )
 
@@ -382,7 +327,7 @@ class AutopilotConfig(BaseModel):
     )
     rail_auto_pick_model_role: ModelRole | None = Field(
         default=None,
-        description=("Router model role for rail auto-pick. Null uses monitor_model_role."),
+        description=("Router model role for rail auto-pick. Null uses the think role."),
     )
     rail_auto_pick_timeout_s: float = Field(
         default=120.0,
@@ -435,118 +380,10 @@ class AutopilotConfig(BaseModel):
     intake_scope: Literal["minimal", "simple", "complex"] | None = Field(
         default=None,
         description=(
-            "Forced StrangeLoop intake scope for autopilot-dispatched goals "
+            "Forced StrangeLoop intake scope for dispatched goals "
             "(minimal|simple|complex). Null (default) lets the loop classify "
             "intake. Set simple/minimal/complex to skip the intake LLM."
         ),
-    )
-
-    # RFC-625 / IG-743: AutopilotMonitor verification cadence + LLM gating
-    verify_periodic_enabled: bool = Field(
-        default=False,
-        description=(
-            "Master switch for periodic DAG health verification. When False "
-            "(default), the monitor's background health tick is skipped entirely "
-            "— no structural heuristics, no LLM. Event-driven verification "
-            "(post-completion, backoff reasoning) still runs; the resource "
-            "watchdog tick still runs on the same cadence."
-        ),
-    )
-    verify_interval: int = Field(
-        default=120,
-        ge=5,
-        le=300,
-        description=("Background verification tick when non-terminal goals exist (seconds)"),
-    )
-    """Seconds between DAG health ticks while work is open."""
-
-    verify_idle_interval: int = Field(
-        default=300,
-        ge=0,
-        le=3600,
-        description=(
-            "Verification tick when the DAG is empty or all goals are terminal. "
-            "Zero reuses verify_interval. Health LLM is skipped while idle; "
-            "structural deadlock merge and resource watchdogs still run."
-        ),
-    )
-    verify_llm_enabled: bool = Field(
-        default=True,
-        description="When False, periodic DAG health never calls the monitor LLM.",
-    )
-    verify_llm_min_nonterminal: int = Field(
-        default=1,
-        ge=0,
-        le=500,
-        description=(
-            "Minimum non-terminal goals required before the periodic health LLM runs. "
-            "Below this threshold, only structural/heuristic health applies."
-        ),
-    )
-    verify_llm_debounce: bool = Field(
-        default=True,
-        description=(
-            "When True, skip the health LLM if the DAG fingerprint is unchanged "
-            "since the last LLM health call."
-        ),
-    )
-
-    webhooks: dict[str, str | None] = Field(default_factory=dict)
-    notify: AutopilotNotifyConfig = Field(
-        default_factory=AutopilotNotifyConfig,
-        description="Job lifecycle multi-channel notify push",
-    )
-
-    # === Loop pool (RFC-222) ===
-    # Distinct from `max_parallel_goals`: `max_loops` caps worker capacity in
-    # the StrangeLoop pool (loops can be reused for parent→child lineage), while
-    # `max_parallel_goals` caps the number of goals actively scheduled at once.
-    # They can differ — e.g. max_loops=16 (pool) with max_parallel_goals=8 (schedule).
-    max_loops: int = Field(
-        default=16,
-        ge=1,
-        le=32,
-        description="Maximum concurrent StrangeLoop workers in the autopilot pool",
-    )
-    loop_idle_timeout: int = Field(
-        default=300,
-        ge=10,
-        description="Seconds an idle loop is kept before release",
-    )
-    poll_interval: int = Field(
-        default=5,
-        ge=1,
-        description="AutopilotService scheduling-loop tick interval, seconds",
-    )
-    dreaming_poll_interval: int = Field(
-        default=60,
-        ge=5,
-        description="Reduced polling cadence when in dreaming mode, seconds",
-    )
-    # RFC-222 H5: wall-clock budget per dispatched goal. None disables.
-    goal_deadline_seconds: float | None = Field(
-        default=1_209_600.0,
-        description=(
-            "Wall-clock budget per dispatched autopilot goal in seconds; "
-            "the AutopilotService monitor cancels the worker on overrun. "
-            "None disables deadline enforcement (default 14d)."
-        ),
-    )
-    # === Context projection (RFC-222 revised) ===
-    # Bounds the GoalDispatchContextBundle that the daemon's ContextProjector
-    # builds for each dispatched goal. Keeps cross-process IPC bounded and
-    # caps memory of the GoalDispatchContextStore in durability.
-    context_projection: ContextProjectionConfig = Field(
-        default_factory=lambda: ContextProjectionConfig(),
-        description="Bounds for GoalDispatchContextBundle merging",
-    )
-
-    # === Workspace reservation (RFC-222 revised) ===
-    # Scheduling-time conflict gate. Refuses to dispatch two goals whose
-    # workspace prefixes overlap. Supersedes per-path FileLockMiddleware for v1.
-    workspace_reservation: WorkspaceReservationConfig = Field(
-        default_factory=lambda: WorkspaceReservationConfig(),
-        description="Workspace-prefix conflict gate config",
     )
 
     # === Lifecycle reclamation ===
@@ -605,6 +442,13 @@ class AutopilotConfig(BaseModel):
             "Seconds to wait for worker process death during force-kill after "
             "cooperative cancel fails."
         ),
+    )
+
+    # === Job lifecycle notify (consumed by daemon notify router) ===
+    webhooks: dict[str, str | None] = Field(default_factory=dict)
+    notify: AutopilotNotifyConfig = Field(
+        default_factory=AutopilotNotifyConfig,
+        description="Job lifecycle multi-channel notify push",
     )
 
 
@@ -813,7 +657,7 @@ class LoopCheckpointAsyncConfig(BaseModel):
 class LoopConcurrencyConfig(BaseModel):
     """Loop execution concurrency and scheduling controls.
 
-    Goal fan-out is owned by `agent.autopilot.max_parallel_goals`.
+    Goal fan-out is owned by the daemon scheduler (legacy autopilot was retired).
     """
 
     max_parallel_steps: int = Field(
@@ -1542,7 +1386,7 @@ class CronConfig(BaseModel):
 class AgentConfig(NanoAgentConfig):
     """Host agent configuration: nano CoreAgent fields plus orchestration overlays.
 
-    Adds StrangeLoop/Autopilot/clarification/veritas and goal-completion behavior
+    Adds StrangeLoop/rail/clarification/veritas and goal-completion behavior
     on top of nano `AgentConfig` (identity, protocols, runtime, middleware).
     """
 
@@ -1552,11 +1396,11 @@ class AgentConfig(NanoAgentConfig):
     )
     """Configurable assistant identity for prompt blocks and intake replies."""
 
-    autopilot: AutopilotConfig = Field(
-        default_factory=AutopilotConfig,
-        description="Autopilot scheduling and self-running configuration",
+    rail: RailConfig = Field(
+        default_factory=RailConfig,
+        description="Loop-native rail selection and goal-execution configuration",
     )
-    """Controls 24/7 self-running behavior for both goal-level and daemon-level."""
+    """Loop-native rail/goal-execution tuning (selection, intake scope, recovery budgets)."""
 
     loop: StrangeLoopConfig = Field(
         default_factory=StrangeLoopConfig,

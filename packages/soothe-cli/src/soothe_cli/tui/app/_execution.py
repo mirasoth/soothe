@@ -735,13 +735,18 @@ class _ExecutionMixin:
             rewritten = f"/skill:skill-creator {args}" if args else "/skill:skill-creator"
             await self._handle_skill_command(rewritten)
         elif cmd == "/autopilot" or cmd.startswith("/autopilot "):
-            # Submit autopilot job via WebSocket (like CLI `soothe autopilot submit`)
+            # Submit autopilot job via the normal loop submission path (not the
+            # autopilot_submit RPC) so the goal runs through StrangeLoop directly.
+            # When the first token matches a known builtin rail id, it is used as
+            # the autopilot rail: `/autopilot [rail_name] <goal description>`.
             args = command.strip()[len("/autopilot") :].strip()
             if not args:
                 await self._mount_message(UserMessage(command))
                 await self._mount_message(
                     AppMessage(
-                        "Usage: /autopilot <task description>\nExample: /autopilot refactor the auth module"
+                        "Usage: /autopilot [rail_name] <task description>\n"
+                        "Example: /autopilot refactor the auth module\n"
+                        "Example: /autopilot hotfix fix the login bug"
                     )
                 )
                 return
@@ -909,6 +914,7 @@ class _ExecutionMixin:
         message: str,
         *,
         skip_daemon_send_turn: bool = False,
+        autopilot_rail_id: str | None = None,
     ) -> None:
         """Send a message to the agent and start execution.
 
@@ -920,6 +926,10 @@ class _ExecutionMixin:
         message: The prompt to send to the agent.
         skip_daemon_send_turn: When using a daemon session, only attach to
         the in-flight stream (prompt already queued on the daemon).
+        autopilot_rail_id: Optional builtin rail id. When set, the daemon
+            binds a ``LoopRailInterpreter`` for this goal via
+            ``run_with_progress(autopilot_rail_id=…)``. Used by the
+            ``/autopilot [rail_name] <goal>`` slash command.
         """
         # Anchor to bottom so streaming response stays visible
         with suppress(NoMatches, ScreenStackError):
@@ -955,6 +965,7 @@ class _ExecutionMixin:
                 self._run_agent_task(
                     message,
                     skip_daemon_send_turn=skip_daemon_send_turn,
+                    autopilot_rail_id=autopilot_rail_id,
                 ),
                 exclusive=False,
             )
@@ -1015,6 +1026,7 @@ class _ExecutionMixin:
         message: str,
         *,
         skip_daemon_send_turn: bool = False,
+        autopilot_rail_id: str | None = None,
     ) -> None:
         """Run the agent task in a background worker.
 
@@ -1024,6 +1036,9 @@ class _ExecutionMixin:
         message: The prompt to send to the agent.
         skip_daemon_send_turn: When `True` with a daemon session, only
         consume the daemon stream (prompt already queued server-side).
+        autopilot_rail_id: Optional builtin rail id forwarded to
+        ``execute_task_textual`` → ``send_turn`` → ``loop_input`` so the
+        daemon binds a ``LoopRailInterpreter`` for this goal.
         """
         # Caller ensures _ui_adapter is set (checked in _handle_user_message)
         if self._ui_adapter is None:
@@ -1073,6 +1088,7 @@ class _ExecutionMixin:
                         clarification_mode=wire_clar,
                         sticky_preferred_subagent=sticky_subagent,
                         interaction_mode=wire_interaction,
+                        autopilot_rail_id=autopilot_rail_id,
                         is_shutting_down=lambda: getattr(self, "_exit", False),
                     )
                     break

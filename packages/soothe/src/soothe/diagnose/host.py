@@ -1,4 +1,4 @@
-"""Host-owned feature diagnose checks (cron, skillify, autopilot, loop)."""
+"""Host-owned feature diagnose checks (cron, skillify, rail, loop)."""
 
 from __future__ import annotations
 
@@ -34,55 +34,36 @@ def _check_import(module_path: str, name: str) -> CheckResult:
         )
 
 
-def _check_autopilot(config: Any | None) -> CheckResult:
-    """Check autopilot config presence and module import.
+def _check_rail(config: Any | None) -> CheckResult:
+    """Check rail config presence.
 
-    `soothe` sits below `soothe-autopilot` in the dependency DAG, so the
-    module may legitimately be absent when autopilot is disabled. Only surface
-    an import failure as ERROR when autopilot is actually enabled.
+    The legacy ``soothe-autopilot`` package was retired; loop-native rail
+    tuning now lives under ``agent.rail`` in the host config. This check
+    only validates that the config section is present.
     """
     agent = getattr(config, "agent", None) if config is not None else None
-    autopilot = getattr(agent, "autopilot", None) if agent is not None else None
-    enabled = bool(getattr(autopilot, "enabled", False)) if autopilot is not None else False
-
-    import_result = _check_import("soothe_autopilot", "autopilot_module")
-    if import_result.status != CheckStatus.OK:
-        if enabled:
-            return CheckResult(
-                name="autopilot",
-                status=import_result.status,
-                message=import_result.message,
-                details=import_result.details,
-            )
-        # Autopilot disabled — module absence is fine.
-        return CheckResult(
-            name="autopilot",
-            status=CheckStatus.OK,
-            message="Autopilot disabled (module not installed)",
-            details={"enabled": False, "module": "soothe_autopilot"},
-        )
+    rail = getattr(agent, "rail", None) if agent is not None else None
 
     if config is None:
         return CheckResult(
-            name="autopilot",
+            name="rail",
             status=CheckStatus.SKIPPED,
-            message="Autopilot: no config loaded (module OK)",
-            details={"module": "soothe_autopilot"},
+            message="Rail: no config loaded",
         )
 
-    if autopilot is None:
+    if rail is None:
         return CheckResult(
-            name="autopilot",
+            name="rail",
             status=CheckStatus.WARNING,
-            message="agent.autopilot config missing",
-            details={"remediation": "Add agent.autopilot in soothe.yml"},
+            message="agent.rail config missing",
+            details={"remediation": "Add agent.rail in soothe.yml"},
         )
 
     return CheckResult(
-        name="autopilot",
+        name="rail",
         status=CheckStatus.OK,
-        message=f"Autopilot config present (enabled={enabled})",
-        details={"enabled": enabled, "module": "soothe_autopilot"},
+        message="Rail config present (loop-native)",
+        details={"default_rail": getattr(rail, "default_rail", None)},
     )
 
 
@@ -240,7 +221,7 @@ def _check_skillify(config: Any | None) -> CheckResult:
 async def check_host(config: Any | None = None) -> CategoryResult:
     """Check host-owned orchestration features."""
     checks = [
-        _check_autopilot(config),
+        _check_rail(config),
         _check_loop(config),
         _check_cron(config),
         _check_skillify(config),

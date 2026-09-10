@@ -42,7 +42,6 @@ class WebSocketChannel(Channel):
         *,
         unified_app: FastAPI | None = None,
         session_manager: Any | None = None,
-        autopilot_service: Any | None = None,
         cron_service: Any | None = None,
         memory_profiler: Any | None = None,
     ) -> None:
@@ -51,7 +50,6 @@ class WebSocketChannel(Channel):
         self._ws_config = config
         self._unified_parent_app = unified_app
         self._session_manager = session_manager
-        self._autopilot_service = autopilot_service
         self._cron_service = cron_service
         self._memory_profiler = memory_profiler
         self._app: FastAPI | None = None
@@ -645,7 +643,7 @@ class WebSocketChannel(Channel):
         msg_dict: dict[str, Any],
         client_id: str,
     ) -> None:
-        """Handle WebSocket command messages for autopilot, cron, and memory.
+        """Handle WebSocket command messages for cron and memory.
 
         Args:
         websocket: WebSocket connection.
@@ -688,14 +686,6 @@ class WebSocketChannel(Channel):
         Raises:
         RuntimeError: If service unavailable or command fails.
         """
-        # Autopilot commands
-        if command.startswith("autopilot_"):
-            if self._autopilot_service is None:
-                raise RuntimeError("Autopilot service unavailable")
-
-            action = command[len("autopilot_") :]
-            return await self._handle_autopilot_command(action, payload)
-
         # Cron commands
         if command.startswith("cron_"):
             if self._cron_service is None:
@@ -713,24 +703,6 @@ class WebSocketChannel(Channel):
             return await self._handle_memory_command(action, payload)
 
         raise RuntimeError(f"Unknown command: {command}")
-
-    async def _handle_autopilot_command(
-        self, action: str, payload: dict[str, Any]
-    ) -> dict[str, Any]:
-        """Handle autopilot command.
-
-        Args:
-        action: Autopilot action name.
-        payload: Command payload.
-
-        Returns:
-        Result dict.
-        """
-        service = self._autopilot_service
-
-        from soothe_daemon.protocol.autopilot_commands import run_autopilot_action
-
-        return await run_autopilot_action(service, action, payload)
 
     async def _handle_cron_command(self, action: str, payload: dict[str, Any]) -> dict[str, Any]:
         """Handle cron command.

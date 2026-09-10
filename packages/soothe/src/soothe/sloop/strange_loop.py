@@ -244,6 +244,8 @@ class StrangeLoop:
         interaction_mode: str
         | None = None,  # per-goal "agent"|"ask"|"plan"|"bypass" graph selection
         approved_plan_path: str | None = None,  # Bug #3: plan-mode approve exec goal
+        autopilot_rail_id: str
+        | None = None,  # RFC-231: autopilot rail id → bind LoopRailInterpreter
     ) -> AsyncGenerator[tuple[str, Any], None]:
         """Run loop with progress events.
 
@@ -278,6 +280,11 @@ class StrangeLoop:
                 after `state.bind_ce` and before the graph runs, so the
                 executing LLM begins with a real multi-turn transcript. `None`
                 or empty → existing first-user-message path unchanged.
+            autopilot_rail_id: Optional LoopRail catalog id. When set, a
+                `LoopRailInterpreter` is constructed and bound to this goal
+                via `interpreter.bind_job(goal_id, rail_id=...)` before the
+                loop graph runs, so stations can emit `RailEvent`s. Stored on
+                the runtime context alongside the interpreter.
 
         Yields:
             Tuples of (event_type, event_data) for progress updates
@@ -852,6 +859,42 @@ class StrangeLoop:
                         ce_goal.id,
                     )
 
+            # RFC-231 LoopRail: when an autopilot goal carries a rail id,
+            # construct a job-scoped ``LoopRailInterpreter`` and bind the job
+            # (goal id → rail) before the loop graph runs. Stations read
+            # ``ctx.rail_interpreter`` to emit ``RailEvent``s after CE
+            # mutations; the interpreter alone writes the trace. Bind failure
+            # is non-fatal: the goal proceeds without rail instrumentation and
+            # a warning is logged so a missing/malformed rail YAML never
+            # blocks execution.
+            rail_interpreter: Any | None = None
+            if autopilot_rail_id:
+                try:
+                    from soothe.rails.interpreter import LoopRailInterpreter
+
+                    rail_interpreter = LoopRailInterpreter(
+                        ce_instance,
+                        soothe_config=self.config,
+                    )
+                    await rail_interpreter.bind_job(
+                        ce_goal.id,
+                        rail_id=autopilot_rail_id,
+                    )
+                    logger.info(
+                        "[StrangeLoop] LoopRailInterpreter bound (goal=%s, rail=%s)",
+                        ce_goal.id,
+                        autopilot_rail_id,
+                    )
+                except Exception:
+                    logger.warning(
+                        "[StrangeLoop] LoopRailInterpreter bind failed "
+                        "(goal=%s, rail=%s); proceeding without rail instrumentation",
+                        ce_goal.id,
+                        autopilot_rail_id,
+                        exc_info=True,
+                    )
+                    rail_interpreter = None
+
             ctx = LoopRuntimeContext(
                 strange_loop=self,
                 state_manager=state_manager,
@@ -876,6 +919,8 @@ class StrangeLoop:
                 ce_goal_id=ce_goal.id,
                 goal_trace=active_goal_trace,
                 relay=self._build_relay(state_manager.loop_id, emit),
+                rail_interpreter=rail_interpreter,
+                autopilot_rail_id=autopilot_rail_id,
             )
             runtime_ctx = ctx
             self._live_runtime_ctx = ctx

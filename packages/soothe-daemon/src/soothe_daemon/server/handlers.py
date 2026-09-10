@@ -229,6 +229,7 @@ class DaemonHandlersMixin:
                     clarification_answers=qo.get("clarification_answers"),
                     resume_interrupted=bool(qo.get("resume_interrupted", False)),
                     approved_plan_path=qo.get("approved_plan_path"),
+                    autopilot_rail_id=qo.get("autopilot_rail_id"),
                 )
         except Exception:
             logger.exception("Daemon loop input handler error")

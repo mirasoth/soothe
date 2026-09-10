@@ -22,6 +22,7 @@ from soothe.sloop.state.sloop_manager import (
 if TYPE_CHECKING:
     from soothe_sdk.protocols.core_agent import CoreAgentProtocol
 
+    from soothe.rails.interpreter import LoopRailInterpreter
     from soothe.sloop.clarification.protocol import ClarificationPolicy
     from soothe.sloop.relay.relay import LoopRelay
     from soothe.sloop.strange_loop import StrangeLoop
@@ -85,6 +86,16 @@ class LoopRuntimeContext:
     tail_persistence_task: asyncio.Task[None] | None = None
     # RFC-904: queued DecompositionProposal objects awaiting RECONCILE.
     decompose_proposals: list[Any] = field(default_factory=list)
+    # RFC-231 LoopRail: job-scoped rail interpreter bound when an autopilot
+    # goal carries a ``rail_id``. Stations read this to emit ``RailEvent``s
+    # after CE mutations; the interpreter alone writes the trace. Constructed
+    # in ``StrangeLoop.run_with_progress`` and bound via ``bind_job`` before
+    # the loop graph runs.
+    rail_interpreter: LoopRailInterpreter | None = None
+    # The rail id that requested autopilot rail execution for this goal.
+    # When set, ``run_with_progress`` constructs the interpreter and binds
+    # the job (goal id → rail) so stations can emit events.
+    autopilot_rail_id: str | None = None
 
     @property
     def core_agent(self) -> CoreAgentProtocol:

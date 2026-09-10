@@ -3031,6 +3031,7 @@ async def execute_task_textual(
     clarification_mode: str | None = None,
     sticky_preferred_subagent: str | None = None,
     interaction_mode: str | None = None,
+    autopilot_rail_id: str | None = None,
     is_shutting_down: Callable[[], bool] | None = None,
 ) -> SessionStats:
     """Execute a task with output directed to Textual UI."""
@@ -3202,6 +3203,7 @@ async def execute_task_textual(
                 interaction_mode=interaction_mode,
                 clarification_answer=sending_clarification_answer,
                 clarification_answers=pending_clarification_answers,
+                autopilot_rail_id=autopilot_rail_id,
             )
             chunk_source = daemon_session.iter_turn_chunks()
 

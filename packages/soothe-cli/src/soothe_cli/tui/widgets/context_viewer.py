@@ -17,9 +17,14 @@ if TYPE_CHECKING:
 from soothe_cli.runtime.presentation.id_format import abbreviate_compact_id
 from soothe_cli.settings import get_glyphs, is_ascii_mode
 from soothe_cli.tui.widgets.context_data import (
+    AutopilotContext,
     LoadTokenSnapshotFn,
+    RailFlowState,
+    StepDagNode,
+    StepDagSnapshot,
     TokenUsageSnapshot,
     format_token_usage,
+    load_autopilot_context,
     load_ce_goals,
     summarize_goal_statuses,
 )
@@ -53,6 +58,17 @@ STATUS_ICONS: dict[str, str] = {
     "awaiting_clarification": "?",
     "validated": "◆",
 }
+
+# Step-specific status icons (superset of goal statuses with step-only states)
+STEP_STATUS_ICONS: dict[str, str] = {
+    **STATUS_ICONS,
+    "skipped": "↷",
+    "decomposed": "⤳",
+    "superseded": "⇄",
+}
+
+# Max steps to render per goal before collapsing with a "+N more" line.
+_MAX_STEPS_PER_GOAL = 40
 
 
 def _abbreviate_loop_id(loop_id: str) -> str:
@@ -257,6 +273,197 @@ class StatusPanel(Static):
         return "\n".join(lines)
 
 
+class AutopilotProgressPanel(Static):
+    """Progress summary for autopilot-mode loops.
+
+    Shows step completion counts, rail phase, iteration, and loop status
+    in a compact one-or-two-line summary.
+    """
+
+    DEFAULT_CSS = """
+    AutopilotProgressPanel {
+        width: 1fr;
+        height: auto;
+        min-height: 3;
+        padding: 0 1;
+        margin-bottom: 1;
+    }
+    """
+
+    def __init__(self, context: AutopilotContext | None = None, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._context = context
+
+    def set_context(self, context: AutopilotContext | None) -> None:
+        """Replace the autopilot context and refresh."""
+        self._context = context
+        self.update(self.render())
+
+    def render(self) -> str:
+        """Render autopilot progress summary."""
+        if self._context is None:
+            return "[bold magenta]Autopilot Progress[/]\n  [dim]Loading…[/]"
+        ctx = self._context
+        header_parts = ["[bold magenta]Autopilot Progress[/]"]
+        if ctx.rail_flow.rail_id:
+            header_parts.append(f"[dim]{ctx.rail_flow.rail_id}[/]")
+        lines = ["  ".join(header_parts)]
+        lines.append(f"  {ctx.progress_text}")
+        if ctx.active_runner is not None:
+            runner_tag = "live" if ctx.active_runner else "idle"
+            lines.append(f"  [dim]Runner: {runner_tag}[/]")
+        return "\n".join(lines)
+
+
+class StepDagTreePanel(Static):
+    """Renders step DAG trees for autopilot-mode goals.
+
+    Each goal with steps is rendered as a tree showing step descriptions,
+    statuses, dependencies, and execution records. Handles zero-step
+    (pre-decomposition) and large DAGs gracefully.
+    """
+
+    DEFAULT_CSS = """
+    StepDagTreePanel {
+        width: 1fr;
+        height: auto;
+        padding: 0 1;
+    }
+    """
+
+    def __init__(self, step_dags: list[StepDagSnapshot] | None = None, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._step_dags = step_dags or []
+
+    def set_step_dags(self, step_dags: list[StepDagSnapshot]) -> None:
+        """Replace step DAG snapshots and refresh."""
+        self._step_dags = step_dags
+        self.update(self.render())
+
+    def render(self) -> str:
+        """Render step DAG trees as styled text."""
+        if not self._step_dags:
+            return "[bold green]Step DAG[/]\n\n  [dim]No step DAG available[/]"
+
+        lines = ["[bold green]Step DAG[/]", ""]
+        panel_width = self.size.width if self.size.width > 0 else 80
+        desc_max = max(30, panel_width - 28)
+
+        for dag in self._step_dags:
+            goal_color = STATUS_COLORS.get(dag.goal_status, "dim")
+            goal_icon = STATUS_ICONS.get(dag.goal_status, "○")
+            gid = _abbreviate_goal_id(dag.goal_id)
+            gdesc = _truncate_text(dag.goal_description, max_len=desc_max)
+            count_str = f"Steps: {dag.steps_completed}/{dag.steps_total}"
+            lines.append(
+                f"  [{goal_color}]{goal_icon}[/] [{goal_color}]{gid}[/] {gdesc} [dim]{count_str}[/]"
+            )
+
+            if not dag.steps:
+                if dag.plan_summary:
+                    summary = _truncate_text(str(dag.plan_summary), max_len=desc_max)
+                    lines.append(f"    [dim]plan: {summary}[/]")
+                else:
+                    lines.append("    [dim]pending decomposition[/]")
+                lines.append("")
+                continue
+
+            visible = dag.steps[:_MAX_STEPS_PER_GOAL]
+            for step in visible:
+                self._render_step(lines, step, panel_width)
+            remaining = len(dag.steps) - len(visible)
+            if remaining > 0:
+                lines.append(f"    [dim]… +{remaining} more steps[/]")
+
+            if dag.plan_summary:
+                summary = _truncate_text(str(dag.plan_summary), max_len=desc_max)
+                lines.append(f"    [dim]plan: {summary}[/]")
+            lines.append("")
+
+        return "\n".join(lines)
+
+    def _render_step(self, lines: list[str], step: StepDagNode, panel_width: int) -> None:
+        """Append one step node to the lines list.
+
+        Args:
+        lines: Accumulating output lines list.
+        step: Step node to render.
+        panel_width: Available panel width for truncation.
+        """
+        color = STATUS_COLORS.get(step.status, "dim")
+        icon = STEP_STATUS_ICONS.get(step.status, "○")
+        sid = _abbreviate_goal_id(step.id)
+        desc_max = max(24, panel_width - 30)
+        desc = _truncate_text(step.description, max_len=desc_max)
+        kind_tag = f" [dim italic]{step.kind}[/]" if step.kind else ""
+        lines.append(f"    [{color}]{icon}[/] [{color}]{sid}[/] {desc}{kind_tag}")
+        if step.dependencies:
+            deps_text = _truncate_text(
+                ", ".join(step.dependencies[:4]),
+                max_len=max(20, panel_width - 22),
+            )
+            suffix = f" (+{len(step.dependencies) - 4} more)" if len(step.dependencies) > 4 else ""
+            lines.append(f"      [dim]depends: {deps_text}{suffix}[/]")
+        if step.execution_summary:
+            exec_text = _truncate_text(step.execution_summary, max_len=max(20, panel_width - 22))
+            lines.append(f"      [dim]exec: {exec_text}[/]")
+
+
+class RailFlowPanel(Static):
+    """Displays rail flow state for autopilot-mode loops.
+
+    Shows the bound rail id, current phase, last fired rules, and
+    fan-out wave / feedback round metadata.
+    """
+
+    DEFAULT_CSS = """
+    RailFlowPanel {
+        width: 1fr;
+        height: auto;
+        min-height: 3;
+        padding: 0 1;
+        margin-bottom: 1;
+    }
+    """
+
+    def __init__(self, rail_flow: RailFlowState | None = None, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._rail_flow = rail_flow
+
+    def set_rail_flow(self, rail_flow: RailFlowState | None) -> None:
+        """Replace rail flow state and refresh."""
+        self._rail_flow = rail_flow
+        self.update(self.render())
+
+    def render(self) -> str:
+        """Render rail flow state."""
+        if self._rail_flow is None:
+            return "[bold cyan]Rail Flow[/]\n  [dim]Rail unbound[/]"
+        rf = self._rail_flow
+        if rf.rail_id is None:
+            return "[bold cyan]Rail Flow[/]\n  [dim]Rail unbound[/]"
+
+        lines = [f"[bold cyan]Rail Flow[/]  [dim]{rf.rail_id}[/]"]
+        if rf.current_phase:
+            lines.append(f"  Phase: [yellow]{rf.current_phase}[/]")
+        if rf.last_fired_rules:
+            rules_text = _truncate_text(", ".join(rf.last_fired_rules[:6]), max_len=60)
+            suffix = (
+                f" (+{len(rf.last_fired_rules) - 6} more)" if len(rf.last_fired_rules) > 6 else ""
+            )
+            lines.append(f"  Last rules: [dim]{rules_text}{suffix}[/]")
+        meta_parts: list[str] = []
+        if rf.wave_index:
+            meta_parts.append(f"Wave: {rf.wave_index}")
+        if rf.feedback_round:
+            meta_parts.append(f"Feedback: {rf.feedback_round}")
+        if rf.acceptance_met:
+            meta_parts.append("Acceptance: ✓")
+        if meta_parts:
+            lines.append(f"  [dim]{' · '.join(meta_parts)}[/]")
+        return "\n".join(lines)
+
+
 class ContextViewerScreen(ModalScreen[None]):
     """Modal dialog displaying token usage and Context Engine goal DAG/status."""
 
@@ -365,18 +572,43 @@ class ContextViewerScreen(ModalScreen[None]):
         self._goals: list[dict[str, Any]] = []
         self._load_token_snapshot = load_token_snapshot
         self._token_snapshot = initial_token_snapshot
+        self._autopilot_context: AutopilotContext | None = None
+        self._is_autopilot: bool = False
 
     def compose(self) -> ComposeResult:
-        """Compose the screen layout."""
+        """Compose the screen layout.
+
+        In autopilot mode the scrollable body swaps GoalDagPanel for
+        StepDagTreePanel + RailFlowPanel. The summary area swaps
+        StatusPanel for AutopilotProgressPanel. Token usage is shown in
+        both modes.
+        """
         glyphs = get_glyphs()
         with Vertical():
             yield Static("Context", classes="context-title")
             with Vertical(classes="context-summary"):
                 yield TokenUsagePanel(snapshot=self._token_snapshot)
-                yield StatusPanel(goals=self._goals, loop_id=self._loop_id)
-            yield ScrollableContainer(
-                GoalDagPanel(goals=self._goals),
-            )
+                if self._is_autopilot:
+                    yield AutopilotProgressPanel(context=self._autopilot_context)
+                else:
+                    yield StatusPanel(goals=self._goals, loop_id=self._loop_id)
+            if self._is_autopilot:
+                yield ScrollableContainer(
+                    RailFlowPanel(
+                        rail_flow=self._autopilot_context.rail_flow
+                        if self._autopilot_context
+                        else None
+                    ),
+                    StepDagTreePanel(
+                        step_dags=self._autopilot_context.step_dags
+                        if self._autopilot_context
+                        else []
+                    ),
+                )
+            else:
+                yield ScrollableContainer(
+                    GoalDagPanel(goals=self._goals),
+                )
             yield Static(
                 f"{glyphs.arrow_up}/{glyphs.arrow_down} scroll  {glyphs.bullet}  Esc close",
                 classes="context-help",
@@ -440,7 +672,12 @@ class ContextViewerScreen(ModalScreen[None]):
         self.remove_class("compact")
 
     async def _async_refresh(self) -> None:
-        """Reload context data and refresh all panels."""
+        """Reload context data and refresh all panels.
+
+        Detects autopilot mode on the first refresh; if autopilot, loads
+        step DAG + rail flow state and refreshes the autopilot panels.
+        Otherwise refreshes the legacy goal DAG + status panels.
+        """
         goals = await load_ce_goals(self._loop_id, self._daemon_session)
         token_snapshot = self._token_snapshot
         if self._load_token_snapshot is not None:
@@ -450,9 +687,58 @@ class ContextViewerScreen(ModalScreen[None]):
                 logger.debug("Failed to refresh token usage snapshot", exc_info=True)
         self._goals = goals
         self._token_snapshot = token_snapshot
+
+        if self._is_autopilot:
+            self._autopilot_context = await load_autopilot_context(
+                self._loop_id, self._daemon_session, goals=goals
+            )
+        else:
+            self._autopilot_context = await load_autopilot_context(
+                self._loop_id, self._daemon_session, goals=goals
+            )
+            if self._autopilot_context is not None:
+                self._is_autopilot = True
+                await self._recompose_for_autopilot()
+
         try:
             self.query_one(TokenUsagePanel).set_snapshot(token_snapshot)
-            self.query_one(StatusPanel).set_goals(goals)
-            self.query_one(GoalDagPanel).set_goals(goals)
+            if self._is_autopilot and self._autopilot_context is not None:
+                self.query_one(AutopilotProgressPanel).set_context(self._autopilot_context)
+                self.query_one(StepDagTreePanel).set_step_dags(self._autopilot_context.step_dags)
+                self.query_one(RailFlowPanel).set_rail_flow(self._autopilot_context.rail_flow)
+            else:
+                self.query_one(StatusPanel).set_goals(goals)
+                self.query_one(GoalDagPanel).set_goals(goals)
         except Exception:
             logger.debug("Failed to refresh context viewer panels", exc_info=True)
+
+    async def _recompose_for_autopilot(self) -> None:
+        """Rebuild the widget tree after switching to autopilot mode.
+
+        Swaps StatusPanel → AutopilotProgressPanel in the summary area and
+        GoalDagPanel → RailFlowPanel + StepDagTreePanel in the scroll body.
+        """
+        try:
+            status_panel = self.query_one(StatusPanel)
+            status_panel.remove()
+            await self.mount(
+                AutopilotProgressPanel(context=self._autopilot_context), after=status_panel
+            )  # type: ignore[arg-type]
+        except Exception:
+            logger.debug("StatusPanel swap failed (already swapped?)", exc_info=True)
+        try:
+            goal_dag = self.query_one(GoalDagPanel)
+            goal_dag.remove()
+            container = self.query_one(ScrollableContainer)
+            await container.mount(
+                RailFlowPanel(
+                    rail_flow=self._autopilot_context.rail_flow if self._autopilot_context else None
+                )
+            )
+            await container.mount(
+                StepDagTreePanel(
+                    step_dags=self._autopilot_context.step_dags if self._autopilot_context else []
+                )
+            )
+        except Exception:
+            logger.debug("GoalDagPanel swap failed (already swapped?)", exc_info=True)

@@ -940,6 +940,7 @@ class QueryEngine:
         clarification_answers: list[str] | None = None,
         resume_interrupted: bool = False,
         approved_plan_path: str | None = None,
+        autopilot_rail_id: str | None = None,
     ) -> None:
         """Stream a query through subprocess workers and broadcast events."""
         d = self._daemon
@@ -1239,6 +1240,7 @@ class QueryEngine:
                     clarification_answers=clarification_answers,
                     resume_interrupted=resume_interrupted,
                     approved_plan_path=approved_plan_path,
+                    autopilot_rail_id=autopilot_rail_id,
                 )
                 run_workspace = run_request.resolve_workspace_path()
                 loop_runner = d._runner_factory.create_runner(_runner_key)

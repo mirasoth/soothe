@@ -12,14 +12,12 @@ from soothe_cli.cli.main import app
 runner = CliRunner()
 
 # Groups where bare invocation and help should print the group help page.
-_HELP_GROUPS = ("loop", "autopilot", "cron", "config")
+_HELP_GROUPS = ("loop", "cron", "config")
 
 # Leaf commands that previously only accepted --help (not -h).
 _LEAF_HELPS = (
     ("loop", "list"),
     ("loop", "continue"),
-    ("autopilot", "top"),
-    ("autopilot", "status"),
     ("cron", "list"),
     ("config", "reload"),
     ("status", "daemon"),
@@ -132,7 +130,7 @@ def test_help_unknown_command_exits_2() -> None:
 
 def test_alias_help_has_no_double_backticks() -> None:
     """Command summaries should not render ReST double-backticks."""
-    result = runner.invoke(app, ["autopilot", "--help"])
+    result = runner.invoke(app, ["cron", "--help"])
     assert result.exit_code == 0
     assert "``" not in result.output
     result = runner.invoke(app, ["loop", "--help"])

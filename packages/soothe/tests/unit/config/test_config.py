@@ -46,10 +46,10 @@ class TestSootheConfig:
         assert cfg.router.default == "openai:gpt-4o-mini"
         assert cfg.embedding_model == "openai:text-embedding-3-small"
         assert cfg.embedding_dims == 1536
-        assert cfg.agent.autopilot.enabled is True
-        assert "max_iterations" not in type(cfg.agent.autopilot).model_fields
-        assert "max_evidence_turns" not in type(cfg.agent.autopilot).model_fields
-        assert "evidence_max_iterations" not in type(cfg.agent.autopilot).model_fields
+        assert not hasattr(cfg.agent.rail, "enabled")
+        assert "max_iterations" not in type(cfg.agent.rail).model_fields
+        assert "max_evidence_turns" not in type(cfg.agent.rail).model_fields
+        assert "evidence_max_iterations" not in type(cfg.agent.rail).model_fields
         assert cfg.agent.loop.max_iterations == 99
         assert cfg.agent.loop.dispatch_idle_seconds == 300.0
         assert cfg.agent.middleware.llm_rate_limit.enabled is True
@@ -57,33 +57,30 @@ class TestSootheConfig:
         assert cfg.vector_stores[0].name == "sqlite_vec_default"
         assert cfg.vector_store_router.default == "sqlite_vec_default:soothe_default"
 
-    def test_legacy_autopilot_max_iterations_is_ignored(self) -> None:
-        """agent.autopilot.max_iterations is not a config field; loop owns the budget."""
-        from soothe.config.models import AutopilotConfig, StrangeLoopConfig
+    def test_legacy_autopilot_fields_are_removed(self) -> None:
+        """Legacy autopilot-only fields are gone from RailConfig."""
+        from soothe.config.models import RailConfig
 
-        ap = AutopilotConfig.model_validate({"enabled": True, "max_iterations": 10})
-        assert "max_iterations" not in type(ap).model_fields
-        assert not hasattr(ap, "max_iterations")
-        loop = StrangeLoopConfig.model_validate({"max_iterations": 42})
-        assert loop.max_iterations == 42
+        rc = RailConfig.model_validate({"enabled": True, "max_iterations": 10})
+        for removed in ("enabled", "max_iterations", "max_retries", "max_parallel_goals"):
+            assert removed not in type(rc).model_fields
+            assert not hasattr(rc, removed)
 
     def test_dynamic_goals_always_on_no_config_knob(self) -> None:
         """Dynamic goal creation is always on; enable_dynamic_goals was removed."""
-        from soothe.config.models import AutopilotConfig
+        from soothe.config.models import RailConfig
 
-        ap = AutopilotConfig.model_validate({"enable_dynamic_goals": False})
-        assert "enable_dynamic_goals" not in type(ap).model_fields
-        assert not hasattr(ap, "enable_dynamic_goals")
+        rc = RailConfig.model_validate({"enable_dynamic_goals": False})
+        assert "enable_dynamic_goals" not in type(rc).model_fields
+        assert not hasattr(rc, "enable_dynamic_goals")
 
-    def test_autopilot_intake_scope_default_null(self) -> None:
-        """Autopilot intake_scope defaults to null (loop classifies)."""
-        from soothe.config.models import AutopilotConfig
+    def test_rail_intake_scope_default_null(self) -> None:
+        """Rail intake_scope defaults to null (loop classifies)."""
+        from soothe.config.models import RailConfig
 
-        assert AutopilotConfig().intake_scope is None
-        assert AutopilotConfig.model_validate({"intake_scope": "simple"}).intake_scope == ("simple")
-        assert AutopilotConfig.model_validate({"intake_scope": "complex"}).intake_scope == (
-            "complex"
-        )
+        assert RailConfig().intake_scope is None
+        assert RailConfig.model_validate({"intake_scope": "simple"}).intake_scope == "simple"
+        assert RailConfig.model_validate({"intake_scope": "complex"}).intake_scope == "complex"
 
     def test_yaml_with_daemon_top_level_block_is_rejected(self, tmp_path: Path) -> None:
         """Agent config rejects daemon-only top-level keys."""
@@ -122,8 +119,7 @@ class TestSootheConfig:
 
     def test_loop_concurrency_defaults(self) -> None:
         cfg = SootheConfig()
-        assert cfg.agent.autopilot.max_parallel_goals == 3
-        assert not hasattr(cfg.agent.loop.concurrency, "max_parallel_goals")
+        assert not hasattr(cfg.agent.rail, "max_parallel_goals")
         assert cfg.agent.loop.concurrency.max_parallel_steps == 3
         assert cfg.agent.loop.concurrency.max_parallel_subagents == 3
         assert cfg.agent.loop.concurrency.global_max_llm_calls == 3
@@ -885,7 +881,7 @@ class TestYamlEnvExpansion:
         soothe_env = tmp_path / "soothe_env.yml"
         soothe_env.write_text(
             "agent:\n"
-            "  autopilot:\n"
+            "  rail:\n"
             "    notify:\n"
             "      sinks:\n"
             "        email:\n"
@@ -896,12 +892,12 @@ class TestYamlEnvExpansion:
             nano_path=str(nano),
             soothe_path=str(soothe_env),
         )
-        assert cfg_env.agent.autopilot.notify.sinks.email.smtp_password == "from-env-secret"
+        assert cfg_env.agent.rail.notify.sinks.email.smtp_password == "from-env-secret"
 
         soothe_plain = tmp_path / "soothe_plain.yml"
         soothe_plain.write_text(
             "agent:\n"
-            "  autopilot:\n"
+            "  rail:\n"
             "    notify:\n"
             "      sinks:\n"
             "        email:\n"
@@ -912,7 +908,7 @@ class TestYamlEnvExpansion:
             nano_path=str(nano),
             soothe_path=str(soothe_plain),
         )
-        assert cfg_plain.agent.autopilot.notify.sinks.email.smtp_password == "plain-secret"
+        assert cfg_plain.agent.rail.notify.sinks.email.smtp_password == "plain-secret"
 
     def test_unresolved_postgres_base_dsn_falls_through(
         self, monkeypatch: pytest.MonkeyPatch

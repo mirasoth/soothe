@@ -248,6 +248,7 @@ def _thread_worker_body(
                             clarification_answers=req.clarification_answers,
                             resume_interrupted=req.resume_interrupted,
                             approved_plan_path=req.approved_plan_path,
+                            autopilot_rail_id=req.autopilot_rail_id,
                         ):
                             # COOPERATIVE CANCELLATION: Check cancel_event between chunks
                             if cancel_event.is_set():

@@ -1,11 +1,16 @@
 """CronService — orchestrator for cron jobs.
 
-Coordinates NL extraction, persistence, and execution through AutopilotService.
+Coordinates NL extraction, persistence, and execution through the loop-native
+submission path (loop_input with ``autopilot_rail_id``). Cron dispatch creates
+a fresh loop and enqueues a ``loop_input`` carrying the configured default
+rail id so ``StrangeLoop.run_with_progress`` binds a ``LoopRailInterpreter``
+— bypassing the removed ``AutopilotService.submit_task`` path.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import uuid
 from datetime import UTC, datetime
@@ -25,7 +30,6 @@ from soothe_daemon.cron.store_factory import create_cron_job_store
 
 if TYPE_CHECKING:
     from soothe.config.settings import SootheConfig
-    from soothe_autopilot import AutopilotService
 
 logger = logging.getLogger(__name__)
 
@@ -36,12 +40,25 @@ class CronService:
     def __init__(
         self,
         config: SootheConfig,
-        autopilot: AutopilotService | None = None,
+        *,
+        loop_input_dispatcher: Any | None = None,
+        persistence_manager: Any | None = None,
         store: Any | None = None,
     ) -> None:
-        """Initialize CronService."""
+        """Initialize CronService.
+
+        Args:
+        config: Host configuration (provides cron + autopilot.default_rail).
+        loop_input_dispatcher: Daemon LoopInputDispatcher used to enqueue
+            loop_input messages carrying ``autopilot_rail_id`` for the
+            loop-native submission path.
+        persistence_manager: Daemon persistence manager used to register
+            loops created for cron dispatch.
+        store: Optional cron job store override.
+        """
         self._config = config
-        self._autopilot = autopilot
+        self._loop_input_dispatcher = loop_input_dispatcher
+        self._persistence_manager = persistence_manager
         self._cron_config = config.cron
 
         # Create components
@@ -148,14 +165,6 @@ class CronService:
         self._running = True
         self._tick_task = asyncio.create_task(self._tick_loop())
 
-        # RFC-229: Subscribe to goal completion events for recurring job rescheduling
-        if self._autopilot is not None:
-            self._autopilot._internal_bus.subscribe(
-                "soothe.internal.goal.completed",
-                self._handle_internal_goal_completed,
-            )
-            logger.debug("CronService subscribed to goal completion events")
-
         await self._reconcile_pending_schedules()
         await self.seed_builtin_jobs()
 
@@ -197,14 +206,17 @@ class CronService:
         Created CronJob with id and next_run set.
 
         Raises:
-        AutopilotDisabledError: If autopilot scheduling is disabled in config.
+        AutopilotDisabledError: If autopilot scheduling is disabled or no
+            dispatch rail_id is configured.
         ExtractionError: If NL extraction fails.
         DuplicateCronJobError: If an equivalent active job already exists.
         ValueError: If max_jobs limit exceeded.
         """
-        if not self._config.agent.autopilot.enabled:
+        if not self._config.agent.autopilot.enabled or self._resolve_dispatch_rail_id() is None:
             logger.warning(
-                "Cron job submission rejected: agent.autopilot.enabled=false (user=%s)",
+                "Cron job submission rejected: dispatch path not configured "
+                "(autopilot.enabled=%s, user=%s)",
+                self._config.agent.autopilot.enabled,
                 user_id,
             )
             raise AutopilotDisabledError(AUTOPILOT_REQUIRED_FOR_CRON)
@@ -323,6 +335,25 @@ class CronService:
             return None
         return job
 
+    def _resolve_dispatch_rail_id(self) -> str | None:
+        """Return the rail id to bind for cron-dispatched goals.
+
+        Uses ``agent.autopilot.default_rail`` from the host config. Returns
+        ``None`` when no rail is configured (dispatch is rejected upstream).
+        """
+        rail_id = getattr(self._config.agent.autopilot, "default_rail", None)
+        if isinstance(rail_id, str) and rail_id.strip():
+            return rail_id.strip()
+        return None
+
+    def _is_dispatch_ready(self) -> bool:
+        """Return True when the loop-native dispatch path is configured."""
+        return (
+            self._loop_input_dispatcher is not None
+            and self._persistence_manager is not None
+            and self._resolve_dispatch_rail_id() is not None
+        )
+
     async def _tick_loop(self) -> None:
         """Periodic monitoring loop for due jobs."""
         while self._running:
@@ -343,6 +374,7 @@ class CronService:
 
         logger.debug("Cron tick: %d due jobs", len(due_jobs))
 
+        rail_id = self._resolve_dispatch_rail_id()
         for job in due_jobs:
             # Check end condition
             if self._is_job_expired(job, now):
@@ -353,18 +385,17 @@ class CronService:
             # Mark as running
             await self._store.update_status(job.id, JobStatus.RUNNING)
 
-            # Dispatch to AutopilotService
-            if self._autopilot:
+            # Dispatch via the loop-native submission path: create a fresh
+            # loop and enqueue a loop_input carrying autopilot_rail_id so
+            # run_with_progress binds a LoopRailInterpreter.
+            if rail_id and self._loop_input_dispatcher and self._persistence_manager:
                 try:
-                    goal = await self._autopilot.submit_task(
-                        job.description,
-                        priority=job.priority,
-                        cron_job_id=job.id,  # RFC-229: Link goal to cron job for rescheduling
-                    )
+                    loop_id = await self._dispatch_via_loop(job, rail_id)
                     logger.info(
-                        "Cron job dispatched: id=%s goal_id=%s",
+                        "Cron job dispatched: id=%s loop_id=%s rail_id=%s",
                         job.id,
-                        goal.id,
+                        loop_id,
+                        rail_id,
                     )
 
                     # For one-shot jobs, mark completed after dispatch
@@ -381,7 +412,79 @@ class CronService:
                     logger.exception("Cron job dispatch failed: id=%s", job.id)
                     await self._store.update_status(job.id, JobStatus.FAILED)
             else:
-                logger.warning("No AutopilotService, cannot dispatch cron job: id=%s", job.id)
+                logger.warning(
+                    "Cron dispatch path not configured (no rail_id / dispatcher): id=%s",
+                    job.id,
+                )
+                await self._store.update_status(job.id, JobStatus.FAILED)
+
+    async def _dispatch_via_loop(self, job: CronJob, rail_id: str) -> str:
+        """Create a fresh loop and enqueue the cron goal via loop_input.
+
+        Args:
+        job: Due CronJob to dispatch.
+        rail_id: Builtin rail id to bind for this goal.
+
+        Returns:
+        The newly created loop_id.
+        """
+        from uuid_utils import uuid7
+
+        loop_id = str(uuid7())
+
+        # Resolve workspace (daemon workspace — cron goals are daemon-owned).
+        from soothe.workspace import resolve_loop_workspace
+
+        try:
+            effective_workspace = resolve_loop_workspace(
+                loop_id=loop_id,
+                client_workspace=None,
+            )
+        except ValueError:
+            from soothe.workspace import resolve_daemon_workspace
+
+            effective_workspace = resolve_daemon_workspace()
+
+        from soothe.sloop.checkpoints.directory_manager import (
+            PersistenceDirectoryManager,
+        )
+
+        loop_dir = PersistenceDirectoryManager.get_loop_directory(loop_id)
+        loop_dir.mkdir(parents=True, exist_ok=True)
+
+        await self._persistence_manager.register_loop(
+            loop_id=loop_id,
+            current_thread_id="",
+            status="created",
+        )
+        await self._persistence_manager.update_loop_metadata(
+            loop_id,
+            current_workspace=str(effective_workspace),
+            cron_job_id=job.id,
+        )
+
+        # Enqueue the goal as a loop_input with autopilot_rail_id. The
+        # LoopInputDispatcher worker calls _process_loop_input_message →
+        # run_query(autopilot_rail_id=…) → LoopRunRequest → run_with_progress.
+        queue_payload: dict[str, Any] = {
+            "type": "input",
+            "text": job.description,
+            "client_id": None,
+            "autopilot_rail_id": rail_id,
+            "cron_job_id": job.id,
+        }
+        await self._loop_input_dispatcher.enqueue(loop_id, queue_payload)
+
+        try:
+            await self._persistence_manager.increment_loop_message_count(loop_id, human=1)
+        except Exception:
+            logger.warning(
+                "Failed to increment human_message_count for cron loop %s",
+                loop_id,
+                exc_info=True,
+            )
+
+        return loop_id
 
     def _is_job_expired(self, job: CronJob, now: datetime) -> bool:
         """Check if recurring job has reached end condition.
@@ -480,42 +583,3 @@ class CronService:
             )
         else:
             await self._store.update_status(job_id, JobStatus.FAILED)
-
-    async def _handle_internal_goal_completed(self, event: Any) -> None:
-        """Handle InternalGoalCompletedEvent for recurring job rescheduling.
-
-        Bridge from internal event to handle_goal_completion when goal has cron_job_id.
-
-        Args:
-        event: InternalGoalCompletedEvent from AutopilotService.
-        """
-        # Extract goal_id from event
-        goal_id = getattr(event, "goal_id", None)
-        if goal_id is None:
-            return
-
-        # Look up goal to check if it has cron_job_id
-        if self._autopilot is None:
-            return
-        goal = await self._autopilot.get_goal(goal_id)
-        if goal is None:
-            return
-
-        cron_job_id = getattr(goal, "cron_job_id", None)
-        if cron_job_id is None:
-            return
-
-        # Check if plan_result indicates success
-        plan_result = getattr(event, "plan_result", {})
-        success = plan_result.get("outcome", "success") == "success"
-
-        logger.debug(
-            "Goal %s completed (success=%s), triggering cron job %s rescheduling",
-            goal_id,
-            success,
-            cron_job_id,
-        )
-        await self.handle_goal_completion(cron_job_id, success=success)
-
-
-import contextlib  # noqa: E402  # Used in stop() above

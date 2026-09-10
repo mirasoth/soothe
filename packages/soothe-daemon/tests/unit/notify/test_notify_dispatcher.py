@@ -13,11 +13,11 @@ from soothe.config.models import (
     NotifyTargetConfig,
     WebhookNotifySinkConfig,
 )
-from soothe_autopilot.notify.models import NotifyIntent, NotifyTarget
 
 from soothe_daemon.notify.email_sink import EmailNotifySink
 from soothe_daemon.notify.factory import build_notify_dispatcher
 from soothe_daemon.notify.feishu_sink import FeishuNotifySink
+from soothe_daemon.notify.models import DeliveryResult, NotifyIntent, NotifyTarget
 from soothe_daemon.notify.protocol import NotifyDispatcher
 from soothe_daemon.notify.webhook_sink import WebhookNotifySink
 
@@ -45,8 +45,6 @@ async def test_dispatcher_fanout_fail_soft() -> None:
             return True
 
         async def deliver(self, intent: NotifyIntent, targets: list[NotifyTarget]) -> Any:
-            from soothe_autopilot.notify.models import DeliveryResult
-
             del targets
             results_ok.append(intent.job_id)
             return DeliveryResult(sink=self.name, ok=True, detail="ok")

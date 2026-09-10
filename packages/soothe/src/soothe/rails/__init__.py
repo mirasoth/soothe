@@ -14,7 +14,7 @@ lower tier; the runtime layer (`interpreter`, `builtins_exec`,
 `guards`, `wave_plan`, `recipe_exec`, `trace_store`, ...) imports
 from it, never the reverse.
 
-AutopilotService binds `LoopRailInterpreter` on job submit when a
+The daemon scheduler binds `LoopRailInterpreter` on job submit when a
 `rail_id` is resolved.
 """
 

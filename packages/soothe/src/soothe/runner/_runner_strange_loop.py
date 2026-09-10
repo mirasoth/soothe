@@ -478,6 +478,7 @@ class StrangeLoopMixin:
         clarification_answers: list[str] | None = None,
         resume_interrupted: bool = False,
         approved_plan_path: str | None = None,
+        autopilot_rail_id: str | None = None,
     ) -> AsyncGenerator[StreamChunk]:
         """Run StrangeLoop goal execution.
 
@@ -500,6 +501,9 @@ class StrangeLoopMixin:
                 its own graph; `None` uses the default graph.
             resume_interrupted: When True, recover an interrupted running goal
                 without chitchat routing or continue-keyword cancel.
+            autopilot_rail_id: Optional builtin rail id. When set, a
+                ``LoopRailInterpreter`` is bound to this goal before the
+                loop graph runs so stations can emit ``RailEvent``s.
 
         Yields:
             StreamChunk events during execution
@@ -630,6 +634,7 @@ class StrangeLoopMixin:
                 resume_interrupted=resume_interrupted,
                 interaction_mode=interaction_mode,
                 approved_plan_path=approved_plan_path,
+                autopilot_rail_id=autopilot_rail_id,
             ):
                 if event_type == "intent_classified_reasoning":
                     payload = event_data if isinstance(event_data, dict) else {}
