@@ -1,21 +1,21 @@
 # Built-in LoopRails
 
-Declarative job-scoped workflow patterns for Autopilot. Users author **when**
-orchestration should act; **Rail Exec** applies catalog verb recipes as CE
-primitives (`then:`).
+Declarative job-scoped workflow patterns for the daemon scheduler. Users author
+**when** orchestration should act; **Rail Exec** applies catalog verb recipes as
+CE primitives (`then:`).
 
 ## No `default` rail
 
-Jobs **without** a `rail_id` keep AutopilotMonitor / ContextEngine opportunistic
-behavior (placement, verifier suggestions, backoff, consensus). A rail is only
-shipped when its policy adds hard gates or topology beyond that path.
+Jobs **without** a `rail_id` keep ContextEngine opportunistic behavior
+(placement, verifier suggestions, backoff, consensus). A rail is only shipped
+when its policy adds hard gates or topology beyond that path.
 
 When submit omits `--rail` / `rail_id`, selection follows RFC-231 §10
 (implementation IG-728): structured LLM auto-pick over the merged catalog, then:
 
 1. `<workspace>/.soothe/rails/.rail-default` (if set)
-2. `agent.autopilot.default_rail` in config (if set)
-3. **No rail** — Monitor/CE defaults (do not invent a `default.yml`)
+2. `agent.rail.default_rail` in config (if set)
+3. **No rail** — CE defaults (do not invent a `default.yml`)
 
 All shipped builtins are eligible for LLM auto-pick. Operators can still force a
 rail with `--rail` / `rail_id`, set `.rail-default`, or exclude ids via

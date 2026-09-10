@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any, Literal
 
-from soothe_autopilot.workers.pool import is_autopilot_worker_loop_id
+from soothe_daemon.runner.worker_loop_ids import is_autopilot_worker_loop_id
 
 logger = logging.getLogger(__name__)
 

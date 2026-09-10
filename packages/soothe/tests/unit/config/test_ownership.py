@@ -32,7 +32,7 @@ def test_validate_nano_file_ownership_rejects_host_owned_keys() -> None:
 
 def test_validate_host_file_ownership_accepts_host_owned_keys() -> None:
     data = {
-        "agent": {"loop": {"max_iterations": 88}, "autopilot": {"enabled": True}},
+        "agent": {"loop": {"max_iterations": 88}, "rail": {"default_rail": None}},
         "cron": {"max_jobs": 99},
     }
     validate_host_file_ownership(data)

@@ -21,9 +21,9 @@ class LoopRunnerActor:
 
     def __init__(self, config: object) -> None:
         # Import deferred so the actor process initialises its own SootheRunner.
-        from soothe_autopilot.runner import AutopilotSootheRunner
+        from soothe.runner import SootheRunner
 
-        self._runner = AutopilotSootheRunner(config)  # type: ignore[arg-type]
+        self._runner = SootheRunner(config)  # type: ignore[arg-type]
         self._cancelled = False
 
     async def run(self, request: LoopRunRequest, queue: Queue) -> None:
@@ -57,6 +57,7 @@ class LoopRunnerActor:
                     clarification_answers=request.clarification_answers,
                     resume_interrupted=request.resume_interrupted,
                     approved_plan_path=request.approved_plan_path,
+                    autopilot_rail_id=request.autopilot_rail_id,
                 ):
                     if self._cancelled:
                         break

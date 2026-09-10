@@ -41,7 +41,7 @@ _NANO_DISALLOWED_RULES: tuple[OwnershipRule, ...] = (
     OwnershipRule("cron", "soothe.yml", "host scheduling service"),
     OwnershipRule("skillify", "soothe.yml", "host semantic skill service"),
     OwnershipRule("agent.loop", "soothe.yml", "host orchestration loop tuning"),
-    OwnershipRule("agent.autopilot", "soothe.yml", "host autopilot behavior"),
+    OwnershipRule("agent.rail", "soothe.yml", "host loop-native rail/goal-execution tuning"),
     OwnershipRule("agent.clarification", "soothe.yml", "host clarification policy"),
     OwnershipRule("agent.veritas", "soothe.yml", "host veritas policy"),
 )

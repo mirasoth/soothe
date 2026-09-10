@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any
 
@@ -304,51 +303,81 @@ class _ModelMixin:
         self.push_screen(HelpScreen(), handle_result)
 
     async def _submit_autopilot_job(self, task: str) -> None:
-        """Submit an autopilot job via WebSocket (like CLI `soothe autopilot submit`).
+        """Submit an autopilot goal via the normal loop submission path.
+
+        Parses an optional leading rail id from ``[rail_name] <goal>``. When the
+        first token matches a builtin rail id, it is used as ``autopilot_rail_id``
+        and forwarded through the loop_input wire so ``StrangeLoop.run_with_progress``
+        binds a ``LoopRailInterpreter`` for this goal. When no rail prefix is
+        present, the goal runs as a normal loop turn (no rail).
+
+        This bypasses ``AutopilotService.submit_task()`` — the goal is submitted
+        like any other user message via the daemon's loop_input dispatcher.
 
         Args:
-        task: Task description for autonomous execution.
+        task: Task description, optionally prefixed with ``[rail_name]``.
         """
-        from soothe_client import (
-            async_command_client_from_config,
-            is_daemon_live,
-            websocket_url_from_config,
-        )
+        from soothe.rails.catalog import BUILTIN_RAIL_IDS
 
         from soothe_cli.runtime import load_config
-        from soothe_cli.tui.widgets.messages import ErrorMessage, UserMessage
+        from soothe_cli.tui.widgets.messages import (
+            AppMessage,
+            ErrorMessage,
+            UserMessage,
+        )
 
-        await self._mount_message(UserMessage(f"/autopilot {task}"))
+        # Parse optional rail prefix: ``/autopilot [rail_name] <goal>``.
+        tokens = task.split(None, 1)
+        rail_id: str | None = None
+        goal_text = task
+        if len(tokens) >= 2 and tokens[0] in BUILTIN_RAIL_IDS:
+            rail_id = tokens[0]
+            goal_text = tokens[1].strip()
+
+        if not goal_text:
+            await self._mount_message(UserMessage(f"/autopilot {task}"))
+            await self._mount_message(
+                AppMessage(
+                    "Usage: /autopilot [rail_name] <task description>\n"
+                    "Example: /autopilot hotfix fix the login bug"
+                )
+            )
+            return
+
+        display = f"/autopilot {task}" if rail_id else f"/autopilot {goal_text}"
+        await self._mount_message(UserMessage(display))
+
+        # Verify the daemon is live before submitting via the loop path.
+        from soothe_client import is_daemon_live, websocket_url_from_config
 
         cfg = load_config()
         ws_url = websocket_url_from_config(cfg)
-
-        # Check daemon is running
         if not await is_daemon_live(ws_url, timeout=5.0):
             await self._mount_message(
                 ErrorMessage("Daemon not running. Start with 'soothed start'.")
             )
             return
 
-        workspace = self._cwd if hasattr(self, "_cwd") else os.getcwd()
-
+        # Submit via the normal loop submission path (not autopilot_submit RPC).
+        # _send_to_agent → execute_task_textual → daemon_session.send_turn →
+        # loop_input RPC → run_with_progress(autopilot_rail_id=rail_id).
         try:
-            client = async_command_client_from_config(cfg)
-            result = await client.autopilot_submit(task, workspace=workspace)
-        except RuntimeError as exc:
-            await self._mount_message(ErrorMessage(str(exc)))
-            return
+            await self._send_to_agent(goal_text, autopilot_rail_id=rail_id)
         except Exception as exc:  # noqa: BLE001
-            logger.exception("Autopilot submit failed")
-            await self._mount_message(ErrorMessage(f"Failed to submit autopilot job: {exc}"))
+            logger.exception("Autopilot loop submission failed")
+            await self._mount_message(ErrorMessage(f"Failed to submit autopilot goal: {exc}"))
             return
 
-        goal_id = result.get("goal_id", "")
-        if goal_id:
-            self.notify(f"Autopilot job submitted: {goal_id[:8]}", timeout=5)
-            logger.info("Submitted autopilot job %s: %s", goal_id, task[:50])
+        if rail_id:
+            self.notify(f"Autopilot goal submitted (rail: {rail_id})", timeout=5)
+            logger.info(
+                "Submitted autopilot goal via loop path (rail=%s): %s",
+                rail_id,
+                goal_text[:50],
+            )
         else:
-            await self._mount_message(ErrorMessage("No goal_id returned from daemon"))
+            self.notify("Autopilot goal submitted", timeout=5)
+            logger.info("Submitted autopilot goal via loop path: %s", goal_text[:50])
 
     async def _submit_cron_job(self, text: str, *, slash_input: str | None = None) -> None:
         """Submit a cron job via WebSocket (like CLI `soothe cron add`).

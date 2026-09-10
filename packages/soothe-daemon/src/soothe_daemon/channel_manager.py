@@ -32,7 +32,6 @@ class ChannelManager:
         runner: Any | None = None,
         soothe_config: Any | None = None,
         session_manager: Any | None = None,
-        autopilot_service: Any | None = None,
         cron_service: Any | None = None,
         memory_profiler: Any | None = None,
     ) -> None:
@@ -42,7 +41,6 @@ class ChannelManager:
         self._runner = runner
         self._soothe_config = soothe_config
         self._session_manager = session_manager
-        self._autopilot_service = autopilot_service
         self._cron_service = cron_service
         self._memory_profiler = memory_profiler
 
@@ -212,7 +210,6 @@ class ChannelManager:
                 manager=self,
                 unified_app=self._unified_app,
                 session_manager=self._session_manager,
-                autopilot_service=self._autopilot_service,
                 cron_service=self._cron_service,
                 memory_profiler=self._memory_profiler,
             )

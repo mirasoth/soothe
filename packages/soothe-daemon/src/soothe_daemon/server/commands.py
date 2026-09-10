@@ -525,10 +525,11 @@ async def _cmd_cron_add(
     # Get or create CronService
     cron_service = getattr(self, "_cron_service", None)
     if cron_service is None:
-        # Create CronService with existing config and autopilot
+        # Create CronService with the loop-native submission path.
         cron_service = CronService(
             config=self._config,
-            autopilot=self._autopilot_service,
+            loop_input_dispatcher=self._loop_input_dispatcher,
+            persistence_manager=self._persistence_manager,
         )
         self._cron_service = cron_service
 

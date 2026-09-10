@@ -22,7 +22,6 @@ from soothe.config.constants import (
 from soothe.config.env import SOOTHE_HOME
 from soothe.config.models import (
     AgentConfig,
-    AutopilotConfig,
     AutopilotNotifyConfig,
     ConsoleLoggingConfig,
     DecomposeLoopConfig,
@@ -44,6 +43,7 @@ from soothe.config.models import (
     PlanPromptLedgerConfig,
     PolicyProtocolConfig,
     ProtocolsConfig,
+    RailConfig,
     RouterProfile,
     SecurityConfig,
     StrangeLoopConfig,
@@ -83,7 +83,6 @@ __all__ = [
     "DEFAULT_EXECUTE_TIMEOUT",
     "SOOTHE_HOME",
     "AgentConfig",
-    "AutopilotConfig",
     "AutopilotNotifyConfig",
     "ConfigReloadCallback",
     "ConfigReloadEvent",
@@ -120,6 +119,7 @@ __all__ = [
     "PlannerProtocolConfig",
     "PolicyProtocolConfig",
     "ProtocolsConfig",
+    "RailConfig",
     "SecurityConfig",
     "NanoSootheConfig",
     "SootheConfig",

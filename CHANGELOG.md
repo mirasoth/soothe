@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Loop-native rail-governed autopilot path: `job_create` RPC with `rail_id` routes through `loop_input` → `StrangeLoop.run_with_progress(autopilot_rail_id=…)` via the daemon router.
+
+### Removed
+- Remove the `soothe-autopilot` package and all legacy autopilot standalone mode code. The `/autopilot` slash command now runs entirely through the loop-native rail-governed StrangeLoop path. The autopilot CLI subcommand group (`soothe autopilot submit/status/top/cancel`) is removed. `AutopilotConfig` is renamed to `RailConfig` (config path `agent.autopilot` → `agent.rail`) and trimmed to loop-native fields only. The daemon's `AutopilotService`/`AutopilotMonitor` construction, all `autopilot_*` RPC handlers, and the `soothe-autopilot` workspace dependency are removed. Cron dispatch is rerouted from `AutopilotService.submit_task` to the loop-native `loop_input` path with `autopilot_rail_id`.
+
 ## [v1.0.8] - 2026-09-09
 
 ### Fixed

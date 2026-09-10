@@ -24,7 +24,7 @@ async def test_diagnose_returns_host_dict() -> None:
 async def test_host_ok_with_full_config() -> None:
     config = SimpleNamespace(
         agent=SimpleNamespace(
-            autopilot=SimpleNamespace(enabled=False),
+            rail=SimpleNamespace(default_rail=None),
             loop=SimpleNamespace(),
         ),
         cron=SimpleNamespace(max_jobs=100),
@@ -33,7 +33,7 @@ async def test_host_ok_with_full_config() -> None:
     result = await check_host(config)
     assert result.category == "host"
     names = {c.name: c for c in result.checks}
-    assert names["autopilot"].status == CheckStatus.OK
+    assert names["rail"].status == CheckStatus.OK
     assert names["loop"].status == CheckStatus.OK
     assert names["cron"].status == CheckStatus.OK
     assert names["skillify"].status == CheckStatus.SKIPPED
@@ -43,7 +43,7 @@ async def test_host_ok_with_full_config() -> None:
 async def test_skillify_enabled_requires_sdk() -> None:
     config = SimpleNamespace(
         agent=SimpleNamespace(
-            autopilot=SimpleNamespace(enabled=True),
+            rail=SimpleNamespace(default_rail=None),
             loop=SimpleNamespace(),
         ),
         cron=SimpleNamespace(max_jobs=10),

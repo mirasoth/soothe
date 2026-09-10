@@ -96,7 +96,6 @@ _METHOD_TO_HANDLER: dict[str, str] = {
     "disconnect": "_handle_detach",
     # subscribe methods
     "loop_events": "_handle_loop_subscribe",
-    "autopilot_events": "_handle_autopilot_subscribe",
     # request methods
     "rpc_command": "_handle_command_request",
 }
@@ -122,7 +121,8 @@ def _queue_options_from_daemon_message(msg: dict[str, Any]) -> dict[str, Any]:
     `intake_scope`, `model`, `model_params`, `router_profile`,
     `intent_hint` (normalized to lowercase when set), `clarification_mode`
     ,
-    `interaction_mode` (normalized to `"agent"`/`"ask"`/`"plan"`/`"bypass"` or `None`).
+    `interaction_mode` (normalized to `"agent"`/`"ask"`/`"plan"`/`"bypass"` or `None`),
+    `autopilot_rail_id` (builtin rail id → binds LoopRailInterpreter).
     """
     preferred_subagent = msg.get("preferred_subagent")
     preferred_norm = (
@@ -186,6 +186,10 @@ def _queue_options_from_daemon_message(msg: dict[str, Any]) -> dict[str, Any]:
         if isinstance(raw_plan_path, str) and raw_plan_path.strip()
         else None
     )
+    raw_rail_id = msg.get("autopilot_rail_id")
+    autopilot_rail_id: str | None = (
+        str(raw_rail_id).strip() if isinstance(raw_rail_id, str) and raw_rail_id.strip() else None
+    )
     return {
         "preferred_subagent": preferred_norm,
         "intake_scope": msg.get("intake_scope"),
@@ -202,6 +206,7 @@ def _queue_options_from_daemon_message(msg: dict[str, Any]) -> dict[str, Any]:
         "clarification_answers": clarification_answers,
         "resume_interrupted": bool(msg.get("resume_interrupted", False)),
         "approved_plan_path": approved_plan_path,
+        "autopilot_rail_id": autopilot_rail_id,
     }
 
 
@@ -378,7 +383,7 @@ class MessageRouter:
         The flat `type` is the envelope `method` (the handler-name key in
         :data:`_METHOD_TO_HANDLER`). `unsubscribe` carries no `method`;
         its target is inferred from `params` (`loop_id` → loop detach,
-        otherwise autopilot unsubscribe).
+        otherwise a generic disconnect).
 
         The envelope `id` is carried as both `request_id` and `id` so
         handlers and error responses can correlate it. `params is None` is
@@ -408,7 +413,10 @@ class MessageRouter:
 
         if msg_type == "unsubscribe":
             # No method field: infer the handler key from params content.
-            flat_type = "loop_detach" if "loop_id" in params else "autopilot_unsubscribe"
+            # loop_id present → loop detach; otherwise treat as a generic
+            # disconnect (autopilot unsubscribe was removed with the
+            # autopilot RPC surface).
+            flat_type = "loop_detach" if "loop_id" in params else "disconnect"
         else:
             flat_type = method
 
@@ -2567,22 +2575,25 @@ class MessageRouter:
         await self._send_response(client_id, request_id, payload)
 
     # ---------------------------------------------------------------------------
-    # RFC-228: Autopilot Job IPC Handlers
+    # RFC-228: Job IPC Handlers (loop-native path only)
     # ---------------------------------------------------------------------------
     async def _handle_job_create(self, client_id: Any, msg: dict[str, Any]) -> None:
         """Handle job_create RPC request.
 
-        Submit a root goal to AutopilotService, creating a new autopilot job.
+        Forwards the goal through the loop-native submission path
+        (loop_input dispatcher) with ``autopilot_rail_id=rail_id`` so
+        ``StrangeLoop.run_with_progress`` binds a ``LoopRailInterpreter``.
+        ``rail_id`` is required — the legacy AutopilotService fallback was
+        removed with the autopilot dependency.
 
         Args:
         client_id: Client connection identifier.
-        msg: Request with goal (required), verification_rules (optional),
-        workspace (optional), request_id.
+        msg: Request with goal (required), rail_id (required),
+        verification_rules (optional), workspace (optional), request_id.
         """
         d = self._daemon
         request_id = msg.get("request_id")
         goal_text = msg.get("goal")
-        verification_rules = msg.get("verification_rules")
         rail_id = msg.get("rail_id")
 
         if not isinstance(goal_text, str) or not goal_text.strip():
@@ -2596,58 +2607,149 @@ class MessageRouter:
             )
             return
 
-        # Resolve workspace path if provided
-        workspace: str | None = None
-        raw_workspace = msg.get("workspace")
-        if raw_workspace and isinstance(raw_workspace, str) and raw_workspace.strip():
-            try:
-                from soothe.workspace import validate_client_workspace
-
-                resolved = validate_client_workspace(raw_workspace.strip())
-                workspace = str(resolved)
-            except (ValueError, OSError):
-                workspace = raw_workspace.strip()
-
-        service = await self._require_autopilot_service(client_id, request_id)
-        if service is None:
-            return
-
-        # Submit root goal to AutopilotService
-        try:
-            goal = await service.submit_task(
-                description=goal_text.strip(),
-                priority=50,  # Default priority
-                workspace=workspace,
-                rail_id=rail_id if isinstance(rail_id, str) else None,
-                verification_rules=(
-                    verification_rules.strip()
-                    if isinstance(verification_rules, str) and verification_rules.strip()
-                    else None
-                ),
-            )
-        except Exception as exc:
-            logger.error("[JobCreate] Failed to submit task: %s", exc, exc_info=True)
+        if not (isinstance(rail_id, str) and rail_id.strip()):
             await d._send_client_message(
                 client_id,
                 build_error_response(
-                    ErrorCode.JOB_CREATE_FAILED,
-                    str(exc),
+                    ErrorCode.INVALID_REQUEST,
+                    "rail_id is required (loop-native submission path)",
                     request_id=request_id,
                 ),
             )
             return
 
+        # Route through the normal loop submission path so
+        # run_with_progress(autopilot_rail_id=rail_id) binds the rail
+        # interpreter.
+        await self._forward_rail_goal_to_loop(
+            client_id,
+            goal_text=goal_text.strip(),
+            rail_id=rail_id.strip(),
+            workspace=msg.get("workspace"),
+            request_id=request_id,
+        )
+
+    async def _forward_rail_goal_to_loop(
+        self,
+        client_id: Any,
+        *,
+        goal_text: str,
+        rail_id: str,
+        workspace: Any,
+        request_id: str | None,
+    ) -> None:
+        """Forward a rail-scoped goal through the normal loop submission path.
+
+        Creates a fresh loop, subscribes the client, and enqueues a
+        ``loop_input`` carrying ``autopilot_rail_id`` so the daemon's
+        ``run_query`` → ``LoopRunRequest`` → ``StrangeLoop.run_with_progress``
+        path binds a ``LoopRailInterpreter`` for this goal — bypassing
+        ``AutopilotService.submit_task()``.
+
+        Args:
+        client_id: Client connection identifier.
+        goal_text: Stripped goal description.
+        rail_id: Builtin rail id to bind.
+        workspace: Optional raw client workspace hint.
+        request_id: RPC correlation id for the response.
+        """
+        d = self._daemon
+        from uuid_utils import uuid7
+
+        loop_id = str(uuid7())
+
+        # Resolve workspace (same logic as _handle_loop_new, simplified).
+        client_workspace: str | None = None
+        if isinstance(workspace, str) and workspace.strip():
+            try:
+                from soothe.workspace import validate_client_workspace
+
+                resolved = validate_client_workspace(workspace.strip())
+                if resolved.exists():
+                    client_workspace = str(resolved)
+            except (ValueError, OSError):
+                pass
+
+        # Create the loop via the persistence manager (mirrors _handle_loop_new).
+        from soothe.workspace import resolve_loop_workspace
+
+        try:
+            effective_workspace = resolve_loop_workspace(
+                loop_id=loop_id,
+                client_workspace=client_workspace,
+            )
+        except ValueError:
+            from soothe.workspace import resolve_daemon_workspace
+
+            effective_workspace = resolve_daemon_workspace()
+
+        from soothe.sloop.checkpoints.directory_manager import (
+            PersistenceDirectoryManager,
+        )
+
+        loop_dir = PersistenceDirectoryManager.get_loop_directory(loop_id)
+        loop_dir.mkdir(parents=True, exist_ok=True)
+
+        await d._persistence_manager.register_loop(
+            loop_id=loop_id,
+            current_thread_id="",
+            status="created",
+        )
+        await d._persistence_manager.update_loop_metadata(
+            loop_id,
+            current_workspace=str(effective_workspace),
+            **({"client_workspace": client_workspace} if client_workspace else {}),
+        )
+
+        # Subscribe the client to the new loop so it receives stream events.
+        await d._session_manager.subscribe_loop(
+            client_id,
+            loop_id,
+            stream_delivery="adaptive",
+            wire_tier="full",
+            subscription_id=request_id,
+        )
+
+        # Enqueue the goal as a loop_input with autopilot_rail_id. The
+        # LoopInputDispatcher worker calls _process_loop_input_message →
+        # run_query(autopilot_rail_id=…) → LoopRunRequest → run_with_progress.
+        queue_payload: dict[str, Any] = {
+            "type": "input",
+            "text": goal_text,
+            "client_id": client_id,
+            "autopilot_rail_id": rail_id,
+        }
+        await d._loop_input_dispatcher.enqueue(loop_id, queue_payload)
+
+        try:
+            await d._persistence_manager.increment_loop_message_count(loop_id, human=1)
+        except Exception:
+            logger.warning(
+                "Failed to increment human_message_count for loop %s",
+                loop_id,
+                exc_info=True,
+            )
+
         await self._send_response(
             client_id,
             request_id,
-            {"job_id": goal.id, "status": goal.status},
+            {"loop_id": loop_id, "rail_id": rail_id, "status": "submitted"},
         )
-        logger.info("[JobCreate] Created job %s with goal: %s", goal.id, goal_text[:50])
+        logger.info(
+            "[JobCreate] Forwarded rail goal to loop %s (rail=%s): %s",
+            loop_id,
+            rail_id,
+            goal_text[:50],
+        )
 
     async def _handle_job_status(self, client_id: Any, msg: dict[str, Any]) -> None:
         """Handle job_status RPC request.
 
-        Query job state: goal status, counts, assigned workers.
+        The AutopilotService-backed DAG status path was removed with the
+        autopilot dependency. This handler now returns a service-unavailable
+        error; job state should be queried via the loop-native RPCs
+        (``loop_get`` / ``loop_state_get``) on the loop id returned by
+        ``job_create``.
 
         Args:
         client_id: Client connection identifier.
@@ -2668,80 +2770,22 @@ class MessageRouter:
             )
             return
 
-        service = await self._require_autopilot_service(client_id, request_id)
-        if service is None:
-            return
-
-        # Get root goal
-        root_goal = await service.get_goal(job_id)
-        if root_goal is None:
-            await d._send_client_message(
-                client_id,
-                build_error_response(
-                    ErrorCode.JOB_NOT_FOUND,
-                    f"Job {job_id} not found",
-                    request_id=request_id,
-                ),
-            )
-            return
-
-        # Use dag_snapshot to get goal descendants (RFC-228)
-        dag = await service.dag_snapshot(job_id)
-        nodes = dag.get("nodes", [])
-
-        # Count goals by status
-        active_count = sum(1 for n in nodes if n.get("status") == "active")
-        completed_count = sum(1 for n in nodes if n.get("status") == "completed")
-        failed_count = sum(1 for n in nodes if n.get("status") == "failed")
-        cancelled_count = sum(1 for n in nodes if n.get("status") == "cancelled")
-        total_count = len(nodes)
-
-        # Collect workers assigned to active goals
-        workers = [
-            {"goal_id": n.get("id"), "loop_id": n.get("assigned_loop_id")}
-            for n in nodes
-            if n.get("status") == "active" and n.get("assigned_loop_id")
-        ]
-
-        # Get last error from failed goals
-        last_error = None
-        all_goals = await service.list_goals()
-        for g in all_goals:
-            if g.id == job_id or any(
-                dep_id == job_id for dep_id in g.depends_on or []
-            ):  # Approximate check
-                if g.status == "failed" and g.error:
-                    last_error = g.error
-                    break
-
-        from soothe_autopilot.verify.job_maturity import maturity_wire_fields
-
-        payload: dict[str, Any] = {
-            "job_id": job_id,
-            "status": root_goal.status,
-            "active_goals": active_count,
-            "completed_goals": completed_count,
-            "failed_goals": failed_count,
-            "cancelled_goals": cancelled_count,
-            "total_goals": total_count,
-            "workers": workers,
-            "last_error": last_error,
-        }
-        maturity = maturity_wire_fields(getattr(root_goal, "maturity", None))
-        if maturity is not None:
-            payload["maturity"] = maturity
-            payload["acceptance_met"] = bool(maturity.get("acceptance_met"))
-
-        await self._send_response(
+        await d._send_client_message(
             client_id,
-            request_id,
-            payload,
+            build_error_response(
+                ErrorCode.AUTOPILOT_NOT_READY,
+                "Job status query requires the legacy AutopilotService DAG "
+                "path, which has been removed. Query the loop returned by "
+                "job_create via loop_get / loop_state_get instead.",
+                request_id=request_id,
+            ),
         )
 
     async def _handle_job_pause(self, client_id: Any, msg: dict[str, Any]) -> None:
         """Handle job_pause RPC request.
 
-        Pause goal execution by suspending the root goal.
+        The AutopilotService-backed pause path was removed with the autopilot
+        dependency. Returns a service-unavailable error.
 
         Args:
         client_id: Client connection identifier.
@@ -2762,75 +2806,20 @@ class MessageRouter:
             )
             return
 
-        service = await self._require_autopilot_service(client_id, request_id)
-        if service is None:
-            return
-
-        context_engine = service._ce
-
-        # Check goal exists and is not already suspended
-        goal = await context_engine.get_goal(job_id)
-        if goal is None:
-            await d._send_client_message(
-                client_id,
-                build_error_response(
-                    ErrorCode.JOB_NOT_FOUND,
-                    f"Job {job_id} not found",
-                    request_id=request_id,
-                ),
-            )
-            return
-
-        if goal.status == "suspended":
-            await d._send_client_message(
-                client_id,
-                build_error_response(
-                    ErrorCode.JOB_ALREADY_PAUSED,
-                    f"Job {job_id} is already paused",
-                    request_id=request_id,
-                ),
-            )
-            return
-
-        if goal.status in ("completed", "failed", "cancelled"):
-            await d._send_client_message(
-                client_id,
-                build_error_response(
-                    ErrorCode.JOB_COMPLETED,
-                    f"Job {job_id} is in terminal state {goal.status}",
-                    request_id=request_id,
-                ),
-            )
-            return
-
-        # Suspend the job subtree and stop in-flight workers (P1-1).
-        try:
-            await service.pause_job(job_id, reason="user_pause")
-        except Exception as exc:
-            logger.error("[JobPause] Failed to pause job %s: %s", job_id, exc)
-            await d._send_client_message(
-                client_id,
-                build_error_response(
-                    ErrorCode.JOB_PAUSE_FAILED,
-                    str(exc),
-                    request_id=request_id,
-                ),
-            )
-            return
-
-        paused = await context_engine.get_goal(job_id)
-        status = paused.status if paused is not None else "suspended"
-        await self._send_response(
+        await d._send_client_message(
             client_id,
-            request_id,
-            {"job_id": job_id, "status": status},
+            build_error_response(
+                ErrorCode.AUTOPILOT_NOT_READY,
+                "Job pause requires the legacy AutopilotService DAG path, which has been removed.",
+                request_id=request_id,
+            ),
         )
-        logger.info("[JobPause] Paused job %s", job_id)
 
     async def _handle_job_resume(self, client_id: Any, msg: dict[str, Any]) -> None:
         """Handle job_resume RPC request.
 
-        Resume paused goal execution by reactivating the root goal.
+        The AutopilotService-backed resume path was removed with the autopilot
+        dependency. Returns a service-unavailable error.
 
         Args:
         client_id: Client connection identifier.
@@ -2851,73 +2840,20 @@ class MessageRouter:
             )
             return
 
-        service = await self._require_autopilot_service(client_id, request_id)
-        if service is None:
-            return
-
-        context_engine = service._ce
-
-        # Check goal exists and is suspended
-        goal = await context_engine.get_goal(job_id)
-        if goal is None:
-            await d._send_client_message(
-                client_id,
-                build_error_response(
-                    ErrorCode.JOB_NOT_FOUND,
-                    f"Job {job_id} not found",
-                    request_id=request_id,
-                ),
-            )
-            return
-
-        if goal.status not in ("suspended", "blocked"):
-            await d._send_client_message(
-                client_id,
-                build_error_response(
-                    ErrorCode.JOB_NOT_PAUSED,
-                    f"Job {job_id} is not paused (status: {goal.status})",
-                    request_id=request_id,
-                ),
-            )
-            return
-
-        # Resume the job subtree and notify LoopRail (P2).
-        try:
-            resumed = await service.resume_job(job_id)
-        except ValueError as exc:
-            await d._send_client_message(
-                client_id,
-                build_error_response(
-                    ErrorCode.JOB_NOT_PAUSED,
-                    str(exc),
-                    request_id=request_id,
-                ),
-            )
-            return
-        except Exception as exc:
-            logger.error("[JobResume] Failed to resume job %s: %s", job_id, exc)
-            await d._send_client_message(
-                client_id,
-                build_error_response(
-                    ErrorCode.JOB_RESUME_FAILED,
-                    str(exc),
-                    request_id=request_id,
-                ),
-            )
-            return
-
-        status = resumed.status if resumed is not None else "pending"
-        await self._send_response(
+        await d._send_client_message(
             client_id,
-            request_id,
-            {"job_id": job_id, "status": status},
+            build_error_response(
+                ErrorCode.AUTOPILOT_NOT_READY,
+                "Job resume requires the legacy AutopilotService DAG path, which has been removed.",
+                request_id=request_id,
+            ),
         )
-        logger.info("[JobResume] Resumed job %s", job_id)
 
     async def _handle_job_cancel(self, client_id: Any, msg: dict[str, Any]) -> None:
         """Handle job_cancel RPC request.
 
-        Cancel job by cancelling the root goal via AutopilotService.
+        The AutopilotService-backed cancel path was removed with the autopilot
+        dependency. Returns a service-unavailable error.
 
         Args:
         client_id: Client connection identifier.
@@ -2938,47 +2874,20 @@ class MessageRouter:
             )
             return
 
-        service = await self._require_autopilot_service(client_id, request_id)
-        if service is None:
-            return
-
-        # Cancel via AutopilotService (handles worker cleanup)
-        try:
-            cancelled = await service.cancel_goal(job_id, reason="user_cancel")
-        except Exception as exc:
-            logger.error("[JobCancel] Failed to cancel goal %s: %s", job_id, exc)
-            await d._send_client_message(
-                client_id,
-                build_error_response(
-                    ErrorCode.JOB_CANCEL_FAILED,
-                    str(exc),
-                    request_id=request_id,
-                ),
-            )
-            return
-
-        if cancelled is None:
-            await d._send_client_message(
-                client_id,
-                build_error_response(
-                    ErrorCode.JOB_NOT_FOUND,
-                    f"Job {job_id} not found",
-                    request_id=request_id,
-                ),
-            )
-            return
-
-        await self._send_response(
+        await d._send_client_message(
             client_id,
-            request_id,
-            {"job_id": job_id, "status": cancelled.status},
+            build_error_response(
+                ErrorCode.AUTOPILOT_NOT_READY,
+                "Job cancel requires the legacy AutopilotService DAG path, which has been removed.",
+                request_id=request_id,
+            ),
         )
-        logger.info("[JobCancel] Cancelled job %s", job_id)
 
     async def _handle_job_dag(self, client_id: Any, msg: dict[str, Any]) -> None:
         """Handle job_dag RPC request.
 
-        Get ContextEngine DAG snapshot for visualization.
+        The AutopilotService-backed DAG snapshot path was removed with the
+        autopilot dependency. Returns a service-unavailable error.
 
         Args:
         client_id: Client connection identifier.
@@ -2999,36 +2908,21 @@ class MessageRouter:
             )
             return
 
-        service = await self._require_autopilot_service(client_id, request_id)
-        if service is None:
-            return
-
-        # Check root goal exists
-        root_goal = await service.get_goal(job_id)
-        if root_goal is None:
-            await d._send_client_message(
-                client_id,
-                build_error_response(
-                    ErrorCode.JOB_NOT_FOUND,
-                    f"Job {job_id} not found",
-                    request_id=request_id,
-                ),
-            )
-            return
-
-        # Use AutopilotService.dag_snapshot() for visualization (RFC-228)
-        dag = await service.dag_snapshot(job_id)
-
-        await self._send_response(
+        await d._send_client_message(
             client_id,
-            request_id,
-            {"job_id": job_id, "dag": dag},
+            build_error_response(
+                ErrorCode.AUTOPILOT_NOT_READY,
+                "Job DAG snapshot requires the legacy AutopilotService DAG "
+                "path, which has been removed.",
+                request_id=request_id,
+            ),
         )
 
     async def _handle_job_guidance(self, client_id: Any, msg: dict[str, Any]) -> None:
         """Handle job_guidance RPC request.
 
-        Send user guidance to ContextEngine for absorption.
+        The AutopilotService-backed guidance absorption path was removed with
+        the autopilot dependency. Returns a service-unavailable error.
 
         Args:
         client_id: Client connection identifier.
@@ -3037,7 +2931,6 @@ class MessageRouter:
         d = self._daemon
         request_id = msg.get("request_id")
         job_id = msg.get("job_id")
-        goal_id = msg.get("goal_id")  # Optional - specific goal or root
         content = msg.get("content")
 
         if not isinstance(job_id, str) or not job_id.strip():
@@ -3062,245 +2955,14 @@ class MessageRouter:
             )
             return
 
-        service = await self._require_autopilot_service(client_id, request_id)
-        if service is None:
-            return
-
-        context_engine = service._ce
-
-        # Determine target goal
-        target_id = goal_id if goal_id else job_id
-        target_goal = await context_engine.get_goal(target_id)
-        if target_goal is None:
-            await d._send_client_message(
-                client_id,
-                build_error_response(
-                    ErrorCode.GOAL_NOT_FOUND,
-                    f"Goal {target_id} not found",
-                    request_id=request_id,
-                ),
-            )
-            return
-
-        # Absorb via Autopilot intake → CE (RFC-228 / IG-733); does not spawn goals.
-        from soothe_autopilot.intake import GuidanceScope, absorb_user_guidance
-
-        scope: GuidanceScope = "goal" if goal_id else "job"
-        absorbed = await absorb_user_guidance(
-            context_engine,
-            target_id,
-            content.strip(),
-            scope=scope,
-        )
-
-        logger.info(
-            "[JobGuidance] Guidance for job=%s goal=%s absorbed=%s: %s",
-            job_id,
-            target_id,
-            absorbed,
-            content[:50],
-        )
-
-        await self._send_response(
+        await d._send_client_message(
             client_id,
-            request_id,
-            {
-                "job_id": job_id,
-                "goal_id": target_id,
-                "absorbed": absorbed,
-            },
-        )
-
-    async def _require_autopilot_service(
-        self, client_id: Any, request_id: str | None
-    ) -> Any | None:
-        """Return the autopilot service or send a not-ready error and None."""
-        d = self._daemon
-        service = getattr(d, "_autopilot_service", None)
-        if service is None:
-            await d._send_client_message(
-                client_id,
-                build_error_response(
-                    ErrorCode.AUTOPILOT_NOT_READY,
-                    "Autopilot service unavailable",
-                    request_id=request_id,
-                ),
-            )
-            return None
-        return service
-
-    async def _dispatch_autopilot_rpc(
-        self,
-        client_id: Any,
-        msg: dict[str, Any],
-        action: str,
-    ) -> None:
-        """Shared protocol-1 response path for `autopilot_*` request methods."""
-        from soothe_daemon.protocol.autopilot_commands import run_autopilot_action
-
-        d = self._daemon
-        request_id = msg.get("request_id")
-        service = await self._require_autopilot_service(client_id, request_id)
-        if service is None:
-            return
-
-        payload = {
-            key: value
-            for key, value in msg.items()
-            if key not in {"type", "proto", "method", "params", "id", "request_id"}
-        }
-        try:
-            result = await run_autopilot_action(service, action, payload)
-        except RuntimeError as exc:
-            await d._send_client_message(
-                client_id,
-                build_error_response(
-                    ErrorCode.INVALID_REQUEST,
-                    str(exc),
-                    request_id=request_id,
-                ),
-            )
-            return
-        except Exception as exc:
-            logger.error("[AutopilotRPC] %s failed: %s", action, exc, exc_info=True)
-            await d._send_client_message(
-                client_id,
-                build_error_response(
-                    ErrorCode.INTERNAL_ERROR,
-                    str(exc),
-                    request_id=request_id,
-                ),
-            )
-            return
-
-        await self._send_response(client_id, request_id, result)
-
-    async def _handle_autopilot_status(self, client_id: Any, msg: dict[str, Any]) -> None:
-        """Handle autopilot_status request (CLI / AsyncCommandClient)."""
-        await self._dispatch_autopilot_rpc(client_id, msg, "status")
-
-    async def _handle_autopilot_submit(self, client_id: Any, msg: dict[str, Any]) -> None:
-        """Handle autopilot_submit request."""
-        await self._dispatch_autopilot_rpc(client_id, msg, "submit")
-
-    async def _handle_autopilot_list_goals(self, client_id: Any, msg: dict[str, Any]) -> None:
-        """Handle autopilot_list_goals request."""
-        await self._dispatch_autopilot_rpc(client_id, msg, "list_goals")
-
-    async def _handle_autopilot_get_goal(self, client_id: Any, msg: dict[str, Any]) -> None:
-        """Handle autopilot_get_goal request."""
-        await self._dispatch_autopilot_rpc(client_id, msg, "get_goal")
-
-    async def _handle_autopilot_cancel_goal(self, client_id: Any, msg: dict[str, Any]) -> None:
-        """Handle autopilot_cancel_goal request."""
-        await self._dispatch_autopilot_rpc(client_id, msg, "cancel_goal")
-
-    async def _handle_autopilot_cancel_all(self, client_id: Any, msg: dict[str, Any]) -> None:
-        """Handle autopilot_cancel_all request."""
-        await self._dispatch_autopilot_rpc(client_id, msg, "cancel_all")
-
-    async def _handle_autopilot_wake(self, client_id: Any, msg: dict[str, Any]) -> None:
-        """Handle autopilot_wake request."""
-        await self._dispatch_autopilot_rpc(client_id, msg, "wake")
-
-    async def _handle_autopilot_dream(self, client_id: Any, msg: dict[str, Any]) -> None:
-        """Handle autopilot_dream request."""
-        await self._dispatch_autopilot_rpc(client_id, msg, "dream")
-
-    async def _handle_autopilot_resume(self, client_id: Any, msg: dict[str, Any]) -> None:
-        """Handle autopilot_resume request."""
-        await self._dispatch_autopilot_rpc(client_id, msg, "resume")
-
-    async def _handle_autopilot_list_jobs(self, client_id: Any, msg: dict[str, Any]) -> None:
-        """Handle autopilot_list_jobs request."""
-        await self._dispatch_autopilot_rpc(client_id, msg, "list_jobs")
-
-    async def _handle_autopilot_get_job(self, client_id: Any, msg: dict[str, Any]) -> None:
-        """Handle autopilot_get_job request."""
-        await self._dispatch_autopilot_rpc(client_id, msg, "get_job")
-
-    async def _handle_autopilot_top(self, client_id: Any, msg: dict[str, Any]) -> None:
-        """Handle autopilot_top request (CLI live dashboard)."""
-        await self._dispatch_autopilot_rpc(client_id, msg, "top")
-
-    async def _handle_autopilot_subscribe(self, client_id: Any, msg: dict[str, Any]) -> None:
-        """Handle autopilot_subscribe RPC request.
-
-        Subscribe client to autopilot worker events (bypasses autopilot__* filter).
-
-        Args:
-        client_id: Client connection identifier.
-        msg: Request with request_id.
-        """
-        d = self._daemon
-        request_id = msg.get("request_id")
-
-        session_manager = d._session_manager
-        session = await session_manager.get_session(client_id)
-        if session is None:
-            await d._send_client_message(
-                client_id,
-                build_error_response(
-                    ErrorCode.NO_SESSION,
-                    "Client session not found",
-                    request_id=request_id,
-                ),
-            )
-            return
-
-        # Set autopilot subscription flag (enables worker event bypass)
-        session.autopilot_subscribed = True
-
-        # Subscribe to autopilot topic for client-visible events (RFC-228)
-        await d._event_bus.subscribe("autopilot", session.event_queue)
-
-        # Per RFC-450 §9.4, subscription confirmation is a ``next`` event
-        # carrying the subscription id (the request's correlation id).
-        await self._send_next(
-            client_id,
-            request_id,
-            {"client_id": client_id, "event": "subscribed", "subscribed": True},
-        )
-        logger.info("[AutopilotSubscribe] Client %s subscribed to autopilot events", client_id)
-
-    async def _handle_autopilot_unsubscribe(self, client_id: Any, msg: dict[str, Any]) -> None:
-        """Handle autopilot_unsubscribe RPC request.
-
-        Release autopilot worker event subscription.
-
-        Args:
-        client_id: Client connection identifier.
-        msg: Request with request_id.
-        """
-        d = self._daemon
-        request_id = msg.get("request_id")
-
-        session_manager = d._session_manager
-        session = await session_manager.get_session(client_id)
-        if session is None:
-            await d._send_client_message(
-                client_id,
-                build_error_response(
-                    ErrorCode.NO_SESSION,
-                    "Client session not found",
-                    request_id=request_id,
-                ),
-            )
-            return
-
-        # Clear autopilot subscription flag
-        session.autopilot_subscribed = False
-
-        # Unsubscribe from autopilot topic (RFC-228)
-        await d._event_bus.unsubscribe("autopilot", session.event_queue)
-
-        await self._send_response(
-            client_id,
-            request_id,
-            {"client_id": client_id, "subscribed": False},
-        )
-        logger.info(
-            "[AutopilotUnsubscribe] Client %s unsubscribed from autopilot events", client_id
+            build_error_response(
+                ErrorCode.AUTOPILOT_NOT_READY,
+                "Job guidance absorption requires the legacy "
+                "AutopilotService intake path, which has been removed.",
+                request_id=request_id,
+            ),
         )
 
     # -- Cron RPC handlers (RFC-229) ---------------------------------------------

@@ -576,7 +576,7 @@ class GoalDecomposedEvent(ProtocolEvent):
     """Goal decomposed into sub-goals.
 
     Emitted when a complex goal is decomposed into multiple sub-goals
-    by the AutopilotMonitor or DAG verification process.
+    by the ContextEngine or DAG verification process.
     """
 
     type: Literal["soothe.cognition.goal.decomposed"] = "soothe.cognition.goal.decomposed"

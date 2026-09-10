@@ -276,7 +276,6 @@ def main(
 # Sub-command groups (nested Typer apps)
 # ---------------------------------------------------------------------------
 
-from soothe_cli.cli.commands.autopilot_cmd import app as _autopilot_app  # noqa: E402
 from soothe_cli.cli.commands.config_cmd import config_app as _config_app  # noqa: E402
 from soothe_cli.cli.commands.cron_cmd import app as _cron_app  # noqa: E402
 from soothe_cli.cli.commands.loop_cmd import loop_app as _loop_app  # noqa: E402
@@ -284,15 +283,11 @@ from soothe_cli.cli.commands.status_cmd import status_app as _status_app  # noqa
 
 for _sub_app, _name in (
     (_loop_app, "loop"),
-    (_autopilot_app, "autopilot"),
     (_cron_app, "cron"),
     (_config_app, "config"),
 ):
     configure_command_group(_sub_app, show_help_on_no_args=True)
     app.add_typer(_sub_app, name=_name)
-
-# Alias: 'ap' -> 'autopilot'
-app.add_typer(_autopilot_app, name="ap")
 
 # status has a custom default action (combined status) — keep it; add help only.
 configure_command_group(_status_app, show_help_on_no_args=False)
@@ -309,7 +304,7 @@ def help_command(
     ctx: typer.Context,
     commands: Annotated[
         list[str] | None,
-        typer.Argument(help="Optional command path (e.g. loop, loop list, autopilot top)."),
+        typer.Argument(help="Optional command path (e.g. loop, loop list, cron list)."),
     ] = None,
 ) -> None:
     """Show this message and exit."""

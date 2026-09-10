@@ -41,13 +41,10 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-# Add fixtures directory and package source paths for scenario imports.
+# Add package source paths for imports.
 # When run from a source checkout (not installed), these ensure the script
-# can import fixtures, soothe, and soothe_autopilot without installation.
-# Note: fixtures is a package under tests/, so the path must include tests/.
+# can import soothe and soothe-sdk without installation.
 _ROOT = Path(__file__).parent.parent
-sys.path.insert(0, str(_ROOT / "packages" / "soothe-autopilot" / "tests"))
-sys.path.insert(0, str(_ROOT / "packages" / "soothe-autopilot" / "src"))
 sys.path.insert(0, str(_ROOT / "packages" / "soothe" / "src"))
 sys.path.insert(0, str(_ROOT / "packages" / "soothe-sdk" / "src"))
 
@@ -637,7 +634,14 @@ async def main_async(args: argparse.Namespace) -> int:
 
     Returns exit code: 0 if all SLOs pass, 1 if any SLO is breached.
     """
-    from fixtures.alert_scenarios import ALL_ALERT_SCENARIOS
+    try:
+        from fixtures.alert_scenarios import ALL_ALERT_SCENARIOS
+    except ImportError:
+        logger.info(
+            "Alert scenario fixtures unavailable (soothe-autopilot package "
+            "was removed). Skipping alert pipeline benchmark."
+        )
+        return 0
 
     iterations = args.iterations
     results: list[ScenarioBenchmarkResult] = []

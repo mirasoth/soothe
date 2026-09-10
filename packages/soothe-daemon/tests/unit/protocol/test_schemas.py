@@ -18,7 +18,6 @@ from soothe_daemon.protocol.schemas import (
     # Auth
     AuthParams,
     AuthRefreshParams,
-    AutopilotSubscribeParams,
     CommandParams,
     CommandRequestParams,
     ConfigGetParams,
@@ -102,8 +101,6 @@ class TestParamsRegistryCompleteness:
         "job_cancel",
         "job_dag",
         "job_guidance",
-        "autopilot_subscribe",
-        "autopilot_unsubscribe",
     }
 
     # All envelope (type, method) pairs per RFC-450 §9.2.
@@ -121,7 +118,6 @@ class TestParamsRegistryCompleteness:
         ("request", "loop_history_fetch"),
         ("request", "loop_detach"),
         ("subscribe", "loop_events"),
-        ("subscribe", "autopilot_events"),
         ("request", "job_create"),
         ("request", "job_status"),
         ("request", "job_pause"),
@@ -142,17 +138,6 @@ class TestParamsRegistryCompleteness:
         ("notification", "slash_command"),
         ("notification", "disconnect"),
         ("request", "rpc_command"),
-        ("request", "autopilot_status"),
-        ("request", "autopilot_submit"),
-        ("request", "autopilot_list_goals"),
-        ("request", "autopilot_get_goal"),
-        ("request", "autopilot_cancel_goal"),
-        ("request", "autopilot_cancel_all"),
-        ("request", "autopilot_wake"),
-        ("request", "autopilot_dream"),
-        ("request", "autopilot_resume"),
-        ("request", "autopilot_list_jobs"),
-        ("request", "autopilot_get_job"),
         ("connection_init", None),
         ("ping", None),
         ("pong", None),
@@ -369,10 +354,6 @@ class TestSubscriptionParams:
     def test_subscribe_invalid_wire_tier(self) -> None:
         with pytest.raises(ValidationError):
             SubscribeParams.model_validate({"loop_id": "abc", "wire_tier": "mega"})
-
-    def test_autopilot_subscribe_valid(self) -> None:
-        p = AutopilotSubscribeParams.model_validate({})
-        assert p is not None
 
 
 # ---------------------------------------------------------------------------

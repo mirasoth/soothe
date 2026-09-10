@@ -19,11 +19,13 @@ import json
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from soothe.context.decomposition import DecompositionProposal, ProposedSubtask
 from soothe.context.engine import ContextEngine
-from soothe.context.models import TERMINAL_STATES, GoalNode
+from soothe.context.models import TERMINAL_STATES, GoalNode, StepExecution, StepNode
 from soothe.rails import worktree_ops
 from soothe.rails.pause_clarify import (
     PauseClarifyDecision,
@@ -54,9 +56,11 @@ from soothe.rails.wave_plan import (
     resolve_fanout_slices,
     workspace_wave_plan_path,
 )
+from soothe.sloop.decompose.reconcile import plan_commit_from_proposals
+from soothe.sloop.state.schemas import allocate_plan_id
 
 if TYPE_CHECKING:
-    from soothe.config.models import SootheConfig
+    from soothe.config.models import DecomposeLoopConfig, SootheConfig
 
 UserInterventionFn = Callable[[str], Awaitable[None]]
 PauseClarifyFn = Callable[..., Awaitable[PauseClarifyDecision]]
@@ -145,6 +149,10 @@ class RailJobState:
     verb_overrides: dict[str, dict[str, Any]] = field(default_factory=dict)
     # IG-737: last Veritas decision for pause_for_user (forensics)
     last_pause_clarify: dict[str, Any] | None = None
+    # RFC-904 step-DAG mode: builtins operate on the goal's StepDAG via
+    # plan_commit_from_proposals instead of spawning child goals. When True,
+    # `invoke` routes catalog verbs to their step-level variants.
+    step_mode: bool = False
 
     def effective_scout_count(self) -> int:
         """Scout fan-out width (default 2 when unset)."""
@@ -210,17 +218,17 @@ class RailBuiltinExecutor:
     def _global_worktree_recycle_enabled(self) -> bool:
         """Global config override for worktree recycling.
 
-        When `autopilot.lifecycle_worktree_recycle_enabled` is False, all
+        When `agent.rail.lifecycle_worktree_recycle_enabled` is False, all
         recycling is skipped (forensics retention). Rail-level policy still
         gates per-rail, but the global flag is a hard off-switch.
         """
         cfg = self._soothe_config
         if cfg is None:
             return True
-        ap = getattr(cfg, "autopilot", None)
-        if ap is None:
+        rail = getattr(cfg, "rail", None)
+        if rail is None:
             return True
-        return bool(getattr(ap, "lifecycle_worktree_recycle_enabled", True))
+        return bool(getattr(rail, "lifecycle_worktree_recycle_enabled", True))
 
     async def bind_job(self, state: RailJobState) -> None:
         """Register or replace job state for a root goal id.
@@ -384,6 +392,7 @@ class RailBuiltinExecutor:
             last_pause_clarify=base.last_pause_clarify
             if base.last_pause_clarify is not None
             else donor.last_pause_clarify,
+            step_mode=base.step_mode or donor.step_mode,
         )
 
     async def _persist_job(self, state: RailJobState) -> None:
@@ -431,6 +440,7 @@ class RailBuiltinExecutor:
                 "acceptance_met": state.acceptance_met,
                 "verb_overrides": state.verb_overrides,
                 "last_pause_clarify": state.last_pause_clarify,
+                "step_mode": state.step_mode,
                 "annotations": {gid: asdict(ann) for gid, ann in state.annotations.items()},
             }
             path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
@@ -503,6 +513,7 @@ class RailBuiltinExecutor:
                 if isinstance(raw.get("last_pause_clarify"), dict)
                 else None
             ),
+            step_mode=bool(raw.get("step_mode", False)),
         )
 
     def _tags_by_goal_unlocked(self, job_id: str) -> dict[str, list[str]]:
@@ -590,6 +601,12 @@ class RailBuiltinExecutor:
         before the generic `_do_*` fallback. Currently only `autoresearch`
         has a native `plan_and_implement` (research synthesis plan+writer
         instead of code planning+implementation).
+
+        Step-DAG mode (RFC-904): when ``state.step_mode`` is True, catalog
+        verbs route to their step-level variants (``_do_*_steps``) which
+        operate on the goal's ``StepDAG`` via ``plan_commit_from_proposals``
+        instead of spawning child goals. YAML ``do:`` recipes still take
+        precedence over step-variants.
         """
         try:
             if builtin == "plan_milestones":
@@ -609,6 +626,11 @@ class RailBuiltinExecutor:
                 return await RecipeRunner(self).run(
                     steps, job_id=job_id, trigger_goal_id=trigger_goal_id
                 )
+            # Step-DAG mode: route goal-level verbs to step-level variants.
+            if state is not None and state.step_mode:
+                step_handler = self._step_variant_handler(builtin)
+                if step_handler is not None:
+                    return await step_handler(job_id=job_id, trigger_goal_id=trigger_goal_id)
             # Native rail dispatch: autoresearch plan_and_implement.
             if (
                 state is not None
@@ -630,6 +652,28 @@ class RailBuiltinExecutor:
                 status="error",
                 detail=f"{type(exc).__name__}: builtin {builtin} failed",
             )
+
+    def _step_variant_handler(
+        self,
+        builtin: str,
+    ) -> Callable[..., Awaitable[BuiltinResult]] | None:
+        """Map a goal-level verb name to its step-DAG variant when in step_mode.
+
+        Returns the bound ``_do_*_steps`` handler for the five supported
+        verbs, or ``None`` when the verb has no step variant (fall through to
+        the goal-level ``_do_*`` handler for backward compat).
+        """
+        mapping = {
+            "decompose_parallel": "_do_decompose_parallel_steps",
+            "plan_and_implement": "_do_plan_and_implement_steps",
+            "review": "_do_review_step",
+            "qa_verify": "_do_qa_verify_step",
+            "complete_job": "_do_complete_job_step",
+        }
+        method_name = mapping.get(builtin)
+        if method_name is None:
+            return None
+        return getattr(self, method_name, None)
 
     def _has_architecture_annotation(self, job_id: str) -> bool:
         """True when any architecture/planner annotation exists (incl. pruned)."""
@@ -1989,7 +2033,7 @@ class RailBuiltinExecutor:
         # Recycle the maker's worktree now that its branch is merged into the
         # job branch — the slice worktree is dead weight after merge. Gated by
         # the rail-declared worktree lifecycle policy (worktrees.recycle_on_merge)
-        # and the global autopilot.lifecycle_worktree_recycle_enabled off-switch.
+        # and the global agent.rail.lifecycle_worktree_recycle_enabled off-switch.
         if (
             state.worktrees_enabled
             and state.worktree_recycle_on_merge
@@ -2219,7 +2263,7 @@ class RailBuiltinExecutor:
         # Sweep any remaining slice/job worktrees now that the job is landed.
         # Gated by the rail-declared worktree lifecycle policy
         # (worktrees.recycle_on_complete) and the global
-        # autopilot.lifecycle_worktree_recycle_enabled off-switch.
+        # agent.rail.lifecycle_worktree_recycle_enabled off-switch.
         repo = _job_workspace(self._ce, job_id)
         if (
             state.worktrees_enabled
@@ -2248,6 +2292,333 @@ class RailBuiltinExecutor:
         return BuiltinResult(
             status="success",
             detail=f"job completed; land={land.detail or land.status}",
+        )
+
+    # ── Step-level builtins (RFC-904 step-DAG mode) ────────────────
+    #
+    # When ``RailJobState.step_mode`` is True, ``invoke`` routes catalog verbs
+    # to these variants. They operate on the goal's ``StepDAG`` via
+    # ``plan_commit_from_proposals`` instead of spawning child goals. The goal
+    # root is the root ``StepNode``; decompose proposals create child
+    # ``StepNode``\ s under it.
+
+    def _resolve_decompose_config(self, state: RailJobState) -> DecomposeLoopConfig:
+        """Resolve the DecomposeLoopConfig for step-DAG reconcile budgets."""
+        if self._soothe_config is not None:
+            loop_cfg = getattr(self._soothe_config, "loop", None)
+            if loop_cfg is not None:
+                decompose = getattr(loop_cfg, "decompose", None)
+                if decompose is not None:
+                    return decompose
+        from soothe.config.models import DecomposeLoopConfig
+
+        return DecomposeLoopConfig()
+
+    def _ensure_root_step(self, job_id: str, state: RailJobState) -> StepNode | None:
+        """Return the goal's root StepNode, creating one when the DAG is empty.
+
+        Mirrors ``sloop.stations.decompose.dispatch._ensure_root_step`` but
+        without grounding / loop-state coupling — rail step-mode only needs a
+        root anchor for ``plan_commit_from_proposals``.
+        """
+        goal = self._ce._dag.get_goal(job_id)
+        if goal is None:
+            return None
+        for node in goal.steps.nodes.values():
+            if node.parent_step_id is None and node.status not in ("superseded", "skipped"):
+                return node
+        if goal.steps.nodes:
+            return next(iter(goal.steps.nodes.values()))
+        plan_id = allocate_plan_id()
+        root_id = f"{plan_id}-01"
+        root = StepNode(
+            id=root_id,
+            description=goal.description or f"Execute job {job_id}",
+            full_description=goal.description,
+            status="pending",
+            parent_step_id=None,
+            plan_iteration=0,
+        )
+        goal.steps.add_step(root)
+        logger.info("step_mode: created root step %s for goal %s", root_id, job_id)
+        return root
+
+    async def _do_decompose_parallel_steps(
+        self, *, job_id: str, trigger_goal_id: str | None
+    ) -> BuiltinResult:
+        """Step-DAG variant of ``decompose_parallel``.
+
+        Builds ``DecompositionProposal`` objects from ``decompose_plan`` (or
+        synthetic scout specs) and commits child ``StepNode`` objects onto the
+        goal's StepDAG via ``plan_commit_from_proposals``. Marks the root
+        step decomposed.
+        """
+        del trigger_goal_id
+        state = await self._require(job_id)
+        root = self._ensure_root_step(job_id, state)
+        if root is None:
+            return BuiltinResult(status="error", detail="goal root missing")
+        plan = state.decompose_plan
+        if plan is None:
+            plan = [
+                {
+                    "description": scout_explore_brief(job_id=job_id, domain_index=i + 1),
+                    "tags": ["exploration"],
+                    "role": "scout",
+                }
+                for i in range(state.effective_scout_count())
+            ]
+        subtasks: list[ProposedSubtask] = []
+        for spec in plan:
+            description = str(spec.get("description") or "").strip()
+            if not description:
+                continue
+            subtasks.append(
+                ProposedSubtask(
+                    description=description,
+                    full_description=str(spec.get("full_description") or ""),
+                    expected_output=str(spec.get("expected_output") or ""),
+                )
+            )
+        if not subtasks:
+            return BuiltinResult(status="skipped", detail="no subtasks to decompose")
+        proposal = DecompositionProposal(
+            parent_step_id=root.id,
+            subtasks=subtasks,
+        )
+        config = self._resolve_decompose_config(state)
+        new_nodes, parents, rejections, plan_id = plan_commit_from_proposals(
+            self._ce._dag.get_goal(job_id).steps,  # type: ignore[union-attr]
+            [proposal],
+            config=config,
+        )
+        if not new_nodes:
+            reasons = ", ".join(r.reason for r in rejections) or "unknown"
+            return BuiltinResult(
+                status="skipped",
+                detail=f"no steps committed (rejections: {reasons})",
+            )
+        await self._ce.add_steps(job_id, new_nodes, plan_iteration=0)
+        goal = self._ce._dag.get_goal(job_id)
+        if goal is not None:
+            for pid in parents:
+                goal.steps.mark_decomposed(pid)
+            goal.updated_at = datetime.now(UTC)
+        await self._persist_job(state)
+        logger.info(
+            "decompose_parallel_steps job=%s root=%s committed=%d plan_id=%s",
+            job_id[:8],
+            root.id,
+            len(new_nodes),
+            plan_id,
+        )
+        return BuiltinResult(
+            status="success",
+            detail=f"committed {len(new_nodes)} step children under {root.id}",
+            created_goal_ids=[n.id for n in new_nodes],
+        )
+
+    async def _do_plan_and_implement_steps(
+        self, *, job_id: str, trigger_goal_id: str | None
+    ) -> BuiltinResult:
+        """Step-DAG variant of ``plan_and_implement``.
+
+        Marks scout (exploration) steps decomposed, then adds a single
+        implement ``StepNode`` child under the root. The implement step
+        depends on completed scout steps.
+        """
+        del trigger_goal_id
+        state = await self._require(job_id)
+        root = self._ensure_root_step(job_id, state)
+        if root is None:
+            return BuiltinResult(status="error", detail="goal root missing")
+        goal = self._ce._dag.get_goal(job_id)
+        if goal is None:
+            return BuiltinResult(status="error", detail="goal missing")
+        # Mark completed scout/exploration steps as decomposed.
+        scout_step_ids: list[str] = []
+        for node in goal.steps.nodes.values():
+            if node.status != "completed":
+                continue
+            if node.kind == "eval":
+                continue
+            # Heuristic: scout steps are exploration-tagged action children.
+            if node.parent_step_id == root.id:
+                scout_step_ids.append(node.id)
+                goal.steps.mark_decomposed(node.id)
+        # Add implement step depending on scout steps.
+        implement = StepNode(
+            id=f"{allocate_plan_id()}-01",
+            description=implement_goal_brief(job_id=job_id),
+            full_description=implement_goal_brief(job_id=job_id),
+            status="pending",
+            dependencies=list(scout_step_ids),
+            parent_step_id=root.id,
+            plan_iteration=0,
+        )
+        goal.steps.add_step(implement)
+        goal.updated_at = datetime.now(UTC)
+        await self._persist_job(state)
+        logger.info(
+            "plan_and_implement_steps job=%s root=%s implement=%s scouts=%d",
+            job_id[:8],
+            root.id,
+            implement.id,
+            len(scout_step_ids),
+        )
+        return BuiltinResult(
+            status="success",
+            detail=f"added implement step {implement.id} under {root.id}",
+            created_goal_ids=[implement.id],
+        )
+
+    async def _do_review_step(self, *, job_id: str, trigger_goal_id: str | None) -> BuiltinResult:
+        """Step-DAG variant of ``review``.
+
+        Adds a review ``StepNode`` child under the root, depending on the
+        trigger step (or the latest completed action step).
+        """
+        state = await self._require(job_id)
+        root = self._ensure_root_step(job_id, state)
+        if root is None:
+            return BuiltinResult(status="error", detail="goal root missing")
+        goal = self._ce._dag.get_goal(job_id)
+        if goal is None:
+            return BuiltinResult(status="error", detail="goal missing")
+        deps: list[str] = []
+        if trigger_goal_id and trigger_goal_id in goal.steps.nodes:
+            deps.append(trigger_goal_id)
+        else:
+            # Depend on the latest completed action step.
+            completed_actions = [
+                n for n in goal.steps.nodes.values() if n.status == "completed" and n.kind != "eval"
+            ]
+            if completed_actions:
+                deps.append(completed_actions[-1].id)
+        review = StepNode(
+            id=f"{allocate_plan_id()}-01",
+            description=resolve_verb_brief(
+                "review",
+                job_id=job_id,
+                overrides=state.verb_overrides,
+            )
+            or f"Review work for job {job_id}.",
+            status="pending",
+            dependencies=deps,
+            parent_step_id=root.id,
+            plan_iteration=0,
+        )
+        goal.steps.add_step(review)
+        goal.updated_at = datetime.now(UTC)
+        await self._persist_job(state)
+        logger.info(
+            "review_step job=%s root=%s review=%s deps=%s",
+            job_id[:8],
+            root.id,
+            review.id,
+            deps,
+        )
+        return BuiltinResult(
+            status="success",
+            detail=f"added review step {review.id} under {root.id}",
+            created_goal_ids=[review.id],
+        )
+
+    async def _do_qa_verify_step(
+        self, *, job_id: str, trigger_goal_id: str | None
+    ) -> BuiltinResult:
+        """Step-DAG variant of ``qa_verify``.
+
+        Adds a QA verify ``StepNode`` child under the root, depending on the
+        trigger step (or the latest completed action step).
+        """
+        state = await self._require(job_id)
+        root = self._ensure_root_step(job_id, state)
+        if root is None:
+            return BuiltinResult(status="error", detail="goal root missing")
+        goal = self._ce._dag.get_goal(job_id)
+        if goal is None:
+            return BuiltinResult(status="error", detail="goal missing")
+        deps: list[str] = []
+        if trigger_goal_id and trigger_goal_id in goal.steps.nodes:
+            deps.append(trigger_goal_id)
+        else:
+            completed_actions = [
+                n for n in goal.steps.nodes.values() if n.status == "completed" and n.kind != "eval"
+            ]
+            if completed_actions:
+                deps.append(completed_actions[-1].id)
+        brief = self._acceptance_brief_for_job(job_id)
+        qa_text = ensure_qa_verify_discipline(
+            f"QA verify for job {job_id}. Run acceptance checks against "
+            f"the job contract and report pass/fail with evidence.\n\n{brief}"
+        )
+        qa = StepNode(
+            id=f"{allocate_plan_id()}-01",
+            description=qa_text,
+            status="pending",
+            dependencies=deps,
+            parent_step_id=root.id,
+            plan_iteration=0,
+        )
+        goal.steps.add_step(qa)
+        goal.updated_at = datetime.now(UTC)
+        await self._persist_job(state)
+        logger.info(
+            "qa_verify_step job=%s root=%s qa=%s deps=%s",
+            job_id[:8],
+            root.id,
+            qa.id,
+            deps,
+        )
+        return BuiltinResult(
+            status="success",
+            detail=f"added qa step {qa.id} under {root.id}",
+            created_goal_ids=[qa.id],
+        )
+
+    async def _do_complete_job_step(
+        self, *, job_id: str, trigger_goal_id: str | None
+    ) -> BuiltinResult:
+        """Step-DAG variant of ``complete_job``.
+
+        Marks the root step completed (when the action tree is green) and
+        latches ``RailJobState.completed``. Does not spawn child goals or
+        land git branches — step-mode jobs manage their own completion.
+        """
+        del trigger_goal_id
+        state = await self._require(job_id)
+        goal = self._ce._dag.get_goal(job_id)
+        if goal is None:
+            return BuiltinResult(status="error", detail="goal root missing")
+        root = self._ensure_root_step(job_id, state)
+        if root is None:
+            return BuiltinResult(status="error", detail="root step missing")
+        # Only complete when the action tree is green.
+        if not goal.steps.action_tree_green():
+            pending = [n.id for n in goal.steps.nodes.values() if n.status in ("pending", "active")]
+            return BuiltinResult(
+                status="skipped",
+                detail=f"action tree not green (pending: {pending})",
+            )
+        # Mark root step completed with a synthetic execution record.
+        if root.status not in TERMINAL_STATES:
+            exec_record = StepExecution()
+            goal.steps.mark_completed(root.id, exec_record)
+        goal.updated_at = datetime.now(UTC)
+        state.completed = True
+        state.suspended = False
+        await self._persist_job(state)
+        logger.info(
+            "complete_job_step job=%s root=%s steps=%d completed=%d",
+            job_id[:8],
+            root.id,
+            goal.steps.total_steps,
+            goal.steps.completed_steps,
+        )
+        return BuiltinResult(
+            status="success",
+            detail=f"job step-completed; root={root.id} steps={goal.steps.total_steps}",
         )
 
     async def _require(self, job_id: str) -> RailJobState:

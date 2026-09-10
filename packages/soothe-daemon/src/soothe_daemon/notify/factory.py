@@ -1,19 +1,18 @@
-"""Build NotifyDispatcher from Autopilot notify config."""
+"""Build NotifyDispatcher from daemon notify config."""
 
 from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING
 
-from soothe_autopilot.notify.models import NotifyTarget
-
 from soothe_daemon.notify.email_sink import EmailNotifySink
 from soothe_daemon.notify.feishu_sink import FeishuNotifySink
+from soothe_daemon.notify.models import NotifyTarget
 from soothe_daemon.notify.protocol import NotifyDispatcher
 from soothe_daemon.notify.webhook_sink import WebhookNotifySink
 
 if TYPE_CHECKING:
-    from soothe.config.models import AutopilotConfig, AutopilotNotifyConfig
+    from soothe.config.models import AutopilotNotifyConfig
 
 logger = logging.getLogger(__name__)
 
@@ -51,9 +50,16 @@ def build_notify_dispatcher(
     return dispatcher
 
 
-def build_notify_dispatcher_from_autopilot(autopilot: AutopilotConfig) -> NotifyDispatcher:
-    """Convenience: build from full AutopilotConfig."""
-    return build_notify_dispatcher(
-        autopilot.notify,
-        legacy_webhooks=autopilot.webhooks,
-    )
+def build_notify_dispatcher_from_config(
+    notify: AutopilotNotifyConfig,
+    *,
+    legacy_webhooks: dict[str, str | None] | None = None,
+) -> NotifyDispatcher:
+    """Build a NotifyDispatcher from the daemon notify config.
+
+    Replaces the former ``build_notify_dispatcher_from_autopilot`` which
+    took a full ``AutopilotConfig``. Callers now pass the notify config
+    (``config.agent.autopilot.notify``) and optional legacy webhooks
+    (``config.agent.autopilot.webhooks``) directly.
+    """
+    return build_notify_dispatcher(notify, legacy_webhooks=legacy_webhooks)

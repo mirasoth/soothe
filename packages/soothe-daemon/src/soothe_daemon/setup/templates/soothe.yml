@@ -2,19 +2,9 @@
 # Host-only overlay. Compose with nano.yml. No nano-owned keys here.
 
 agent:
-  autopilot:
-    enabled: true
-    max_retries: 2
-    max_parallel_goals: 3  # cap goal fan-out under provider concurrency quotas
-    gc_enabled: true  # cancel non-terminal goals whose job root is already terminal
-    gc_interval_seconds: 120
+  rail:
     max_send_backs: 3
     max_engine_recoveries: 2
-    # Dreaming is automatic (DAG complete / timer); wake on submit or scheduled task.
-    dreaming_enabled: true
-    monitor_model_role: think
-    consensus_model_role: think  # report-commit judgment; empty deny spawn/cancel dag_ops
-    judge_allow_structural_dag_ops: []
     default_rail: null
     # LLM LoopRail auto-pick when submit omits rail_id.
     rail_auto_pick: true
@@ -29,14 +19,13 @@ agent:
     rail_pause_auto_clarify: true
     # Forced StrangeLoop intake (null|minimal|simple|complex). null lets loop classify.
     intake_scope: null
-    # Periodic DAG health verification (structural + LLM). false skips background tick;
-    # event-driven verification still runs. Resource watchdog tick unaffected.
-    verify_periodic_enabled: false
-    verify_interval: 120
-    verify_idle_interval: 300  # idle tick; 0 = reuse verify_interval. LLM skipped while idle.
-    verify_llm_enabled: true
-    verify_llm_min_nonterminal: 1
-    verify_llm_debounce: true
+    # Worktree lifecycle reclamation.
+    lifecycle_drain_grace_seconds: 2.0
+    lifecycle_worktree_recycle_enabled: true
+    # Cancel escalation (cooperative → force-kill).
+    cancel_retry_count: 3
+    cancel_retry_interval_seconds: 2.0
+    cancel_force_kill_timeout_seconds: 10.0
     webhooks: {}
     notify:
       enabled: false
@@ -77,15 +66,6 @@ agent:
         warning_seconds: 3600
         critical_seconds: 7200
         breach_seconds: 14400
-    max_loops: 16
-    loop_idle_timeout: 300
-    poll_interval: 5
-    dreaming_poll_interval: 60
-    goal_deadline_seconds: 1209600
-    context_projection:
-      max_findings: 20
-      max_effects: 50
-      max_plan_steps: 30
 
   # agent.loop: StrangeLoop execution controls. Only non-default overrides shown;
   # see soothe.config.models.StrangeLoopConfig / LoopConcurrencyConfig for all fields.

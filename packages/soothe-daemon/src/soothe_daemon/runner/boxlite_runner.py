@@ -136,6 +136,7 @@ def _run_single(loop, req, request_id, config, cached_runner):
                     clarification_answers=req.clarification_answers,
                     resume_interrupted=req.resume_interrupted,
                     approved_plan_path=req.approved_plan_path,
+                    autopilot_rail_id=req.autopilot_rail_id,
                 ):
                     try:
                         _send_frame(sys.stdout, ("chunk", request_id, chunk))

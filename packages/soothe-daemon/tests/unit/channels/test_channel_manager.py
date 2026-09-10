@@ -88,7 +88,7 @@ class TestChannelManagerInit:
         runner = MagicMock()
         soothe_config = MagicMock()
         session_manager = MagicMock()
-        autopilot_service = MagicMock()
+        cron_service = MagicMock()
 
         manager = ChannelManager(
             config,
@@ -96,13 +96,13 @@ class TestChannelManagerInit:
             runner=runner,
             soothe_config=soothe_config,
             session_manager=session_manager,
-            autopilot_service=autopilot_service,
+            cron_service=cron_service,
         )
 
         assert manager._runner == runner
         assert manager._soothe_config == soothe_config
         assert manager._session_manager == session_manager
-        assert manager._autopilot_service == autopilot_service
+        assert manager._cron_service == cron_service
 
 
 class TestHandleInbound:

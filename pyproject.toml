@@ -11,7 +11,6 @@ dependencies = [
     "soothe-client-python",
     "soothe-cli",
     "soothe",
-    "soothe-autopilot",
     "soothe-daemon",
 ]
 
@@ -36,7 +35,6 @@ soothe-nano = { workspace = true }
 soothe-client-python = { workspace = true }
 soothe-cli = { workspace = true }
 soothe = { workspace = true }
-soothe-autopilot = { workspace = true }
 soothe-daemon = { workspace = true }
 
 [dependency-groups]
@@ -74,7 +72,6 @@ paths = [
     "packages/soothe-sdk/vulture_whitelist.py",
     "packages/soothe-sdk/src",
     "packages/soothe/src",
-    "packages/soothe-autopilot/src",
     "packages/soothe-daemon/src",
     "packages/soothe-cli/src",
 ]

@@ -241,7 +241,7 @@ class SootheConfig(BaseSettings):
     # --- Agent behaviour (unified) ---
 
     agent: AgentConfig = Field(default_factory=AgentConfig)
-    """Unified agent configuration: identity, behavior, autopilot, loop, protocols."""
+    """Unified agent configuration: identity, behavior, rail, loop, protocols."""
 
     subagents: dict[str, SubagentConfig] = Field(default_factory=dict)
     """Subagent name to config mapping. Set `enabled: false` to disable.

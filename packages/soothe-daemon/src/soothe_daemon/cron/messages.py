@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 AUTOPILOT_REQUIRED_FOR_CRON = (
-    "Autopilot is disabled. Set agent.autopilot.enabled to true in config "
-    "and restart the daemon (soothed restart) before scheduling cron jobs."
+    "Cron dispatch is unavailable. The loop-native submission path is not "
+    "configured — ensure the daemon is running with a valid rail_id before "
+    "scheduling cron jobs."
 )
-"""Message shown when cron submission requires a running autopilot scheduler."""
+"""Message shown when cron submission cannot dispatch via the loop-native path."""

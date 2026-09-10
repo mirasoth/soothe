@@ -801,6 +801,7 @@ class SootheRunner(
         clarification_answers: list[str] | None = None,  # RFC-622: per-question answers
         resume_interrupted: bool = False,  # daemon crash recovery
         approved_plan_path: str | None = None,  # Bug #3: plan-mode approve exec goal
+        autopilot_rail_id: str | None = None,  # RFC-231: rail id → LoopRailInterpreter
     ) -> AsyncGenerator[StreamChunk]:
         """Stream agent execution with protocol orchestration.
 
@@ -902,6 +903,7 @@ class SootheRunner(
                 clarification_answers=clarification_answers,
                 resume_interrupted=resume_interrupted,
                 approved_plan_path=approved_plan_path,
+                autopilot_rail_id=autopilot_rail_id,
             ):
                 yield chunk
         finally:
@@ -917,17 +919,17 @@ class SootheRunner(
         max_iterations: int,
         intake_scope: str | None = None,
     ) -> AsyncGenerator[StreamChunk]:
-        """Run an autopilot-dispatched goal (overridden by `AutopilotSootheRunner`).
+        """Run a daemon-dispatched goal (overridden by daemon runner subclass).
 
-        The base `SootheRunner` is autopilot-agnostic: it must never receive a
-        non-`None` `autopilot_job`. The daemon constructs
-        `soothe_autopilot.AutopilotSootheRunner` in autopilot worker loops; that
-        subclass overrides this hook with the goal-dispatch implementation.
+        The base `SootheRunner` is dispatch-agnostic: it must never receive a
+        non-`None` `autopilot_job`. The daemon constructs its runner subclass
+        in worker loops; that subclass overrides this hook with the
+        goal-dispatch implementation.
 
         Raises:
             RuntimeError: If a bare `SootheRunner` receives an `autopilot_job`.
         """
         raise RuntimeError(
-            "autopilot_job reached a non-autopilot SootheRunner; construct "
-            "soothe_autopilot.AutopilotSootheRunner in autopilot workers"
+            "autopilot_job reached a non-dispatch SootheRunner; construct "
+            "the daemon runner subclass in worker loops"
         )

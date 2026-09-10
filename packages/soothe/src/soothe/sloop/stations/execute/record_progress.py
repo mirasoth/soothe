@@ -12,6 +12,58 @@ from soothe.sloop.utils.plan_action_text import resolve_plan_action_text
 logger = logging.getLogger(__name__)
 
 
+async def _emit_step_rail_events(
+    ctx: LoopRuntimeContext,
+    step_results: list[Any],
+    decompose_parent_ids: set[str],
+) -> None:
+    """Emit step_completed/step_failed RailEvents after CE step feedback.
+
+    Reads ``ctx.rail_interpreter``; no-op when absent or no CE goal bound.
+    Skips decomposing parent steps that stayed active (not marked
+    complete/failed in CE). Handle failures are logged and swallowed so a
+    rail rule error never blocks iteration persistence.
+
+    Args:
+        ctx: Loop runtime context carrying the rail interpreter.
+        step_results: Step execution records from the just-finished wave.
+        decompose_parent_ids: Step ids that queued decomposition proposals;
+            their CE transitions were skipped, so skip their rail events too.
+    """
+    rail = ctx.rail_interpreter
+    goal_id = ctx.ce_goal_id
+    if rail is None or not goal_id:
+        return
+    from soothe.rails.interpreter import RailEvent
+
+    for r in step_results:
+        if r.step_id in decompose_parent_ids:
+            continue
+        event = RailEvent(
+            name="step_completed" if r.success else "step_failed",
+            job_id=goal_id,
+            goal_id=goal_id,
+            payload={
+                "step_id": r.step_id,
+                "success": r.success,
+                "outcome": r.outcome,
+                "error": r.error,
+                "error_type": r.error_type,
+                "duration_ms": r.duration_ms,
+                "thread_id": r.thread_id,
+            },
+        )
+        try:
+            await rail.handle(event)
+        except Exception:
+            logger.warning(
+                "[record_iteration] RailEvent %s handle failed for step %s",
+                event.name,
+                r.step_id,
+                exc_info=True,
+            )
+
+
 async def node_record_iteration(ctx: LoopRuntimeContext, _state: dict[str, Any]) -> dict[str, Any]:
     """Checkpoint persist + iteration_completed emission; advance iteration counter."""
     state = ctx.loop_state
@@ -84,6 +136,11 @@ async def node_record_iteration(ctx: LoopRuntimeContext, _state: dict[str, Any])
                 ctx.ce.increment_iteration(ctx.ce_goal_id)
         except Exception:
             logger.warning("[record_iteration] CE step feedback failed", exc_info=True)
+
+    # RFC-231 LoopRail: emit step_completed/step_failed RailEvents so rail
+    # rules can react to per-step outcomes (e.g. complete_job, review/qa
+    # transitions). Reads ``ctx.rail_interpreter``; no-op when unbound.
+    await _emit_step_rail_events(ctx, step_results, decompose_parent_ids)
 
     iteration_completed = state.iteration
     state.iteration += 1

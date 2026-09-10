@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from soothe_autopilot.notify.models import DeliveryResult, NotifyIntent, NotifyTarget
+from soothe_daemon.notify.models import DeliveryResult, NotifyIntent, NotifyTarget
 
 if TYPE_CHECKING:
     from soothe.config.models import FeishuNotifySinkConfig

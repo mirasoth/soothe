@@ -236,20 +236,6 @@ class TestEnvelopeFormatValidation:
         )
         assert "loop_id" in errors[0]
 
-    def test_autopilot_events_subscribe_envelope(self) -> None:
-        assert (
-            validate_message(
-                {
-                    "proto": "1",
-                    "type": "subscribe",
-                    "method": "autopilot_events",
-                    "params": {},
-                    "id": "s1",
-                }
-            )
-            == []
-        )
-
     def test_job_create_envelope(self) -> None:
         assert (
             validate_message(
@@ -391,7 +377,7 @@ class TestEnvelopeFormatValidation:
                     "proto": "1",
                     "type": "request",
                     "method": "rpc_command",
-                    "params": {"command": "autopilot_status"},
+                    "params": {"command": "daemon_status"},
                     "id": "r1",
                 }
             )

@@ -273,7 +273,7 @@ async def resolve_rail_for_job(
         workspace: Optional workspace for catalog tier + `.rail-default`.
         catalog: Optional catalog; constructed from workspace when None.
         picker: Optional LLM picker; when None, skip LLM step.
-        default_rail: Config `agent.autopilot.default_rail`.
+        default_rail: Config `agent.rail.default_rail`.
         auto_pick: Master switch for the LLM step.
         min_confidence: Threshold for accepting pick or abstain.
         deny: Extra rail ids excluded from candidates.
@@ -368,7 +368,7 @@ async def resolve_rail_for_job(
     rid, source = _deterministic_fallback(workspace=workspace, default_rail=default_rail)
     reasoning = {
         "workspace_default": "workspace .rail-default",
-        "config_default": "agent.autopilot.default_rail",
+        "config_default": "agent.rail.default_rail",
         "none": "no rail resolved",
     }[source]
     return RailPickResult(

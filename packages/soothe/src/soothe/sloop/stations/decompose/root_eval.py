@@ -129,6 +129,44 @@ def _eval_envelope(goal_text: str, nodes: list[Any]) -> str:
     )
 
 
+async def _emit_dag_idle_rail_event(
+    ctx: LoopRuntimeContext,
+    goal: Any,
+) -> None:
+    """Emit a dag_idle RailEvent when the action tree is green and idle.
+
+    Fires once at the coverage-ready gate so rail rules can trigger
+    complete_job or review/qa transitions. Reads ``ctx.rail_interpreter``;
+    no-op when unbound. Handle failures are logged and swallowed so a rail
+    rule error never blocks the ROOT_EVAL decision.
+
+    Args:
+        ctx: Loop runtime context carrying the rail interpreter.
+        goal: CE goal whose ``steps`` StepDAG is coverage-ready.
+    """
+    rail = ctx.rail_interpreter
+    goal_id = ctx.ce_goal_id
+    if rail is None or not goal_id:
+        return
+    from soothe.rails.interpreter import RailEvent
+
+    event = RailEvent(
+        name="dag_idle",
+        job_id=goal_id,
+        goal_id=goal_id,
+        payload={
+            "completed_step_ids": sorted(goal.steps.completed_step_ids()),
+            "failed_step_ids": sorted(goal.steps.failed_step_ids()),
+            "decomposed_step_ids": sorted(goal.steps.decomposed_step_ids()),
+            "node_count": len(goal.steps.nodes),
+        },
+    )
+    try:
+        await rail.handle(event)
+    except Exception:
+        logger.warning("[root_eval] RailEvent dag_idle handle failed", exc_info=True)
+
+
 class RootEvalNode(LoopNode):
     """Insert a fresh Eval StepNode when coverage audit is required."""
 
@@ -168,6 +206,11 @@ class RootEvalNode(LoopNode):
                         return NodeResult(payload={"root_eval_route": "dispatch"})
                     logger.warning("[root_eval] action tree not green and no ready steps")
                     return NodeResult(payload={"root_eval_route": "fatal"})
+
+                # RFC-231 LoopRail: action tree is green and no pending action
+                # steps remain. Emit dag_idle so rail rules can trigger
+                # complete_job or review/qa transitions before coverage Eval.
+                await _emit_dag_idle_rail_event(ctx, goal)
 
                 latest = goal.steps.latest_eval()
                 if latest is not None:

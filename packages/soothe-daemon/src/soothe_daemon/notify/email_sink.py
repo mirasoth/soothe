@@ -10,8 +10,7 @@ import time
 from email.message import EmailMessage
 from typing import TYPE_CHECKING
 
-from soothe_autopilot.notify.models import DeliveryResult, NotifyIntent, NotifyTarget
-
+from soothe_daemon.notify.models import DeliveryResult, NotifyIntent, NotifyTarget
 from soothe_daemon.notify.render import intent_html_body, intent_plain_body, intent_subject
 
 if TYPE_CHECKING:

@@ -16,9 +16,9 @@ from soothe.events import StreamChunk
 class GoalDispatchEnvelope:
     """Transient dispatch message for worker goal execution.
 
-    This is a **wire message**, not a persistent entity. Created by the daemon's
-    `AutopilotService` when dispatching a goal to a subprocess worker, and
-    consumed by the worker's `SootheRunner.astream(autopilot_job=...)` path.
+    This is a **wire message**, not a persistent entity. Created by the daemon
+    scheduler when dispatching a goal to a subprocess worker, and consumed by
+    the worker's `SootheRunner.astream(autopilot_job=...)` path.
 
     **Terminology note:**
     - "Job" in /Desktop UX = user-facing term for a **root Goal** (persistent)
@@ -59,7 +59,7 @@ class LoopRunRequest:
           hash uses `user_id` (or `""`) with `client_workspace_id` or `loop_id`.
 
     Autopilot extension (additive): when `autopilot_job` is set, this
-    request is dispatched by the daemon's `AutopilotService`; the worker
+    request is dispatched by the daemon scheduler; the worker
     branches to a hydrate-from-bundle path. When `None`, the worker runs
     today's solo-mode path. The `LoopRunnerProtocol.run` signature is
     unchanged.
@@ -103,7 +103,7 @@ class LoopRunRequest:
     # Skips the chitchat fast-path, preserves ``recovery_valid_resume``, and
     # must not cancel the in-flight goal (unlike bare continue/resume keywords).
     resume_interrupted: bool = False
-    # RFC-222 revised: set by daemon's AutopilotService for autopilot-dispatched
+    # RFC-222 revised: set by daemon scheduler for autopilot-dispatched
     # goals. None for solo-mode requests (default).
     autopilot_job: GoalDispatchEnvelope | None = None
     # Bug #3: plan-mode approve auto-enqueues an exec goal carrying the approved
@@ -111,6 +111,11 @@ class LoopRunRequest:
     # so DISPATCH grounds the plan body (read from disk) onto the exec goal's
     # fresh root. None for normal goals.
     approved_plan_path: str | None = None
+    # RFC-231: builtin rail id → the runner forwards it to
+    # ``StrangeLoop.run_with_progress(autopilot_rail_id=…)`` so a
+    # ``LoopRailInterpreter`` is bound for this goal. Set by the
+    # ``/autopilot [rail_name] <goal>`` slash command (loop-native path).
+    autopilot_rail_id: str | None = None
 
     def resolve_workspace_path(self) -> str:
         """Absolute workspace path for `SootheRunner.astream(workspace=...)`."""
@@ -130,7 +135,7 @@ class LoopRunRequest:
 class LoopRunnerProtocol(Protocol):
     """Structural interface satisfied by all loop runner implementations.
 
-    Consumers (`QueryEngine`, `AutopilotService`) depend only on this
+    Consumers (`QueryEngine`, daemon scheduler) depend only on this
     interface. The concrete runtime — `LocalLoopRunner` (multiprocessing)
     or `RayLoopRunner` (Ray actor) — is selected by
     `soothe_daemon.runner.LoopRunnerFactory` based on `SootheDaemonConfig`.

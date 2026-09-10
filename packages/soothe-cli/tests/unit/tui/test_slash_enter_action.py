@@ -49,7 +49,6 @@ def _key(name: str) -> SimpleNamespace:
         ("/help", EnterAction.EXECUTE),
         ("/model", EnterAction.EXECUTE),
         ("/tokens", EnterAction.EXECUTE),
-        ("/autopilot", EnterAction.COMPLETE),
         ("/cron", EnterAction.COMPLETE),
         ("/plan", EnterAction.COMPLETE),
         ("/deep_research", EnterAction.COMPLETE),
@@ -66,7 +65,6 @@ def test_static_complete_commands_are_explicit() -> None:
     complete = {cmd.name for cmd in COMMANDS if cmd.enter_action == EnterAction.COMPLETE}
     assert complete == {
         "/academic_research",
-        "/autopilot",
         "/browser_use",
         "/cron",
         "/deep_research",
@@ -83,12 +81,12 @@ def test_enter_on_clear_submits() -> None:
     assert view.replacements[-1][2] == "/clear"
 
 
-def test_enter_on_autopilot_completes_only() -> None:
+def test_enter_on_cron_completes_only() -> None:
     view = _FakeView()
     controller = SlashCommandController(list(SLASH_COMMANDS), view)
-    controller.on_text_changed("/auto", 5)
-    assert controller.on_key(_key("enter"), "/auto", 5) == CompletionResult.HANDLED
-    assert view.replacements[-1][2] == "/autopilot"
+    controller.on_text_changed("/cro", 4)
+    assert controller.on_key(_key("enter"), "/cro", 4) == CompletionResult.HANDLED
+    assert view.replacements[-1][2] == "/cron"
 
 
 def test_enter_on_skill_completes_only() -> None:

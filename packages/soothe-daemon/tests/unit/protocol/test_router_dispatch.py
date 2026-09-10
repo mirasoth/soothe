@@ -120,8 +120,6 @@ def test_handler_registry_covers_all_legacy_message_types() -> None:
         "job_cancel",
         "job_dag",
         "job_guidance",
-        "autopilot_events",
-        "autopilot_unsubscribe",
     }
     unresolved = {m for m in envelope_methods if MessageRouter._resolve_handler(m) is None}
     assert not unresolved, f"No handler resolves for envelope methods: {unresolved}"
@@ -424,15 +422,15 @@ async def test_dispatch_unwraps_unsubscribe_envelope_with_loop_id() -> None:
 
 @pytest.mark.asyncio
 async def test_dispatch_unwraps_unsubscribe_envelope_without_loop_id() -> None:
-    """An ``unsubscribe`` envelope without ``loop_id`` maps to
-    ``autopilot_unsubscribe`` flat type and reaches the handler."""
+    """An ``unsubscribe`` envelope without ``loop_id`` maps to the
+    ``disconnect`` flat type and reaches the handler."""
     router, daemon = _make_router()
     called: list[dict[str, Any]] = []
 
     async def _stub_handler(client_id, msg):
         called.append(msg)
 
-    router._handle_autopilot_unsubscribe = _stub_handler  # type: ignore[method-assign]
+    router._handle_detach = _stub_handler  # type: ignore[method-assign]
 
     await router.dispatch(
         "client-1",
@@ -444,7 +442,7 @@ async def test_dispatch_unwraps_unsubscribe_envelope_without_loop_id() -> None:
         },
     )
     assert len(called) == 1
-    assert called[0]["type"] == "autopilot_unsubscribe"
+    assert called[0]["type"] == "disconnect"
     assert called[0]["request_id"] == "sub-1"
 
 

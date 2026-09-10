@@ -23,6 +23,7 @@ from soothe_daemon.cron.store import CronJobStore
 def _mock_config(*, max_jobs: int = 100, poll_interval: int = 60) -> MagicMock:
     cfg = MagicMock()
     cfg.agent.autopilot.enabled = True
+    cfg.agent.autopilot.default_rail = "feature-dev"
     cfg.cron.max_jobs = max_jobs
     cfg.cron.poll_interval = poll_interval
     cfg.cron.extraction_model = "fast"
@@ -55,12 +56,12 @@ def temp_store(tmp_path) -> CronJobStore:
 
 @pytest.mark.asyncio
 async def test_add_job_rejects_when_autopilot_disabled(temp_store: CronJobStore) -> None:
-    """Pending jobs must not be created when autopilot scheduling is disabled."""
+    """Pending jobs must not be created when the loop-native path is disabled."""
     svc = CronService(config=_mock_config(), store=temp_store)
     svc._config.agent.autopilot.enabled = False
     svc._extraction_service.extract = AsyncMock(return_value=_extraction())
 
-    with pytest.raises(AutopilotDisabledError, match="Autopilot is disabled"):
+    with pytest.raises(AutopilotDisabledError, match="Cron dispatch is unavailable"):
         await svc.add_job("in 1 hour check deploy", DEFAULT_CRON_USER_ID)
 
     assert await svc.list_jobs(DEFAULT_CRON_USER_ID) == []
@@ -179,12 +180,21 @@ async def test_cancel_job_pending_only(temp_store: CronJobStore) -> None:
 
 
 @pytest.mark.asyncio
-async def test_tick_dispatches_due_job_to_autopilot(temp_store: CronJobStore) -> None:
-    autopilot = MagicMock()
-    goal = MagicMock(id="goal-abc")
-    autopilot.submit_task = AsyncMock(return_value=goal)
+async def test_tick_dispatches_due_job_to_loop(temp_store: CronJobStore) -> None:
+    """Due jobs are dispatched via the loop-native path (loop_input enqueue)."""
+    loop_input_dispatcher = MagicMock()
+    loop_input_dispatcher.enqueue = AsyncMock()
+    persistence_manager = MagicMock()
+    persistence_manager.register_loop = AsyncMock()
+    persistence_manager.update_loop_metadata = AsyncMock()
+    persistence_manager.increment_loop_message_count = AsyncMock()
 
-    svc = CronService(config=_mock_config(), store=temp_store, autopilot=autopilot)
+    svc = CronService(
+        config=_mock_config(),
+        store=temp_store,
+        loop_input_dispatcher=loop_input_dispatcher,
+        persistence_manager=persistence_manager,
+    )
     due_job = CronJob(
         id="due001",
         user_id=DEFAULT_CRON_USER_ID,
@@ -198,11 +208,14 @@ async def test_tick_dispatches_due_job_to_autopilot(temp_store: CronJobStore) ->
 
     await svc._tick()
 
-    autopilot.submit_task.assert_awaited_once_with(
-        "run nightly backup",
-        priority=50,
-        cron_job_id="due001",  # RFC-229: Link goal to cron job for rescheduling
-    )
+    # The loop_input dispatcher is enqueued with a payload carrying
+    # autopilot_rail_id (the loop-native rail binding).
+    loop_input_dispatcher.enqueue.assert_awaited_once()
+    call_args = loop_input_dispatcher.enqueue.call_args
+    payload = call_args.kwargs.get("message") or call_args.args[1]
+    assert payload["text"] == "run nightly backup"
+    assert payload["autopilot_rail_id"] == "feature-dev"
+    assert payload["cron_job_id"] == "due001"
     updated = await temp_store.get("due001")
     assert updated is not None
     assert updated.status == JobStatus.COMPLETED

@@ -121,7 +121,7 @@ class LoopRailInterpreter:
 
         Engine concerns (only):
           - `engine_max_parallel_goals` — spawn budget from
-            `autopilot.max_parallel_goals` (capacity clamp).
+            the daemon scheduler (capacity clamp).
 
         LoopRail concerns (from YAML / multi-form WavePlan transfer, never submit kwargs):
           - When `fanout:` is present: `require_plan`, scout/max_waves.

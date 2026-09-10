@@ -90,7 +90,7 @@ def test_host_agent_config_subclasses_nano() -> None:
     )
     assert host_only == {
         "assistant_identity",
-        "autopilot",
+        "rail",
         "clarification",
         "loop",
         "veritas",

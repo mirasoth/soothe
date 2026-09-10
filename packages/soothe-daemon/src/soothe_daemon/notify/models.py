@@ -1,7 +1,10 @@
-"""Job lifecycle notify intents.
+"""Job lifecycle notify intents (daemon-local).
 
 Channel-agnostic payloads produced by the host NotificationRouter and
 consumed by daemon NotifySink adapters (email, webhook, Feishu, …).
+
+These models were relocated from ``soothe_autopilot.notify.models`` so the
+daemon no longer depends on the ``soothe-autopilot`` package for notify.
 """
 
 from __future__ import annotations

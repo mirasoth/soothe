@@ -66,13 +66,13 @@ async def test_cmd_cron_add_missing_text() -> None:
 
 @pytest.mark.asyncio
 async def test_cmd_cron_add_autopilot_disabled() -> None:
-    """cron_add surfaces guidance when autopilot scheduling is disabled."""
+    """cron_add surfaces guidance when the loop-native path is disabled."""
     daemon = MagicMock()
     daemon._cron_service = MagicMock()
     daemon._cron_service.add_job = AsyncMock(
         side_effect=AutopilotDisabledError(AUTOPILOT_REQUIRED_FOR_CRON),
     )
-    with pytest.raises(ValueError, match="Autopilot is disabled"):
+    with pytest.raises(ValueError, match="Cron dispatch is unavailable"):
         await _cmd_cron_add(
             daemon,
             None,
@@ -103,7 +103,8 @@ async def test_cmd_cron_add_lazy_service_creation(monkeypatch: pytest.MonkeyPatc
     daemon = MagicMock()
     daemon._cron_service = None
     daemon._config = MagicMock()
-    daemon._autopilot_service = MagicMock()
+    daemon._loop_input_dispatcher = MagicMock()
+    daemon._persistence_manager = MagicMock()
     job = _sample_job()
 
     mock_instance = MagicMock()
@@ -118,6 +119,10 @@ async def test_cmd_cron_add_lazy_service_creation(monkeypatch: pytest.MonkeyPatc
         loop_id="loop-1",
     )
 
-    mock_cls.assert_called_once_with(config=daemon._config, autopilot=daemon._autopilot_service)
+    mock_cls.assert_called_once_with(
+        config=daemon._config,
+        loop_input_dispatcher=daemon._loop_input_dispatcher,
+        persistence_manager=daemon._persistence_manager,
+    )
     assert daemon._cron_service is mock_instance
     assert result["cron_add"]["id"] == "job001"

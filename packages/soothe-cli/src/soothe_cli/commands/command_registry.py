@@ -67,13 +67,6 @@ class SlashCommand:
 
 COMMANDS: tuple[SlashCommand, ...] = (
     SlashCommand(
-        name="/autopilot",
-        description="Submit autopilot job (usage: /autopilot <task>)",
-        bypass_tier=BypassTier.QUEUED,
-        hidden_keywords="goals autonomous job submit",
-        enter_action=EnterAction.COMPLETE,
-    ),
-    SlashCommand(
         name="/cron",
         description="Add scheduled job (usage: /cron <natural language>)",
         bypass_tier=BypassTier.QUEUED,

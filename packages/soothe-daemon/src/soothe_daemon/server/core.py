@@ -105,10 +105,6 @@ class SootheDaemon(DaemonHandlersMixin):
         self._skill_index = SkillIndex()
 
         self._runner: Any = None
-        # RFC-222 revised (Phase B): daemon-owned AutopilotService placeholder.
-        # Constructed in start() with subscribe_to_bus=False to coexist with
-        # the per-runner AutopilotService until Phase D retires that one.
-        self._autopilot_service: Any = None  # AutopilotService | None
         self._cron_service: Any = None  # CronService | None (RFC-229)
         self._running = False
         self._started_at: str | None = None
@@ -588,7 +584,6 @@ class SootheDaemon(DaemonHandlersMixin):
                 raise
 
             # RFC-221: LoopRunnerFactory creates one subprocess runner per loop_id.
-            # Construct it BEFORE AutopilotService — the autopilot wraps it.
             from soothe_daemon.runner.factory import LoopRunnerFactory
 
             try:
@@ -602,200 +597,39 @@ class SootheDaemon(DaemonHandlersMixin):
                 self._readiness_message = str(exc)
                 raise
 
-            # RFC-222 revised (Phase C): daemon-owned AutopilotService with
-            # full real-dispatch wiring. Constructs its OWN ContextEngine and
-            # InternalEventBus (not the singleton/runner's) so its DAG state
-            # and event subscriptions are isolated from the per-runner
-            # AutopilotService that handles Autopilot goal dispatch in subprocess.
-            #
-            # The daemon-owned instance is the one HTTP /autopilot/submit
-            # talks to (Phase C5 cutover). Its scheduling loop dispatches
-            # to subprocess workers via the runner_factory above.
-            #
-            # RFC-625: Uses ContextEngine + AutopilotMonitor instead of GoalEngine.
+            # IG-713: job lifecycle notify (email / webhook / Feishu sinks).
+            # The NotifyDispatcher is built from the daemon notify config and
+            # is no longer wired through AutopilotService.
             try:
-                from soothe.context import ContextEngine
-                from soothe.events.internal_bus import InternalEventBus
-                from soothe_autopilot import AutopilotMonitor, AutopilotService
-                from soothe_autopilot.dispatch.durability_store import (
-                    DurabilityGoalDispatchContextStore,
+                from soothe_daemon.notify import build_notify_dispatcher_from_config
+
+                self._notify_dispatcher = build_notify_dispatcher_from_config(
+                    self._config.agent.autopilot.notify,
+                    legacy_webhooks=self._config.agent.autopilot.webhooks,
                 )
-                from soothe_autopilot.dispatch.projector import ContextProjector
-                from soothe_autopilot.workers.workspace_reservation import WorkspaceReservation
-                from soothe_nano.backends.persistence import create_persist_store
-                from soothe_sdk.paths import SOOTHE_DATA_DIR
-
-                # Isolated bus for the daemon's autopilot domain.
-                daemon_autopilot_bus = InternalEventBus()
-                # RFC-625: ContextEngine is the sole in-process SoT for the
-                # autopilot goal DAG. Persistence is the sidecar snapshot in
-                # ``goal_persist_store`` (restored in AutopilotService.start);
-                # worker StrangeLoop CEs remain loop-scoped (ledger/steps).
-                # Full unified durability is tracked in P1-4.
-                daemon_ce = ContextEngine()
-                # RFC-625: AutopilotMonitor handles proactive DAG monitoring.
-                daemon_monitor = AutopilotMonitor(
-                    ce=daemon_ce,
-                    bus=daemon_autopilot_bus,
-                    config=self._config,
-                )
-                ws_cfg = self._config.agent.autopilot.workspace_reservation
-                workspace_reservation = WorkspaceReservation(
-                    enabled=ws_cfg.enabled,
-                    strict_overlap=ws_cfg.strict_overlap,
-                )
-
-                dur_backend = self._config.resolve_durability_backend()
-                dur_cfg = self._config.agent.protocols.durability
-                persist_dir = dur_cfg.persist_dir or str(SOOTHE_DATA_DIR)
-                if dur_backend == "postgresql":
-                    from soothe.persistence.shared_metadata_pool import (
-                        SharedMetadataPool,
-                    )
-
-                    dsn = self._config.resolve_postgres_dsn_for_database("metadata")
-                    metadata_pool = SharedMetadataPool.get_or_create_pool(self._config)
-                    goal_persist_store = create_persist_store(
-                        backend="postgresql",
-                        dsn=dsn,
-                        namespace="autopilot_goals",
-                        config=self._config,
-                        shared_pool=metadata_pool,
-                    )
-                    context_persist_store = create_persist_store(
-                        backend="postgresql",
-                        dsn=dsn,
-                        namespace="autopilot_context",
-                        config=self._config,
-                        shared_pool=metadata_pool,
-                    )
-                else:
-                    goal_persist_store = create_persist_store(
-                        persist_dir=persist_dir,
-                        backend="sqlite",
-                        namespace="autopilot_goals",
-                    )
-                    context_persist_store = create_persist_store(
-                        persist_dir=persist_dir,
-                        backend="sqlite",
-                        namespace="autopilot_context",
-                    )
-
-                consensus_model = None
-                consensus_role = self._config.agent.autopilot.consensus_model_role
-                try:
-                    consensus_model = self._config.create_chat_model(consensus_role)
-                except Exception:
-                    logger.warning(
-                        "[Autopilot] consensus model unavailable after %s→default "
-                        "fallback; completed goals will suspend until a model is configured",
-                        consensus_role,
-                    )
-
-                auto_pick_model = None
-                ap_cfg = self._config.agent.autopilot
-                if ap_cfg.rail_auto_pick:
-                    pick_role = ap_cfg.rail_auto_pick_model_role or ap_cfg.monitor_model_role
-                    if pick_role == consensus_role and consensus_model is not None:
-                        auto_pick_model = consensus_model
-                    else:
-                        try:
-                            auto_pick_model = self._config.create_chat_model(pick_role)
-                        except Exception:
-                            logger.warning(
-                                "[Autopilot] rail auto-pick model unavailable for role %s; "
-                                "submit will use deterministic rail defaults only",
-                                pick_role,
-                            )
-
-                self._autopilot_service = AutopilotService(
-                    ce=daemon_ce,
-                    config=self._config.agent.autopilot,
-                    internal_bus=daemon_autopilot_bus,
-                    monitor=daemon_monitor,
-                    subscribe_to_bus=True,
-                    runner_factory=self._runner_factory,
-                    workspace_reservation=workspace_reservation,
-                    consensus_model=consensus_model,
-                    auto_pick_model=auto_pick_model,
-                    goal_persist_store=goal_persist_store,
-                    soothe_config=self._config,
-                )
-                if context_persist_store is not None:
-                    self._autopilot_service._context_store = DurabilityGoalDispatchContextStore(
-                        context_persist_store
-                    )
-                else:
-                    from soothe_autopilot.dispatch.store import InMemoryGoalDispatchContextStore
-
-                    cp = self._config.agent.autopilot.context_projection
-                    self._autopilot_service._context_store = InMemoryGoalDispatchContextStore(
-                        max_entries=cp.max_context_entries,
-                        retention_hours=cp.context_retention_hours,
-                    )
-                self._autopilot_service.set_context_projector(
-                    ContextProjector(
-                        self._autopilot_service._context_store,
-                        self._config.agent.autopilot.context_projection,
-                    )
-                )
-                # IG-713: job lifecycle notify (email / webhook / Feishu sinks)
-                try:
-                    from soothe_daemon.notify import build_notify_dispatcher_from_autopilot
-
-                    self._notify_dispatcher = build_notify_dispatcher_from_autopilot(
-                        self._config.agent.autopilot
-                    )
-                    self._autopilot_service.set_notify_dispatch(self._notify_dispatcher.dispatch)
-                except Exception:
-                    logger.exception("[Notify] failed to wire NotifyDispatcher")
-                    self._notify_dispatcher = None
-                logger.info(
-                    "[Autopilot] daemon-owned AutopilotService constructed "
-                    "(real dispatch enabled; scheduling loop will start)"
-                )
-
-                # RFC-229: Create daemon-owned CronService for scheduled jobs
-                try:
-                    from soothe_daemon.cron import CronService
-                    from soothe_daemon.cron.store_factory import create_cron_job_store
-
-                    self._cron_service = CronService(
-                        config=self._config,
-                        autopilot=self._autopilot_service,
-                        store=create_cron_job_store(self._config),
-                    )
-                    logger.info(
-                        "[Cron] daemon-owned CronService constructed (monitoring loop will start)"
-                    )
-                except Exception:
-                    logger.exception("[Cron] failed to construct daemon-owned CronService")
-                    self._cron_service = None
-
-                # RFC-228: Bridge internal autopilot events to client-visible
-                # events for sessions with autopilot_subscribed=True
-                from soothe.events.internal_events import internal_to_client_event
-
-                async def _bridge_internal_to_client(event: Any) -> None:
-                    """Bridge internal event to client-visible event for autopilot subscribers."""
-                    # Convert internal event to client-visible format
-                    client_event = internal_to_client_event(event)
-                    if client_event is None:
-                        return
-                    # Publish to autopilot topic for subscribed clients
-                    await self._event_bus.publish(
-                        "autopilot",
-                        client_event.model_dump(mode="json"),
-                        event_meta=None,
-                    )
-
-                # Subscribe bridge to internal bus (forward relevant events)
-                daemon_autopilot_bus.subscribe("*", _bridge_internal_to_client)
             except Exception:
-                # Construction must never block daemon startup. Log loudly;
-                # autopilot endpoints will return 503.
-                logger.exception("[Autopilot] failed to construct daemon-owned AutopilotService")
-                self._autopilot_service = None
+                logger.exception("[Notify] failed to wire NotifyDispatcher")
+                self._notify_dispatcher = None
+
+            # RFC-229: Create daemon-owned CronService for scheduled jobs.
+            # Cron dispatches via the loop-native submission path (loop_input
+            # with autopilot_rail_id) — no AutopilotService dependency.
+            try:
+                from soothe_daemon.cron import CronService
+                from soothe_daemon.cron.store_factory import create_cron_job_store
+
+                self._cron_service = CronService(
+                    config=self._config,
+                    loop_input_dispatcher=self._loop_input_dispatcher,
+                    persistence_manager=self._persistence_manager,
+                    store=create_cron_job_store(self._config),
+                )
+                logger.info(
+                    "[Cron] daemon-owned CronService constructed (monitoring loop will start)"
+                )
+            except Exception:
+                logger.exception("[Cron] failed to construct daemon-owned CronService")
+                self._cron_service = None
 
             # Reap orphaned process_pool subprocesses left after crashes / restarts.
             try:
@@ -885,7 +719,6 @@ class SootheDaemon(DaemonHandlersMixin):
                 runner=self._runner,
                 soothe_config=self._config,
                 session_manager=self._session_manager,
-                autopilot_service=self._autopilot_service,
                 cron_service=self._cron_service,
                 memory_profiler=self._memory_profiler,
             )
@@ -932,23 +765,6 @@ class SootheDaemon(DaemonHandlersMixin):
                     "state": "idle",
                 }
             )
-
-            # RFC-222 revised (Phase C): start the daemon-owned AutopilotService's
-            # scheduling loop so HTTP /autopilot/submit submissions get dispatched.
-            # Failure to start is logged but does not block the daemon — autopilot
-            # endpoints will return 503-equivalent until the next restart.
-            # Only start if config.agent.autopilot.enabled is True.
-            if self._autopilot_service is not None and self._config.agent.autopilot.enabled:
-                try:
-                    await self._autopilot_service.start()
-                    logger.info("[Autopilot] scheduling loop started (enabled=true)")
-                except Exception:
-                    logger.exception("[Autopilot] failed to start scheduling loop")
-            elif self._autopilot_service is not None:
-                logger.info(
-                    "[Autopilot] service constructed but scheduling loop NOT started "
-                    "(config.agent.autopilot.enabled=false)"
-                )
 
             # RFC-229: Start CronService monitoring loop for scheduled jobs
             if self._cron_service is not None:
@@ -1387,27 +1203,6 @@ class SootheDaemon(DaemonHandlersMixin):
                     cfg.stale_running_seconds,
                     f", closed {closed_goals} orphaned goal(s)" if closed_goals else "",
                 )
-                # Close the autopilot-side gap: the persistence-layer demote
-                # above only flips the loop row. If this is an autopilot
-                # worker loop, also release the ProcessPool slot and
-                # WorkspaceReservation it held — otherwise a lost
-                # completion chunk leaves them pinned and (with strict
-                # workspace overlap) blocks every pending goal sharing
-                # that workspace.
-                if self._autopilot_service is not None:
-                    try:
-                        from soothe_autopilot.workers.pool import (
-                            is_autopilot_worker_loop_id,
-                        )
-
-                        if is_autopilot_worker_loop_id(loop_id):
-                            await self._autopilot_service.reconcile_stale_worker(loop_id)
-                    except Exception:
-                        logger.debug(
-                            "Autopilot stale-worker reconcile failed for %s",
-                            loop_id,
-                            exc_info=True,
-                        )
             except Exception:
                 logger.warning(
                     "Failed to demote stale loop %s",
@@ -1640,14 +1435,6 @@ class SootheDaemon(DaemonHandlersMixin):
                 await self._cron_service.stop()
             except Exception:
                 logger.warning("[Cron] stop raised during shutdown", exc_info=True)
-
-        # RFC-222 revised (Phase C): stop the autopilot scheduling loop early
-        # so it doesn't dispatch new goals while the rest of the daemon shuts down.
-        if self._autopilot_service is not None:
-            try:
-                await self._autopilot_service.stop(reason="shutdown")
-            except Exception:
-                logger.warning("[Autopilot] stop raised during shutdown", exc_info=True)
 
         await self._loop_input_dispatcher.shutdown()
 

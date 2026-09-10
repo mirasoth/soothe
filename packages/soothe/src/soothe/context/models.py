@@ -356,7 +356,7 @@ class StepDAG(BaseModel):
 class GoalNode(BaseModel):
     """Single goal in the unified Goal+Step DAG.
 
-    Migrated fields from Goal model (autopilot/models.py):
+    Migrated fields from the legacy Goal model (retired autopilot package):
     - retry_count, max_retries, send_back_count, max_send_backs
     - workspace, attempts_after_crash
     - pending_clarification
@@ -440,8 +440,8 @@ class GoalNode(BaseModel):
     branch_status: Literal["active", "pruned", "suspended"] | None = None
     role: str | None = None  # scout | planner | maker | checker | qa | root | …
 
-    # Forced StrangeLoop intake scope for Autopilot dispatch (IG-735).
-    # null (default) → AutopilotConfig.intake_scope, else loop intake classification.
+    # Forced StrangeLoop intake scope for dispatch (IG-735).
+    # null (default) → RailConfig.intake_scope, else loop intake classification.
     intake_scope: Literal["minimal", "simple", "complex"] | None = None
 
     # Cron job tracking (RFC-229)
