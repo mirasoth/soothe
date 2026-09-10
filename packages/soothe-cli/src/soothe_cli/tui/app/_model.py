@@ -333,6 +333,10 @@ class _ModelMixin:
         if len(tokens) >= 2 and tokens[0] in BUILTIN_RAIL_IDS:
             rail_id = tokens[0]
             goal_text = tokens[1].strip()
+        else:
+            # No rail prefix — send "auto" so the StrangeLoop auto-picks a
+            # rail via ``resolve_rail_for_job`` instead of running without one.
+            rail_id = "auto"
 
         if not goal_text:
             await self._mount_message(UserMessage(f"/autopilot {task}"))
@@ -344,7 +348,9 @@ class _ModelMixin:
             )
             return
 
-        display = f"/autopilot {task}" if rail_id else f"/autopilot {goal_text}"
+        display = (
+            f"/autopilot {task}" if rail_id and rail_id != "auto" else f"/autopilot {goal_text}"
+        )
         await self._mount_message(UserMessage(display))
 
         # Verify the daemon is live before submitting via the loop path.
@@ -368,7 +374,7 @@ class _ModelMixin:
             await self._mount_message(ErrorMessage(f"Failed to submit autopilot goal: {exc}"))
             return
 
-        if rail_id:
+        if rail_id and rail_id != "auto":
             self.notify(f"Autopilot goal submitted (rail: {rail_id})", timeout=5)
             logger.info(
                 "Submitted autopilot goal via loop path (rail=%s): %s",

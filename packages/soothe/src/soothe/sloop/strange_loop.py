@@ -138,6 +138,84 @@ class StrangeLoop:
 
         return LoopRelay(loop_id=loop_id, emit=emit)
 
+    async def _auto_pick_rail(
+        self,
+        *,
+        goal_text: str,
+        workspace: str | None = None,
+    ) -> str | None:
+        """Auto-pick a LoopRail for an autopilot goal without an explicit rail.
+
+        Called when ``autopilot_rail_id == "auto"`` (user typed
+        ``/autopilot <goal>`` without a rail prefix). Delegates to
+        ``resolve_rail_for_job`` which tries: explicit → workspace
+        ``.rail-default`` → LLM-based catalog matching → config default.
+        Returns ``None`` when the picker abstains.
+
+        Args:
+            goal_text: The goal description for LLM matching.
+            workspace: Optional workspace path for catalog tier resolution.
+
+        Returns:
+            A rail id string, or ``None`` when auto-pick abstains.
+        """
+        try:
+            from soothe.rails.selector import RailAutoPicker, resolve_rail_for_job
+
+            rail_cfg = getattr(self.config.agent, "rail", None)
+            default_rail = getattr(rail_cfg, "default_rail", None)
+            auto_pick_enabled = getattr(rail_cfg, "rail_auto_pick", True)
+            min_confidence = getattr(rail_cfg, "rail_auto_pick_min_confidence", 0.6)
+            deny = getattr(rail_cfg, "rail_auto_pick_deny", [])
+            max_candidates = getattr(rail_cfg, "rail_auto_pick_max_candidates", 32)
+            timeout_s = getattr(rail_cfg, "rail_auto_pick_timeout_s", 120.0)
+            skip_ws_default = getattr(rail_cfg, "rail_auto_pick_skip_if_workspace_default", False)
+            abstain_overrides = getattr(rail_cfg, "rail_auto_pick_abstain_overrides_defaults", True)
+
+            # Construct an LLM picker when auto_pick is enabled. The picker
+            # uses the configured model role (default: think) to run a
+            # structured catalog match. When the model can't be created
+            # (missing API key, etc.), fall back to deterministic resolution.
+            picker: RailAutoPicker | None = None
+            if auto_pick_enabled:
+                try:
+                    from soothe_nano.llm.factory import LLMFactory
+
+                    factory = LLMFactory(self.config)
+                    model_role = getattr(rail_cfg, "rail_auto_pick_model_role", None)
+                    # ModelRole is a Literal[str]; normalize enum → str.
+                    role_str = str(model_role) if model_role else "think"
+                    model = factory.create_chat_model(role=role_str)
+                    picker = RailAutoPicker(model, soothe_config=self.config)
+                except Exception:
+                    logger.warning(
+                        "[StrangeLoop] Failed to construct rail auto-pick model; "
+                        "falling back to deterministic resolution",
+                        exc_info=True,
+                    )
+
+            result = await resolve_rail_for_job(
+                explicit=None,
+                description=goal_text,
+                workspace=workspace,
+                default_rail=default_rail,
+                auto_pick=auto_pick_enabled,
+                min_confidence=min_confidence,
+                deny=deny or None,
+                max_candidates=max_candidates,
+                timeout_s=timeout_s,
+                skip_llm_if_workspace_default=skip_ws_default,
+                abstain_overrides_defaults=abstain_overrides,
+                picker=picker,
+            )
+            return result.rail_id
+        except Exception:
+            logger.warning(
+                "[StrangeLoop] Rail auto-pick failed; proceeding without rail",
+                exc_info=True,
+            )
+            return None
+
     def set_clarification_mode(
         self,
         mode: str,
@@ -867,8 +945,32 @@ class StrangeLoop:
             # is non-fatal: the goal proceeds without rail instrumentation and
             # a warning is logged so a missing/malformed rail YAML never
             # blocks execution.
+            #
+            # When ``autopilot_rail_id == "auto"``, the user typed
+            # ``/autopilot <goal>`` without a rail prefix. Auto-pick a rail
+            # via ``resolve_rail_for_job`` (LLM-based catalog matching) before
+            # binding. If auto-pick abstains, fall back to the config default
+            # rail; if that is also unset, proceed without a rail.
             rail_interpreter: Any | None = None
-            if autopilot_rail_id:
+            effective_rail_id = autopilot_rail_id
+            if autopilot_rail_id == "auto":
+                effective_rail_id = await self._auto_pick_rail(
+                    goal_text=goal,
+                    workspace=workspace,
+                )
+                if effective_rail_id:
+                    logger.info(
+                        "[StrangeLoop] Auto-picked rail=%s for goal=%s",
+                        effective_rail_id,
+                        ce_goal.id,
+                    )
+                else:
+                    logger.info(
+                        "[StrangeLoop] Rail auto-pick abstained for goal=%s; "
+                        "proceeding without rail instrumentation",
+                        ce_goal.id,
+                    )
+            if effective_rail_id and effective_rail_id != "auto":
                 try:
                     from soothe.rails.interpreter import LoopRailInterpreter
 
@@ -878,19 +980,19 @@ class StrangeLoop:
                     )
                     await rail_interpreter.bind_job(
                         ce_goal.id,
-                        rail_id=autopilot_rail_id,
+                        rail_id=effective_rail_id,
                     )
                     logger.info(
                         "[StrangeLoop] LoopRailInterpreter bound (goal=%s, rail=%s)",
                         ce_goal.id,
-                        autopilot_rail_id,
+                        effective_rail_id,
                     )
                 except Exception:
                     logger.warning(
                         "[StrangeLoop] LoopRailInterpreter bind failed "
                         "(goal=%s, rail=%s); proceeding without rail instrumentation",
                         ce_goal.id,
-                        autopilot_rail_id,
+                        effective_rail_id,
                         exc_info=True,
                     )
                     rail_interpreter = None
@@ -920,7 +1022,7 @@ class StrangeLoop:
                 goal_trace=active_goal_trace,
                 relay=self._build_relay(state_manager.loop_id, emit),
                 rail_interpreter=rail_interpreter,
-                autopilot_rail_id=autopilot_rail_id,
+                autopilot_rail_id=effective_rail_id,
             )
             runtime_ctx = ctx
             self._live_runtime_ctx = ctx

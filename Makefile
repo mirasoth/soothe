@@ -5,8 +5,7 @@
 # 2. soothe-nano       - SootheNanoAgent on deepagents (submodule at packages/soothe-nano)
 # 3. soothe-cli        - CLI client (Typer CLI + Textual TUI)
 # 4. soothe            - StrangeLoop / host composition
-# 5. soothe-autopilot  - Goal orchestration (Autopilot, rails, verify)
-# 6. soothe-daemon     - Daemon server (WebSocket/HTTP transports, cron)
+# 5. soothe-daemon     - Daemon server (WebSocket/HTTP transports, cron)
 #
 # Submodules (consume code only — do not format, lint, test, or release here):
 #   client/* (python/go/ts/rust)
@@ -24,14 +23,14 @@ DOCKER_PROD_COMPOSE := docker compose -f deploy/docker-compose.yml --env-file de
 .PHONY: format format-check lint lint-src lint-fix autofix vulture vulture-whitelist
 .PHONY: test test-unit test-integration test-coverage build clean
 .PHONY: bench-alert-slo
-.PHONY: cli-publish soothe-publish autopilot-publish daemon-publish sdk-publish publish
-.PHONY: cli-publish-test soothe-publish-test autopilot-publish-test daemon-publish-test sdk-publish-test publish-test
+.PHONY: cli-publish soothe-publish daemon-publish sdk-publish publish
+.PHONY: cli-publish-test soothe-publish-test daemon-publish-test sdk-publish-test publish-test
 
 # ============================================================================
 # Configuration
 # ============================================================================
 
-PACKAGES = soothe-sdk soothe-nano soothe-cli soothe soothe-autopilot soothe-daemon
+PACKAGES = soothe-sdk soothe-nano soothe-cli soothe soothe-daemon
 
 # Root-level directories to lint (outside packages)
 ROOT_LINT_DIRS = examples scripts
@@ -320,7 +319,6 @@ test-unit: sync
 test-integration: sync
 	@echo "Running integration tests..."
 	@cd packages/soothe && uv run pytest tests/integration/ --run-integration -v && cd ..
-	@cd packages/soothe-autopilot && uv run pytest tests/integration/ --run-integration -v && cd ..
 	@cd packages/soothe-daemon && uv run pytest tests/integration/ --run-integration -v && cd ..
 
 test-coverage: sync
@@ -334,7 +332,6 @@ test-coverage: sync
 # Alert pipeline latency benchmark + SLO enforcement.
 # Runs scripts/benchmark_alert_pipeline.py in --slo-only mode: exits non-zero
 # if any latency SLO threshold is breached. The companion pytest SLO checks
-# in packages/soothe-autopilot/tests/unit/core/autopilot/test_alert_pipeline_slo.py
 # run as part of `make test-unit`.
 bench-alert-slo: sync
 	@echo "Running alert pipeline latency benchmark & SLO gates..."
@@ -373,12 +370,12 @@ soothe-publish:
 	cd packages/soothe && uv publish dist/* --native-tls
 
 autopilot-publish:
-	cd packages/soothe-autopilot && uv publish dist/* --native-tls
+	@echo "soothe-autopilot package removed (merged into soothe); nothing to publish"
 
 daemon-publish:
 	cd packages/soothe-daemon && uv publish dist/* --native-tls
 
-publish: build sdk-publish cli-publish soothe-publish autopilot-publish daemon-publish
+publish: build sdk-publish cli-publish soothe-publish daemon-publish
 	@echo "Published to PyPI (nano publishes from its own repo)"
 
 sdk-publish-test:
@@ -391,10 +388,10 @@ soothe-publish-test:
 	cd packages/soothe && uv publish dist/* --index-url https://test.pypi.org/simple/ --native-tls
 
 autopilot-publish-test:
-	cd packages/soothe-autopilot && uv publish dist/* --index-url https://test.pypi.org/simple/ --native-tls
+	@echo "soothe-autopilot package removed (merged into soothe); nothing to publish"
 
 daemon-publish-test:
 	cd packages/soothe-daemon && uv publish dist/* --index-url https://test.pypi.org/simple/ --native-tls
 
-publish-test: build sdk-publish-test cli-publish-test soothe-publish-test autopilot-publish-test daemon-publish-test
+publish-test: build sdk-publish-test cli-publish-test soothe-publish-test daemon-publish-test
 	@echo "Published to TestPyPI"
