@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.0.10] - 2026-09-12
+
+### Fixed
+- Bump `soothe-nano` floor to 1.2.26: `git rm` is no longer blocked as a destructive standalone `rm`, and the `run_command` tool's security gate now honors loop-scoped human approvals from the `tool_approval` pipeline instead of re-denying the same command.
+
+[Compare with previous version]: https://github.com/mirasoth/soothe/compare/v1.0.9...v1.0.10
+
 ## [v1.0.9] - 2026-09-12
 
 ### Added
