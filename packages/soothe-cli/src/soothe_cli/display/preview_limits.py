@@ -5,16 +5,21 @@ from __future__ import annotations
 from typing import Final
 
 # --- Step cognition cards (`CognitionStepMessage`) ---
-# When False, step cards show the latest N tool activity lines in the branch tree
-# (task + main-agent scopes) plus per-kind counts on the running status line.
-# When True, the full nested tool list also renders in `#step-cognition-tools`.
-STEP_CARD_SHOW_TOOL_ROW_DETAILS: Final[bool] = False
-
 # Latest per-tool invocation lines on step cards and orphan SubAgent cards.
-STEP_CARD_TOOL_ACTIVITY_PREVIEW_COUNT: Final[int] = 2
+STEP_CARD_TOOL_ACTIVITY_PREVIEW_COUNT: Final[int] = 5
 
-# Optional manual full tool-list folding threshold (not auto-collapse).
-STEP_TASK_CARD_COLLAPSE_LINE_THRESHOLD: Final[int] = 3
+# File-edit branch on step cards: latest N file-write tool rows (write_file,
+# edit_file, edit_lines, insert_lines, delete_lines, apply_diff, delete_file).
+# The File-edit branch is always rendered (no gate); it only shows when there
+# are file-write tool rows for the step.
+STEP_CARD_FILE_EDIT_PREVIEW_COUNT: Final[int] = 5
+
+# TUI file-change preview cards (the standalone write/edit/delete diff cards
+# mounted in the chat transcript, NOT the step-card File-edit branch).
+# When False (default), the standalone file-change cards are suppressed so
+# file edits appear only in the step-card File-edit branch. Set True to also
+# mount the dedicated diff/content preview cards.
+TUI_FILE_CHANGE_CARDS_ENABLED: Final[bool] = False
 
 # Single-line task-description preview on task markers and orphan SubAgent headers.
 TASK_DELEGATION_DESC_MAX_CHARS: Final[int] = 80

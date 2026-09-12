@@ -44,10 +44,10 @@ class CLIConfig:
     output_streaming_mode: str | None = None
     """Override daemon streaming mode: 'streaming' or 'batch'."""
 
-    # Composer mode (Auto / Manual / Plan). Auto/Manual map to RFC-622
-    # clarification_mode; Plan sets interaction_mode=plan (read-only plan graph).
+    # Composer mode (Auto / Plan). Auto maps to RFC-622 clarification_mode=auto;
+    # Plan sets interaction_mode=plan (read-only plan graph).
     clarification_mode: str | None = None
-    """'manual', 'auto', or 'plan'. None = seed from daemon default_mode."""
+    """'auto' or 'plan'. None = seed from daemon default_mode."""
 
     # Resume behavior: when the launcher finds an active loop on startup,
     # auto-resume it (True) or prompt the user (False, default).

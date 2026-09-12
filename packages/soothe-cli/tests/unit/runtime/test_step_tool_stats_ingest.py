@@ -616,9 +616,9 @@ def test_subagent_card_shows_latest_two_tool_activities() -> None:
     text = str(card._step_task_activity_content())
     assert "**/5" in text
     assert "**/6" in text
-    assert "**/4" not in text
+    assert "**/1" not in text
     assert "**/0" not in text
-    assert "+5 more tools" in text
+    assert "+2 more tools" in text
 
 
 @pytest.mark.asyncio

@@ -175,9 +175,8 @@ def main(
         typer.Option(
             "--mode",
             help=(
-                "Composer mode: 'auto' (veritas auto-answers), "
-                "'manual' (relay AI questions to you), or 'plan' (read-only "
-                "plan mode without typing /plan). Default: 'manual'."
+                "Composer mode: 'auto' (veritas auto-answers) or 'plan' "
+                "(read-only plan mode without typing /plan). Default: 'auto'."
             ),
         ),
     ] = None,
@@ -227,9 +226,9 @@ def main(
         raise typer.Exit
 
     home_path = Path(soothe_home).expanduser() if soothe_home else Path(SOOTHE_HOME)
-    if mode is not None and mode not in ("manual", "auto", "plan"):
+    if mode is not None and mode not in ("auto", "plan"):
         typer.echo(
-            f"Invalid --mode {mode!r}; expected 'manual', 'auto', or 'plan'.",
+            f"Invalid --mode {mode!r}; expected 'auto' or 'plan'.",
             err=True,
         )
         raise typer.Exit(code=2)

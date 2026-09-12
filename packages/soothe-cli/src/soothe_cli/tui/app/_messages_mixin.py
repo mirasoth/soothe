@@ -1147,7 +1147,7 @@ class _MessagesMixin:
         """Shift+Tab: navigate loop selector when active, otherwise cycle mode.
 
         - In the LoopSelectorScreen, defer to its filter navigation.
-        - On the main screen, cycle composer mode Auto → Bypass → Manual → Plan → Ask.
+        - On the main screen, cycle composer mode Auto → Bypass → Plan → Ask.
         """
         from soothe_cli.tui.widgets.loop_selector import LoopSelectorScreen
 
@@ -1159,8 +1159,8 @@ class _MessagesMixin:
     def cycle_composer_mode(self) -> None:
         """Advance composer mode and refresh the status-bar badge.
 
-        Cycle: Auto → Bypass → Manual → Plan → Ask → Auto. For agent sub-modes
-        (auto/bypass/manual) hot-swap the running goal's agent mode via
+        Cycle: Auto → Bypass → Plan → Ask → Auto. For agent sub-modes
+        (auto/bypass) hot-swap the running goal's agent mode via
         `loop_set_clarification_mode`; Plan/Ask take effect on the next turn.
         """
         from soothe_cli.tui.composer_mode import (

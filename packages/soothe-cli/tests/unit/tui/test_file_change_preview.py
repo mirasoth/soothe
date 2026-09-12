@@ -6,7 +6,7 @@ import asyncio
 import logging
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from soothe_sdk.tools.metadata import get_file_write_tool_names
@@ -41,6 +41,20 @@ from soothe_cli.tui.widgets.file_change_preview import (
     WriteFilePreviewWidget,
 )
 from soothe_cli.tui.widgets.messages.diff_message import DiffMessage
+
+
+@pytest.fixture(autouse=True)
+def _enable_file_change_cards() -> object:
+    """Enable TUI file-change preview cards for mount/finalize tests.
+
+    The cards are disabled by default (`TUI_FILE_CHANGE_CARDS_ENABLED=False`),
+    but this test module exercises the mount/finalize code paths directly.
+    """
+    with patch(
+        "soothe_cli.tui.file_change_notify.TUI_FILE_CHANGE_CARDS_ENABLED",
+        True,
+    ):
+        yield
 
 
 def test_file_change_tools_match_metadata_registry() -> None:
@@ -652,3 +666,27 @@ async def test_mount_late_after_early_result_shows_edited(
     assert widget._action_label == "Edited"
     assert widget._finalized is True
     assert tracker.peek_recently_completed(tcid, tool_name="edit_file") is None
+
+
+@pytest.mark.asyncio
+async def test_file_change_cards_disabled_by_default() -> None:
+    """When TUI_FILE_CHANGE_CARDS_ENABLED=False, no preview card is mounted."""
+    adapter = MagicMock()
+    adapter._file_change_previews_shown = set()
+    adapter._file_change_widgets = {}
+    adapter._mount_message = AsyncMock()
+
+    with patch(
+        "soothe_cli.tui.file_change_notify.TUI_FILE_CHANGE_CARDS_ENABLED",
+        False,
+    ):
+        await mount_file_change_preview(
+            adapter,
+            tool_name="write_file",
+            args={"file_path": "/tmp/x.txt", "content": "body"},
+            tool_call_id="tc-disabled",
+            assistant_id=None,
+        )
+
+    assert adapter._mount_message.await_count == 0
+    assert "tc-disabled" not in adapter._file_change_previews_shown

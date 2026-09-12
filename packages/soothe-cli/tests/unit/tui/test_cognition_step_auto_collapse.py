@@ -275,8 +275,6 @@ async def test_surface_sync_after_complete_does_not_re_expand() -> None:
         assert card.has_class("-collapsed")
         assert card._card_collapsed is True
         assert card._detail_widget.display is False
-        if card._tools_widget is not None:
-            assert card._tools_widget.display is False
         if card._activity_widget is not None:
             assert card._activity_widget.display is False
 

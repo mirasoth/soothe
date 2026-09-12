@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from time import monotonic, time
+from time import time
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 import textual.events as events
@@ -20,15 +20,10 @@ from textual.widgets import Static
 
 from soothe_cli.display import theme
 from soothe_cli.display.card import (
-    _STEP_TOOL_PREVIEW_ROWS,
     _assemble_card_header,
     _card_body_gutter,
 )
-from soothe_cli.display.preview_limits import STEP_CARD_SHOW_TOOL_ROW_DETAILS
-from soothe_cli.display.tool_display import (
-    display_width,
-    format_step_tool_activity_line,
-)
+from soothe_cli.display.preview_limits import STEP_CARD_FILE_EDIT_PREVIEW_COUNT
 from soothe_cli.runtime.presentation.duration_format import format_duration_ms
 from soothe_cli.settings import get_glyphs
 from soothe_cli.tui.widgets.clipboard import (
@@ -37,7 +32,6 @@ from soothe_cli.tui.widgets.clipboard import (
 from soothe_cli.tui.widgets.messages._helpers import (
     _RUNNING_SPINNER_INTERVAL_SECONDS,
     _is_widget_animation_visible,
-    _should_refresh_now,
     _strip_success_exit_line,
     request_deferred_tools_refresh,
 )
@@ -59,7 +53,6 @@ from soothe_cli.tui.widgets.messages.cognition_step_activity import (
     stats_title_suffix,
     subagent_task_label,
     task_delegation_dedupe_key,
-    task_tool_row_tone,
 )
 from soothe_cli.tui.widgets.messages.cognition_step_activity import (
     StepToolRow as _StepToolRow,
@@ -98,12 +91,6 @@ class CognitionStepMessage(Vertical):
         color: $foreground;
     }
 
-    CognitionStepMessage .step-tools {
-        height: auto;
-        color: $text-muted;
-        overflow-x: hidden;
-    }
-
     CognitionStepMessage .step-subagent-notes {
         margin-top: 0;
         color: $text-muted;
@@ -123,7 +110,6 @@ class CognitionStepMessage(Vertical):
         color: $text-muted;
     }
 
-    CognitionStepMessage.-collapsed .step-tools,
     CognitionStepMessage.-collapsed .step-subagent-notes,
     CognitionStepMessage.-collapsed .step-detail {
         display: none;
@@ -148,15 +134,10 @@ class CognitionStepMessage(Vertical):
         self._animation_timer: Timer | None = None
         self._last_rows_animation_refresh: float = 0.0
         # Throttling for refresh methods
-        self._last_tools_refresh: float | None = None
         self._last_header_refresh: float | None = None
         self._tools_refresh_pending = False
-        self._row_cache_key_by_id: dict[str, tuple[Any, ...]] = {}
-        self._row_content_by_id: dict[str, Content] = {}
-        self._tools_panel_cache_key: tuple[Any, ...] | None = None
         self._status_widget: Static | None = None
         self._header_widget: Static | None = None
-        self._tools_widget: Static | None = None
         self._detail_widget: Static | None = None
         self._activity_widget: Static | None = None
         self._deferred_complete: _DeferredStepComplete | None = None
@@ -176,7 +157,6 @@ class CognitionStepMessage(Vertical):
         self._deferred_interrupted: str | None = None
         self._rows: list[_StepToolRow] = []
         self._row_index: dict[str, _StepToolRow] = {}
-        self._tools_body_collapsed: bool = False
         self._subagent_notes: list[str] = []
         self._subagent_notes_by_task: dict[str, list[str]] = {}
         self._todos: list[dict[str, str]] = []
@@ -185,8 +165,6 @@ class CognitionStepMessage(Vertical):
         """Execute-step prose frozen when ``set_complete`` runs (TUI dedupe vs goal_completion)."""
         self._card_collapsed: bool = False
         """Whether the entire card body is collapsed (header remains visible)."""
-        self._step_tool_list_user_expanded: bool = False
-        """If True, skip auto-folding the tool-row preview (user expanded the list)."""
         self._has_clarification_details: bool = False
         """Whether detail panel currently holds clarification Q/A content."""
         self._has_result_preview: bool = False
@@ -208,18 +186,6 @@ class CognitionStepMessage(Vertical):
                 task_idx=self._subagent_task_idx,
             )
         return StepRowClassifier.build(self._step_id, self._rows)
-
-    def _maybe_auto_fold_step_tool_list(self) -> None:
-        """Fold long tool lists to the preview cap while the step runs (not only after complete)."""
-        if not STEP_CARD_SHOW_TOOL_ROW_DETAILS:
-            return
-        if self._step_tool_list_user_expanded:
-            return
-        if len(self._rows) <= _STEP_TOOL_PREVIEW_ROWS:
-            return
-        if self._tools_body_collapsed:
-            return
-        self._tools_body_collapsed = True
 
     @property
     def last_completed_execute_prose(self) -> str:
@@ -327,7 +293,6 @@ class CognitionStepMessage(Vertical):
             classes="step-header",
             id="step-cognition-header",
         )
-        yield Static("", classes="step-tools", id="step-cognition-tools", markup=False)
         yield Static(
             "",
             markup=False,
@@ -370,12 +335,10 @@ class CognitionStepMessage(Vertical):
     def on_mount(self) -> None:
         self._header_widget = self.query_one("#step-cognition-header", Static)
         self._status_widget = self.query_one("#step-cognition-status", Static)
-        self._tools_widget = self.query_one("#step-cognition-tools", Static)
         self._detail_widget = self.query_one("#step-cognition-detail", Static)
         self._activity_widget = self.query_one("#step-cognition-subagent-notes", Static)
         self._activity_widget.display = False
         self._status_widget.display = False
-        self._tools_widget.display = False
         self._detail_widget.display = False
         self._refresh_header_title()
         if self._execute_assistant_buffer.strip() and self._status == "running":
@@ -395,10 +358,8 @@ class CognitionStepMessage(Vertical):
             return
         if not _is_widget_animation_visible(self):
             return
-        # Width affects line content; force a refresh of both render paths.
+        # Width affects line content; force a refresh of the activity panel.
         self._sync_step_card_surface()
-        if STEP_CARD_SHOW_TOOL_ROW_DETAILS:
-            self._refresh_tools_display(force=True)
 
     def on_click(self, event: Click) -> None:  # noqa: ARG002
         """Toggle tool-row folding or card collapse."""
@@ -414,22 +375,8 @@ class CognitionStepMessage(Vertical):
         if self._status in ("success", "error"):
             self.toggle_collapse()
             return
-        # Running cards: toggle tool-row folding for long tool lists.
-        if (
-            STEP_CARD_SHOW_TOOL_ROW_DETAILS
-            and self._rows
-            and len(self._rows) > _STEP_TOOL_PREVIEW_ROWS
-        ):
-            was_collapsed = self._tools_body_collapsed
-            self._tools_body_collapsed = not self._tools_body_collapsed
-            if was_collapsed and not self._tools_body_collapsed:
-                self._step_tool_list_user_expanded = True
-            self._refresh_tools_display()
-            return
         has_collapsible_content = (
-            (STEP_CARD_SHOW_TOOL_ROW_DETAILS and self._rows)
-            or self._has_task_activity_body()
-            or self._execute_assistant_buffer.strip()
+            self._has_task_activity_body() or self._execute_assistant_buffer.strip()
         )
         if has_collapsible_content:
             self.toggle_collapse()
@@ -459,7 +406,6 @@ class CognitionStepMessage(Vertical):
             # -collapsed class cannot override an inline display=True that was
             # set during the running phase (e.g. by _sync_step_card_surface).
             for w in (
-                self._tools_widget,
                 self._activity_widget,
                 self._detail_widget,
             ):
@@ -666,6 +612,7 @@ class CognitionStepMessage(Vertical):
             todos=self._todos,
             max_cols=self._available_line_width(),
             glyph_override=self._step_header_glyph() if self._is_orphan_subagent_card() else None,
+            file_edit_preview_limit=STEP_CARD_FILE_EDIT_PREVIEW_COUNT,
         )
 
     def _sync_step_card_surface(self) -> None:
@@ -698,12 +645,6 @@ class CognitionStepMessage(Vertical):
             self._sync_running_status_text()
         elif self._status == "pending":
             self._refresh_pending_display(index)
-
-        if STEP_CARD_SHOW_TOOL_ROW_DETAILS:
-            if self._card_collapsed and self._tools_widget is not None:
-                self._tools_widget.display = False
-            else:
-                self._refresh_tools_display()
 
         self._maybe_start_running_timer()
 
@@ -822,36 +763,6 @@ class CognitionStepMessage(Vertical):
         """
         return _card_body_gutter(self._step_header_glyph())
 
-    def _row_to_content(self, row: _StepToolRow) -> Content:
-        """One CLI-style tool activity row for the optional full tools panel."""
-        g = get_glyphs()
-        gutter = _card_body_gutter(self._step_header_glyph())
-        try:
-            colors = theme.get_theme_colors(self)
-        except Exception:  # noqa: BLE001
-            colors = theme.DARK_COLORS
-        phase = (row.phase or "pending").strip().lower()
-        icon = self._phase_icon(
-            row.phase or "pending",
-            g,
-            animate_running=phase == "running",
-        )
-        max_cols = self._available_line_width()
-        line_max = None
-        if max_cols is not None and max_cols > 0:
-            prefix_width = display_width(f"{gutter}{icon} ")
-            line_max = max(0, max_cols - prefix_width)
-        body = format_step_tool_activity_line(
-            row.tool_name,
-            row.args or {},
-            row.phase or "pending",
-            duration_ms=row.duration_ms,
-            error=str(row.output or "") if phase == "error" else "",
-            max_cols=line_max,
-        )
-        tone = task_tool_row_tone(row, colors)
-        return Content.styled(f"{gutter}{icon} {body}", tone)
-
     def _step_branched_execute_body(self, body: str, *, muted: bool = True) -> Content:
         """Streamed execute-phase prose: tree gutter per line."""
         g = get_glyphs()
@@ -890,11 +801,6 @@ class CognitionStepMessage(Vertical):
                 parts.append(Content.styled(f"{sub}{ln}", colors.error))
         return Content.assemble(*parts)
 
-    def _build_tools_panel_row_order(self) -> list[_StepToolRow]:
-        """Flat row order for the optional full tools panel."""
-        index = self._build_row_index()
-        return list(index.task_delegations) + list(index.main_tools)
-
     def request_tools_display_refresh(self, *, immediate: bool = False) -> None:
         """Queue or run a card surface repaint (batched across cards during streaming)."""
         if immediate:
@@ -909,66 +815,6 @@ class CognitionStepMessage(Vertical):
             return
         self._tools_refresh_pending = False
         self._sync_step_card_surface()
-
-    def _row_content_cache_key(self, row: _StepToolRow) -> tuple[Any, ...]:
-        args_key: tuple[tuple[str, Any], ...] = ()
-        if row.args:
-            try:
-                args_key = tuple(sorted((str(k), v) for k, v in row.args.items()))
-            except TypeError:
-                args_key = (repr(row.args),)
-        return (
-            row.tool_call_id,
-            row.phase,
-            row.tool_name,
-            row.duration_ms,
-            row.output,
-            args_key,
-            row.parent_tool_call_id,
-            row.is_task_row,
-        )
-
-    def _refresh_tools_display(self, *, force: bool = False) -> None:
-        """Repaint the optional full nested tool list panel."""
-        if self._tools_widget is None:
-            return
-        if not STEP_CARD_SHOW_TOOL_ROW_DETAILS:
-            self._tools_widget.display = False
-            self._row_cache_key_by_id.clear()
-            self._row_content_by_id.clear()
-            self._tools_panel_cache_key = None
-            return
-        if not force and not _should_refresh_now(self._last_tools_refresh):
-            return
-        self._last_tools_refresh = monotonic()
-        if not self._rows:
-            self._tools_widget.display = False
-            self._row_cache_key_by_id.clear()
-            self._row_content_by_id.clear()
-            self._tools_panel_cache_key = None
-            return
-        self._maybe_auto_fold_step_tool_list()
-        self._tools_widget.display = True
-        ordered_rows = self._build_tools_panel_row_order()
-        show_all = len(ordered_rows) <= _STEP_TOOL_PREVIEW_ROWS or not self._tools_body_collapsed
-        visible = ordered_rows if show_all else ordered_rows[:_STEP_TOOL_PREVIEW_ROWS]
-        panel_key: tuple[Any, ...] = (
-            tuple(self._row_content_cache_key(r) for r in visible),
-            show_all,
-            self._tools_body_collapsed,
-        )
-        if not force and panel_key == self._tools_panel_cache_key:
-            return
-        lines: list[Content] = []
-        for row in visible:
-            rk = self._row_content_cache_key(row)
-            if self._row_cache_key_by_id.get(row.tool_call_id) != rk:
-                content = self._row_to_content(row)
-                self._row_cache_key_by_id[row.tool_call_id] = rk
-                self._row_content_by_id[row.tool_call_id] = content
-            lines.append(self._row_content_by_id[row.tool_call_id])
-        self._tools_panel_cache_key = panel_key
-        self._tools_widget.update(Content("\n").join(lines))
 
     def add_tool_call(
         self,
@@ -1362,9 +1208,7 @@ class CognitionStepMessage(Vertical):
             return
         self._status = "running"
         self._has_clarification_details = False
-        self._step_tool_list_user_expanded = False
         self._start_time = time()
-        self._tools_body_collapsed = False
         self._refresh_header_title()
         self._ensure_running_ui()
 
@@ -1411,7 +1255,6 @@ class CognitionStepMessage(Vertical):
             return
         self._card_collapsed = True
         for w in (
-            self._tools_widget,
             self._activity_widget,
             self._detail_widget,
         ):
@@ -1442,9 +1285,6 @@ class CognitionStepMessage(Vertical):
             return
 
         self.mark_unfinished_tools_on_step_complete(success=success)
-        self._tools_body_collapsed = True
-        if STEP_CARD_SHOW_TOOL_ROW_DETAILS:
-            self._refresh_tools_display(force=True)
 
         dur_str = format_duration_ms(duration_ms)
         tool_part = self._status_tool_stats_suffix(tool_call_count)

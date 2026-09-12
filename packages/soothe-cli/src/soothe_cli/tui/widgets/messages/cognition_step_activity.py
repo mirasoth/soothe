@@ -22,6 +22,7 @@ from soothe_cli.display.card import (
     _card_item_indent,
 )
 from soothe_cli.display.preview_limits import (
+    STEP_CARD_FILE_EDIT_PREVIEW_COUNT,
     STEP_CARD_TOOL_ACTIVITY_PREVIEW_COUNT,
     TASK_DELEGATION_DESC_MAX_CHARS,
 )
@@ -77,9 +78,11 @@ class StepRowIndex:
     task_delegations: list[StepToolRow] = field(default_factory=list)
     main_tools: list[StepToolRow] = field(default_factory=list)
     children_by_task: dict[str, list[StepToolRow]] = field(default_factory=dict)
+    file_edit_rows: list[StepToolRow] = field(default_factory=list)
     total_tool_count: int = 0
     main_tool_count: int = 0
     task_delegation_count: int = 0
+    file_edit_count: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -211,6 +214,139 @@ def is_write_todos_tool_name(tool_name: object) -> bool:
 def todo_status_phase(status: str) -> str:
     """Map a todo status string to a `phase_icon` phase."""
     return _TODO_STATUS_TO_PHASE.get((status or "pending").strip().lower(), "pending")
+
+
+# ---------------------------------------------------------------------------
+# File-edit branch helpers
+# ---------------------------------------------------------------------------
+
+_FILE_WRITE_TOOL_NAMES: frozenset[str] = frozenset(
+    {
+        "write_file",
+        "edit_file",
+        "edit_lines",
+        "insert_lines",
+        "delete_lines",
+        "apply_diff",
+        "delete_file",
+    }
+)
+
+
+def is_file_write_tool_name(tool_name: object) -> bool:
+    """True for filesystem tools that mutate files (write/edit/insert/delete)."""
+    name = str(tool_name or "").strip().lower()
+    return name in _FILE_WRITE_TOOL_NAMES
+
+
+def file_edit_action_label(tool_name: str) -> str:
+    """Short action verb for a file-write tool row (Created/Edited/Deleted)."""
+    name = str(tool_name or "").strip().lower()
+    if name == "write_file":
+        return "Created"
+    if name in ("edit_file", "edit_lines", "apply_diff"):
+        return "Edited"
+    if name in ("insert_lines",):
+        return "Inserted"
+    if name in ("delete_lines", "delete_file"):
+        return "Deleted"
+    return "Edited"
+
+
+def _file_path_from_args(args: dict[str, Any]) -> str:
+    """Extract the display path from a file-write tool row's args."""
+    path_str = str(args.get("file_path") or args.get("path") or "").strip()
+    if not path_str:
+        return "(unknown)"
+    try:
+        from pathlib import Path
+
+        p = Path(path_str)
+        if p.is_absolute():
+            return p.name or str(p)
+        return str(p)
+    except (OSError, ValueError):
+        return str(path_str)
+
+
+def _line_count(text: str) -> int:
+    """Count lines in `text` (trailing newline does not add an empty line)."""
+    if not text:
+        return 0
+    count = text.count("\n")
+    if not text.endswith("\n"):
+        count += 1
+    return max(0, count)
+
+
+def compute_file_edit_line_changes(
+    tool_name: str,
+    args: dict[str, Any],
+) -> tuple[int, int]:
+    """Best-effort added/removed line deltas for a file-write tool row.
+
+    Returns:
+        `(added, removed)` line counts. Returns `(0, 0)` when the tool args do
+        not carry enough information to estimate the change.
+    """
+    name = str(tool_name or "").strip().lower()
+    if name == "write_file":
+        content = str(args.get("content") or "")
+        return (_line_count(content), 0)
+    if name == "edit_file":
+        old = str(args.get("old_string") or "")
+        new = str(args.get("new_string") or "")
+        added = _line_count(new)
+        removed = _line_count(old)
+        return (added, removed)
+    if name == "insert_lines":
+        content = str(args.get("content") or "")
+        return (_line_count(content), 0)
+    if name == "delete_lines":
+        start = args.get("start_line")
+        end = args.get("end_line")
+        if isinstance(start, bool) or isinstance(end, bool):
+            return (0, 0)
+        if isinstance(start, (int, float)) and isinstance(end, (int, float)):
+            removed = max(0, int(end) - int(start) + 1)
+            return (0, removed)
+        return (0, 0)
+    if name == "edit_lines":
+        edits = args.get("edits")
+        added = 0
+        removed = 0
+        if isinstance(edits, list):
+            for edit in edits:
+                if not isinstance(edit, dict):
+                    continue
+                old = str(edit.get("old_string") or edit.get("old") or "")
+                new = str(edit.get("new_string") or edit.get("new") or "")
+                added += _line_count(new)
+                removed += _line_count(old)
+        return (added, removed)
+    if name == "apply_diff":
+        diff = str(args.get("diff") or args.get("content") or "")
+        added = 0
+        removed = 0
+        for ln in diff.splitlines():
+            if ln.startswith("+") and not ln.startswith("+++"):
+                added += 1
+            elif ln.startswith("-") and not ln.startswith("---"):
+                removed += 1
+        return (added, removed)
+    if name == "delete_file":
+        return (0, 0)
+    return (0, 0)
+
+
+def format_file_edit_line_suffix(added: int, removed: int) -> str:
+    """Format `+added -removed` line-change suffix for a file-edit row."""
+    parts: list[str] = []
+    if added:
+        parts.append(f"+{added}")
+    if removed:
+        parts.append(f"-{removed}")
+    return " ".join(parts)
 
 
 def has_task_activity_body(
@@ -436,13 +572,18 @@ class StepRowClassifier:
         main_tools = [r for r in rows if row_counts_for_main_tools(r, step_id)]
         children_by_task = build_children_by_task(step_id, rows, task_delegations)
         countable = [r for r in rows if row_counts_for_step_tool_total(r, step_id)]
+        file_edit_rows = [
+            r for r in main_tools if is_file_write_tool_name(r.tool_name) and not r.is_task_row
+        ]
         return StepRowIndex(
             task_delegations=task_delegations,
             main_tools=main_tools,
             children_by_task=children_by_task,
+            file_edit_rows=file_edit_rows,
             total_tool_count=count_distinct_tool_call_ids(countable),
             main_tool_count=count_distinct_tool_call_ids(main_tools),
             task_delegation_count=len(task_delegations),
+            file_edit_count=len(file_edit_rows),
         )
 
     @staticmethod
@@ -472,9 +613,11 @@ class StepRowClassifier:
             task_delegations=[],
             main_tools=filtered_rows,
             children_by_task={},
+            file_edit_rows=[r for r in filtered_rows if is_file_write_tool_name(r.tool_name)],
             total_tool_count=count_distinct_tool_call_ids(filtered_rows),
             main_tool_count=len(filtered_rows),
             task_delegation_count=0,
+            file_edit_count=sum(1 for r in filtered_rows if is_file_write_tool_name(r.tool_name)),
         )
 
     @staticmethod
@@ -663,11 +806,13 @@ class StepCardStatusLine:
 
 
 class StepActivityTree:
-    """Pure render: Tool-use + To-do sections under the step title.
+    """Pure render: To-do + Tool-use + File-edit sections under the step title.
 
     Task rows are flat markers under Tool-use. While a task is running, the marker
     line shows that task's subgraph tool count. Nested child tool lines are not
-    rendered.
+    rendered. The File-edit branch shows the latest file-write tool rows with
+    action labels and line-change deltas; it is always rendered when file-write
+    rows exist for the step (no config gate).
     """
 
     @staticmethod
@@ -685,18 +830,22 @@ class StepActivityTree:
         todos: list[dict[str, str]] | None = None,
         max_cols: int | None = None,
         glyph_override: str | None = None,
+        file_edit_preview_limit: int = STEP_CARD_FILE_EDIT_PREVIEW_COUNT,
     ) -> Content:
-        """Tool-use section then To-do section (task markers + main tool preview).
+        """To-do section, Tool-use section, then File-edit section.
 
         `max_cols` bounds each rendered line to the terminal width so tool
         rows never wrap; `None` preserves the prior fixed-cap behavior.
         `glyph_override` is the card header glyph (subagent glyph for orphan
         SubAgent cards) so the activity gutters align to the right of that dot.
 
-        Layout: the section header (`Tool-use` / `To-do`) sits on a `⎿`
-        body-gutter line; its items (tool rows, todo markers, notes, `+N
+        Layout: the section header (`To-do` / `Tool-use` / `File-edit`) sits on a
+        `⎿` body-gutter line; its items (tool rows, todo markers, notes, `+N
         more`) are indented one column beyond the section label so they nest
         under the header without a tree glyph.
+
+        The File-edit branch is always rendered when file-write tool rows exist
+        for the step; it is no longer config-gated.
         """
         section_gutter = _card_body_gutter(glyph_override)
         item_gutter = _card_item_indent(1, glyph_override=glyph_override)
@@ -707,15 +856,48 @@ class StepActivityTree:
         if todo_items:
             # Avoid duplicating write_todos when the Todo section is live.
             main_source = [r for r in main_source if not is_write_todos_tool_name(r.tool_name)]
+        if index.file_edit_rows:
+            # File-write rows render in the File-edit branch; exclude from Tool-use.
+            main_source = [r for r in main_source if not is_file_write_tool_name(r.tool_name)]
         main_preview = latest_preview_rows(main_source, preview_limit)
         has_tools = bool(
             index.task_delegations or main_preview or subagent_notes or subagent_notes_by_task
         )
-        if not todo_items and not has_tools:
+        file_edit_rows = (
+            latest_preview_rows(index.file_edit_rows, file_edit_preview_limit)
+            if index.file_edit_rows
+            else []
+        )
+        if not todo_items and not has_tools and not file_edit_rows:
             return Content("")
 
         first_block = True
+
+        # --- To-do (all todo items) ---
+        if todo_items:
+            first_block = False
+            parts.append(Content.styled(f"{section_gutter}To-do", theme.SECONDARY_TEXT_STYLE))
+            for item in todo_items:
+                content = str(item.get("content") or "").strip()
+                if not content:
+                    continue
+                status = str(item.get("status") or "pending")
+                phase = todo_status_phase(status)
+                animate = phase == "running" and step_status == "running"
+                icon = phase_icon(
+                    phase,
+                    g,
+                    spinner_position=spinner_position,
+                    animate_running=animate,
+                )
+                tone = task_tool_row_tone_for_phase(phase, colors)
+                parts.append("\n")
+                parts.append(Content.styled(f"{item_gutter}{icon} {content}", tone))
+
+        # --- Tool-use (latest five) ---
         if has_tools:
+            if not first_block:
+                parts.append("\n")
             first_block = False
             parts.append(Content.styled(f"{section_gutter}Tool-use", theme.SECONDARY_TEXT_STYLE))
 
@@ -784,26 +966,34 @@ class StepActivityTree:
                 parts.append("\n")
                 parts.append(Content.styled(f"{item_gutter}· {t}", theme.SECONDARY_TEXT_STYLE))
 
-        if todo_items:
+        # --- File-edit (latest five) ---
+        if file_edit_rows:
             if not first_block:
                 parts.append("\n")
             first_block = False
-            parts.append(Content.styled(f"{section_gutter}To-do", theme.SECONDARY_TEXT_STYLE))
-            for item in todo_items:
-                content = str(item.get("content") or "").strip()
-                if not content:
-                    continue
-                status = str(item.get("status") or "pending")
-                phase = todo_status_phase(status)
-                animate = phase == "running" and step_status == "running"
+            parts.append(Content.styled(f"{section_gutter}File-edit", theme.SECONDARY_TEXT_STYLE))
+            for row in file_edit_rows:
+                parts.append("\n")
+                phase = (row.phase or "pending").strip().lower()
                 icon = phase_icon(
-                    phase,
+                    row.phase or "pending",
                     g,
                     spinner_position=spinner_position,
-                    animate_running=animate,
+                    animate_running=step_status == "running" and phase == "running",
                 )
-                tone = task_tool_row_tone_for_phase(phase, colors)
+                action = file_edit_action_label(row.tool_name)
+                file_path = _file_path_from_args(row.args or {})
+                added, removed = compute_file_edit_line_changes(row.tool_name, row.args or {})
+                line_suffix = format_file_edit_line_suffix(added, removed)
+                line_text = f"{action} {file_path}"
+                if line_suffix:
+                    line_text = f"{line_text} {line_suffix}"
+                tone = task_tool_row_tone(row, colors)
+                parts.append(Content.styled(f"{item_gutter}{icon} {line_text}", tone))
+            hidden_edits = len(index.file_edit_rows) - len(file_edit_rows)
+            if hidden_edits > 0:
+                label = f"+{hidden_edits} more edit{'s' if hidden_edits != 1 else ''}"
                 parts.append("\n")
-                parts.append(Content.styled(f"{item_gutter}{icon} {content}", tone))
+                parts.append(Content.styled(f"{item_gutter}· {label}", theme.SECONDARY_TEXT_STYLE))
 
         return Content.assemble(*parts) if parts else Content("")
