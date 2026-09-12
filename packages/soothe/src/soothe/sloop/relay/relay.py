@@ -30,11 +30,9 @@ from soothe.sloop.relay.errors import (
 )
 from soothe.sloop.relay.events import (
     RELAY_CAPTURED,
-    RELAY_DEFERRED,
     RELAY_RECOVERED,
     RELAY_RESUME_COMMAND_BUILT,
     RELAY_STALE_INTERRUPT_SKIPPED,
-    RELAY_UNBLOCKED,
 )
 from soothe.sloop.relay.inbox import RelayInbox
 from soothe.sloop.relay.outbox import build_clarification_resume_payload
@@ -545,18 +543,6 @@ class LoopRelay:
     # ------------------------------------------------------------------
     # Event helpers for await_user integration
     # ------------------------------------------------------------------
-
-    async def emit_deferred(self, *, reason: str, questions: tuple) -> None:
-        await self._emit(
-            RELAY_DEFERRED,
-            {"loop_id": self._loop_id, "reason": reason, "questions": list(questions)},
-        )
-
-    async def emit_unblocked(self, *, goal_id: str) -> None:
-        await self._emit(
-            RELAY_UNBLOCKED,
-            {"loop_id": self._loop_id, "goal_id": goal_id, "new_status": "pending"},
-        )
 
     async def emit_recovered(self, *, reason: str, origin: str | None = None) -> None:
         await self._emit(
