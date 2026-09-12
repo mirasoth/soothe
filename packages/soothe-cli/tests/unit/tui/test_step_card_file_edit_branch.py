@@ -22,6 +22,7 @@ from soothe_cli.tui.widgets.messages.cognition_step_activity import (
     compute_file_edit_line_changes,
     file_edit_action_label,
     format_file_edit_line_suffix,
+    format_file_edit_stats_label,
     is_file_write_tool_name,
 )
 
@@ -114,6 +115,31 @@ def test_format_file_edit_line_suffix() -> None:
     assert format_file_edit_line_suffix(5, 0) == "+5"
     assert format_file_edit_line_suffix(0, 3) == "-3"
     assert format_file_edit_line_suffix(0, 0) == ""
+
+
+def test_format_file_edit_stats_label_both_deltas() -> None:
+    assert format_file_edit_stats_label(2, 10, 2) == "2 files +10 -2"
+
+
+def test_format_file_edit_stats_label_added_only() -> None:
+    assert format_file_edit_stats_label(1, 5, 0) == "1 file +5"
+
+
+def test_format_file_edit_stats_label_removed_only() -> None:
+    assert format_file_edit_stats_label(3, 0, 8) == "3 files -8"
+
+
+def test_format_file_edit_stats_label_zero_deltas() -> None:
+    """No line delta (e.g. delete_file) still shows the count word."""
+    assert format_file_edit_stats_label(2, 0, 0) == "2 files"
+
+
+def test_format_file_edit_stats_label_zero_count() -> None:
+    assert format_file_edit_stats_label(0, 10, 2) == ""
+
+
+def test_format_file_edit_stats_label_singular_word() -> None:
+    assert format_file_edit_stats_label(1, 0, 1) == "1 file -1"
 
 
 # ---------------------------------------------------------------------------
