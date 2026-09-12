@@ -44,6 +44,7 @@ from soothe_cli.tui.widgets.messages.cognition_step_activity import (
     coerce_todos_list,
     compact_step_title_meta,
     finalize_tool_rows_on_step_end,
+    format_file_edit_stats_label,
     has_task_activity_body,
     is_write_todos_tool_name,
     latest_preview_rows,
@@ -675,6 +676,9 @@ class CognitionStepMessage(Vertical):
         Step cards use `total_tool_count` (main + subgraph). Intake-only orphan
         SubAgent cards use the same index over their filtered subgraph rows.
         Server `tool_call_count` is only a fallback when no local rows exist.
+
+        File-edit stats (count plus aggregate line deltas) form a separate
+        middot segment after the tool/task totals.
         """
         index = self._build_row_index()
         tool_count = index.total_tool_count
@@ -698,8 +702,16 @@ class CognitionStepMessage(Vertical):
                     index.task_delegation_count, singular="task", plural="tasks"
                 )
             )
+        segments: list[str] = []
         if parts:
-            return f" · {', '.join(parts)}"
+            segments.append(", ".join(parts))
+        file_label = format_file_edit_stats_label(
+            index.file_edit_count, index.file_edit_added, index.file_edit_removed
+        )
+        if file_label:
+            segments.append(file_label)
+        if segments:
+            return " · " + " · ".join(segments)
         if fallback_count > 0:
             return f" · {fallback_count} tools"
         return ""

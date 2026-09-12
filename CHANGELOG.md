@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Show aggregate file-edit count and line deltas as a separate segment in TUI step card footers (e.g. `· 2 tools, 1 task · 2 files +10 -2`).
+
 ## [v1.0.10] - 2026-09-12
 
 ### Fixed

@@ -83,6 +83,8 @@ class StepRowIndex:
     main_tool_count: int = 0
     task_delegation_count: int = 0
     file_edit_count: int = 0
+    file_edit_added: int = 0
+    file_edit_removed: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -349,6 +351,22 @@ def format_file_edit_line_suffix(added: int, removed: int) -> str:
     return " ".join(parts)
 
 
+def format_file_edit_stats_label(count: int, added: int, removed: int) -> str:
+    """Aggregate file-edit label for the step footer, e.g. `2 files +10 -2`.
+
+    Returns the count word (`N files`) plus a `+added -removed` line delta
+    (via :func:`format_file_edit_line_suffix`) when any lines changed. Returns
+    an empty string when ``count`` is zero so callers can omit the segment.
+    """
+    if count <= 0:
+        return ""
+    word = "file" if count == 1 else "files"
+    line_suffix = format_file_edit_line_suffix(added, removed)
+    if line_suffix:
+        return f"{count} {word} {line_suffix}"
+    return f"{count} {word}"
+
+
 def has_task_activity_body(
     index: StepRowIndex,
     subagent_notes: list[str],
@@ -575,6 +593,12 @@ class StepRowClassifier:
         file_edit_rows = [
             r for r in main_tools if is_file_write_tool_name(r.tool_name) and not r.is_task_row
         ]
+        file_added = 0
+        file_removed = 0
+        for r in file_edit_rows:
+            a, d = compute_file_edit_line_changes(r.tool_name, r.args or {})
+            file_added += a
+            file_removed += d
         return StepRowIndex(
             task_delegations=task_delegations,
             main_tools=main_tools,
@@ -584,6 +608,8 @@ class StepRowClassifier:
             main_tool_count=count_distinct_tool_call_ids(main_tools),
             task_delegation_count=len(task_delegations),
             file_edit_count=len(file_edit_rows),
+            file_edit_added=file_added,
+            file_edit_removed=file_removed,
         )
 
     @staticmethod
@@ -609,15 +635,24 @@ class StepRowClassifier:
             # Type ``s`` (intake wire stamp) or opaque ids → show on orphan card.
             filtered_rows.append(row)
 
+        orphan_file_edit_rows = [r for r in filtered_rows if is_file_write_tool_name(r.tool_name)]
+        orphan_file_added = 0
+        orphan_file_removed = 0
+        for r in orphan_file_edit_rows:
+            a, d = compute_file_edit_line_changes(r.tool_name, r.args or {})
+            orphan_file_added += a
+            orphan_file_removed += d
         return StepRowIndex(
             task_delegations=[],
             main_tools=filtered_rows,
             children_by_task={},
-            file_edit_rows=[r for r in filtered_rows if is_file_write_tool_name(r.tool_name)],
+            file_edit_rows=orphan_file_edit_rows,
             total_tool_count=count_distinct_tool_call_ids(filtered_rows),
             main_tool_count=len(filtered_rows),
             task_delegation_count=0,
-            file_edit_count=sum(1 for r in filtered_rows if is_file_write_tool_name(r.tool_name)),
+            file_edit_count=len(orphan_file_edit_rows),
+            file_edit_added=orphan_file_added,
+            file_edit_removed=orphan_file_removed,
         )
 
     @staticmethod

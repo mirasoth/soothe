@@ -80,6 +80,76 @@ def test_status_tool_stats_suffix_falls_back_to_total_when_untracked() -> None:
     assert card._status_tool_stats_suffix(fallback_count=3) == " · 3 tools"
 
 
+def test_status_tool_stats_suffix_includes_file_edit_segment() -> None:
+    """File-edit count and aggregate line deltas form a separate middot segment."""
+    card = CognitionStepMessage("FIL-01", "Edit files", id="stp-files")
+    card.add_tool_call(
+        "FIL_01:s:write_file:0",
+        "write_file",
+        {"file_path": "a.py", "content": "line1\nline2\nline3"},
+    )
+    card.add_tool_call(
+        "FIL_01:s:edit_file:1",
+        "edit_file",
+        {"file_path": "b.py", "old_string": "old", "new_string": "new1\nnew2"},
+    )
+    suffix = card._status_tool_stats_suffix(fallback_count=0)
+    # 2 tools (both file-write rows count as tools), then 2 files +5 -1
+    assert suffix == " · 2 tools · 2 files +5 -1"
+
+
+def test_status_tool_stats_suffix_file_segment_after_tools_and_tasks() -> None:
+    """File segment follows the comma-joined tool/task segment."""
+    card = CognitionStepMessage("MIX-01", "Mixed", id="stp-mixed")
+    card.add_tool_call("MIX_01:s:grep:0", "grep", {"pattern": "x"})
+    card.add_tool_call(
+        "MIX_01:s:write_file:1",
+        "write_file",
+        {"file_path": "out.py", "content": "a\nb"},
+    )
+    card.add_tool_call(
+        "MIX_01:s:task:0",
+        "task",
+        {"subagent_type": "deep_research", "description": "scan"},
+        is_task_row=True,
+    )
+    suffix = card._status_tool_stats_suffix(fallback_count=0)
+    # 2 tools (grep + write_file), 1 task, then 1 file +2
+    assert suffix == " · 2 tools, 1 task · 1 file +2"
+
+
+def test_status_tool_stats_suffix_no_file_segment_for_non_file_tools() -> None:
+    """Non-file-write tools produce no file segment."""
+    card = CognitionStepMessage("NF-01", "No files", id="stp-nofiles")
+    card.add_tool_call("NF_01:s:grep:0", "grep", {"pattern": "x"})
+    card.add_tool_call("NF_01:s:glob:1", "glob", {"pattern": "**/*"})
+    assert card._status_tool_stats_suffix(fallback_count=0) == " · 2 tools"
+
+
+def test_status_tool_stats_suffix_file_segment_shows_only_deletions() -> None:
+    """delete_lines rows show count without additions."""
+    card = CognitionStepMessage("DEL-01", "Delete lines", id="stp-delete")
+    card.add_tool_call(
+        "DEL_01:s:delete_lines:0",
+        "delete_lines",
+        {"file_path": "a.py", "start_line": 1, "end_line": 4},
+    )
+    suffix = card._status_tool_stats_suffix(fallback_count=0)
+    assert suffix == " · 1 tool · 1 file -4"
+
+
+def test_status_tool_stats_suffix_file_segment_zero_deltas_shows_count_only() -> None:
+    """delete_file (0/0 deltas) shows the count word without line suffix."""
+    card = CognitionStepMessage("DF-01", "Delete file", id="stp-delfile")
+    card.add_tool_call(
+        "DF_01:s:delete_file:0",
+        "delete_file",
+        {"file_path": "gone.py"},
+    )
+    suffix = card._status_tool_stats_suffix(fallback_count=0)
+    assert suffix == " · 1 tool · 1 file"
+
+
 def test_stats_same_unified_id_not_double_counted() -> None:
     card = CognitionStepMessage("ABC-01", "Scan", id="stp-stream")
     card.add_tool_call("ABC_01:s:glob:0", "glob", {})
