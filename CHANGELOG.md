@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Show aggregate file-edit count and line deltas as a separate segment in TUI step card footers (e.g. `· 2 tools, 1 task · 2 files +10 -2`).
 
+## [v1.0.11] - 2026-09-13
+
+### Fixed
+- Bump `soothe-client-python` floor from `1.0.22` to `1.0.23`: the TUI passes `autopilot_rail_id` to `DaemonSession.send_turn()`, but the published `soothe-client-python` 1.0.22 never included that parameter (the fix existed only in an unreleased commit ahead of the v1.0.22 tag). Every normal TUI turn raised `TypeError: DaemonSession.send_turn() got an unexpected keyword argument 'autopilot_rail_id'`. The v1.0.23 client release publishes the kwarg; this pin bump prevents pip from resolving to the broken 1.0.22 wheel.
+
+### Changed
+- Bump client submodule pointers: `client/python` → v1.0.23, `client/go` → v0.4.18, `client/rust` → v0.3.11, `client/typescript` → v0.5.12 — all four clients now support `autopilot_rail_id` at every layer (options struct, `send_turn`/`sendTurn`, `send_input`/`sendInput`, wire `loop_input` payload).
+
+[Compare with previous version]: https://github.com/mirasoth/soothe/compare/v1.0.10...v1.0.11
+
 ## [v1.0.10] - 2026-09-12
 
 ### Fixed
