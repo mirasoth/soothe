@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 from soothe_cli.runtime.state.session_stats import format_token_count
 from soothe_cli.runtime.token_usage import fetch_conversation_token_count
@@ -20,15 +20,26 @@ LoadTokenSnapshotFn = Callable[[], Awaitable["TokenUsageSnapshot"]]
 
 __all__ = [
     "AutopilotContext",
+    "CONTEXT_REFRESH_DEFAULT_S",
+    "CONTEXT_REFRESH_MAX_S",
+    "CONTEXT_REFRESH_MIN_S",
+    "ContextViewState",
+    "GlobalContextSnapshot",
     "LoadTokenSnapshotFn",
+    "LoopContextSnapshot",
     "RailFlowState",
     "StepDagNode",
     "StepDagSnapshot",
     "TokenUsageSnapshot",
+    "VIEW_TERMINAL_GOAL_STATUSES",
+    "apply_context_key",
     "detect_autopilot_mode",
+    "filter_goals_for_view",
+    "filter_step_dags_for_view",
     "format_token_usage",
     "load_autopilot_context",
     "load_ce_goals",
+    "load_global_context",
     "load_step_dag_snapshot",
     "load_token_usage_snapshot",
     "summarize_goal_statuses",
@@ -661,4 +672,219 @@ async def load_autopilot_context(
         rail_flow=rail_flow,
         progress_text=progress_text,
         active_runner=active_runner,
+    )
+
+
+# ── Interactive view state (ported from autopilot `top` keymaps) ─────────
+
+
+VIEW_TERMINAL_GOAL_STATUSES: frozenset[str] = frozenset({"completed", "failed", "cancelled"})
+"""Goal statuses the active-only view (default) omits; ``a`` restores them."""
+
+CONTEXT_REFRESH_MIN_S = 0.2
+CONTEXT_REFRESH_MAX_S = 10.0
+CONTEXT_REFRESH_DEFAULT_S = 1.0
+CONTEXT_REFRESH_STEP_S = 0.5
+
+
+@dataclass(slots=True)
+class ContextViewState:
+    """Interactive view flags for the ``/context`` screen.
+
+    Ported from the autopilot ``top`` keymap and adapted to the per-loop
+    rail-native viewer; ``show_loops`` toggles the rail-flow panel.
+    """
+
+    include_terminal: bool = False
+    steps_mode: Literal["off", "active", "all"] = "active"
+    show_loops: bool = True
+    interval: float = CONTEXT_REFRESH_DEFAULT_S
+    force_refresh: bool = False
+
+
+def _bump_interval(value: float, *, faster: bool) -> float:
+    """Nudge the refresh interval by one step within the clamped range."""
+    delta = -CONTEXT_REFRESH_STEP_S if faster else CONTEXT_REFRESH_STEP_S
+    return round(max(CONTEXT_REFRESH_MIN_S, min(CONTEXT_REFRESH_MAX_S, value + delta)), 1)
+
+
+def apply_context_key(state: ContextViewState, key: str) -> None:
+    """Apply a toggle key (``a``/``s``/``l``/``d``/``+``/``-``/``space``).
+
+    Mirrors the autopilot ``top`` toggle keys. Scrolling and the
+    quit/help keys are handled by the Textual screen, not this state.
+    """
+    if key == "a":
+        state.include_terminal = not state.include_terminal
+        state.force_refresh = True
+        return
+    if key == "s":
+        modes: tuple[Literal["off", "active", "all"], ...] = ("off", "active", "all")
+        state.steps_mode = modes[(modes.index(state.steps_mode) + 1) % len(modes)]
+        return
+    if key == "l":
+        state.show_loops = not state.show_loops
+        return
+    if key == "d":
+        if state.steps_mode != "off" and state.show_loops:
+            state.steps_mode = "off"
+            state.show_loops = False
+        elif state.steps_mode == "off" and not state.show_loops:
+            state.steps_mode = "all"
+            state.show_loops = False
+        else:
+            state.steps_mode = "all"
+            state.show_loops = True
+        return
+    if key in {"+", "="}:
+        state.interval = _bump_interval(state.interval, faster=True)
+        return
+    if key in {"-", "_"}:
+        state.interval = _bump_interval(state.interval, faster=False)
+        return
+    if key == "space":
+        state.force_refresh = True
+
+
+def filter_goals_for_view(
+    goals: list[dict[str, Any]],
+    *,
+    include_terminal: bool,
+) -> list[dict[str, Any]]:
+    """Drop terminal goals unless ``include_terminal`` (the ``a`` toggle)."""
+    if include_terminal:
+        return list(goals)
+    return [
+        g
+        for g in goals
+        if str(g.get("status") or "pending").lower() not in VIEW_TERMINAL_GOAL_STATUSES
+    ]
+
+
+def filter_step_dags_for_view(
+    step_dags: list[StepDagSnapshot],
+    *,
+    include_terminal: bool,
+) -> list[StepDagSnapshot]:
+    """Drop step DAGs whose goal is terminal unless ``include_terminal``.
+
+    Per-step visibility (off/active/all) is applied by the panel renderer.
+    """
+    if include_terminal:
+        return list(step_dags)
+    return [
+        dag
+        for dag in step_dags
+        if str(dag.goal_status or "pending").lower() not in VIEW_TERMINAL_GOAL_STATUSES
+    ]
+
+
+# ── Global top snapshot (all loops/goals/steps) ───────────────────────
+
+
+GLOBAL_LOOP_DETAIL_LIMIT = 12
+"""Max loops whose goal/step detail is fetched for the global view (caps RPC fan-out)."""
+
+
+@dataclass(slots=True)
+class LoopContextSnapshot:
+    """One loop's slice for the global top forest."""
+
+    loop_id: str
+    status: str
+    live: bool
+    prompt: str
+    updated: str
+    goals: list[dict[str, Any]] = field(default_factory=list)
+    step_dags: list[StepDagSnapshot] = field(default_factory=list)
+    goals_total: int = 0
+
+
+@dataclass(slots=True)
+class GlobalContextSnapshot:
+    """Aggregated global context for the ``/context`` top dashboard."""
+
+    loops: list[LoopContextSnapshot] = field(default_factory=list)
+    loops_total: int = 0
+    loops_active: int = 0
+    goals_total: int = 0
+    goals_by_status: dict[str, int] = field(default_factory=dict)
+    steps_total: int = 0
+    steps_completed: int = 0
+
+
+async def load_global_context(
+    daemon_session: Any,
+    *,
+    limit: int = GLOBAL_LOOP_DETAIL_LIMIT,
+) -> GlobalContextSnapshot:
+    """Build a global snapshot across recent loops.
+
+    Enumerates loops via ``list_loops`` then fetches each loop's goal
+    history to derive goal + step detail. Failed fetches still appear as
+    metadata-only rows; counts reflect only the detailed loops.
+    """
+    from soothe_cli.loops.sessions import list_loops_via_daemon_rpc
+
+    if daemon_session is None:
+        return GlobalContextSnapshot()
+
+    try:
+        loops_meta = await list_loops_via_daemon_rpc(daemon_session, limit=limit, sort_by="updated")
+    except Exception:
+        logger.debug("list_loops failed for global context", exc_info=True)
+        loops_meta = []
+
+    items: list[LoopContextSnapshot] = []
+    goals_by_status: dict[str, int] = {}
+    goals_total = steps_total = steps_completed = 0
+    loops_active = 0
+
+    for meta in loops_meta:
+        loop_id = str(meta.get("loop_id") or "")
+        if not loop_id:
+            continue
+        status = str(meta.get("status") or "unknown")
+        live = bool(meta.get("live"))
+        if live:
+            loops_active += 1
+        prompt = str(meta.get("prompt") or meta.get("topic") or "")
+        updated = str(meta.get("updated") or "")
+
+        try:
+            goals = await load_ce_goals(loop_id, daemon_session)
+        except Exception:
+            logger.debug("goal history failed for %s", loop_id, exc_info=True)
+            goals = []
+        step_dags = load_step_dag_snapshot(goals, None)
+
+        for goal in goals:
+            gstatus = str(goal.get("status") or "unknown")
+            goals_by_status[gstatus] = goals_by_status.get(gstatus, 0) + 1
+        for dag in step_dags:
+            steps_total += dag.steps_total
+            steps_completed += dag.steps_completed
+        goals_total += len(goals)
+
+        items.append(
+            LoopContextSnapshot(
+                loop_id=loop_id,
+                status=status,
+                live=live,
+                prompt=prompt,
+                updated=updated,
+                goals=goals,
+                step_dags=step_dags,
+                goals_total=len(goals),
+            )
+        )
+
+    return GlobalContextSnapshot(
+        loops=items,
+        loops_total=len(items),
+        loops_active=loops_active,
+        goals_total=goals_total,
+        goals_by_status=goals_by_status,
+        steps_total=steps_total,
+        steps_completed=steps_completed,
     )
