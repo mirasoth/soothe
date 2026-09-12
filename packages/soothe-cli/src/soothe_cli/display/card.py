@@ -11,13 +11,8 @@ from __future__ import annotations
 from textual.content import Content
 
 from soothe_cli.display import theme
-from soothe_cli.display.preview_limits import STEP_TASK_CARD_COLLAPSE_LINE_THRESHOLD
 from soothe_cli.display.tool_display import display_width
 from soothe_cli.settings import get_glyphs
-
-# Preview limits imported from preview_limits module
-_STEP_TOOL_PREVIEW_ROWS = STEP_TASK_CARD_COLLAPSE_LINE_THRESHOLD
-"""Collapsed step/task activity preview shows this many rows."""
 
 
 def _card_dot_tone(

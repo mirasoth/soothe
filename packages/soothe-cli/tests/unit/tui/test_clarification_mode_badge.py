@@ -9,7 +9,6 @@ from soothe_cli.tui.composer_mode import (
     COMPOSER_MODE_ASK,
     COMPOSER_MODE_AUTO,
     COMPOSER_MODE_BYPASS,
-    COMPOSER_MODE_MANUAL,
     COMPOSER_MODE_PLAN,
 )
 from soothe_cli.tui.widgets.loading import TipRow
@@ -58,17 +57,17 @@ async def test_badge_flips_to_auto_when_mode_assigned() -> None:
 
 
 @pytest.mark.asyncio
-async def test_badge_flips_to_manual_when_mode_assigned() -> None:
-    """Setting ``mode`` updates the visible text and CSS class atomically."""
+async def test_badge_clamps_manual_to_auto_when_mode_assigned() -> None:
+    """Manual is no longer selectable; assigning it clamps to auto."""
     async with _BadgeOnlyApp().run_test() as pilot:
         badge = pilot.app.query_one("#badge", ClarificationModeBadge)
-        badge.mode = COMPOSER_MODE_MANUAL
+        badge.mode = "manual"
         await pilot.pause()
-        assert badge.has_class("manual")
-        assert not badge.has_class("auto")
+        assert badge.has_class("auto")
+        assert not badge.has_class("manual")
         assert not badge.has_class("plan")
         assert not badge.has_class("bypass")
-        assert _read_static_content(badge) == "⏵⏵ agent · manual (shift+Tab to cycle)"
+        assert _read_static_content(badge) == "⏵⏵ agent · auto (shift+Tab to cycle)"
 
 
 @pytest.mark.asyncio
@@ -132,11 +131,12 @@ def test_badge_has_initial_content_before_mount() -> None:
     assert badge.has_class("auto")
 
 
-def test_badge_constructor_accepts_initial_manual_mode() -> None:
-    """``ClarificationModeBadge(mode="manual")`` starts on the manual variant."""
+def test_badge_constructor_clamps_manual_to_auto() -> None:
+    """``ClarificationModeBadge(mode="manual")`` clamps to the auto variant."""
     badge = ClarificationModeBadge(id="pre-mount-manual", mode="manual")
-    assert _read_static_content(badge) == "⏵⏵ agent · manual (shift+Tab to cycle)"
-    assert badge.has_class("manual")
+    assert _read_static_content(badge) == "⏵⏵ agent · auto (shift+Tab to cycle)"
+    assert badge.has_class("auto")
+    assert not badge.has_class("manual")
 
 
 def test_badge_constructor_accepts_initial_plan_mode() -> None:

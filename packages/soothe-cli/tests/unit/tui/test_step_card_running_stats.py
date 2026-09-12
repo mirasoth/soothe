@@ -434,7 +434,6 @@ def test_refresh_tools_display_syncs_title_when_animation_not_visible() -> None:
     mock_status = MagicMock()
     card._header_widget = mock_header
     card._status_widget = mock_status
-    card._tools_widget = MagicMock()
     card._activity_widget = MagicMock()
 
     card.add_tool_call("REFRESH_01:s:grep:0", "grep", {"pattern": "foo"})

@@ -6,6 +6,7 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
+from soothe_cli.display.preview_limits import TUI_FILE_CHANGE_CARDS_ENABLED
 from soothe_cli.runtime.state.file_tracker import (
     FILE_CHANGE_TOOLS,
     file_change_action_label,
@@ -97,6 +98,8 @@ async def mount_file_change_preview(
     assistant_id: Agent id for path resolution.
     file_op_tracker: Optional tracker with `recently_completed` lookups.
     """
+    if not TUI_FILE_CHANGE_CARDS_ENABLED:
+        return
     if tool_name not in FILE_CHANGE_TOOLS:
         return
     tcid = str(tool_call_id or "").strip()
@@ -208,6 +211,8 @@ async def mount_completed_file_change_preview(
     Returns:
     True when a completed preview card was mounted from the tracker record.
     """
+    if not TUI_FILE_CHANGE_CARDS_ENABLED:
+        return False
     tool_name = str(record.tool_name or "").strip()
     tcid = str(record.tool_call_id or "").strip()
     if tool_name not in FILE_CHANGE_TOOLS or not tcid:

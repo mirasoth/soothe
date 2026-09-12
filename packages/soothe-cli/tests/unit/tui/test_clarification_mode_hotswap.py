@@ -1,9 +1,9 @@
 """Tests for the Shift+Tab agent-mode hot-swap RPC payload.
 
 Covers the composer-mode cycle → `loop_set_clarification_mode` wire mapping:
-auto/manual push `interaction_mode=None`; bypass pushes
-`interaction_mode="bypass"` so the daemon swaps the live CoreAgent graph;
-plan/ask do not push (next-turn-only).
+auto pushes `interaction_mode=None`; bypass pushes `interaction_mode="bypass"`
+so the daemon swaps the live CoreAgent graph; plan/ask do not push
+(next-turn-only).
 """
 
 from __future__ import annotations
@@ -79,24 +79,9 @@ def test_cycle_auto_to_bypass_pushes_bypass_interaction_mode() -> None:
     assert app.pushed == [("auto", "bypass")]
 
 
-def test_cycle_bypass_to_manual_pushs_default_graph() -> None:
-    """Bypass → Manual pushes (mode=manual, interaction_mode=None).
-
-    Switching off bypass back to the default graph re-gates mutating tools,
-    so the daemon swaps the CoreAgent graph back to the interrupt-on variant.
-    """
-    app = _CycleHarness(initial="bypass")
-    app.cycle_composer_mode()
-    assert app._composer_mode == "manual"
-    assert app.pushed == [("manual", None)]
-
-
-def test_cycle_manual_to_auto_pushs_no_interaction_mode() -> None:
-    """Manual → Auto pushes (mode=auto, interaction_mode=None)."""
-    app = _CycleHarness(initial="manual")
-    app.cycle_composer_mode()
-    # Manual → Plan is next in the cycle; force auto via a full round trip.
-    app._composer_mode = "ask"
+def test_cycle_ask_to_auto_pushs_no_interaction_mode() -> None:
+    """Ask → Auto pushes (mode=auto, interaction_mode=None)."""
+    app = _CycleHarness(initial="ask")
     app.cycle_composer_mode()
     assert app._composer_mode == "auto"
     assert app.pushed == [("auto", None)]
@@ -104,7 +89,7 @@ def test_cycle_manual_to_auto_pushs_no_interaction_mode() -> None:
 
 def test_cycle_plan_does_not_push() -> None:
     """Plan is a standalone working mode; no hot-swap RPC fires."""
-    app = _CycleHarness(initial="manual")
+    app = _CycleHarness(initial="bypass")
     app.cycle_composer_mode()
     assert app._composer_mode == "plan"
     assert app.pushed == []
@@ -140,12 +125,12 @@ def test_push_omits_interaction_mode_when_none() -> None:
     app = _PushHarness(session=session)
 
     async def _drive() -> None:
-        app._push_clarification_mode_to_running_loop("manual")
+        app._push_clarification_mode_to_running_loop("auto")
         await asyncio.sleep(0)
         await asyncio.sleep(0)
 
     asyncio.run(_drive())
-    assert session.calls == [("manual", None)]
+    assert session.calls == [("auto", None)]
 
 
 def test_push_without_session_is_noop() -> None:

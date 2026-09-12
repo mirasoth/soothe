@@ -17,7 +17,6 @@ from textual.widgets import Static
 from soothe_cli.settings import get_glyphs
 from soothe_cli.tui.composer_mode import (
     COMPOSER_MODE_AUTO,
-    COMPOSER_MODE_MANUAL,
     normalize_composer_mode,
 )
 
@@ -78,7 +77,7 @@ class ClarificationModeBadge(Static):
     """Active composer-mode badge. Shows `⏵⏵ <label> (shift+Tab to cycle)`.
 
     Each mode uses a distinct foreground color: Auto green, Bypass amber,
-    Manual purple, Plan accent teal, Ask primary blue.
+    Plan accent teal, Ask primary blue.
     """
 
     DEFAULT_CSS = """
@@ -98,10 +97,6 @@ class ClarificationModeBadge(Static):
         color: $warning;
     }
 
-    ClarificationModeBadge.manual {
-        color: $secondary;
-    }
-
     ClarificationModeBadge.plan {
         color: $accent;
     }
@@ -114,7 +109,6 @@ class ClarificationModeBadge(Static):
     _MODE_LABELS: dict[str, str] = {
         "auto": "agent · auto",
         "bypass": "agent · bypass",
-        "manual": "agent · manual",
         "plan": "plan",
         "ask": "ask",
     }
@@ -141,12 +135,12 @@ class ClarificationModeBadge(Static):
 
     @classmethod
     def _render_label(cls, mode: str) -> str:
-        label = cls._MODE_LABELS.get(mode, cls._MODE_LABELS[COMPOSER_MODE_MANUAL])
+        label = cls._MODE_LABELS.get(mode, cls._MODE_LABELS[COMPOSER_MODE_AUTO])
         return f"\u23f5\u23f5 {label} {cls._CYCLE_HINT}"
 
     def _refresh(self, mode: str) -> None:
         normalized = normalize_composer_mode(mode)
-        self.remove_class("auto", "manual", "plan", "ask", "bypass")
+        self.remove_class("auto", "plan", "ask", "bypass")
         self.add_class(normalized)
         self.update(self._render_label(normalized))
 

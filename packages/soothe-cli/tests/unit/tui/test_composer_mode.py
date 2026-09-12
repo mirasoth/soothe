@@ -9,7 +9,6 @@ from soothe_cli.tui.composer_mode import (
     COMPOSER_MODE_ASK,
     COMPOSER_MODE_AUTO,
     COMPOSER_MODE_BYPASS,
-    COMPOSER_MODE_MANUAL,
     COMPOSER_MODE_PLAN,
     ComposerWireFields,
     next_composer_mode,
@@ -22,7 +21,7 @@ from soothe_cli.tui.composer_mode import (
     ("raw", "expected"),
     [
         ("auto", COMPOSER_MODE_AUTO),
-        ("manual", COMPOSER_MODE_MANUAL),
+        ("manual", COMPOSER_MODE_AUTO),
         ("plan", COMPOSER_MODE_PLAN),
         ("ask", COMPOSER_MODE_ASK),
         ("bypass", COMPOSER_MODE_BYPASS),
@@ -39,10 +38,10 @@ def test_normalize_composer_mode(raw: str | None, expected: str) -> None:
     ("current", "expected"),
     [
         ("auto", "bypass"),
-        ("bypass", "manual"),
-        ("manual", "plan"),
+        ("bypass", "plan"),
         ("plan", "ask"),
         ("ask", "auto"),
+        ("manual", "auto"),
         ("garbage", "auto"),
     ],
 )
@@ -54,7 +53,7 @@ def test_next_composer_mode(current: str, expected: str) -> None:
     ("mode", "wire_clar", "sticky", "interaction"),
     [
         ("auto", "auto", None, None),
-        ("manual", "manual", None, None),
+        ("manual", "auto", None, None),
         ("plan", "auto", None, "plan"),
         ("ask", "auto", None, "ask"),
         ("bypass", "auto", None, "bypass"),

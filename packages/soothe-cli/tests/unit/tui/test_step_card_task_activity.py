@@ -349,8 +349,8 @@ def test_footer_stats_include_all_step_tools() -> None:
     assert suffix == " · 1 tool, 1 task"
 
 
-def test_step_shows_latest_two_main_tools() -> None:
-    """Step card shows latest 2 main-agent tool rows."""
+def test_step_shows_latest_five_main_tools() -> None:
+    """Step card shows latest 5 main-agent tool rows (STEP_CARD_TOOL_ACTIVITY_PREVIEW_COUNT)."""
     card = CognitionStepMessage("ABC-01", "Scan only", id="stp-main-preview")
     for i in range(7):
         card.add_tool_call(f"ABC_01:s:grep:{i}", "grep", {"pattern": f"m{i}"})
@@ -358,10 +358,10 @@ def test_step_shows_latest_two_main_tools() -> None:
     text = _plain(card._step_task_activity_content())
     assert not text.startswith("\n")
     assert "Grep(m6)" in text
-    assert "Grep(m5)" in text
-    assert "Grep(m4)" not in text
+    assert "Grep(m2)" in text
+    assert "Grep(m1)" not in text
     assert "Grep(m0)" not in text
-    assert "+5 more tools" in text
+    assert "+2 more tools" in text
 
 
 def test_step_without_task_rows_still_shows_main_tools() -> None:

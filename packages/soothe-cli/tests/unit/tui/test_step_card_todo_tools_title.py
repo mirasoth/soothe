@@ -87,9 +87,9 @@ def test_activity_tree_tools_above_todo() -> None:
     assert "Tool-use" in text
     assert "Survey frontend tree" in text
     assert "ListFiles" in text
-    tools_idx = text.index("Tool-use")
     todo_idx = text.index("To-do")
-    assert tools_idx < todo_idx
+    tools_idx = text.index("Tool-use")
+    assert todo_idx < tools_idx
     assert tools_idx < text.index("ListFiles")
 
 
