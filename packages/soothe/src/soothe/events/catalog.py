@@ -111,8 +111,6 @@ RELAY_CAPTURED = "soothe.cognition.relay.captured"
 RELAY_RESUME_COMMAND_BUILT = "soothe.cognition.relay.resume_command_built"
 RELAY_RECOVERED = "soothe.cognition.relay.recovered"
 RELAY_STALE_INTERRUPT_SKIPPED = "soothe.cognition.relay.stale_interrupt_skipped"
-RELAY_DEFERRED = "soothe.cognition.relay.deferred"
-RELAY_UNBLOCKED = "soothe.cognition.relay.unblocked"
 
 # Intake-only wired specialist lifecycle (RFC-630 §6.3.3)
 WIRED_SUBAGENT_STARTED = "soothe.cognition.wired_subagent.started"
@@ -476,24 +474,6 @@ class RelayStaleInterruptSkippedEvent(LifecycleEvent):
     ticket_id: str
 
 
-class RelayDeferredEvent(LifecycleEvent):
-    """A clarification was hard-deferred (parked) awaiting an out-of-band answer."""
-
-    type: Literal["soothe.cognition.relay.deferred"] = "soothe.cognition.relay.deferred"
-    loop_id: str
-    reason: str
-    questions: list[str] = []  # noqa: RUF012
-
-
-class RelayUnblockedEvent(LifecycleEvent):
-    """A parked clarification was resolved and the goal was unblocked."""
-
-    type: Literal["soothe.cognition.relay.unblocked"] = "soothe.cognition.relay.unblocked"
-    loop_id: str
-    goal_id: str
-    new_status: str = "pending"
-
-
 # ---------------------------------------------------------------------------
 # Protocol events
 # ---------------------------------------------------------------------------
@@ -796,20 +776,6 @@ _reg(
     RelayStaleInterruptSkippedEvent,
     verbosity=VerbosityTier.INTERNAL,
     summary_template="Stale resume skipped: {ticket_id}",
-)
-_reg(
-    RELAY_DEFERRED,
-    RelayDeferredEvent,
-    verbosity=VerbosityTier.NORMAL,
-    summary_template="Deferred: {reason}",
-    priority=EventPriority.HIGH,
-)
-_reg(
-    RELAY_UNBLOCKED,
-    RelayUnblockedEvent,
-    verbosity=VerbosityTier.NORMAL,
-    summary_template="Unblocked: {goal_id}",
-    priority=EventPriority.HIGH,
 )
 
 # -- Protocol: plan ----------------------------------------------------------
