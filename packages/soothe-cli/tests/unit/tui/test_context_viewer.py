@@ -431,7 +431,7 @@ def test_step_dag_tree_panel_renders_steps_with_statuses() -> None:
         steps_total=2,
         steps_completed=1,
     )
-    panel = context_viewer.StepDagTreePanel(step_dags=[dag])
+    panel = context_viewer.StepDagTreePanel(step_dags=[dag], steps_mode="all")
     rendered = panel.render()
     assert "s1" in rendered
     assert "analyze" in rendered
@@ -455,7 +455,7 @@ def test_step_dag_tree_panel_collapses_large_dags() -> None:
         steps_total=len(steps),
         steps_completed=len(steps),
     )
-    panel = context_viewer.StepDagTreePanel(step_dags=[dag])
+    panel = context_viewer.StepDagTreePanel(step_dags=[dag], steps_mode="all")
     rendered = panel.render()
     assert "+5 more" in rendered
 
@@ -543,3 +543,420 @@ async def test_load_token_usage_snapshot_includes_conversation_breakdown(monkeyp
 
     assert snapshot.conv_tokens == 1200
     assert "Conversation (est.)" in context_data.format_token_usage(snapshot)
+
+
+# ── Interactive view state (ported from autopilot `top` keymaps) ─────────────
+
+
+def test_context_view_state_defaults() -> None:
+    """Defaults mirror the autopilot `top` view state."""
+    state = context_data.ContextViewState()
+    assert state.include_terminal is False
+    assert state.steps_mode == "active"
+    assert state.show_loops is True
+    assert state.interval == context_data.CONTEXT_REFRESH_DEFAULT_S
+    assert state.force_refresh is False
+
+
+def test_apply_context_key_toggles() -> None:
+    """Toggle keys behave like autopilot `top` (a/s/l/d/+/-/space)."""
+    state = context_data.ContextViewState()
+    assert state.interval == context_data.CONTEXT_REFRESH_DEFAULT_S
+
+    context_data.apply_context_key(state, "a")
+    assert state.include_terminal is True
+    assert state.force_refresh is True
+
+    context_data.apply_context_key(state, "s")
+    assert state.steps_mode == "all"
+    context_data.apply_context_key(state, "s")
+    assert state.steps_mode == "off"
+    context_data.apply_context_key(state, "s")
+    assert state.steps_mode == "active"
+
+    context_data.apply_context_key(state, "l")
+    assert state.show_loops is False
+
+    # density: compact (off + no loops) -> steps-only (all, no loops) -> full
+    state.steps_mode = "off"
+    context_data.apply_context_key(state, "d")
+    assert state.steps_mode == "all" and state.show_loops is False
+    context_data.apply_context_key(state, "d")
+    assert state.steps_mode == "all" and state.show_loops is True
+    context_data.apply_context_key(state, "d")
+    assert state.steps_mode == "off" and state.show_loops is False
+
+    context_data.apply_context_key(state, "+")
+    assert state.interval < context_data.CONTEXT_REFRESH_DEFAULT_S
+    context_data.apply_context_key(state, "-")
+    assert state.interval == context_data.CONTEXT_REFRESH_DEFAULT_S
+
+    context_data.apply_context_key(state, "space")
+    assert state.force_refresh is True
+
+
+def test_apply_context_key_interval_clamps() -> None:
+    """Interval never leaves the 0.2–10s range."""
+    state = context_data.ContextViewState()
+    for _ in range(100):
+        context_data.apply_context_key(state, "+")
+    assert state.interval == context_data.CONTEXT_REFRESH_MIN_S
+    for _ in range(100):
+        context_data.apply_context_key(state, "-")
+    assert state.interval == context_data.CONTEXT_REFRESH_MAX_S
+
+
+def test_filter_goals_for_view_hides_terminal() -> None:
+    """Active-only mode drops completed/failed/cancelled goals."""
+    goals = [
+        {"id": "g1", "status": "active"},
+        {"id": "g2", "status": "completed"},
+        {"id": "g3", "status": "failed"},
+        {"id": "g4", "status": "cancelled"},
+        {"id": "g5", "status": "pending"},
+    ]
+    active = context_data.filter_goals_for_view(goals, include_terminal=False)
+    assert [g["id"] for g in active] == ["g1", "g5"]
+    all_goals = context_data.filter_goals_for_view(goals, include_terminal=True)
+    assert [g["id"] for g in all_goals] == ["g1", "g2", "g3", "g4", "g5"]
+
+
+def test_filter_step_dags_for_view_hides_terminal_goals() -> None:
+    """Active-only mode drops step DAGs whose goal is terminal."""
+    dags = [
+        context_data.StepDagSnapshot(goal_id="g1", goal_description="live", goal_status="active"),
+        context_data.StepDagSnapshot(
+            goal_id="g2", goal_description="done", goal_status="completed"
+        ),
+    ]
+    active = context_data.filter_step_dags_for_view(dags, include_terminal=False)
+    assert [d.goal_id for d in active] == ["g1"]
+    assert len(context_data.filter_step_dags_for_view(dags, include_terminal=True)) == 2
+
+
+def _goal_dag_with_steps() -> context_data.StepDagSnapshot:
+    """Build a step DAG with terminal + non-terminal steps for mode tests."""
+    return context_data.StepDagSnapshot(
+        goal_id="g1",
+        goal_description="Refactor",
+        goal_status="active",
+        steps=[
+            context_data.StepDagNode(id="s1", description="analyze", status="completed"),
+            context_data.StepDagNode(id="s2", description="implement", status="active"),
+            context_data.StepDagNode(id="s3", description="verify", status="pending"),
+            context_data.StepDagNode(id="s4", description="docs", status="failed"),
+        ],
+        steps_total=4,
+        steps_completed=1,
+    )
+
+
+def test_step_dag_tree_panel_steps_mode_active_shows_only_active_and_pending() -> None:
+    """`steps_mode=active` lists only active/pending steps (mirrors `top`)."""
+    panel = context_viewer.StepDagTreePanel(step_dags=[_goal_dag_with_steps()], steps_mode="active")
+    rendered = panel.render()
+    assert "s2" in rendered and "implement" in rendered
+    assert "s3" in rendered and "verify" in rendered
+    assert "s1" not in rendered
+    assert "s4" not in rendered
+    # Real progress counts are still shown (not just visible rows).
+    assert "Steps: 1/4" in rendered
+
+
+def test_step_dag_tree_panel_steps_mode_all_shows_every_step() -> None:
+    """`steps_mode=all` lists completed and failed steps too."""
+    panel = context_viewer.StepDagTreePanel(step_dags=[_goal_dag_with_steps()], steps_mode="all")
+    rendered = panel.render()
+    assert "s1" in rendered
+    assert "s2" in rendered
+    assert "s3" in rendered
+    assert "s4" in rendered
+
+
+def test_step_dag_tree_panel_steps_mode_off_hides_step_rows() -> None:
+    """`steps_mode=off` hides step rows but keeps the goal header + counts."""
+    panel = context_viewer.StepDagTreePanel(step_dags=[_goal_dag_with_steps()], steps_mode="off")
+    rendered = panel.render()
+    assert "g1" in rendered
+    assert "Refactor" in rendered
+    assert "Steps: 1/4" in rendered
+    assert "s1" not in rendered
+    assert "s2" not in rendered
+    assert "steps hidden" in rendered
+
+
+def test_context_viewer_footer_reflects_state() -> None:
+    """The footer renders the live mode/steps/rail/delay badges."""
+    import re
+
+    def plain(text: str) -> str:
+        """Strip Textual markup tags for substring assertions."""
+        return re.sub(r"\[/?[^\]]*\]", "", text)
+
+    screen = context_viewer.ContextViewerScreen("loop-1")
+    screen._state.include_terminal = True
+    screen._state.steps_mode = "all"
+    screen._state.show_loops = False
+    screen._state.interval = 2.5
+    footer = plain(screen._render_footer())
+    assert "mode=all" in footer
+    assert "(live)" not in footer
+    assert "steps=all" in footer
+    assert "rail=off" in footer
+    assert "delay=2.5s" in footer
+    # default (active-only) carries the live hint
+    fresh = plain(context_viewer.ContextViewerScreen("loop-2")._render_footer())
+    assert "mode=active" in fresh
+    assert "(live)" in fresh
+
+
+def test_context_viewer_help_overlay_content_lists_keys() -> None:
+    """The help overlay documents every ported keymap."""
+    screen = context_viewer.ContextViewerScreen("loop-1")
+    help_text = screen._render_help()
+    for key in ("a", "s", "l", "d", "+/-", "Space", "g/G", "h/?", "q"):
+        assert key in help_text
+
+
+# ── Global top dashboard (all loops/goals/steps) ────────────────────────────
+
+
+def _plain(text: str) -> str:
+    """Strip Textual markup tags for substring assertions."""
+    import re
+
+    return re.sub(r"\[/?[^\]]*\]", "", text)
+
+
+def _global_snapshot_two_loops() -> context_data.GlobalContextSnapshot:
+    """Build a two-loop global snapshot for panel tests."""
+    return context_data.GlobalContextSnapshot(
+        loops=[
+            context_data.LoopContextSnapshot(
+                loop_id="loop-A",
+                status="running",
+                live=True,
+                prompt="Implement auth",
+                updated="2026-09-12T02:00:00+00:00",
+                goals=[
+                    {"id": "g1", "goal_id": "g1", "description": "auth", "status": "active"},
+                    {"id": "g2", "goal_id": "g2", "description": "docs", "status": "completed"},
+                ],
+                step_dags=[
+                    context_data.StepDagSnapshot(
+                        goal_id="g1",
+                        goal_description="auth",
+                        goal_status="active",
+                        steps=[
+                            context_data.StepDagNode(
+                                id="s1", description="scaffold", status="completed"
+                            ),
+                            context_data.StepDagNode(id="s2", description="jwt", status="pending"),
+                        ],
+                        steps_total=2,
+                        steps_completed=1,
+                    ),
+                ],
+                goals_total=2,
+            ),
+            context_data.LoopContextSnapshot(
+                loop_id="loop-B",
+                status="paused",
+                live=False,
+                prompt="Write tests",
+                updated="2026-09-12T01:00:00+00:00",
+                goals=[
+                    {"id": "g3", "goal_id": "g3", "description": "tests", "status": "pending"},
+                ],
+                step_dags=[],
+                goals_total=1,
+            ),
+        ],
+        loops_total=2,
+        loops_active=1,
+        goals_total=3,
+        goals_by_status={"active": 1, "completed": 1, "pending": 1},
+        steps_total=2,
+        steps_completed=1,
+    )
+
+
+@pytest.mark.asyncio
+async def test_load_global_context_aggregates_loops() -> None:
+    """The global aggregator enumerates loops and tallies goals/steps."""
+    loops_resp = {
+        "loops": [
+            {
+                "loop_id": "loop-A",
+                "status": "running",
+                "live": True,
+                "prompt": "Implement auth",
+                "updated": "2026-09-12T02:00:00+00:00",
+                "goals": 1,
+            }
+        ]
+    }
+    history = SimpleNamespace(
+        goals=[
+            {
+                "goal_id": "g1",
+                "goal_text": "auth",
+                "status": "active",
+                "step_outcomes": [
+                    {"id": "s1", "description": "scaffold", "status": "completed"},
+                    {"id": "s2", "description": "jwt", "status": "pending"},
+                ],
+            }
+        ]
+    )
+    session = SimpleNamespace(
+        list_loops=AsyncMock(return_value=loops_resp),
+        fetch_loop_history=AsyncMock(return_value=history),
+    )
+
+    snapshot = await context_data.load_global_context(session)
+    assert snapshot.loops_total == 1
+    assert snapshot.loops_active == 1
+    assert snapshot.goals_total == 1
+    assert snapshot.goals_by_status.get("active") == 1
+    assert snapshot.steps_total == 2
+    assert snapshot.steps_completed == 1
+    assert snapshot.loops[0].prompt == "Implement auth"
+
+
+@pytest.mark.asyncio
+async def test_load_global_context_returns_empty_without_session() -> None:
+    """A missing daemon session yields an empty (non-error) snapshot."""
+    snapshot = await context_data.load_global_context(None)
+    assert snapshot.loops_total == 0
+    assert snapshot.goals_total == 0
+
+
+def test_global_top_panel_renders_loop_goal_step_forest() -> None:
+    """The global forest shows loop → goal → step rows plus header counts."""
+    panel = context_viewer.GlobalTopPanel(
+        snapshot=_global_snapshot_two_loops(),
+        state=context_data.ContextViewState(include_terminal=True, steps_mode="all"),
+    )
+    rendered = _plain(panel.render())
+    assert "Context · global" in rendered
+    assert "loops=2" in rendered and "live 1" in rendered
+    assert "goals=3" in rendered
+    assert "steps=1/2" in rendered
+    assert "LOOP" in rendered
+    assert "g1" in rendered and "auth" in rendered
+    assert "s1" in rendered and "scaffold" in rendered
+    assert "s2" in rendered and "jwt" in rendered
+
+
+def test_global_top_panel_active_mode_drops_terminal_goals_and_loops() -> None:
+    """Active-only mode omits terminal goals and fully-terminal loops."""
+    state = context_data.ContextViewState(include_terminal=False, steps_mode="all")
+    panel = context_viewer.GlobalTopPanel(snapshot=_global_snapshot_two_loops(), state=state)
+    rendered = _plain(panel.render())
+    # g2 (completed) is dropped under loop-A.
+    assert "docs" not in rendered
+    # loop-A still shows (it has g1 active + is live).
+    assert "Implement auth" in rendered
+
+
+def test_global_top_panel_steps_mode_off_hides_step_rows() -> None:
+    """steps_mode=off hides step rows but keeps the loop/goal headers."""
+    state = context_data.ContextViewState(include_terminal=True, steps_mode="off")
+    panel = context_viewer.GlobalTopPanel(snapshot=_global_snapshot_two_loops(), state=state)
+    rendered = _plain(panel.render())
+    assert "scaffold" not in rendered
+    assert "jwt" not in rendered
+    assert "g1" in rendered and "LOOP" in rendered
+
+
+def test_global_top_panel_steps_mode_active_shows_only_active_and_pending() -> None:
+    """steps_mode=active lists only active/pending steps (completed hidden)."""
+    state = context_data.ContextViewState(include_terminal=True, steps_mode="active")
+    panel = context_viewer.GlobalTopPanel(snapshot=_global_snapshot_two_loops(), state=state)
+    rendered = _plain(panel.render())
+    assert "jwt" in rendered  # pending step
+    assert "scaffold" not in rendered  # completed step hidden
+
+
+@pytest.mark.asyncio
+async def test_context_viewer_t_toggle_switches_to_global() -> None:
+    """Pressing `t` switches the /context body to the global top dashboard."""
+    from textual.app import App, ComposeResult
+    from textual.widgets import Static
+
+    class HostApp(App):
+        def compose(self) -> ComposeResult:
+            yield Static("host")
+
+    loops_resp = {
+        "loops": [
+            {
+                "loop_id": "loop-A",
+                "status": "running",
+                "live": True,
+                "prompt": "Implement auth",
+                "updated": "2026-09-12T02:00:00+00:00",
+                "goals": 1,
+            }
+        ]
+    }
+    history = SimpleNamespace(goals=[{"goal_id": "g1", "goal_text": "auth", "status": "active"}])
+    session = SimpleNamespace(
+        list_loops=AsyncMock(return_value=loops_resp),
+        fetch_loop_history=AsyncMock(return_value=history),
+    )
+    app = HostApp()
+    async with app.run_test() as pilot:
+        screen = context_viewer.ContextViewerScreen(
+            "loop-A",
+            daemon_session=session,
+            load_token_snapshot=AsyncMock(return_value=None),
+        )
+        app.push_screen(screen)
+        await pilot.pause()
+        assert screen._view_mode == "loop"
+        await pilot.press("t")
+        await pilot.pause()
+        assert screen._view_mode == "global"
+        assert screen._global_snapshot is not None
+        assert screen._global_snapshot.loops_total == 1
+        # back to loop view
+        await pilot.press("t")
+        await pilot.pause()
+        assert screen._view_mode == "loop"
+
+
+@pytest.mark.asyncio
+async def test_context_viewer_h_pushes_help_view_dismissed_by_any_key() -> None:
+    """`h` opens a dedicated help modal; any key dismisses it."""
+    from textual.app import App, ComposeResult
+    from textual.widgets import Static
+
+    from soothe_cli.tui.widgets.context_viewer import ContextHelpScreen
+
+    class HostApp(App):
+        def compose(self) -> ComposeResult:
+            yield Static("host")
+
+    session = SimpleNamespace(
+        fetch_loop_history=AsyncMock(return_value=SimpleNamespace(goals=[])),
+        list_loops=AsyncMock(return_value={"loops": []}),
+    )
+    app = HostApp()
+    async with app.run_test() as pilot:
+        screen = context_viewer.ContextViewerScreen(
+            "loop-A",
+            daemon_session=session,
+            load_token_snapshot=AsyncMock(return_value=None),
+        )
+        app.push_screen(screen)
+        await pilot.pause()
+        # `h` pushes the help view on top of the context screen.
+        await pilot.press("h")
+        await pilot.pause()
+        assert isinstance(app.screen, ContextHelpScreen)
+        # any key dismisses the help view and returns to /context.
+        await pilot.press("a")
+        await pilot.pause()
+        assert app.screen is screen
