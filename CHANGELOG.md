@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.0.9] - 2026-09-12
+
 ### Added
 - Add a File-edit branch to TUI step cards showing action, file path, and line-change deltas (`Created /path/to/file.md +100 -10`) for each file-write tool, capped at the latest five. Step cards now display sections in order: To-do → Tool-use (latest five) → File-edit (latest five).
 - Disable TUI file-change diff cards by default via `TUI_FILE_CHANGE_CARDS_ENABLED`; file edits surface only in the step-card File-edit branch.
@@ -18,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Remove the `manual` composer mode. Shift+Tab cycle is now Auto → Bypass → Plan → Ask → Auto; `--mode` accepts `auto` or `plan` only (default `auto`).
 - Remove dead `STEP_CARD_SHOW_TOOL_ROW_DETAILS` rendering path and associated legacy tool-panel fields, methods, and config flags from the TUI step card.
 - Remove the `soothe-autopilot` package and all legacy autopilot standalone mode code. The `/autopilot` slash command now runs entirely through the loop-native rail-governed StrangeLoop path. The autopilot CLI subcommand group (`soothe autopilot submit/status/top/cancel`) is removed. `AutopilotConfig` is renamed to `RailConfig` (config path `agent.autopilot` → `agent.rail`) and trimmed to loop-native fields only. The daemon's `AutopilotService`/`AutopilotMonitor` construction, all `autopilot_*` RPC handlers, and the `soothe-autopilot` workspace dependency are removed. Cron dispatch is rerouted from `AutopilotService.submit_task` to the loop-native `loop_input` path with `autopilot_rail_id`.
+
+[Compare with previous version]: https://github.com/mirasoth/soothe/compare/v1.0.8...v1.0.9
 
 ## [v1.0.8] - 2026-09-09
 
