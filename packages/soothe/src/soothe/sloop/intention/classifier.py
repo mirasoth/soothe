@@ -47,6 +47,7 @@ class IntentClassifier:
         *,
         assistant_identity: AssistantIdentity | None = None,
     ) -> None:
+        """Initialize the fast model, coordinator, and intake classifier."""
         self._fast_model = model
         self._assistant_name = assistant_name
         self._soothe_config = soothe_config

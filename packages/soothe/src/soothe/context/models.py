@@ -155,6 +155,7 @@ class StepDAG(BaseModel):
         return ready
 
     def completed_step_ids(self) -> set[str]:
+        """Return IDs of all completed steps."""
         return {cid for cid, n in self.nodes.items() if n.status == "completed"}
 
     def decomposed_step_ids(self) -> set[str]:
@@ -162,9 +163,11 @@ class StepDAG(BaseModel):
         return {cid for cid, n in self.nodes.items() if n.status == "decomposed"}
 
     def failed_step_ids(self) -> set[str]:
+        """Return IDs of all failed steps."""
         return {cid for cid, n in self.nodes.items() if n.status == "failed"}
 
     def pending_step_ids(self) -> set[str]:
+        """Return IDs of all pending steps."""
         return {cid for cid, n in self.nodes.items() if n.status == "pending"}
 
     def mark_active(self, step_id: str) -> None:
@@ -174,18 +177,21 @@ class StepDAG(BaseModel):
             node.status = "active"
 
     def mark_completed(self, step_id: str, execution: StepExecution) -> None:
+        """Mark a step completed and attach its execution record."""
         node = self.nodes.get(step_id)
         if node is not None:
             node.status = "completed"
             node.execution = execution
 
     def mark_failed(self, step_id: str, execution: StepExecution) -> None:
+        """Mark a step failed and attach its execution record."""
         node = self.nodes.get(step_id)
         if node is not None:
             node.status = "failed"
             node.execution = execution
 
     def mark_skipped(self, step_id: str) -> None:
+        """Mark a step as skipped."""
         node = self.nodes.get(step_id)
         if node is not None:
             node.status = "skipped"
@@ -332,18 +338,22 @@ class StepDAG(BaseModel):
 
     @property
     def total_steps(self) -> int:
+        """Total number of steps in the DAG."""
         return len(self.nodes)
 
     @property
     def completed_steps(self) -> int:
+        """Count of completed steps."""
         return sum(1 for n in self.nodes.values() if n.status == "completed")
 
     @property
     def failed_steps(self) -> int:
+        """Count of failed steps."""
         return sum(1 for n in self.nodes.values() if n.status == "failed")
 
     @property
     def success_rate(self) -> float:
+        """Fraction of executed steps that completed successfully (0.0–1.0)."""
         executed = self.completed_steps + self.failed_steps
         if executed == 0:
             return 1.0
@@ -499,9 +509,11 @@ class GoalStepDAG(BaseModel):
         self.goals[goal.id] = goal
 
     def get_goal(self, goal_id: str) -> GoalNode | None:
+        """Return a goal by ID, or `None` if not found."""
         return self.goals.get(goal_id)
 
     def complete_goal(self, goal_id: str) -> None:
+        """Mark a goal completed and release its loop assignment."""
         goal = self.goals.get(goal_id)
         if goal is not None:
             goal.status = "completed"
@@ -509,6 +521,7 @@ class GoalStepDAG(BaseModel):
             goal.updated_at = datetime.now(UTC)
 
     def fail_goal(self, goal_id: str, error: str) -> None:
+        """Mark a goal failed and record the error message."""
         goal = self.goals.get(goal_id)
         if goal is not None:
             goal.status = "failed"
@@ -516,6 +529,7 @@ class GoalStepDAG(BaseModel):
             goal.updated_at = datetime.now(UTC)
 
     def suspend_goal(self, goal_id: str, reason: str) -> None:
+        """Mark a goal suspended and release its loop assignment."""
         goal = self.goals.get(goal_id)
         if goal is not None:
             goal.status = "suspended"
@@ -640,6 +654,7 @@ class GoalStepDAG(BaseModel):
         return goal
 
     def active_goals(self) -> list[GoalNode]:
+        """Return all goals with `status=active`."""
         return [g for g in self.goals.values() if g.status == "active"]
 
     # ── Lineage ─────────────────────────────────────────────────
@@ -664,9 +679,11 @@ class GoalStepDAG(BaseModel):
     # ── Snapshot ────────────────────────────────────────────────
 
     def snapshot(self) -> GoalStepDAGSnapshot:
+        """Capture a serializable snapshot of all goals."""
         return GoalStepDAGSnapshot(goals=list(self.goals.values()))
 
     def restore_from_snapshot(self, snapshot: GoalStepDAGSnapshot) -> None:
+        """Replace all goals from a previously captured snapshot."""
         self.goals.clear()
         for goal in snapshot.goals:
             self.goals[goal.id] = goal

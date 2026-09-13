@@ -19,6 +19,7 @@ class GoalScheduler:
     """Goal scheduling for ContextEngine, operating on GoalStepDAG."""
 
     def __init__(self, dag: GoalStepDAG) -> None:
+        """Bind the scheduler to a GoalStepDAG."""
         self._dag = dag
 
     def peek_ready_goals(self, limit: int = 1) -> list[GoalNode]:

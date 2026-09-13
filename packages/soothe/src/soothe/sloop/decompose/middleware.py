@@ -198,6 +198,7 @@ class DecomposeTaskMiddleware(AgentMiddleware):
     # ------------------------------------------------------------------
 
     def modify_request(self, request: ModelRequest[ContextT]) -> ModelRequest[ContextT]:
+        """Inject decompose-task tool and prompt addendum for step-mode threads."""
         conf = _decompose_runtime.langgraph_configurable()
         if conf.get(SOOTHE_EVAL_STEP_ID_KEY):
             # EvalStepMiddleware owns the Eval tool/prompt policy

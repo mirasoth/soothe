@@ -150,6 +150,7 @@ def wrap_node(
     if isinstance(node, LoopNode):
 
         async def wrapped(state: dict[str, Any]) -> dict[str, Any]:
+            """Invoke a LoopNode with the runtime context and return state."""
             return await node(ctx, state)
 
         wrapped.__name__ = f"node_{station}"
@@ -157,6 +158,7 @@ def wrap_node(
         return wrapped
 
     async def wrapped_legacy(state: dict[str, Any]) -> dict[str, Any]:
+        """Invoke a legacy node function with the runtime context."""
         return await node(ctx, state)
 
     wrapped_legacy.__name__ = f"node_{station}"

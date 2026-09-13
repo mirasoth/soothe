@@ -80,12 +80,14 @@ class MemoryRailTraceStore:
     _records: dict[str, list[RuleFireRecord]] = field(default_factory=dict)
 
     def append(self, job_id: str, record: RuleFireRecord) -> RuleFireRecord:
+        """Append a rule-fire record to the in-memory bucket for `job_id`."""
         bucket = self._records.setdefault(job_id, [])
         record.seq = len(bucket)
         bucket.append(record)
         return record
 
     def read(self, job_id: str) -> list[RuleFireRecord]:
+        """Return all rule-fire records for `job_id`."""
         return list(self._records.get(job_id, ()))
 
 
@@ -129,6 +131,7 @@ class JsonlRailTraceStore:
         return path
 
     def append(self, job_id: str, record: RuleFireRecord) -> RuleFireRecord:
+        """Append a rule-fire record to the JSONL trace file for `job_id`."""
         _sanitize_job_id(job_id)
         path = self._ensure_migrated(job_id)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -139,6 +142,7 @@ class JsonlRailTraceStore:
         return record
 
     def read(self, job_id: str) -> list[RuleFireRecord]:
+        """Read all rule-fire records from the JSONL trace for `job_id`."""
         _sanitize_job_id(job_id)
         path = self._ensure_migrated(job_id)
         if not path.is_file():

@@ -52,6 +52,7 @@ class FsspecSyncBackend:
         root: str,
         max_workers: int = _DEFAULT_MAX_WORKERS,
     ) -> None:
+        """Initialize the fsspec filesystem, root path, and thread pool."""
         self._fs = fs
         self._root = root.rstrip("/")
         self._executor = ThreadPoolExecutor(

@@ -103,12 +103,12 @@ class HealthReport:
     """Complete health check report.
 
     Attributes:
-    timestamp: ISO 8601 timestamp of report generation
-    soothe_version: Soothe framework package version
-    config_path: Path to config file used (or None if not loaded)
-    overall_status: Aggregated status across all categories
-    categories: List of category results
-    daemon_version: Soothe daemon package version
+        timestamp: ISO 8601 timestamp of report generation
+        soothe_version: Soothe framework package version
+        config_path: Path to config file used (or None if not loaded)
+        overall_status: Aggregated status across all categories
+        categories: List of category results
+        daemon_version: Soothe daemon package version
     """
 
     timestamp: str
@@ -133,7 +133,7 @@ class HealthReport:
         """Get summary counts by status.
 
         Returns:
-        Dictionary with counts for each status level
+            Dictionary with counts for each status level
         """
         summary = {
             "total": 0,

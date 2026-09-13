@@ -13,6 +13,7 @@ def collect_related_exceptions(exc: BaseException) -> list[BaseException]:
     seen: set[int] = set()
 
     def visit(e: BaseException | None) -> None:
+        """Recursively collect chained causes and contexts, deduplicating by id."""
         if e is None or id(e) in seen:
             return
         seen.add(id(e))

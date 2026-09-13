@@ -89,8 +89,8 @@ class AsyncCancelOrchestrator:
         Deduplicates cancel requests: only one background task per loop_id.
 
         Args:
-        loop_id: The loop to cancel.
-        already_signaled: If True, runner.cancel() was already called by caller.
+            loop_id: The loop to cancel.
+            already_signaled: If True, runner.cancel() was already called by caller.
         """
         # Deduplicate: only one cancel task per loop
         if loop_id in self._active_cancel_tasks:
@@ -115,8 +115,8 @@ class AsyncCancelOrchestrator:
         Always succeeds: either cooperative cancel works, or force kill terminates.
 
         Args:
-        loop_id: The loop to cancel.
-        already_signaled: If True, runner.cancel() was already called by caller.
+            loop_id: The loop to cancel.
+            already_signaled: If True, runner.cancel() was already called by caller.
         """
         config = self._daemon._daemon_config
         max_retries = getattr(config, "cancel_retry_count", 3)
@@ -565,7 +565,7 @@ class QueryEngine:
         """Reserve daemon / per-loop query capacity atomically.
 
         Returns:
-        Tuple of admission result and turn generation (0 when not loop-scoped).
+            Tuple of admission result and turn generation (0 when not loop-scoped).
         """
         d = self._daemon
         max_concurrent = getattr(d._daemon_config, "max_concurrent_threads", 100)

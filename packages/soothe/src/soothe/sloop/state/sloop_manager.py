@@ -1090,19 +1090,13 @@ class StrangeLoopStateManager:
     ) -> None:
         """Persist a resumable interruption cursor on the in-flight goal.
 
-        Sets the active goal's status to `interrupted` (NOT terminal `cancelled`)
-        and records the current iteration cursor in `execution_checkpoint` so a
-        subsequent `retry` / `resume` turn restores the same iteration counter
-        instead of restarting from zero. Called when the loop is cancelled
-        mid-Execute (user cancel / infra event) before the goal reaches
-        `goal_completion`.
+        Sets the active goal's status to `interrupted` (not terminal `cancelled`)
+        and records the current iteration cursor so a subsequent `retry`/`resume`
+        restores the same iteration counter.
 
         Args:
-            goal_record: Goal index entry to mark interrupted. `None` → no-op
-                (caller had no in-flight goal).
-            iteration: Current iteration counter at the interrupt point. This is
-                persisted as-is (not `+1`) because the in-progress iteration did
-                not complete its `record_iteration` flush.
+            goal_record: Goal index entry to mark interrupted. `None` → no-op.
+            iteration: Current iteration counter at the interrupt point.
             reason: Short discriminator for logs (e.g. `user_cancelled`).
         """
         if self._checkpoint is None:

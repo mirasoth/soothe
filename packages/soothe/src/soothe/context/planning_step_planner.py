@@ -61,11 +61,13 @@ class StepPlanningSubengine:
     """Manages step-level DAG planning within ContextEngine."""
 
     def __init__(self, dag: GoalStepDAG) -> None:
+        """Bind the step planner to a GoalStepDAG."""
         self._dag = dag
         self._plan_waves: list[PlanWave] = []
 
     @property
     def plan_waves(self) -> list[PlanWave]:
+        """Recorded plan waves (one per ingest_plan call)."""
         return self._plan_waves
 
     # --- Ingestion ---
@@ -416,26 +418,32 @@ class StepPlanManagerAdapter:
         subengine: StepPlanningSubengine,
         goal_id: str,
     ) -> None:
+        """Bind the adapter to a subengine and goal ID."""
         self._subengine = subengine
         self._goal_id = goal_id
         self.plan_history: list[PlanResult] = []
 
     @property
     def goal_id(self) -> str | None:
+        """The bound goal ID, or `None` when unset."""
         return self._goal_id or None
 
     @goal_id.setter
     def goal_id(self, value: str) -> None:
+        """Set the bound goal ID."""
         self._goal_id = value
 
     def ingest_plan(self, plan_result: PlanResult, plan_id: str | None, iteration: int) -> None:
+        """Record a plan result and forward it to the subengine."""
         self.plan_history.append(plan_result)
         self._subengine.ingest_plan(self._goal_id, plan_result, plan_id, iteration)
 
     def record_step_outcomes(self, step_results: list[StepExecutionRecord]) -> None:
+        """Forward step execution outcomes to the subengine."""
         self._subengine.record_step_outcomes(self._goal_id, step_results)
 
     def get_planning_context(self) -> DagPlanningContext:
+        """Return the DAG planning context for the bound goal."""
         return self._subengine.get_planning_context(self._goal_id)
 
     def determine_completion_strategy(
@@ -444,9 +452,11 @@ class StepPlanManagerAdapter:
         plan_result: Any,
         mode: str = "auto",
     ) -> CompletionStrategy:
+        """Determine the completion strategy for the bound goal."""
         return self._subengine.determine_completion_strategy(
             self._goal_id, state, plan_result, mode
         )
 
     def format_completion_dag_report(self) -> str:
+        """Return a formatted DAG completion report."""
         return self._subengine.format_completion_dag_report()

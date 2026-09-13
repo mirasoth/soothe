@@ -458,6 +458,7 @@ class ThreadContextManager:
 
         # Delete run directory
         def get_run_dir() -> Path:
+            """Return the on-disk run directory path for this thread."""
             return Path(SOOTHE_HOME).expanduser() / "data" / "threads" / thread_id
 
         run_dir = await asyncio.to_thread(get_run_dir)
@@ -528,6 +529,7 @@ class ThreadContextManager:
         """
 
         def get_run_dir() -> Path:
+            """Return the on-disk run directory path for this thread."""
             return Path(SOOTHE_HOME).expanduser() / "data" / "threads" / thread_id
 
         run_dir = await asyncio.to_thread(get_run_dir)

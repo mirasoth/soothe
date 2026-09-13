@@ -139,20 +139,10 @@ class StrangeLoopCheckpoint(BaseModel):
     ) -> bool:
         """Force a running checkpoint into a terminal state (fatal_error handler).
 
-        When `pump_graph` crashes or a graph node sets
-        `last_outcome="fatal"`, the runner now emits a wire-visible
-        `fatal_error` event, but the checkpoint may still be left
-        `status="running"` if the crash bypassed `finalize_goal`.
-        This method transitions the loop to a terminal status and marks
-        the active goal as cancelled/failed so recovery and
-        reconciliation can proceed.
-
         Args:
             terminal_status: Terminal loop status. Defaults to `idle` so the
-                daemon can accept the next goal. Use `cancelled` for hard
-                kills (user disconnect, unrecoverable crash).
-            goal_status: Status to set on the in-flight goal. Defaults to
-                `cancelled` for infrastructure failures.
+                daemon can accept the next goal. Use `cancelled` for hard kills.
+            goal_status: Status to set on the in-flight goal.
             goal_index: Index into `goal_history`. When `None`, uses
                 `current_goal_index`.
 

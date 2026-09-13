@@ -33,6 +33,7 @@ class StepBriefHydrator:
     """Expand vague dependent-step briefs using predecessor evidence."""
 
     def __init__(self, model: Any, config: SootheConfig | None = None) -> None:
+        """Store the LLM model and config used for brief hydration."""
         self._model = model
         self._config = config
 

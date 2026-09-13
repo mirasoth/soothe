@@ -46,6 +46,8 @@ class LoopStateView:
 
 @dataclass(frozen=True)
 class ClarificationRequest:
+    """A structured clarification question bundle emitted by a loop station."""
+
     questions: tuple
     """Structured (dict) or plain-string questions. Structured dicts carry
     question/header/options; plain strings are used by HITL origins and the
@@ -61,6 +63,8 @@ class ClarificationRequest:
 
 @dataclass(frozen=True)
 class ClarificationAnswer:
+    """Resolved answers to a ClarificationRequest with provenance."""
+
     answers: tuple[str, ...]
     source: Literal["human", "veritas", "fallback", "static"]
     confidence: float | None = None
@@ -88,6 +92,7 @@ class ClarificationDeferredError(Exception):
         *,
         kind: DeferKind = "explicit",
     ) -> None:
+        """Store reason, request, and defer kind for relay propagation."""
         super().__init__(reason)
         self.reason = reason
         self.request = request
@@ -101,7 +106,9 @@ class ClarificationPolicy(Protocol):
     :class:`AutoClarificationPolicy` (`veritas` subagent).
     """
 
-    async def answer(self, request: ClarificationRequest) -> ClarificationAnswer: ...
+    async def answer(self, request: ClarificationRequest) -> ClarificationAnswer:
+        """Resolve a clarification request into an answer."""
+        ...
 
 
 def _safe_int(value: Any, default: int = 0) -> int:

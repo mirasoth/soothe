@@ -150,6 +150,15 @@ class LoopRunnerFactory:
             return await BoxLiteWorkerPool.get_shared_instance(
                 self._agent_config, self._daemon_config
             )
+        if self._mode == "ray":
+            from soothe_daemon.runner.ray_runner import await_loop_dispatchable
+
+            class _RayPoolNamespace:
+                """Pool facade exposing `await_loop_dispatchable`."""
+
+                await_loop_dispatchable = staticmethod(await_loop_dispatchable)
+
+            return _RayPoolNamespace()
         return None
 
     async def initialize_pool(self) -> None:
@@ -185,6 +194,12 @@ class LoopRunnerFactory:
             )
             self._pool_initialized = True
             logger.info("LoopRunnerFactory: thread pool pre-warmed")
+        elif self._mode == "ray":
+            from soothe_daemon.runner.ray_runner import _ensure_ray_init
+
+            _ensure_ray_init(self._daemon_config)
+            self._pool_initialized = True
+            logger.info("LoopRunnerFactory: ray cluster connected")
 
     async def shutdown_pool(self) -> None:
         """Shutdown worker pool if active.
@@ -214,6 +229,12 @@ class LoopRunnerFactory:
 
             await ThreadPool.close_shared_instance()
             logger.info("LoopRunnerFactory: thread pool shutdown")
+        elif self._mode == "ray":
+            import ray
+
+            if ray.is_initialized():
+                ray.shutdown()
+                logger.info("LoopRunnerFactory: ray cluster shutdown")
 
         self._pool_initialized = False
 
@@ -247,7 +268,7 @@ class LoopRunnerFactory:
         # mode == "ray"
         from soothe_daemon.runner.ray_runner import RayLoopRunner
 
-        return RayLoopRunner(loop_id, self._agent_config)
+        return RayLoopRunner(loop_id, self._agent_config, self._daemon_config)
 
 
 __all__ = ["LoopRunnerFactory"]

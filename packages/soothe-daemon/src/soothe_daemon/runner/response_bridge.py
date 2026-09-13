@@ -102,16 +102,16 @@ class ResponsePusher:
         """Schedule delivery of one worker message onto the main event loop.
 
         Args:
-        msg_type: Worker message kind (`chunk`, `done`, `error`, etc.).
-        payload: Chunk tuple or exception; ignored for `done` / `cancelled`.
+            msg_type: Worker message kind (`chunk`, `done`, `error`, etc.).
+            payload: Chunk tuple or exception; ignored for `done` / `cancelled`.
 
-        For CHUNK messages, blocks the worker thread until a delivery slot is
-        available (semaphore acquire). This applies backpressure to LangGraph
-        `astream` so memory cannot grow unbounded when the consumer is slow.
+            For CHUNK messages, blocks the worker thread until a delivery slot is
+            available (semaphore acquire). This applies backpressure to LangGraph
+            `astream` so memory cannot grow unbounded when the consumer is slow.
 
-        Uses longer timeout for execute-phase and goal_completion chunks
-        since these can run for minutes during long tool execution (browser_use,
-        web searches).
+            Uses longer timeout for execute-phase and goal_completion chunks
+            since these can run for minutes during long tool execution (browser_use,
+            web searches).
         """
         if self._loop.is_closed():
             return

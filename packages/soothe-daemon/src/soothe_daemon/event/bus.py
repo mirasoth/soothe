@@ -174,7 +174,7 @@ class EventBus:
         """Initialize the event bus with lock-free publish (Phase 2).
 
         Args:
-        event_size_stats: Optional collector for streaming wire-size stats.
+            event_size_stats: Optional collector for streaming wire-size stats.
         """
         # Regular dict (atomic read, no lock needed)
         self._subscribers: dict[str, set[asyncio.Queue[dict[str, Any]]]] = {}
@@ -197,16 +197,16 @@ class EventBus:
         - Multiple concurrent publishers
         - No contention in hot path
 
-        Implements priority-aware overflow strategy (Phase 1):
+        Implements priority-aware overflow strategy:
         - CRITICAL events: Never dropped, block until space available
         - HIGH events: Rarely dropped, warn if dropped
         - NORMAL events: Drop when full; one throttled warning per topic per interval
         - LOW events: Silent drop when queue near capacity (80%)
 
         Args:
-        topic: Topic identifier (e.g., "loop:abc123")
-        event: Event dictionary to broadcast
-        event_meta: Optional EventMeta for filtering and priority
+            topic: Topic identifier (e.g., "loop:abc123")
+            event: Event dictionary to broadcast
+            event_meta: Optional EventMeta for filtering and priority
         """
         if self._event_size_stats is not None:
             self._event_size_stats.record_event_dict(event)
@@ -327,8 +327,8 @@ class EventBus:
         """Subscribe queue to receive events for topic with write lock (Phase 2).
 
         Args:
-        topic: Topic identifier to subscribe to
-        queue: AsyncIO queue to receive events
+            topic: Topic identifier to subscribe to
+            queue: AsyncIO queue to receive events
         """
         # Write lock for subscribe (writer operation) - Phase 2
         async with self._write_lock:
@@ -342,8 +342,8 @@ class EventBus:
         """Unsubscribe queue from topic with write lock (Phase 2).
 
         Args:
-        topic: Topic identifier to unsubscribe from
-        queue: Queue to remove from subscribers
+            topic: Topic identifier to unsubscribe from
+            queue: Queue to remove from subscribers
         """
         # Write lock for unsubscribe (writer operation) - Phase 2
         async with self._write_lock:
@@ -358,7 +358,7 @@ class EventBus:
         """Unsubscribe queue from all topics with write lock (Phase 2).
 
         Args:
-        queue: Queue to remove from all subscribers
+            queue: Queue to remove from all subscribers
         """
         # Write lock for unsubscribe_all (writer operation) - Phase 2
         async with self._write_lock:
@@ -380,7 +380,7 @@ class EventBus:
         removed during unsubscribe (e.g., due to race conditions or early disconnects).
 
         Returns:
-        Number of orphaned topics removed.
+            Number of orphaned topics removed.
         """
         async with self._write_lock:
             orphaned = [topic for topic, queues in self._subscribers.items() if not queues]
@@ -395,10 +395,10 @@ class EventBus:
         """Return number of subscribers for a topic (no lock needed, atomic read).
 
         Args:
-        topic: Topic identifier.
+            topic: Topic identifier.
 
         Returns:
-        Number of active subscriber queues for the topic.
+            Number of active subscriber queues for the topic.
         """
         return len(self._subscribers.get(topic, set()))
 

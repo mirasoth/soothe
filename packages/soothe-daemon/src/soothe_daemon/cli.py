@@ -92,8 +92,8 @@ def _fast_is_running() -> tuple[bool, bool]:
     to detect orphan daemons (PID file missing but process alive on port).
 
     Returns:
-    Tuple of (is_running, is_orphan). is_orphan is True when the
-    daemon is running but the PID file is missing or stale.
+        Tuple of (is_running, is_orphan). is_orphan is True when the
+        daemon is running but the PID file is missing or stale.
     """
     pf = _fast_pid_path()
     if pf.exists():
@@ -657,12 +657,12 @@ def _load_daemon_config(config_path: str | None, daemon_config_cls, default_conf
     """Load `SootheDaemonConfig` from explicit path or default location.
 
     Args:
-    config_path: Optional path passed from CLI (`daemon.yml`).
-    daemon_config_cls: SootheDaemonConfig class (passed to avoid import).
-    default_config_path_func: Function to get default config path.
+        config_path: Optional path passed from CLI (`daemon.yml`).
+        daemon_config_cls: SootheDaemonConfig class (passed to avoid import).
+        default_config_path_func: Function to get default config path.
 
     Returns:
-    Parsed `SootheDaemonConfig` (defaults if no file found).
+        Parsed `SootheDaemonConfig` (defaults if no file found).
     """
     if config_path:
         return daemon_config_cls.from_yaml_file(config_path)

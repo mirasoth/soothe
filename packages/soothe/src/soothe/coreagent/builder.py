@@ -22,6 +22,7 @@ class AgentBuilder(nano_builder.AgentBuilder):
     """Soothe AgentBuilder: host injections + intake-only catalog split."""
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
+        """Initialize with empty intake-only spec list and no identity runtime."""
         super().__init__(*args, **kwargs)
         self._intake_only_specs: list[SubAgent | CompiledSubAgent] = []
         self._identity_runtime: IdentityRuntime | None = None
@@ -62,6 +63,7 @@ class AgentBuilder(nano_builder.AgentBuilder):
         )
 
     def build(self, *args: Any, **kwargs: Any):  # type: ignore[override]
+        """Build the agent graph with host middleware, tools, and kill guards."""
         # Install host daemon kill guards before toolkit resolution (nano hook).
         from soothe.security.daemon_kill_guards import ensure_daemon_kill_guards_installed
 

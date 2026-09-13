@@ -1,18 +1,15 @@
 """Firecracker microVM-based loop runner — one warm microVM per worker slot.
 
-A fourth `LoopRunnerProtocol` substrate (RFC-221) selected by
-`LoopRunnerFactory` when `loop_runner.runner_mode='firecracker'`. Each microVM runs the
-same `_pool_worker_body` / `SootheRunner` code as the process pool, but
-bridges stream chunks host↔guest over **virtio-vsock** instead of
+Selected by `LoopRunnerFactory` when `loop_runner.runner_mode='firecracker'`.
+Each microVM runs the same worker body as the process pool, but bridges
+stream chunks host↔guest over virtio-vsock instead of
 `multiprocessing.Queue`.
 
-**Linux-only — officially supported on Linux only.** Firecracker requires
-`AF_VSOCK`, the `firecracker` binary, and a Linux host with KVM. This module
-is import-safe on non-Linux (guards `AF_VSOCK` availability so import never
-crashes), but `LoopRunnerFactory` raises `RuntimeError` if `runner_mode` is
-set to `firecracker` on a non-Linux host. The factory imports this module
-lazily inside the `firecracker` branch only, so thread/process/ray paths
-never pay the import cost or require vsock.
+Linux-only: requires `AF_VSOCK`, the `firecracker` binary, and a Linux host
+with KVM. The module is import-safe on non-Linux (guards `AF_VSOCK`
+availability); `LoopRunnerFactory` raises `RuntimeError` if selected on a
+non-Linux host. The factory imports this module lazily so thread/process/ray
+paths never pay the import cost.
 """
 
 from __future__ import annotations
@@ -294,7 +291,7 @@ class FirecrackerWorkerPool:
 
     Mirrors `ProcessPool`'s shape (singleton, pre-warm, submit → async
     generator, cancel_request, force_kill_worker_by_loop_id) so
-    `QueryEngine` is fully decoupled per RFC-221.
+    `QueryEngine` is fully decoupled.
 
     Each VM boots the configured kernel + rootfs, runs a guest-side
     entrypoint that imports `_pool_worker_body` and speaks the vsock frame

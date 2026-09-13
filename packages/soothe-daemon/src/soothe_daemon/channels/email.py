@@ -1,7 +1,4 @@
-"""Email channel implementation using IMAP polling + SMTP replies.
-
-Migrated from nanoBot with adaptations for soothe-daemon Channel architecture.
-"""
+"""Email channel implementation using IMAP polling + SMTP replies."""
 
 from __future__ import annotations
 
@@ -589,7 +586,7 @@ class EmailChannel(Channel):
         """Parse Authentication-Results headers for SPF and DKIM verdicts.
 
         Returns:
-        A tuple of (spf_pass, dkim_pass) booleans.
+            A tuple of (spf_pass, dkim_pass) booleans.
         """
         spf_pass = False
         dkim_pass = False

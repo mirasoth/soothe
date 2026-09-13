@@ -289,32 +289,29 @@ class Executor:
         fast_model: Any | None = None,
         interaction_mode: str | None = None,
     ) -> None:
-        """Initialize Execute phase.
+        """Initialize the Execute phase.
 
         Args:
-            core_agent: Layer 1 CoreAgent for step execution
+            core_agent: CoreAgent for step execution.
             checkpointer: LangGraph checkpointer for thread fork inheritance.
-            max_parallel_steps: Max steps to run **concurrently** in one batch. `execute` repeats
-                batches until all ready steps finish (e.g. 4 ready steps and `2` → two batches of 2).
-                `0` means unlimited.
-            config: Optional Soothe config for Act wave caps.
-            loop_id: Optional loop identifier for Langfuse trace correlation.
-            clarification_detector: When set with `clarification_capture` and
-                `clarification_loop_state_view`, enables clarification
-                relay during the CoreAgent stream.
-            clarification_capture: Per-loop FIFO queue for captured
-                `ask_user` / `tool_approval` requests. The caller reads
-                `capture.head` after `execute()` completes.
-            clarification_loop_state_view: Read-only loop state snapshot threaded
-                to the policy.
-            clarification_resume_answer_payload: Optional LangGraph resume payload
-                (built from `state.pending_clarification_answer`) injected as
-                the first `Command(resume=...)` to resume after a prior
-                clarification was answered.
-            context_engine: Optional ContextEngine instance for dual-write
-                ledger recording.
-            step_brief_hydrator: Optional :class:`StepBriefHydrator` for between-wave
+            max_parallel_steps: Max concurrent steps per batch; `0` = unlimited.
+            config: Soothe config for Act wave caps.
+            loop_id: Loop identifier for Langfuse trace correlation.
+            clarification_detector: Enables clarification relay when set with
+                `clarification_capture` and `clarification_loop_state_view`.
+            clarification_capture: Per-loop FIFO queue for `ask_user`/
+                `tool_approval` requests.
+            clarification_loop_state_view: Read-only loop state snapshot.
+            clarification_resume_answer_payload: LangGraph resume payload
+                injected as the first `Command(resume=...)`.
+            context_engine: ContextEngine for dual-write ledger recording.
+            step_brief_hydrator: `StepBriefHydrator` for between-wave
                 dependent step brief expansion.
+            checkpoint: Loop checkpoint snapshot.
+            goal_trace: `GoalLoopTrace` for Langfuse.
+            fast_model: Fast model for lightweight classification calls.
+            interaction_mode: CoreAgent interaction mode
+                (`agent`/`ask`/`plan`/`bypass`).
         """
         self.core_agent = core_agent
         self._checkpointer = checkpointer
@@ -393,11 +390,11 @@ class Executor:
             from soothe.sloop.utils.graph_config import strip_parent_checkpoint_coordinates
 
             # The parent is the StrangeLoop graph's execute-node config, which
-            # carries its own checkpoint coordinates (``checkpoint_ns`` =
-            # ``execute:{task_id}``). Inheriting them makes the CoreAgent run
+            # carries its own checkpoint coordinates (`checkpoint_ns` =
+            # `execute:{task_id}`). Inheriting them makes the CoreAgent run
             # as a parent subgraph: its checkpoints — including interrupts —
             # land under the parent's task namespace instead of the fork
-            # thread root, so ``Command(resume=...)`` cannot reach them and
+            # thread root, so `Command(resume=...)` cannot reach them and
             # approved tool calls never execute (IG-763). Keep the tracing
             # callbacks; drop the checkpoint coordinates.
             return strip_parent_checkpoint_coordinates(
@@ -883,15 +880,15 @@ class Executor:
         step_description: str | None = None,  # captured for resume identity
         step_start_perf: float | None = None,  # perf_counter baseline for prior_duration_ms
     ) -> AsyncGenerator[Any, None]:
-        """Run ``CoreAgent.astream`` with interrupt capture and resume.
+        """Run `CoreAgent.astream` with interrupt capture and resume.
 
-        Captures ``ask_user`` / ``action_requests`` (tool-approval) interrupts
-        into ``capture`` and returns early so StrangeLoop can route to
-        ``await_clarification``.  When ``resume_answer_payload`` is set, the
-        first call uses it as ``Command(resume=...)`` to re-enter after a prior
+        Captures `ask_user` / `action_requests` (tool-approval) interrupts
+        into `capture` and returns early so StrangeLoop can route to
+        `await_clarification`.  When `resume_answer_payload` is set, the
+        first call uses it as `Command(resume=...)` to re-enter after a prior
         clarification was answered.  Yields heartbeat sentinels during long
-        waits.  ``step_start_perf`` accumulates pre-interrupt elapsed time onto
-        ``resume_ticket.prior_duration_ms``.
+        waits.  `step_start_perf` accumulates pre-interrupt elapsed time onto
+        `resume_ticket.prior_duration_ms`.
         """
         interrupt_iterations = 0
         current_input: dict[str, Any] | Command = (
@@ -927,7 +924,7 @@ class Executor:
                         raise
 
                     # Forward heartbeat as a raw LangGraph custom chunk so
-                    # ``_stream_and_collect`` can wrap and fan it out once.
+                    # `_stream_and_collect` can wrap and fan it out once.
                     if chunk is _STREAM_HEARTBEAT_SENTINEL:
                         yield (
                             (),
@@ -945,9 +942,9 @@ class Executor:
             except asyncio.CancelledError:
                 raise
             except GraphInterrupt as exc:
-                # ``interrupt()`` and ``HumanInTheLoopMiddleware`` raise
-                # ``GraphInterrupt`` mid-stream. The interrupt objects are on
-                # ``exc.args[0]``, NOT in graph state. Capture them directly.
+                # `interrupt()` and `HumanInTheLoopMiddleware` raise
+                # `GraphInterrupt` mid-stream. The interrupt objects are on
+                # `exc.args[0]`, NOT in graph state. Capture them directly.
                 logger.info("[executor] GraphInterrupt during stream (step=%s)", step_id)
                 if clarification_enabled:
                     # Build the resume ticket before enqueuing so the queue
@@ -1320,9 +1317,9 @@ class Executor:
         from soothe.sloop.utils.token_usage import estimate_token_usage
 
         # IG-761: unified actual-first, estimate-on-demand API. When the
-        # provider returned ``usage_metadata`` we use the real counts;
+        # provider returned `usage_metadata` we use the real counts;
         # otherwise we estimate BOTH input (prompt messages) and output
-        # (response content) via model-aware ``count_tokens`` — never output
+        # (response content) via model-aware `count_tokens` — never output
         # alone, which undercounted total consumption.
         model_hint = None
         if self._config is not None:
@@ -1767,23 +1764,6 @@ class Executor:
 
         Pure-function over wave outputs; no I/O. Always overwrites
         `state.prior_progress` so the digest reflects the most recent wave.
-        Wave index increments within the same iteration; resets to 0 on a new
-        iteration. See.3 for the derivation rules.
-
-        Sourcing notes (production-accurate):
-        - Tool names come from `AIMessage.tool_calls` on assistant turns in
-          `step_messages`. The executor's stream collector does not append
-          `ToolMessage` instances to that list (it routes them into
-          `outcomes`/`budget` accounting), so a `ToolMessage` walk would
-          miss every call.
-        - The tool `head` carries the first textual arg of the LLM tool call
-          (e.g. `run_command(command="find . -name '*.py' | wc -l")`). It
-          gives the plan-assess prompt a concrete handle on what was run
-          without depending on tool-result text being in `step_messages`.
-        - Evidence excerpts extract assistant prose and tool-result data
-          separately. Tool evidence (from `_last_tool_result_block`) is
-          included only when the assistant produced no prose text, so
-          plan-assess still sees concrete output for tool-driven steps.
         """
         steps_completed = 0
         steps_failed = 0
@@ -1999,7 +1979,7 @@ class Executor:
                         )
                         # Capture the full traceback so the exact crash site
                         # survives in the step.completed event payload (the
-                        # ``error`` field), not just ``str(exc)``.
+                        # `error` field), not just `str(exc)`.
                         parallel_error = self._extract_error_message(
                             result, "Parallel step execution failed"
                         )
@@ -2082,7 +2062,7 @@ class Executor:
             await asyncio.gather(*tasks, return_exceptions=True)
 
         # RFC-214: parallel waves must update the ledger so Plan-assess
-        # receives prior execute evidence via ``state.loop_messages``.
+        # receives prior execute evidence via `state.loop_messages`.
         self._append_parallel_wave_ledger(state, steps, gather_results)
 
         parallel_multi = len(steps) > 1
@@ -2229,27 +2209,21 @@ class Executor:
     ) -> _ExecuteStepResult:
         """Execute single step, collecting events for the parallel merge queue.
 
-        When `live_event_queue` is set (parallel execute), each stream chunk is pushed
-        immediately for upstream TUI/WebSocket display and is not duplicated on the
+        When `live_event_queue` is set (parallel execute), each stream chunk is
+        pushed immediately for upstream display and is not duplicated on the
         returned `_ExecuteStepResult.events` list.
 
-        Collects outcome metadata instead of full output string.
-        Fourth tuple element is joined `task` tool delegate-final text for finalize.
-        Thread isolation via random `{main}__{hex5}` thread ids; predecessor context via ledger
-        projection into graph input (no checkpoint fork).
-
         Args:
-            step: StepAction with description and optional hints
-            thread_id: Logical thread ID for StepExecutionRecord, logs, and durability lookups
-            workspace: Thread-specific workspace path
+            step: StepAction with description and optional hints.
+            thread_id: Logical thread ID for records, logs, and durability lookups.
+            workspace: Thread-specific workspace path.
             routing_classification: Loop routing payload for middleware.
-            continue_loop_mode: True when this loop has prior goals;
-                flows into LangGraph state so middleware injects loop-continuation guidance.
-            loop_state: When set, generates isolated thread ID; multi-dep steps inject
-                predecessor ledger messages.
+            continue_loop_mode: True when this loop has prior goals.
+            loop_state: When set, generates isolated thread ID; multi-dep steps
+                inject predecessor ledger messages.
 
         Returns:
-            Collected execute-step stream result (events, step outcome, messages, delegate text).
+            Collected execute-step stream result.
         """
         start = time.perf_counter()
         # Accumulate pre-interrupt elapsed time (carried on resume_ticket)
@@ -2297,7 +2271,7 @@ class Executor:
             if workspace:
                 configurable["workspace"] = workspace
             # Loop-scoped tool-approval allowlist — read by the
-            # ``interrupt_on`` ``when`` predicates (interrupt_rules.py) so an
+            # `interrupt_on` `when` predicates (interrupt_rules.py) so an
             # already-approved command (exact signature OR safety rule) does
             # not re-interrupt; the tool executes silently on the next hop.
             if (
@@ -2350,7 +2324,7 @@ class Executor:
                 sink=self.decompose_proposals,
             )
             # Pass current_decision for middleware to inject agent loop output contract
-            # when available on ``loop_state``; parallel branches
+            # when available on `loop_state`; parallel branches
             # may still omit it here because middleware reads configurable elsewhere.
             config: dict[str, Any] = {"configurable": configurable}
             if self._config is not None:
@@ -2992,7 +2966,7 @@ class Executor:
             # Persist the full traceback for non-recoverable failures so the
             # exact crash site survives in the step.completed event payload
             # (conversation.jsonl) and the daemon event stream. Without this,
-            # the ``error`` field carries only ``str(e)`` (truncated to 50 chars
+            # the `error` field carries only `str(e)` (truncated to 50 chars
             # by the TUI summary builder) and the traceback is lost when the
             # per-loop runner.log handler is detached mid-run.
             #
@@ -3042,23 +3016,23 @@ class Executor:
     ) -> AsyncGenerator[_StreamCollectChunk, None]:
         """Stream events for real-time display while accumulating the final result.
 
-        Rewrites tool_call_ids to unified ``{step_id}:s:{fragment}``, collects
+        Rewrites tool_call_ids to unified `{step_id}:s:{fragment}`, collects
         AIMessage/ToolMessage objects for token/outcome extraction, and yields
         wire events followed by one finalized summary.
 
         Args:
-            stream: Async iterator from ``agent.astream()``.
-            budget: Optional Act wave budget (subagent ``task`` cap).
+            stream: Async iterator from `agent.astream()`.
+            budget: Optional Act wave budget (subagent `task` cap).
             step_id: When set, rewrite root-graph tool_call_ids to unified format.
-            step_description: Step brief copied onto ``task`` kwargs when the
+            step_description: Step brief copied onto `task` kwargs when the
                 model streams empty delegation args.
             pre_streamed_message_ids: Message ids already on the CoreAgent
-                checkpoint before this call (resume path).  Root-graph
+                checkpoint before this call (resume path). Root-graph
                 AIMessages whose id is in this set have their wire events
-                suppressed to avoid re-rendering the pre-interrupt tool call.
+                suppressed.
 
         Yields:
-            :class:`_StreamCollectChunk` — wire events then one finalized summary.
+            `_StreamCollectChunk` — wire events then one finalized summary.
         """
         from langchain_core.messages import AIMessage, AIMessageChunk
 
@@ -3456,7 +3430,7 @@ class Executor:
                         format_todos_for_log(todos_payload),
                     )
                 # Step-level execute tools get wire updates from the AIMessage/ToolMessage
-                # tuple path above; placeholder updates here are for ``tools:`` subgraphs only.
+                # tuple path above; placeholder updates here are for `tools:` subgraphs only.
                 if unified_tcid and tname != "task" and not is_execute_ns:
                     tool_ev = tool_args.subgraph_placeholder_update(unified_tcid, tname)
                     if tool_ev is not None:

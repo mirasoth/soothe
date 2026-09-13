@@ -116,6 +116,7 @@ class AutoresearchExec:
     """
 
     def __init__(self, executor: RailBuiltinExecutor) -> None:
+        """Bind the autoresearch handler to a builtin executor."""
         self._ex = executor
 
     async def plan_and_implement(

@@ -35,6 +35,7 @@ class SqliteContextPersistence:
     """SQLite-backed persistence for ContextEngine via `SqliteStoreRuntime`."""
 
     def __init__(self, loop_id: str, db_path: Path) -> None:
+        """Initialize the SQLite runtime and ensure the CE schema exists."""
         self._loop_id = loop_id
         self._db_path = Path(db_path)
         self._runtime: SqliteStoreRuntime = SqliteRuntimeRegistry.acquire(self._db_path)
@@ -54,6 +55,7 @@ class SqliteContextPersistence:
             logger.warning("[CE] Failed to release SQLite Runtime", exc_info=True)
 
     async def save_dag(self, dag: GoalStepDAG) -> None:
+        """Persist a GoalStepDAG snapshot to the `ce_dag` table."""
         snapshot = dag.snapshot()
         data = snapshot.model_dump(mode="json")
         json_str = json.dumps(data, default=str)
@@ -81,6 +83,7 @@ class SqliteContextPersistence:
             raise
 
     async def load_dag(self) -> GoalStepDAG | None:
+        """Load and restore a GoalStepDAG from the `ce_dag` table, or `None`."""
         loop_id = self._loop_id
 
         def _load(conn: Any) -> str | None:
@@ -110,6 +113,7 @@ class SqliteContextPersistence:
             return None
 
     async def save_ledger(self, messages: list[dict[str, Any]]) -> None:
+        """Persist ledger messages to the `ce_ledger` table as JSON."""
         json_str = json.dumps(messages, default=str)
         loop_id = self._loop_id
 
@@ -135,6 +139,7 @@ class SqliteContextPersistence:
             raise
 
     async def load_ledger(self) -> list[dict[str, Any]]:
+        """Load ledger messages from the `ce_ledger` table, or `[]` on error."""
         loop_id = self._loop_id
 
         def _load(conn: Any) -> str | None:
@@ -160,6 +165,7 @@ class SqliteContextPersistence:
             return []
 
     async def clear(self) -> None:
+        """Delete all DAG and ledger rows for this loop_id."""
         loop_id = self._loop_id
 
         def _clear(conn: Any) -> None:

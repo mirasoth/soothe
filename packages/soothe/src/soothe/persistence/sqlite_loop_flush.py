@@ -58,6 +58,7 @@ class SqliteLoopFlushCoordinator:
         close_timeout_seconds: float = 30.0,
         durable_flush_timeout: float = 10.0,
     ) -> None:
+        """Initialize coalescing flush intervals and pending-entry bookkeeping."""
         self._flush_interval = flush_interval
         self._close_timeout_seconds = close_timeout_seconds
         self._durable_flush_timeout = durable_flush_timeout
@@ -79,6 +80,7 @@ class SqliteLoopFlushCoordinator:
 
     @classmethod
     def existing_instance(cls) -> SqliteLoopFlushCoordinator | None:
+        """Return the shared singleton coordinator, or None if not yet created."""
         return _coordinator_singleton
 
     @classmethod

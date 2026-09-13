@@ -90,10 +90,10 @@ class CronExtractionService:
         """Initialize extraction service.
 
         Args:
-        config: SootheConfig for LLM factory access.
-        model_role: Model role to use (default: fast).
-        timeout: Extraction timeout in seconds.
-        max_retries: Maximum retry attempts on failure.
+            config: SootheConfig for LLM factory access.
+            model_role: Model role to use (default: fast).
+            timeout: Extraction timeout in seconds.
+            max_retries: Maximum retry attempts on failure.
         """
         self._config = config
         self._model_role = model_role
@@ -105,7 +105,7 @@ class CronExtractionService:
         """Get or create LLM model for extraction.
 
         Returns:
-        BaseChatModel with structured output support.
+            BaseChatModel with structured output support.
         """
         if self._model is None:
             factory = self._config.llm_factory
@@ -120,14 +120,14 @@ class CronExtractionService:
         """Extract schedule from natural language input.
 
         Args:
-        natural_language: User's natural language request.
-        confidence_threshold: Minimum confidence required.
+            natural_language: User's natural language request.
+            confidence_threshold: Minimum confidence required.
 
         Returns:
-        ExtractionResult with parsed schedule.
+            ExtractionResult with parsed schedule.
 
         Raises:
-        ExtractionError: If extraction fails or confidence below threshold.
+            ExtractionError: If extraction fails or confidence below threshold.
         """
         tz_name = self._config.cron.timezone
         tz_label = schedule_timezone_label(tz_name)
@@ -188,13 +188,13 @@ class CronExtractionService:
         """Call LLM with structured output.
 
         Args:
-        prompt: Extraction prompt.
+            prompt: Extraction prompt.
 
         Returns:
-        ExtractionResult from LLM response.
+            ExtractionResult from LLM response.
 
         Raises:
-        Exception: If LLM call fails.
+            Exception: If LLM call fails.
         """
         from langchain_core.messages import HumanMessage
         from soothe_nano.llm import ainvoke_structured_traced, ainvoke_traced
@@ -244,11 +244,11 @@ class CronExtractionService:
         """Convert ExtractionSchema to ExtractionResult.
 
         Args:
-        schema: Pydantic schema from LLM.
-        raw_input: Original input for debugging.
+            schema: Pydantic schema from LLM.
+            raw_input: Original input for debugging.
 
         Returns:
-        ExtractionResult instance.
+            ExtractionResult instance.
         """
         try:
             kind = ScheduleKind(schema.schedule_kind.lower())
@@ -287,14 +287,14 @@ class CronExtractionService:
         """Parse JSON from LLM content fallback.
 
         Args:
-        content: LLM response content.
-        raw_input: Original input for debugging.
+            content: LLM response content.
+            raw_input: Original input for debugging.
 
         Returns:
-        ExtractionResult instance.
+            ExtractionResult instance.
 
         Raises:
-        ValueError: If JSON cannot be parsed.
+            ValueError: If JSON cannot be parsed.
         """
         # Try to extract JSON from content
         try:
@@ -318,14 +318,14 @@ class AutopilotDisabledError(Exception):
     """Cron submission rejected because autopilot scheduling is disabled.
 
     Attributes:
-    message: User-facing guidance to enable autopilot.
+        message: User-facing guidance to enable autopilot.
     """
 
     def __init__(self, message: str) -> None:
         """Initialize autopilot-disabled error.
 
         Args:
-        message: User-facing guidance.
+            message: User-facing guidance.
         """
         super().__init__(message)
         self.message = message
@@ -338,8 +338,8 @@ class ExtractionError(Exception):
     """Extraction failure with optional partial result.
 
     Attributes:
-    message: Error message for user.
-    partial_result: Partial extraction if available.
+        message: Error message for user.
+        partial_result: Partial extraction if available.
     """
 
     def __init__(
@@ -350,8 +350,8 @@ class ExtractionError(Exception):
         """Initialize extraction error.
 
         Args:
-        message: Error message for user.
-        partial_result: Partial extraction if available.
+            message: Error message for user.
+            partial_result: Partial extraction if available.
         """
         super().__init__(message)
         self.message = message

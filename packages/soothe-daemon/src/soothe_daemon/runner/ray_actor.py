@@ -13,21 +13,22 @@ logger = logging.getLogger(__name__)
 
 @ray.remote
 class LoopRunnerActor:
-    """Ray actor that hosts one `SootheRunner` in a Ray worker process.
+    """Ray actor hosting one SootheRunner in a worker process.
 
     Constructed once per loop via `LoopRunnerActor.remote(config)`.
     Streams chunks into a caller-supplied `ray.util.queue.Queue`.
+
+    Terminal message types: "chunk", "done", "error", "cancelled".
     """
 
     def __init__(self, config: object) -> None:
-        # Import deferred so the actor process initialises its own SootheRunner.
         from soothe.runner import SootheRunner
 
         self._runner = SootheRunner(config)  # type: ignore[arg-type]
         self._cancelled = False
 
     async def run(self, request: LoopRunRequest, queue: Queue) -> None:
-        """Stream chunks from `SootheRunner.astream()` into `queue`."""
+        """Stream chunks from SootheRunner.astream() into queue."""
         from soothe.runner.worker_logging import (
             configure_loop_runner_worker_logging,
             release_loop_runner_logging,
@@ -50,7 +51,7 @@ class LoopRunnerActor:
                     preferred_subagent=request.preferred_subagent,
                     intake_scope=request.intake_scope,
                     client_loop_id=request.loop_id,
-                    autopilot_job=request.autopilot_job,  # RFC-222 revised
+                    autopilot_job=request.autopilot_job,
                     clarification_mode=request.clarification_mode,
                     interaction_mode=request.interaction_mode,
                     clarification_answer=request.clarification_answer,
@@ -60,14 +61,13 @@ class LoopRunnerActor:
                     autopilot_rail_id=request.autopilot_rail_id,
                 ):
                     if self._cancelled:
-                        break
+                        await queue.put_async(("cancelled", None))
+                        return
                     await queue.put_async(("chunk", chunk))
         except Exception as exc:  # noqa: BLE001
             await queue.put_async(("error", exc))
             return
         finally:
-            # Release the in-flight logging marker so the runner.log handler
-            # can be torn down when the next loop is dispatched on this actor.
             try:
                 release_loop_runner_logging(request.loop_id)
             except Exception:
@@ -79,8 +79,9 @@ class LoopRunnerActor:
         await queue.put_async(("done", None))
 
     async def cancel(self) -> None:
-        """Signal cooperative cancellation; checked between chunks in `run()`."""
+        """Signal cooperative cancellation; checked between chunks in run()."""
         self._cancelled = True
 
-
-__all__ = ["LoopRunnerActor"]
+    def ping(self) -> bool:
+        """Lightweight liveness probe for dead-actor detection."""
+        return True

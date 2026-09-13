@@ -5,47 +5,49 @@ whose bodies are ``...`` (ellipsis). Vulture flags them as unused because
 the body doesn't reference them, but they define the callable signature.
 """
 
+# ruff: noqa: F821
 
 # core_agent.py — astream / execution_astream / execute_stream parameters
-execution_scope  # noqa: F841
-input_arg  # noqa: F841
-stream_mode  # noqa: F841
-subgraphs  # noqa: F841
+execution_scope
+input_arg
+stream_mode
+subgraphs
 
 # durability.py — DurabilityStore protocol parameters
-thread_id  # noqa: F841
-thread_filter  # noqa: F841
+thread_id
+thread_filter
 
 # identity.py — IdentityService protocol parameters
-expiry_days  # noqa: F841
-aksk_id  # noqa: F841
-access_key  # noqa: F841
-refresh_token  # noqa: F841
-jti  # noqa: F841
-active_only  # noqa: F841
-channel  # noqa: F841
-sender_id  # noqa: F841
+expiry_days
+aksk_id
+access_key
+refresh_token
+jti
+active_only
+channel
+sender_id
 
 # memory.py — MemoryStore protocol parameters
-limit  # noqa: F841
-item_id  # noqa: F841
+limit
+item_id
 
 # operation_security.py — OperationSecurity protocol parameters
-request  # noqa: F841
+request
 
 # policy.py — PolicyProtocol parameters
-child_name  # noqa: F841
-parent_permissions  # noqa: F841
+child_name
+parent_permissions
 
 # vector_store.py — VectorStore protocol parameters
-distance  # noqa: F841
-vector_size  # noqa: F841
-vectors  # noqa: F841
-payloads  # noqa: F841
-vector  # noqa: F841
-filters  # noqa: F841
-record_id  # noqa: F841
+distance
+vector_size
+vectors
+payloads
+vector
+filters
+record_id
 
 # workspace_sync.py — WorkspaceSync protocol parameters (abstract bodies are `...`)
-if_match  # noqa: F841
-artifact_path  # noqa: F841
+if_match
+artifact_path
+content_type

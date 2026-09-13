@@ -65,6 +65,7 @@ def _drop_new_node_cycles(nodes: list[StepNode]) -> None:
     visited: set[str] = set()
 
     def visit(step_id: str) -> None:
+        """DFS-visit a step, collecting cycle edges into `to_remove`."""
         if step_id in visiting or step_id in visited:
             return
         visiting.add(step_id)

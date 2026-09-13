@@ -26,7 +26,7 @@ _PATH_TOOLS = frozenset({"edit_file", "write_file", "delete"})
 
 
 def signature_for(tool_name: str, args: Mapping[str, Any]) -> str | None:
-    """Stable per-action signature (``command`` or ``file_path``), or ``None``."""
+    """Stable per-action signature (`command` or `file_path`), or `None`."""
     if tool_name in _COMMAND_TOOLS:
         return str(args.get("command") or "").strip() or None
     if tool_name in _PATH_TOOLS:
@@ -82,6 +82,7 @@ class ToolApprovalPipeline:
         security_config: Any = None,
         bypass_security: bool = False,
     ) -> None:
+        """Initialize deny rules, security config, and lazy evaluator."""
         self._deny_rules = config.deny_rules
         self._security_config = security_config
         self._bypass_security = bypass_security
@@ -96,15 +97,15 @@ class ToolApprovalPipeline:
         bypass_security: bool | None = None,
         allowlist: list[Mapping[str, Any]] | None = None,
     ) -> ApprovalResult | None:
-        """Run deny → allowlist → safety stages.  Returns ``None`` to defer.
+        """Run deny → allowlist → safety stages.  Returns `None` to defer.
 
         Args:
             action_requests: Batched HITL action requests.
-            workspace_root: Per-request workspace root (``<workspace>`` token).
+            workspace_root: Per-request workspace root (`<workspace>` token).
             auto_approve: When True, passing actions are auto-approved.
                 When False (manual), they defer to the human.
             bypass_security: Skip all checks and approve.
-            allowlist: Loop-scoped ``{"tool", "signature"}`` records from
+            allowlist: Loop-scoped `{"tool", "signature"}` records from
                 prior human approvals.
         """
         try:
@@ -221,7 +222,7 @@ class ToolApprovalPipeline:
         args: Mapping[str, Any],
         workspace_root: str | None,
     ) -> tuple[str, str | None] | None:
-        """Run safety checks via nano's OperationSecurity.  Returns ``(reason, rule_id)`` if denied."""
+        """Run safety checks via nano's OperationSecurity.  Returns `(reason, rule_id)` if denied."""
         from soothe_nano.security.operation_guard import (
             WorkspaceToolOperationSecurity,
             build_operation_security_request,

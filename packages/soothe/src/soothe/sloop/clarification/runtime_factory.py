@@ -52,35 +52,23 @@ def build_clarification_policy_for_runner(
     loop_id: str | None = None,
     interaction_mode: str | None = None,
 ) -> ClarificationPolicy:
-    """Build the policy a runner injects into `LoopRuntimeContext`.
+    """Build the clarification policy a runner injects into `LoopRuntimeContext`.
 
     Args:
-        config: Soothe configuration providing the clarification and veritas
-            sub-blocks plus the chat-model factory.
-        mode: Optional per-request mode (`"auto"` / `"manual"`). When
-            unset, falls back to `config.agent.clarification.default_mode`.
-        emit: Optional emit function for early UI notification. The durable
-            pause path uses LangGraph `interrupt(...)` regardless.
-        human_attached: When `True` and `mode` resolves to `"auto"`,
-            wire an :class:`InteractiveClarificationPolicy` as the
-            `interactive_fallback`. Veritas structured-output
-            failures then degrade to a TUI prompt instead of terminating the
-            loop. Headless callers (autopilot) pass `False` and keep the
-            hard-defer path on veritas failure.
-        thread_id: Loop thread id used as the Langfuse `session_id` for the
-            veritas LLM call so the span correlates with the parent loop trace.
+        config: Soothe config providing clarification and veritas sub-blocks
+            plus the chat-model factory.
+        mode: Per-request `auto`/`manual` override; falls back to
+            `config.agent.clarification.default_mode`.
+        emit: Emit function for early UI notification.
+        human_attached: When True and mode is `auto`, wire an
+            `InteractiveClarificationPolicy` as the `interactive_fallback`.
+        thread_id: Loop thread id used as the Langfuse `session_id`.
         loop_id: Loop id forwarded to Langfuse for trace correlation.
-        interaction_mode: Per-request CoreAgent interaction mode. When
-            `"bypass"`, the tool-approval pipeline skips all deny rules
-            and safety checks.
+        interaction_mode: CoreAgent interaction mode. `bypass` skips all
+            tool-approval deny/safety checks.
 
     Returns:
-        A `ClarificationPolicy` ready to attach to a goal run. The veritas
-        chat model is only instantiated when `mode` resolves to `"auto"`
-        — manual mode skips the model construction entirely. In manual mode
-        the tool-approval pipeline (when enabled) still pre-filters
-        `tool_approval` requests: deny/safety stages auto-reject, allow
-        rules auto-approve only under `manual_scope: ambiguous_only`.
+        A `ClarificationPolicy` ready to attach to a goal run.
     """
     resolved_mode = resolve_clarification_mode(mode, config)
     clar_cfg = config.agent.clarification

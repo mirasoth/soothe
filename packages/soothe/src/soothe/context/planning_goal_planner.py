@@ -25,6 +25,7 @@ class GoalPlanningSubengine:
     """Manages goal-level planning: decomposition, orchestration, and lifecycle."""
 
     def __init__(self, dag: GoalStepDAG) -> None:
+        """Bind the planning subengine to a GoalStepDAG."""
         self._dag = dag
 
     # --- Goal decomposition ---

@@ -1,7 +1,4 @@
-"""WhatsApp channel implementation using Node.js bridge.
-
-Migrated from nanoBot with adaptations for soothe-daemon Channel architecture.
-"""
+"""WhatsApp channel implementation using Node.js bridge."""
 
 from __future__ import annotations
 

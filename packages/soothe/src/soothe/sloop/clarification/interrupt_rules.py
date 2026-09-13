@@ -1,10 +1,10 @@
-"""Conditional ``interrupt_on`` predicates for the HITL middleware.
+"""Conditional `interrupt_on` predicates for the HITL middleware.
 
-Each predicate returns ``True`` when the tool call is dangerous enough to
-warrant a human interrupt, ``False`` when safe to execute silently.  Fail-safe:
-when the workspace or command can't be inspected, returns ``True``.
+Each predicate returns `True` when the tool call is dangerous enough to
+warrant a human interrupt, `False` when safe to execute silently.  Fail-safe:
+when the workspace or command can't be inspected, returns `True`.
 
-Also consults the loop-scoped ``tool_approval_allowlist`` (via ``configurable``)
+Also consults the loop-scoped `tool_approval_allowlist` (via `configurable`)
 so an already-approved command or safety-rule family does not re-interrupt.
 """
 
@@ -188,18 +188,22 @@ def _should_interrupt_run_command(req: ToolCallRequest) -> bool:
 
 
 def when_edit_file(req: ToolCallRequest) -> bool:
+    """Return True if an edit_file call should trigger a clarification interrupt."""
     return _should_interrupt_path_tool(req)
 
 
 def when_write_file(req: ToolCallRequest) -> bool:
+    """Return True if a write_file call should trigger a clarification interrupt."""
     return _should_interrupt_path_tool(req)
 
 
 def when_delete(req: ToolCallRequest) -> bool:
+    """Return True if a delete call should trigger a clarification interrupt."""
     return _should_interrupt_path_tool(req, arg_keys=("path", "file_path", "directory"))
 
 
 def when_run_command(req: ToolCallRequest) -> bool:
+    """Return True if a run_command call should trigger a clarification interrupt."""
     return _should_interrupt_run_command(req)
 
 

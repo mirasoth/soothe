@@ -86,6 +86,7 @@ class RecipeRunner:
     """Execute a validated `do:` list against `RailBuiltinExecutor` helpers."""
 
     def __init__(self, executor: RailBuiltinExecutor) -> None:
+        """Bind the recipe runner to a builtin executor."""
         self._ex = executor
 
     async def run(
@@ -95,6 +96,7 @@ class RecipeRunner:
         job_id: str,
         trigger_goal_id: str | None,
     ) -> BuiltinResult:
+        """Execute a list of `do:` recipe steps sequentially."""
         state = await self._ex._require(job_id)
         ctx = _RecipeCtx(job_id=job_id, trigger_goal_id=trigger_goal_id, state=state)
         try:

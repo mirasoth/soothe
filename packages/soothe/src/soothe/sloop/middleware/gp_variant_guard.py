@@ -69,6 +69,7 @@ class GeneralPurposeVariantGuardMiddleware(AgentMiddleware):
         request: ToolCallRequest,
         handler: Callable[[ToolCallRequest], Awaitable[Any]],
     ) -> Any:
+        """Redirect bare general-purpose task calls to a step-appropriate variant."""
         tool_call = getattr(request, "tool_call", None)
         tool_name = tool_call.get("name") if isinstance(tool_call, dict) else None
         if tool_name != _TASK_TOOL_NAME:

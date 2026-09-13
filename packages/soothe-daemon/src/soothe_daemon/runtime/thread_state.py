@@ -91,8 +91,8 @@ class ThreadStateRegistry:
         Used by /clear command to update thread binding after creating new loop.
 
         Args:
-        thread_id: Thread identifier.
-        loop_id: Loop identifier to bind.
+            thread_id: Thread identifier.
+            loop_id: Loop identifier to bind.
         """
         if loop_id and str(loop_id).strip():
             self._thread_loop[thread_id] = str(loop_id).strip()
@@ -103,12 +103,12 @@ class ThreadStateRegistry:
         Used by /clear command to remove old loop binding before creating new loop.
 
         Args:
-        thread_id: Thread identifier.
-        loop_id: Loop identifier to unbind.
+            thread_id: Thread identifier.
+            loop_id: Loop identifier to unbind.
 
-        Note:
-        Only removes binding if it matches the provided loop_id.
-        Does not remove thread state or other associations.
+            Note:
+            Only removes binding if it matches the provided loop_id.
+            Does not remove thread state or other associations.
         """
         current_binding = self._thread_loop.get(thread_id)
         if current_binding == loop_id:
@@ -132,7 +132,7 @@ class ThreadStateRegistry:
         """Remove all threads associated with *loop_id* (loop deletion).
 
         Returns:
-        List of thread_ids that were removed.
+            List of thread_ids that were removed.
         """
         removed: list[str] = []
         for tid, lid in list(self._thread_loop.items()):
@@ -158,9 +158,9 @@ class ThreadStateRegistry:
         Integration: user_id populated for workspace isolation.
 
         Args:
-        thread_id: Thread identifier.
-        user_id: Authenticated user_id (from JWT or external mapping).
-        aksk_id: Optional AKSK ID for audit tracking.
+            thread_id: Thread identifier.
+            user_id: Authenticated user_id (from JWT or external mapping).
+            aksk_id: Optional AKSK ID for audit tracking.
         """
         st = self.ensure(thread_id)
         st.user_id = user_id
@@ -172,10 +172,10 @@ class ThreadStateRegistry:
         Integration.
 
         Args:
-        thread_id: Thread identifier.
+            thread_id: Thread identifier.
 
         Returns:
-        user_id if set, None otherwise.
+            user_id if set, None otherwise.
         """
         st = self.get(thread_id)
         return st.user_id if st else None
@@ -186,10 +186,10 @@ class ThreadStateRegistry:
         Integration.
 
         Args:
-        thread_id: Thread identifier.
+            thread_id: Thread identifier.
 
         Returns:
-        aksk_id if set, None otherwise.
+            aksk_id if set, None otherwise.
         """
         st = self.get(thread_id)
         return st.aksk_id if st else None
