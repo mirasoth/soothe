@@ -234,8 +234,8 @@ class TestACPWebSocketE2E:
             assert "error" not in response
             result = response["result"]
             assert "protocolVersion" in result
-            assert "capabilities" in result
-            assert result["agent"]["name"] == "TestAgent"
+            assert "agentCapabilities" in result
+            assert result["agentInfo"]["name"] == "TestAgent"
 
     @pytest.mark.integration
     @pytest.mark.asyncio
