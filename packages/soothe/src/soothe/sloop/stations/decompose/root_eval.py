@@ -258,8 +258,23 @@ class RootEvalNode(LoopNode):
                 # tree shows decomposition, multi-leaf, or early-exit; skip
                 # otherwise (single-leaf no-decompose no early-exit).
                 elif not goal.steps.eval_required():
-                    logger.info("[root_eval] eval skip predicate matched; finalize")
-                    return NodeResult(payload={"root_eval_route": "finalize"})
+                    # Coverage backstop: a goal classified COMPLEX that ran
+                    # as a single completed leaf without decomposition still
+                    # warrants a coverage audit. Complex work executed
+                    # monolithically in one step (observed: 100+ tools,
+                    # recoverable errors, no fan-out) is exactly where
+                    # unverified gaps hide, and the documented contract is
+                    # that complex goals run the full coverage Eval gate.
+                    # Unlabeled (None) goals continue to trust the structural
+                    # skip, preserving existing behavior for legacy/forced
+                    # goals that never passed through intake classification.
+                    if intake_label != IntakeLabel.COMPLEX:
+                        logger.info("[root_eval] eval skip predicate matched; finalize")
+                        return NodeResult(payload={"root_eval_route": "finalize"})
+                    logger.info(
+                        "[root_eval] complex goal ran as single leaf; force Eval (no decomposition)"
+                    )
+                    # Fall through to Eval insertion below.
 
                 eval_cfg = getattr(ctx.strange_loop.config.agent.loop, "eval", None)
                 max_rounds = positive_config_int(
