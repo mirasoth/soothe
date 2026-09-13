@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from soothe.identity.runtime import (
     AKSKConfig as AKSKConfig,
 )
@@ -190,6 +190,74 @@ class ProcessPoolConfig(BaseModel):
         return max(self.min_pool_size, self.max_pool_size)
 
 
+class LocalModelConfig(BaseModel):
+    """Local model server configuration for GPU-bound Ray actors.
+
+    When set on ``RayConfig.local_model``, each ``LoopRunnerActor`` launches
+    a local model server (vLLM or Ollama) and routes inference to it instead
+    of a remote API endpoint.
+
+    The local server exposes an OpenAI-compatible HTTP endpoint that the
+    agent's ``LLMFactory`` resolves as a standard provider — no changes
+    to the inference path.
+    """
+
+    backend: Literal["vllm", "ollama"] = Field(
+        default="vllm",
+        description="Inference backend: vLLM (high-throughput, GPU) or Ollama (lightweight).",
+    )
+    model_name: str = Field(
+        description="HuggingFace model ID (vLLM) or Ollama model tag.",
+    )
+    provider_name: str = Field(
+        default="local_gpu",
+        description="Provider name injected into SootheConfig.providers for routing.",
+    )
+    port: int = Field(
+        default=0,
+        ge=0,
+        le=65535,
+        description="Port for the local server (0 = auto-allocate from 8765-8800).",
+    )
+    gpu_memory_utilization: float = Field(
+        default=0.9,
+        ge=0.1,
+        le=1.0,
+        description="vLLM GPU memory fraction (vLLM backend only).",
+    )
+    tensor_parallel_size: int = Field(
+        default=1,
+        ge=1,
+        description="vLLM tensor parallelism (must match num_gpus for multi-GPU).",
+    )
+    max_model_len: int | None = Field(
+        default=None,
+        description="Maximum context length override (vLLM --max-model-len).",
+    )
+    quantization: str | None = Field(
+        default=None,
+        description="Quantization method (e.g. 'awq', 'gptq', None for fp16).",
+    )
+    startup_timeout_seconds: int = Field(
+        default=120,
+        ge=10,
+        le=600,
+        description="Max seconds to wait for the model server to become healthy.",
+    )
+    extra_args: list[str] = Field(
+        default_factory=list,
+        description="Additional CLI args passed to the backend server.",
+    )
+    override_roles: list[str] = Field(
+        default_factory=lambda: ["default"],
+        description=(
+            "Model roles to override with the local model "
+            "(e.g. ['default', 'fast', 'think']). "
+            "Roles not listed keep their configured remote provider."
+        ),
+    )
+
+
 class RayConfig(BaseModel):
     """Ray distributed loop execution configuration (Ray actors)."""
 
@@ -218,6 +286,34 @@ class RayConfig(BaseModel):
         default=True,
         description="Stream Ray logs to the driver process.",
     )
+    num_gpus: float = Field(
+        default=0.0,
+        ge=0.0,
+        description=(
+            "GPUs to reserve per Ray actor (0 = no GPU). Set to 1.0 when local_model is configured."
+        ),
+    )
+    local_model: LocalModelConfig | None = Field(
+        default=None,
+        description=(
+            "When set, each Ray actor launches a local model server "
+            "and routes inference to it. Requires num_gpus >= 1."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _validate_local_model_gpu(self) -> RayConfig:
+        """Ensure GPU allocation when local_model is configured."""
+        if self.local_model is not None:
+            min_gpus = float(self.local_model.tensor_parallel_size)
+            if self.num_gpus < min_gpus:
+                msg = (
+                    f"RayConfig.num_gpus must be >= {min_gpus:.0f} "
+                    f"(tensor_parallel_size) when local_model is configured, "
+                    f"got {self.num_gpus}."
+                )
+                raise ValueError(msg)
+        return self
 
 
 class ThreadPoolConfig(BaseModel):
