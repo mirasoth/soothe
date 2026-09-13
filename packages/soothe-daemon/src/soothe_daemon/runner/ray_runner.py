@@ -76,6 +76,8 @@ def _ensure_ray_init(daemon_config: SootheDaemonConfig | None) -> None:
 
             if ray_config.num_cpus > 0:
                 actor_opts["num_cpus"] = ray_config.num_cpus
+            if ray_config.num_gpus > 0:
+                actor_opts["num_gpus"] = ray_config.num_gpus
             if ray_config.object_store_memory > 0:
                 actor_opts["object_store_memory"] = ray_config.object_store_memory
             max_actors = ray_config.max_concurrent_actors
@@ -173,6 +175,11 @@ class RayLoopRunner:
         self._actor: ray.actor.ActorHandle | None = None
         self._cancel_event = _RayCancelFlag()
 
+        # Extract local model config for GPU-bound actor mode.
+        self._local_model_config = None
+        if daemon_config is not None and daemon_config.loop_runner.ray.local_model is not None:
+            self._local_model_config = daemon_config.loop_runner.ray.local_model
+
     async def run(self, request: LoopRunRequest) -> AsyncIterator[StreamChunk]:  # type: ignore[override]
         from soothe_daemon.runner.ray_actor import LoopRunnerActor
 
@@ -189,7 +196,10 @@ class RayLoopRunner:
         if _actor_options:
             actor_cls = actor_cls.options(**_actor_options)  # type: ignore[attr-defined]
 
-        self._actor = actor_cls.remote(self._config)
+        self._actor = actor_cls.remote(
+            self._config,
+            local_model_config=self._local_model_config,
+        )
         queue: Queue = Queue(maxsize=1000)
         self._cancel_event.clear()
 

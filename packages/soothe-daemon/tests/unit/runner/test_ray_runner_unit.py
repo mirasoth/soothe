@@ -131,6 +131,59 @@ class TestEnsureRayInit:
 
         _reset_ray_state_for_testing()
 
+    def test_actor_options_include_num_gpus_when_set(self) -> None:
+        """When RayConfig.num_gpus > 0, _actor_options includes num_gpus."""
+        import soothe_daemon.runner.ray_runner as rrm
+
+        _reset_ray_state_for_testing = rrm._reset_ray_state_for_testing
+        _ensure_ray_init = rrm._ensure_ray_init
+
+        _reset_ray_state_for_testing()
+
+        daemon_cfg = SootheDaemonConfig(
+            loop_runner=LoopRunnerConfig(
+                runner_mode="ray",
+                ray=RayConfig(
+                    num_cpus=2,
+                    num_gpus=1.0,
+                    max_concurrent_actors=2,
+                ),
+            ),
+        )
+
+        with patch("soothe_daemon.runner.ray_runner.ray", ray_mock) as mock_r:
+            mock_r.is_initialized.return_value = False
+            _ensure_ray_init(daemon_cfg)
+
+            assert rrm._actor_options.get("num_gpus") == 1.0
+            assert rrm._actor_options.get("num_cpus") == 2
+
+        _reset_ray_state_for_testing()
+
+    def test_actor_options_no_num_gpus_when_zero(self) -> None:
+        """When RayConfig.num_gpus == 0, num_gpus is not in actor_options."""
+        import soothe_daemon.runner.ray_runner as rrm
+
+        _reset_ray_state_for_testing = rrm._reset_ray_state_for_testing
+        _ensure_ray_init = rrm._ensure_ray_init
+
+        _reset_ray_state_for_testing()
+
+        daemon_cfg = SootheDaemonConfig(
+            loop_runner=LoopRunnerConfig(
+                runner_mode="ray",
+                ray=RayConfig(num_cpus=2, num_gpus=0.0),
+            ),
+        )
+
+        with patch("soothe_daemon.runner.ray_runner.ray", ray_mock) as mock_r:
+            mock_r.is_initialized.return_value = False
+            _ensure_ray_init(daemon_cfg)
+
+            assert "num_gpus" not in rrm._actor_options
+
+        _reset_ray_state_for_testing()
+
 
 class TestAwaitLoopDispatchable:
     """`await_loop_dispatchable` serializes consecutive turns on the same loop."""
