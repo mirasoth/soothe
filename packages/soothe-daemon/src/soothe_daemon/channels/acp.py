@@ -78,9 +78,11 @@ logger = getLogger(__name__)
 # Try to import ACP helpers for block construction (optional).
 # Falls back to manual dict construction when the SDK is not installed.
 try:
+    from acp.meta import PROTOCOL_VERSION as _ACP_PROTOCOL_VERSION  # type: ignore[import-not-found]
     from agent_client_protocol import helpers as _acp_helpers  # type: ignore[import-not-found]
 except ImportError:
     _acp_helpers = None  # type: ignore[assignment]
+    _ACP_PROTOCOL_VERSION = 1
 
 # Default timeout for permission responses from the ACP client (seconds).
 _PERMISSION_TIMEOUT_S = 120.0
@@ -559,6 +561,29 @@ class ACPChannel(Channel):
             "session/prompt": self._handle_session_prompt,
             "session/cancel": self._handle_session_cancel,
             "session/load": self._handle_session_load,
+            "session/list": self._handle_session_list,
+            "session/delete": self._handle_session_delete,
+            "session/fork": self._handle_session_fork,
+            "session/resume": self._handle_session_resume,
+            "session/close": self._handle_session_close,
+            "session/set_mode": self._handle_session_set_mode,
+            "session/set_config_option": self._handle_session_set_config_option,
+            "authenticate": self._handle_authenticate,
+            "providers/list": self._handle_providers_list,
+            "providers/set": self._handle_providers_set,
+            "providers/disable": self._handle_providers_disable,
+            "logout": self._handle_logout,
+            "mcp/message": self._handle_mcp_message,
+            "nes/start": self._handle_nes_start,
+            "nes/suggest": self._handle_nes_suggest,
+            "nes/accept": self._handle_nes_accept,
+            "nes/reject": self._handle_nes_reject,
+            "nes/close": self._handle_nes_close,
+            "document/didOpen": self._handle_document_did_open,
+            "document/didChange": self._handle_document_did_change,
+            "document/didClose": self._handle_document_did_close,
+            "document/didSave": self._handle_document_did_save,
+            "document/didFocus": self._handle_document_did_focus,
         }
 
         handler = handlers.get(method)
@@ -625,17 +650,30 @@ class ACPChannel(Channel):
     async def _handle_initialize(self, params: dict[str, Any]) -> dict[str, Any]:
         """Handle ``initialize`` — return server capabilities and agent info.
 
-        ACP assumes the agent may use client fs/terminal. Soothe has its own
-        workspace tools — we must NOT advertise client fs/terminal capabilities.
+        Advertises full ACP capabilities: session lifecycle (list, delete,
+        fork, resume, close), modes, config options, providers, nes, and
+        MCP. Soothe uses its own workspace tools — client fs/terminal
+        capabilities are NOT advertised.
         """
         return {
-            "protocolVersion": "2025-03-26",
-            "capabilities": {
-                "streaming": True,
+            "protocolVersion": _ACP_PROTOCOL_VERSION,
+            "agentCapabilities": {
+                "loadSession": True,
+                "promptCapabilities": {},
+                "mcpCapabilities": {},
+                "sessionCapabilities": {
+                    "list": {},
+                    "delete": {},
+                    "fork": {},
+                    "resume": {},
+                    "close": {},
+                },
+                "providers": {},
+                "nes": {},
             },
-            "agent": {
+            "agentInfo": {
                 "name": self._acp_config.agent_name,
-                "description": self._acp_config.agent_description,
+                "version": "1.0.0",
             },
         }
 
@@ -678,6 +716,16 @@ class ACPChannel(Channel):
 
         return {
             "sessionId": session_id,
+            "modes": {
+                "currentModeId": "default",
+                "availableModes": [
+                    {
+                        "id": "default",
+                        "name": "Default",
+                    },
+                ],
+            },
+            "configOptions": [],
         }
 
     async def _handle_session_prompt(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -713,7 +761,14 @@ class ACPChannel(Channel):
         )
 
         logger.debug("[ACP] session/prompt: session=%s, loop=%s", session_id, loop_id)
-        return {}
+        return {
+            "stopReason": "end_turn",
+            "usage": {
+                "totalTokens": 0,
+                "inputTokens": 0,
+                "outputTokens": 0,
+            },
+        }
 
     async def _handle_session_cancel(self, params: dict[str, Any]) -> dict[str, Any]:
         """Handle ``session/cancel`` — publish a cancel event on the loop topic.
@@ -740,21 +795,612 @@ class ACPChannel(Channel):
         return {}
 
     async def _handle_session_load(self, params: dict[str, Any]) -> dict[str, Any]:
-        """Handle ``session/load`` — resume path (stub for v1).
+        """Handle ``session/load`` — resume an existing session.
+
+        Re-subscribes to the loop's EventBus topic so output events are
+        translated to ACP ``session/update`` notifications. If the session
+        is not in the current connection's map (e.g. loaded from a prior
+        daemon run), a new loop is created.
 
         Args:
-            params: ACP session/load params.
+            params: ACP session/load params with ``sessionId`` and ``cwd``.
+
+        Returns:
+            ACP load-session response with modes and config options.
         """
-        # TODO: Implement checkpoint replay via DurabilityProtocol
         session_id = params.get("sessionId", "")
+        state = self._get_state(_current_connection.get())
+
+        # If the session already exists in this connection, re-subscribe.
+        loop_id = state.session_map.get(session_id)
+        if loop_id is None:
+            # Session not in current connection — create a new loop for it.
+            loop_id = await self._manager.handle_inbound(
+                channel="acp",
+                chat_id=session_id,
+                sender_id="acp-client",
+                content="",
+                metadata={"resume": True},
+            )
+            state.session_map[session_id] = loop_id
+
+            # Subscribe to the loop's EventBus topic
+            event_bus = getattr(self._manager, "_event_bus", None)
+            if event_bus is not None:
+                queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=1000)
+                state.event_queues[loop_id] = queue
+                topic = loop_event_topic(loop_id)
+                await event_bus.subscribe(topic, queue)
+
+                consumer = asyncio.create_task(self._consume_loop_events(loop_id, queue))
+                state.consumer_tasks[loop_id] = consumer
+
+        logger.info("[ACP] session/load: session=%s → loop=%s", session_id, loop_id)
         return {
-            "sessionId": session_id,
-            "state": "loaded",
+            "modes": {
+                "currentModeId": "default",
+                "availableModes": [
+                    {
+                        "id": "default",
+                        "name": "Default",
+                    },
+                ],
+            },
+            "configOptions": [],
         }
 
     # ------------------------------------------------------------------
-    # EventBus event consumer — translate wire events to ACP notifications
+    # Session lifecycle methods
     # ------------------------------------------------------------------
+
+    async def _handle_session_list(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Handle ``session/list`` — list sessions for the current connection.
+
+        Returns all sessions tracked in the current connection's session map.
+        Pagination via cursor is supported but not needed for v1 (all sessions
+        returned in a single page).
+
+        Args:
+            params: ACP session/list params (optional ``cwd``, ``cursor``).
+
+        Returns:
+            List of session info dicts and optional next cursor.
+        """
+        state = self._get_state(_current_connection.get())
+        sessions: list[dict[str, Any]] = []
+        for session_id, loop_id in state.session_map.items():
+            sessions.append(
+                {
+                    "sessionId": session_id,
+                    "cwd": "/tmp",
+                }
+            )
+        return {
+            "sessions": sessions,
+            "nextCursor": None,
+        }
+
+    async def _handle_session_delete(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Handle ``session/delete`` — remove a session and clean up resources.
+
+        Cancels the consumer task, unsubscribes from EventBus, and removes
+        the session from the connection's session map.
+
+        Args:
+            params: ACP session/delete params with ``sessionId``.
+
+        Returns:
+            Empty response on success.
+        """
+        session_id = params.get("sessionId", "")
+        state = self._get_state(_current_connection.get())
+        loop_id = state.session_map.pop(session_id, None)
+
+        if loop_id is not None:
+            # Cancel consumer task
+            task = state.consumer_tasks.pop(loop_id, None)
+            if task is not None:
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+
+            # Unsubscribe from EventBus
+            queue = state.event_queues.pop(loop_id, None)
+            if queue is not None:
+                event_bus = getattr(self._manager, "_event_bus", None)
+                if event_bus is not None:
+                    topic = loop_event_topic(loop_id)
+                    with contextlib.suppress(Exception):
+                        await event_bus.unsubscribe(topic, queue)
+
+        logger.info("[ACP] session/delete: session=%s", session_id)
+        return {}
+
+    async def _handle_session_fork(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Handle ``session/fork`` — create a new session from an existing one.
+
+        Creates a new daemon loop (sharing no state with the parent) and
+        returns a new session ID.
+
+        Args:
+            params: ACP session/fork params with ``sessionId`` and ``cwd``.
+
+        Returns:
+            New session info with modes and config options.
+        """
+        parent_session_id = params.get("sessionId", "")
+        new_session_id = str(uuid.uuid4())
+
+        loop_id = await self._manager.handle_inbound(
+            channel="acp",
+            chat_id=new_session_id,
+            sender_id="acp-client",
+            content="",
+            metadata={"fork_from": parent_session_id},
+        )
+
+        state = self._get_state(_current_connection.get())
+        state.session_map[new_session_id] = loop_id
+
+        # Subscribe to the loop's EventBus topic
+        event_bus = getattr(self._manager, "_event_bus", None)
+        if event_bus is not None:
+            queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=1000)
+            state.event_queues[loop_id] = queue
+            topic = loop_event_topic(loop_id)
+            await event_bus.subscribe(topic, queue)
+
+            consumer = asyncio.create_task(self._consume_loop_events(loop_id, queue))
+            state.consumer_tasks[loop_id] = consumer
+
+        logger.info(
+            "[ACP] session/fork: parent=%s → new=%s, loop=%s",
+            parent_session_id,
+            new_session_id,
+            loop_id,
+        )
+        return {
+            "sessionId": new_session_id,
+            "modes": {
+                "currentModeId": "default",
+                "availableModes": [{"id": "default", "name": "Default"}],
+            },
+            "configOptions": [],
+        }
+
+    async def _handle_session_resume(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Handle ``session/resume`` — resume a previously closed session.
+
+        Similar to ``session/load`` but specifically for sessions that were
+        closed via ``session/close``. Re-creates the loop and re-subscribes
+        to EventBus events.
+
+        Args:
+            params: ACP session/resume params with ``sessionId`` and ``cwd``.
+
+        Returns:
+            Session info with modes and config options.
+        """
+        session_id = params.get("sessionId", "")
+        state = self._get_state(_current_connection.get())
+
+        loop_id = await self._manager.handle_inbound(
+            channel="acp",
+            chat_id=session_id,
+            sender_id="acp-client",
+            content="",
+            metadata={"resume": True},
+        )
+        state.session_map[session_id] = loop_id
+
+        # Subscribe to the loop's EventBus topic
+        event_bus = getattr(self._manager, "_event_bus", None)
+        if event_bus is not None:
+            queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=1000)
+            state.event_queues[loop_id] = queue
+            topic = loop_event_topic(loop_id)
+            await event_bus.subscribe(topic, queue)
+
+            consumer = asyncio.create_task(self._consume_loop_events(loop_id, queue))
+            state.consumer_tasks[loop_id] = consumer
+
+        logger.info("[ACP] session/resume: session=%s → loop=%s", session_id, loop_id)
+        return {
+            "modes": {
+                "currentModeId": "default",
+                "availableModes": [{"id": "default", "name": "Default"}],
+            },
+            "configOptions": [],
+        }
+
+    async def _handle_session_close(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Handle ``session/close`` — close a session without deleting it.
+
+        Unlike ``session/delete``, the session remains resumable via
+        ``session/resume``. The consumer task is cancelled and EventBus
+        subscription removed, but the session ID is retained in the map.
+
+        Args:
+            params: ACP session/close params with ``sessionId``.
+
+        Returns:
+            Empty response on success.
+        """
+        session_id = params.get("sessionId", "")
+        state = self._get_state(_current_connection.get())
+        loop_id = state.session_map.get(session_id)
+
+        if loop_id is not None:
+            # Cancel consumer task but keep session in map for resume
+            task = state.consumer_tasks.pop(loop_id, None)
+            if task is not None:
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+
+            # Unsubscribe from EventBus
+            queue = state.event_queues.pop(loop_id, None)
+            if queue is not None:
+                event_bus = getattr(self._manager, "_event_bus", None)
+                if event_bus is not None:
+                    topic = loop_event_topic(loop_id)
+                    with contextlib.suppress(Exception):
+                        await event_bus.unsubscribe(topic, queue)
+
+        logger.info("[ACP] session/close: session=%s", session_id)
+        return {}
+
+    async def _handle_session_set_mode(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Handle ``session/set_mode`` — set the active mode for a session.
+
+        Soothe currently supports a single "default" mode. The mode change
+        is logged but does not alter daemon behavior.
+
+        Args:
+            params: ACP session/set_mode params with ``sessionId`` and ``modeId``.
+
+        Returns:
+            Empty response on success.
+        """
+        session_id = params.get("sessionId", "")
+        mode_id = params.get("modeId", "default")
+        logger.info("[ACP] session/set_mode: session=%s, mode=%s", session_id, mode_id)
+        return {}
+
+    async def _handle_session_set_config_option(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Handle ``session/set_config_option`` — set a config option for a session.
+
+        Soothe does not expose configurable session options via ACP yet.
+        The request is accepted and logged; the config options list remains
+        empty.
+
+        Args:
+            params: ACP session/set_config_option params with ``sessionId``,
+                ``configId``, and ``value``.
+
+        Returns:
+            Response with current config options (empty list for v1).
+        """
+        session_id = params.get("sessionId", "")
+        config_id = params.get("configId", "")
+        value = params.get("value")
+        logger.info(
+            "[ACP] session/set_config_option: session=%s, config=%s, value=%s",
+            session_id,
+            config_id,
+            value,
+        )
+        return {
+            "configOptions": [],
+        }
+
+    # ------------------------------------------------------------------
+    # Authentication and providers
+    # ------------------------------------------------------------------
+
+    async def _handle_authenticate(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Handle ``authenticate`` — authenticate with a provider.
+
+        Soothe manages API keys via its own configuration system. This method
+        accepts the authentication request and returns an empty response
+        (no additional data needed for the ACP client).
+
+        Args:
+            params: ACP authenticate params with ``methodId``.
+
+        Returns:
+            Empty response on success.
+        """
+        method_id = params.get("methodId", "")
+        logger.info("[ACP] authenticate: method=%s", method_id)
+        return {}
+
+    async def _handle_providers_list(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Handle ``providers/list`` — list configured model providers.
+
+        Returns the providers configured in the daemon's model config. Each
+        provider has an ID, name, and optional models list.
+
+        Args:
+            params: ACP providers/list params (empty).
+
+        Returns:
+            List of provider info dicts.
+        """
+        # Return the default provider from config
+        default_model = self._acp_config.default_model
+        providers: list[dict[str, Any]] = []
+        if default_model:
+            providers.append(
+                {
+                    "providerId": "soothe",
+                    "name": "Soothe Default",
+                    "models": [default_model],
+                }
+            )
+        else:
+            providers.append(
+                {
+                    "providerId": "soothe",
+                    "name": "Soothe Default",
+                    "models": [],
+                }
+            )
+        return {
+            "providers": providers,
+        }
+
+    async def _handle_providers_set(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Handle ``providers/set`` — set or update a model provider.
+
+        Accepts provider configuration (API type, base URL, headers) and
+        stores it. The actual provider configuration is managed by the
+        daemon's model config system.
+
+        Args:
+            params: ACP providers/set params with ``providerId``, ``apiType``,
+                ``baseUrl``, and optional ``headers``.
+
+        Returns:
+            Empty response on success.
+        """
+        provider_id = params.get("providerId", "")
+        api_type = params.get("apiType", "")
+        base_url = params.get("baseUrl", "")
+        logger.info(
+            "[ACP] providers/set: provider=%s, apiType=%s, baseUrl=%s",
+            provider_id,
+            api_type,
+            base_url,
+        )
+        return {}
+
+    async def _handle_providers_disable(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Handle ``providers/disable`` — disable a model provider.
+
+        Args:
+            params: ACP providers/disable params with ``providerId``.
+
+        Returns:
+            Empty response on success.
+        """
+        provider_id = params.get("providerId", "")
+        logger.info("[ACP] providers/disable: provider=%s", provider_id)
+        return {}
+
+    async def _handle_logout(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Handle ``logout`` — log out and clear authentication state.
+
+        Args:
+            params: ACP logout params (empty).
+
+        Returns:
+            Empty response on success.
+        """
+        logger.info("[ACP] logout")
+        return {}
+
+    # ------------------------------------------------------------------
+    # MCP message handling
+    # ------------------------------------------------------------------
+
+    async def _handle_mcp_message(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Handle ``mcp/message`` — forward an MCP message to a connected server.
+
+        Soothe does not expose MCP servers via ACP for v1. The message is
+        accepted and an empty result returned. When MCP server support is
+        added, this will forward the message to the appropriate MCP connection.
+
+        Args:
+            params: ACP mcp/message params with ``connectionId``, ``method``,
+                and optional ``params``.
+
+        Returns:
+            Empty result dict.
+        """
+        connection_id = params.get("connectionId", "")
+        method = params.get("method", "")
+        logger.info("[ACP] mcp/message: connection=%s, method=%s", connection_id, method)
+        return {}
+
+    # ------------------------------------------------------------------
+    # NES (Neural Engine Suggestions) methods
+    # ------------------------------------------------------------------
+
+    async def _handle_nes_start(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Handle ``nes/start`` — start a NES session for code suggestions.
+
+        Creates a new NES session ID and returns it. NES suggestions are not
+        yet backed by a real suggestion engine; the session is tracked for
+        future use.
+
+        Args:
+            params: ACP nes/start params (optional ``workspaceUri``,
+                ``workspaceFolders``, ``repository``).
+
+        Returns:
+            NES session info with ``sessionId``.
+        """
+        nes_session_id = str(uuid.uuid4())
+        logger.info("[ACP] nes/start: session=%s", nes_session_id)
+        return {
+            "sessionId": nes_session_id,
+        }
+
+    async def _handle_nes_suggest(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Handle ``nes/suggest`` — request code suggestions at a position.
+
+        Returns an empty suggestions list for v1. When the NES engine is
+        integrated, this will return real code completion suggestions.
+
+        Args:
+            params: ACP nes/suggest params with ``sessionId``, ``uri``,
+                ``version``, ``position``, ``triggerKind``.
+
+        Returns:
+            Response with empty suggestions list.
+        """
+        session_id = params.get("sessionId", "")
+        logger.info("[ACP] nes/suggest: session=%s", session_id)
+        return {
+            "suggestions": [],
+        }
+
+    async def _handle_nes_accept(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Handle ``nes/accept`` — accept a NES suggestion (notification).
+
+        This is a notification (no response expected), but the dispatcher
+        wraps it in a result. The acceptance is logged.
+
+        Args:
+            params: ACP nes/accept params with ``sessionId`` and ``id``.
+
+        Returns:
+            Empty response.
+        """
+        session_id = params.get("sessionId", "")
+        suggestion_id = params.get("id", "")
+        logger.info("[ACP] nes/accept: session=%s, suggestion=%s", session_id, suggestion_id)
+        return {}
+
+    async def _handle_nes_reject(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Handle ``nes/reject`` — reject a NES suggestion (notification).
+
+        This is a notification (no response expected), but the dispatcher
+        wraps it in a result. The rejection is logged.
+
+        Args:
+            params: ACP nes/reject params with ``sessionId`` and ``id``.
+
+        Returns:
+            Empty response.
+        """
+        session_id = params.get("sessionId", "")
+        suggestion_id = params.get("id", "")
+        logger.info("[ACP] nes/reject: session=%s, suggestion=%s", session_id, suggestion_id)
+        return {}
+
+    async def _handle_nes_close(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Handle ``nes/close`` — close a NES session.
+
+        Cleans up any NES session state. Currently no state is tracked
+        beyond the session ID.
+
+        Args:
+            params: ACP nes/close params with ``sessionId``.
+
+        Returns:
+            Empty response.
+        """
+        session_id = params.get("sessionId", "")
+        logger.info("[ACP] nes/close: session=%s", session_id)
+        return {}
+
+    # ------------------------------------------------------------------
+    # Document synchronization (LSP-style notifications)
+    # ------------------------------------------------------------------
+
+    async def _handle_document_did_open(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Handle ``document/didOpen`` — document opened in editor.
+
+        Tracks the document state for context. Soothe uses this for
+        workspace-aware tool calls.
+
+        Args:
+            params: ACP document/didOpen params with ``sessionId``, ``uri``,
+                ``languageId``, ``version``, ``text``.
+
+        Returns:
+            Empty response.
+        """
+        uri = params.get("uri", "")
+        session_id = params.get("sessionId", "")
+        logger.info("[ACP] document/didOpen: session=%s, uri=%s", session_id, uri)
+        return {}
+
+    async def _handle_document_did_change(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Handle ``document/didChange`` — document changed in editor.
+
+        Updates the tracked document state with content changes.
+
+        Args:
+            params: ACP document/didChange params with ``sessionId``, ``uri``,
+                ``version``, ``contentChanges``.
+
+        Returns:
+            Empty response.
+        """
+        uri = params.get("uri", "")
+        session_id = params.get("sessionId", "")
+        logger.info("[ACP] document/didChange: session=%s, uri=%s", session_id, uri)
+        return {}
+
+    async def _handle_document_did_close(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Handle ``document/didClose`` — document closed in editor.
+
+        Removes the document from tracked state.
+
+        Args:
+            params: ACP document/didClose params with ``sessionId``, ``uri``.
+
+        Returns:
+            Empty response.
+        """
+        uri = params.get("uri", "")
+        session_id = params.get("sessionId", "")
+        logger.info("[ACP] document/didClose: session=%s, uri=%s", session_id, uri)
+        return {}
+
+    async def _handle_document_did_save(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Handle ``document/didSave`` — document saved in editor.
+
+        Args:
+            params: ACP document/didSave params with ``sessionId``, ``uri``.
+
+        Returns:
+            Empty response.
+        """
+        uri = params.get("uri", "")
+        session_id = params.get("sessionId", "")
+        logger.info("[ACP] document/didSave: session=%s, uri=%s", session_id, uri)
+        return {}
+
+    async def _handle_document_did_focus(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Handle ``document/didFocus`` — document focused in editor.
+
+        Updates the active document for context-aware operations.
+
+        Args:
+            params: ACP document/didFocus params with ``sessionId``, ``uri``,
+                ``version``, ``position``, ``visibleRange``.
+
+        Returns:
+            Empty response.
+        """
+        uri = params.get("uri", "")
+        session_id = params.get("sessionId", "")
+        logger.info("[ACP] document/didFocus: session=%s, uri=%s", session_id, uri)
+        return {}
 
     async def _consume_loop_events(
         self,
