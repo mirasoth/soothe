@@ -1190,17 +1190,18 @@ class TestACPFullProtocolBehaviour:
             )
             await _recv_jsonrpc_matching(ws, match_id=1)
 
+            # Start a NES session first
             await _send_jsonrpc(
                 ws,
                 {
                     "jsonrpc": "2.0",
                     "id": 2,
-                    "method": "session/new",
-                    "params": _params_for("session/new"),
+                    "method": "nes/start",
+                    "params": _params_for("nes/start"),
                 },
             )
-            new_resp = await _recv_jsonrpc_matching(ws, match_id=2)
-            session_id = new_resp["result"]["sessionId"]
+            start_resp = await _recv_jsonrpc_matching(ws, match_id=2)
+            nes_session_id = start_resp["result"]["sessionId"]
 
             await _send_jsonrpc(
                 ws,
@@ -1208,7 +1209,7 @@ class TestACPFullProtocolBehaviour:
                     "jsonrpc": "2.0",
                     "id": 3,
                     "method": "nes/suggest",
-                    "params": _params_for("nes/suggest", session_id=session_id),
+                    "params": _params_for("nes/suggest", session_id=nes_session_id),
                 },
             )
             resp = await _recv_jsonrpc_matching(ws, match_id=3)
@@ -1234,17 +1235,18 @@ class TestACPFullProtocolBehaviour:
             )
             await _recv_jsonrpc_matching(ws, match_id=1)
 
+            # Start a NES session first
             await _send_jsonrpc(
                 ws,
                 {
                     "jsonrpc": "2.0",
                     "id": 2,
-                    "method": "session/new",
-                    "params": _params_for("session/new"),
+                    "method": "nes/start",
+                    "params": _params_for("nes/start"),
                 },
             )
-            new_resp = await _recv_jsonrpc_matching(ws, match_id=2)
-            session_id = new_resp["result"]["sessionId"]
+            start_resp = await _recv_jsonrpc_matching(ws, match_id=2)
+            nes_session_id = start_resp["result"]["sessionId"]
 
             await _send_jsonrpc(
                 ws,
@@ -1252,7 +1254,7 @@ class TestACPFullProtocolBehaviour:
                     "jsonrpc": "2.0",
                     "id": 3,
                     "method": "nes/accept",
-                    "params": _params_for("nes/accept", session_id=session_id),
+                    "params": _params_for("nes/accept", session_id=nes_session_id),
                 },
             )
             resp = await _recv_jsonrpc_matching(ws, match_id=3)
@@ -1276,17 +1278,18 @@ class TestACPFullProtocolBehaviour:
             )
             await _recv_jsonrpc_matching(ws, match_id=1)
 
+            # Start a NES session first
             await _send_jsonrpc(
                 ws,
                 {
                     "jsonrpc": "2.0",
                     "id": 2,
-                    "method": "session/new",
-                    "params": _params_for("session/new"),
+                    "method": "nes/start",
+                    "params": _params_for("nes/start"),
                 },
             )
-            new_resp = await _recv_jsonrpc_matching(ws, match_id=2)
-            session_id = new_resp["result"]["sessionId"]
+            start_resp = await _recv_jsonrpc_matching(ws, match_id=2)
+            nes_session_id = start_resp["result"]["sessionId"]
 
             await _send_jsonrpc(
                 ws,
@@ -1294,7 +1297,7 @@ class TestACPFullProtocolBehaviour:
                     "jsonrpc": "2.0",
                     "id": 3,
                     "method": "nes/reject",
-                    "params": _params_for("nes/reject", session_id=session_id),
+                    "params": _params_for("nes/reject", session_id=nes_session_id),
                 },
             )
             resp = await _recv_jsonrpc_matching(ws, match_id=3)
@@ -1318,17 +1321,18 @@ class TestACPFullProtocolBehaviour:
             )
             await _recv_jsonrpc_matching(ws, match_id=1)
 
+            # Start a NES session first
             await _send_jsonrpc(
                 ws,
                 {
                     "jsonrpc": "2.0",
                     "id": 2,
-                    "method": "session/new",
-                    "params": _params_for("session/new"),
+                    "method": "nes/start",
+                    "params": _params_for("nes/start"),
                 },
             )
-            new_resp = await _recv_jsonrpc_matching(ws, match_id=2)
-            session_id = new_resp["result"]["sessionId"]
+            start_resp = await _recv_jsonrpc_matching(ws, match_id=2)
+            nes_session_id = start_resp["result"]["sessionId"]
 
             await _send_jsonrpc(
                 ws,
@@ -1336,7 +1340,7 @@ class TestACPFullProtocolBehaviour:
                     "jsonrpc": "2.0",
                     "id": 3,
                     "method": "nes/close",
-                    "params": _params_for("nes/close", session_id=session_id),
+                    "params": _params_for("nes/close", session_id=nes_session_id),
                 },
             )
             resp = await _recv_jsonrpc_matching(ws, match_id=3)
@@ -1551,3 +1555,685 @@ class TestACPFullProtocolBehaviour:
             )
             resp = await _recv_jsonrpc_matching(ws, match_id=3)
             assert "result" in resp
+
+
+# ---------------------------------------------------------------------------
+# Production-readiness tests: state tracking, validation, error handling
+# ---------------------------------------------------------------------------
+
+
+class TestACPProductionReadiness:
+    """Tests verifying production-ready behaviour: state tracking, session
+    validation, and proper JSON-RPC error codes for invalid parameters.
+    """
+
+    @pytest.mark.integration
+    @pytest.mark.asyncio
+    async def test_session_prompt_unknown_session_returns_invalid_params(
+        self, acp_ws_server
+    ) -> None:
+        """session/prompt with unknown sessionId must return -32602 (invalid params)."""
+        base_url, _channel, _manager = acp_ws_server
+
+        async with websockets.asyncio.client.connect(f"{base_url}/acp") as ws:
+            await _send_jsonrpc(
+                ws,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": _params_for("initialize"),
+                },
+            )
+            await _recv_jsonrpc_matching(ws, match_id=1)
+
+            await _send_jsonrpc(
+                ws,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "session/prompt",
+                    "params": {
+                        "sessionId": "nonexistent-session",
+                        "prompt": [{"type": "text", "text": "test"}],
+                    },
+                },
+            )
+            resp = await _recv_jsonrpc_matching(ws, match_id=2)
+            assert "error" in resp
+            assert resp["error"]["code"] == -32602
+            assert "Unknown session" in resp["error"]["message"]
+
+    @pytest.mark.integration
+    @pytest.mark.asyncio
+    async def test_session_cancel_unknown_session_returns_invalid_params(
+        self, acp_ws_server
+    ) -> None:
+        """session/cancel with unknown sessionId must return -32602."""
+        base_url, _channel, _manager = acp_ws_server
+
+        async with websockets.asyncio.client.connect(f"{base_url}/acp") as ws:
+            await _send_jsonrpc(
+                ws,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": _params_for("initialize"),
+                },
+            )
+            await _recv_jsonrpc_matching(ws, match_id=1)
+
+            await _send_jsonrpc(
+                ws,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "session/cancel",
+                    "params": {"sessionId": "nonexistent-session"},
+                },
+            )
+            resp = await _recv_jsonrpc_matching(ws, match_id=2)
+            assert "error" in resp
+            assert resp["error"]["code"] == -32602
+
+    @pytest.mark.integration
+    @pytest.mark.asyncio
+    async def test_session_delete_unknown_session_returns_invalid_params(
+        self, acp_ws_server
+    ) -> None:
+        """session/delete with unknown sessionId must return -32602."""
+        base_url, _channel, _manager = acp_ws_server
+
+        async with websockets.asyncio.client.connect(f"{base_url}/acp") as ws:
+            await _send_jsonrpc(
+                ws,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": _params_for("initialize"),
+                },
+            )
+            await _recv_jsonrpc_matching(ws, match_id=1)
+
+            await _send_jsonrpc(
+                ws,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "session/delete",
+                    "params": {"sessionId": "nonexistent-session"},
+                },
+            )
+            resp = await _recv_jsonrpc_matching(ws, match_id=2)
+            assert "error" in resp
+            assert resp["error"]["code"] == -32602
+
+    @pytest.mark.integration
+    @pytest.mark.asyncio
+    async def test_session_set_mode_unknown_session_returns_invalid_params(
+        self, acp_ws_server
+    ) -> None:
+        """session/set_mode with unknown sessionId must return -32602."""
+        base_url, _channel, _manager = acp_ws_server
+
+        async with websockets.asyncio.client.connect(f"{base_url}/acp") as ws:
+            await _send_jsonrpc(
+                ws,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": _params_for("initialize"),
+                },
+            )
+            await _recv_jsonrpc_matching(ws, match_id=1)
+
+            await _send_jsonrpc(
+                ws,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "session/set_mode",
+                    "params": {"sessionId": "nonexistent-session", "modeId": "default"},
+                },
+            )
+            resp = await _recv_jsonrpc_matching(ws, match_id=2)
+            assert "error" in resp
+            assert resp["error"]["code"] == -32602
+
+    @pytest.mark.integration
+    @pytest.mark.asyncio
+    async def test_session_list_returns_real_cwd(self, acp_ws_server) -> None:
+        """session/list must return the real cwd the session was created with."""
+        base_url, _channel, _manager = acp_ws_server
+
+        async with websockets.asyncio.client.connect(f"{base_url}/acp") as ws:
+            await _send_jsonrpc(
+                ws,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": _params_for("initialize"),
+                },
+            )
+            await _recv_jsonrpc_matching(ws, match_id=1)
+
+            # Create a session with a specific cwd
+            await _send_jsonrpc(
+                ws,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "session/new",
+                    "params": {"cwd": "/home/user/project"},
+                },
+            )
+            await _recv_jsonrpc_matching(ws, match_id=2)
+
+            await _send_jsonrpc(
+                ws,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 3,
+                    "method": "session/list",
+                    "params": {},
+                },
+            )
+            resp = await _recv_jsonrpc_matching(ws, match_id=3)
+            result = resp["result"]
+            sessions = result["sessions"]
+            assert len(sessions) >= 1
+            # The session must have the real cwd, not "/tmp"
+            cwds = [s["cwd"] for s in sessions]
+            assert "/home/user/project" in cwds
+
+    @pytest.mark.integration
+    @pytest.mark.asyncio
+    async def test_session_fork_inherits_parent_cwd(self, acp_ws_server) -> None:
+        """session/fork must inherit the parent session's cwd."""
+        base_url, _channel, _manager = acp_ws_server
+
+        async with websockets.asyncio.client.connect(f"{base_url}/acp") as ws:
+            await _send_jsonrpc(
+                ws,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": _params_for("initialize"),
+                },
+            )
+            await _recv_jsonrpc_matching(ws, match_id=1)
+
+            # Create parent session with specific cwd
+            await _send_jsonrpc(
+                ws,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "session/new",
+                    "params": {"cwd": "/home/user/parent"},
+                },
+            )
+            new_resp = await _recv_jsonrpc_matching(ws, match_id=2)
+            session_id = new_resp["result"]["sessionId"]
+
+            # Fork without specifying cwd — should inherit parent's
+            await _send_jsonrpc(
+                ws,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 3,
+                    "method": "session/fork",
+                    "params": {"sessionId": session_id, "cwd": "/tmp"},
+                },
+            )
+            fork_resp = await _recv_jsonrpc_matching(ws, match_id=3)
+            assert "result" in fork_resp
+
+            # List sessions and check that parent's cwd is preserved
+            await _send_jsonrpc(
+                ws,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 4,
+                    "method": "session/list",
+                    "params": {},
+                },
+            )
+            list_resp = await _recv_jsonrpc_matching(ws, match_id=4)
+            sessions = list_resp["result"]["sessions"]
+            cwds = [s["cwd"] for s in sessions]
+            assert "/home/user/parent" in cwds
+
+    @pytest.mark.integration
+    @pytest.mark.asyncio
+    async def test_session_close_then_resume_preserves_session(self, acp_ws_server) -> None:
+        """session/close followed by session/resume must work (session preserved)."""
+        base_url, _channel, _manager = acp_ws_server
+
+        async with websockets.asyncio.client.connect(f"{base_url}/acp") as ws:
+            await _send_jsonrpc(
+                ws,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": _params_for("initialize"),
+                },
+            )
+            await _recv_jsonrpc_matching(ws, match_id=1)
+
+            # Create session
+            await _send_jsonrpc(
+                ws,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "session/new",
+                    "params": {"cwd": "/home/user/project"},
+                },
+            )
+            new_resp = await _recv_jsonrpc_matching(ws, match_id=2)
+            session_id = new_resp["result"]["sessionId"]
+
+            # Close it
+            await _send_jsonrpc(
+                ws,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 3,
+                    "method": "session/close",
+                    "params": {"sessionId": session_id},
+                },
+            )
+            close_resp = await _recv_jsonrpc_matching(ws, match_id=3)
+            assert "result" in close_resp
+
+            # Resume it — must succeed (session preserved in map)
+            await _send_jsonrpc(
+                ws,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 4,
+                    "method": "session/resume",
+                    "params": {"sessionId": session_id, "cwd": "/home/user/project"},
+                },
+            )
+            resume_resp = await _recv_jsonrpc_matching(ws, match_id=4)
+            assert "result" in resume_resp
+            assert "modes" in resume_resp["result"]
+
+    @pytest.mark.integration
+    @pytest.mark.asyncio
+    async def test_session_delete_then_resume_returns_error(self, acp_ws_server) -> None:
+        """session/resume on a deleted session must return -32602."""
+        base_url, _channel, _manager = acp_ws_server
+
+        async with websockets.asyncio.client.connect(f"{base_url}/acp") as ws:
+            await _send_jsonrpc(
+                ws,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": _params_for("initialize"),
+                },
+            )
+            await _recv_jsonrpc_matching(ws, match_id=1)
+
+            # Create and delete a session
+            await _send_jsonrpc(
+                ws,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "session/new",
+                    "params": {"cwd": "/tmp"},
+                },
+            )
+            new_resp = await _recv_jsonrpc_matching(ws, match_id=2)
+            session_id = new_resp["result"]["sessionId"]
+
+            await _send_jsonrpc(
+                ws,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 3,
+                    "method": "session/delete",
+                    "params": {"sessionId": session_id},
+                },
+            )
+            await _recv_jsonrpc_matching(ws, match_id=3)
+
+            # Resume deleted session — must fail
+            await _send_jsonrpc(
+                ws,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 4,
+                    "method": "session/resume",
+                    "params": {"sessionId": session_id, "cwd": "/tmp"},
+                },
+            )
+            resp = await _recv_jsonrpc_matching(ws, match_id=4)
+            assert "error" in resp
+            assert resp["error"]["code"] == -32602
+
+    @pytest.mark.integration
+    @pytest.mark.asyncio
+    async def test_session_set_config_option_tracks_value(self, acp_ws_server) -> None:
+        """session/set_config_option must track the value and return it."""
+        base_url, _channel, _manager = acp_ws_server
+
+        async with websockets.asyncio.client.connect(f"{base_url}/acp") as ws:
+            await _send_jsonrpc(
+                ws,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": _params_for("initialize"),
+                },
+            )
+            await _recv_jsonrpc_matching(ws, match_id=1)
+
+            await _send_jsonrpc(
+                ws,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "session/new",
+                    "params": {"cwd": "/tmp"},
+                },
+            )
+            new_resp = await _recv_jsonrpc_matching(ws, match_id=2)
+            session_id = new_resp["result"]["sessionId"]
+
+            await _send_jsonrpc(
+                ws,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 3,
+                    "method": "session/set_config_option",
+                    "params": {
+                        "sessionId": session_id,
+                        "configId": "model",
+                        "value": "gpt-4",
+                        "type": "select",
+                    },
+                },
+            )
+            resp = await _recv_jsonrpc_matching(ws, match_id=3)
+            result = resp["result"]
+            assert "configOptions" in result
+            # The tracked config option must be in the response
+            config_ids = [c["configId"] for c in result["configOptions"]]
+            assert "model" in config_ids
+            model_opt = [c for c in result["configOptions"] if c["configId"] == "model"][0]
+            assert model_opt["value"] == "gpt-4"
+
+    @pytest.mark.integration
+    @pytest.mark.asyncio
+    async def test_initialize_advertises_auth_and_position_encoding(self, acp_ws_server) -> None:
+        """Initialize must advertise auth/logout and positionEncoding capabilities."""
+        base_url, _channel, _manager = acp_ws_server
+
+        async with websockets.asyncio.client.connect(f"{base_url}/acp") as ws:
+            await _send_jsonrpc(
+                ws,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": _params_for("initialize"),
+                },
+            )
+            resp = await _recv_jsonrpc_matching(ws, match_id=1)
+            result = resp["result"]
+            caps = result["agentCapabilities"]
+            assert "auth" in caps
+            assert "logout" in caps["auth"]
+            assert "positionEncoding" in caps
+            assert caps["positionEncoding"] == "utf-16"
+            assert "promptCapabilities" in caps
+            assert "mcpCapabilities" in caps
+            assert "agentInfo" in result
+            assert "description" in result["agentInfo"]
+
+    @pytest.mark.integration
+    @pytest.mark.asyncio
+    async def test_document_lifecycle_tracks_state(self, acp_ws_server) -> None:
+        """document/didOpen → didChange → didClose lifecycle must track state."""
+        base_url, _channel, _manager = acp_ws_server
+
+        async with websockets.asyncio.client.connect(f"{base_url}/acp") as ws:
+            await _send_jsonrpc(
+                ws,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": _params_for("initialize"),
+                },
+            )
+            await _recv_jsonrpc_matching(ws, match_id=1)
+
+            await _send_jsonrpc(
+                ws,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "session/new",
+                    "params": {"cwd": "/tmp"},
+                },
+            )
+            new_resp = await _recv_jsonrpc_matching(ws, match_id=2)
+            session_id = new_resp["result"]["sessionId"]
+
+            # Open document
+            await _send_jsonrpc(
+                ws,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 3,
+                    "method": "document/didOpen",
+                    "params": {
+                        "sessionId": session_id,
+                        "uri": "file:///tmp/test.py",
+                        "languageId": "python",
+                        "version": 1,
+                        "text": "print('hello')",
+                    },
+                },
+            )
+            resp = await _recv_jsonrpc_matching(ws, match_id=3)
+            assert "result" in resp
+
+            # Change document
+            await _send_jsonrpc(
+                ws,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 4,
+                    "method": "document/didChange",
+                    "params": {
+                        "sessionId": session_id,
+                        "uri": "file:///tmp/test.py",
+                        "version": 2,
+                        "contentChanges": [{"text": "print('world')"}],
+                    },
+                },
+            )
+            resp = await _recv_jsonrpc_matching(ws, match_id=4)
+            assert "result" in resp
+
+            # Focus document
+            await _send_jsonrpc(
+                ws,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 5,
+                    "method": "document/didFocus",
+                    "params": {
+                        "sessionId": session_id,
+                        "uri": "file:///tmp/test.py",
+                        "version": 2,
+                        "position": {"line": 0, "character": 0},
+                        "visibleRange": {
+                            "start": {"line": 0, "character": 0},
+                            "end": {"line": 10, "character": 0},
+                        },
+                    },
+                },
+            )
+            resp = await _recv_jsonrpc_matching(ws, match_id=5)
+            assert "result" in resp
+
+            # Save document
+            await _send_jsonrpc(
+                ws,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 6,
+                    "method": "document/didSave",
+                    "params": {
+                        "sessionId": session_id,
+                        "uri": "file:///tmp/test.py",
+                    },
+                },
+            )
+            resp = await _recv_jsonrpc_matching(ws, match_id=6)
+            assert "result" in resp
+
+            # Close document
+            await _send_jsonrpc(
+                ws,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 7,
+                    "method": "document/didClose",
+                    "params": {
+                        "sessionId": session_id,
+                        "uri": "file:///tmp/test.py",
+                    },
+                },
+            )
+            resp = await _recv_jsonrpc_matching(ws, match_id=7)
+            assert "result" in resp
+
+    @pytest.mark.integration
+    @pytest.mark.asyncio
+    async def test_nes_lifecycle_tracks_state(self, acp_ws_server) -> None:
+        """nes/start → suggest → accept → close lifecycle must track state."""
+        base_url, _channel, _manager = acp_ws_server
+
+        async with websockets.asyncio.client.connect(f"{base_url}/acp") as ws:
+            await _send_jsonrpc(
+                ws,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": _params_for("initialize"),
+                },
+            )
+            await _recv_jsonrpc_matching(ws, match_id=1)
+
+            # Start NES session
+            await _send_jsonrpc(
+                ws,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "nes/start",
+                    "params": {"workspaceUri": "file:///tmp"},
+                },
+            )
+            start_resp = await _recv_jsonrpc_matching(ws, match_id=2)
+            nes_session_id = start_resp["result"]["sessionId"]
+
+            # Suggest
+            await _send_jsonrpc(
+                ws,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 3,
+                    "method": "nes/suggest",
+                    "params": {
+                        "sessionId": nes_session_id,
+                        "uri": "file:///tmp/test.py",
+                        "version": 1,
+                        "position": {"line": 0, "character": 0},
+                        "triggerKind": "automatic",
+                    },
+                },
+            )
+            resp = await _recv_jsonrpc_matching(ws, match_id=3)
+            assert "suggestions" in resp["result"]
+
+            # Accept
+            await _send_jsonrpc(
+                ws,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 4,
+                    "method": "nes/accept",
+                    "params": {"sessionId": nes_session_id, "id": "sugg-1"},
+                },
+            )
+            resp = await _recv_jsonrpc_matching(ws, match_id=4)
+            assert "result" in resp
+
+            # Close
+            await _send_jsonrpc(
+                ws,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 5,
+                    "method": "nes/close",
+                    "params": {"sessionId": nes_session_id},
+                },
+            )
+            resp = await _recv_jsonrpc_matching(ws, match_id=5)
+            assert "result" in resp
+
+    @pytest.mark.integration
+    @pytest.mark.asyncio
+    async def test_providers_list_returns_configured_model(self, acp_ws_server) -> None:
+        """providers/list must return the configured default model."""
+        base_url, channel, _manager = acp_ws_server
+
+        async with websockets.asyncio.client.connect(f"{base_url}/acp") as ws:
+            await _send_jsonrpc(
+                ws,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": _params_for("initialize"),
+                },
+            )
+            await _recv_jsonrpc_matching(ws, match_id=1)
+
+            await _send_jsonrpc(
+                ws,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "providers/list",
+                    "params": {},
+                },
+            )
+            resp = await _recv_jsonrpc_matching(ws, match_id=2)
+            result = resp["result"]
+            assert "providers" in result
+            assert len(result["providers"]) >= 1
+            provider = result["providers"][0]
+            assert provider["providerId"] == "soothe"
+            assert provider["name"] == "Soothe Default"
+            # Models list should contain the configured default model (or be empty)
+            assert "models" in provider

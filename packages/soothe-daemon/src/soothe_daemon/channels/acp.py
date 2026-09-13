@@ -56,6 +56,10 @@ except ImportError:
 # Default timeout for permission responses from the ACP client (seconds).
 _PERMISSION_TIMEOUT_S = 120.0
 
+# JSON-RPC error codes.
+_ERR_INVALID_PARAMS = -32602
+_ERR_INTERNAL = -32603
+
 # Sentinel key used for the single stdio connection in the _connections dict.
 # In stdio mode there is exactly one connection (the stdin/stdout pipe); in
 # WebSocket mode each connected client gets its own _ConnectionState entry
@@ -74,16 +78,16 @@ _current_connection: contextvars.ContextVar[Any] = contextvars.ContextVar(
 class _SessionState:
     """Per-session state tracking for production-ready ACP compliance.
 
-    Tracks the cwd, active mode, config options, open documents, and NES
-    sessions for a single ACP session. This replaces the previous stub
-    handlers that accepted requests but discarded all state.
+    Tracks the cwd, active mode, config options, and open documents for a
+    single ACP session. This replaces the previous stub handlers that
+    accepted requests but discarded all state.
 
     Attributes:
         cwd: Working directory the session was created with.
         current_mode: Active mode ID (default "default").
         config_options: Config option values set via session/set_config_option.
         documents: Open documents keyed by URI (uri → text/version dict).
-        nes_sessions: Set of active NES session IDs.
+        focused_uri: Set of URIs currently focused in the editor.
     """
 
     __slots__ = (
@@ -91,7 +95,7 @@ class _SessionState:
         "current_mode",
         "config_options",
         "documents",
-        "nes_sessions",
+        "focused_uri",
     )
 
     def __init__(self, cwd: str = "/tmp") -> None:
@@ -99,7 +103,7 @@ class _SessionState:
         self.current_mode: str = "default"
         self.config_options: dict[str, Any] = {}
         self.documents: dict[str, dict[str, Any]] = {}
-        self.nes_sessions: set[str] = set()
+        self.focused_uri: set[str] = set()
 
 
 class _ConnectionState:
@@ -113,6 +117,7 @@ class _ConnectionState:
     Attributes:
         session_map: ACP session_id → daemon loop_id.
         session_states: ACP session_id → _SessionState (per-session metadata).
+        nes_sessions: NES session_id → metadata dict (workspaceUri, suggestions).
         pending_permissions: request_id → future awaiting client response.
         event_queues: loop_id → EventBus event queue.
         consumer_tasks: loop_id → event consumer asyncio task.
@@ -121,6 +126,7 @@ class _ConnectionState:
     __slots__ = (
         "session_map",
         "session_states",
+        "nes_sessions",
         "pending_permissions",
         "event_queues",
         "consumer_tasks",
@@ -129,6 +135,7 @@ class _ConnectionState:
     def __init__(self) -> None:
         self.session_map: dict[str, str] = {}
         self.session_states: dict[str, _SessionState] = {}
+        self.nes_sessions: dict[str, dict[str, Any]] = {}
         self.pending_permissions: dict[int, asyncio.Future[dict[str, Any]]] = {}
         self.event_queues: dict[str, asyncio.Queue[dict[str, Any]]] = {}
         self.consumer_tasks: dict[str, asyncio.Task[None]] = {}
@@ -611,6 +618,19 @@ class ACPChannel(Channel):
                     "result": result,
                 }
             )
+        except ValueError as e:
+            # ValueError from session validation = invalid params (-32602)
+            logger.warning("[ACP] Invalid params for %s: %s", method, e)
+            await self._write_jsonrpc(
+                {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "error": {
+                        "code": _ERR_INVALID_PARAMS,
+                        "message": str(e),
+                    },
+                }
+            )
         except Exception as e:
             logger.exception("[ACP] Handler error for %s", method)
             await self._write_jsonrpc(
@@ -618,7 +638,7 @@ class ACPChannel(Channel):
                     "jsonrpc": "2.0",
                     "id": req_id,
                     "error": {
-                        "code": -32603,
+                        "code": _ERR_INTERNAL,
                         "message": f"Internal error: {e}",
                     },
                 }
@@ -745,13 +765,37 @@ class ACPChannel(Channel):
             "configOptions": [],
         }
 
+    def _require_session(self, params: dict[str, Any]) -> tuple[str, str]:
+        """Validate that a session exists and return (session_id, loop_id).
+
+        Raises ValueError (mapped to JSON-RPC -32602 by the dispatcher)
+        if the session is not found in the current connection's session map.
+
+        Args:
+            params: ACP request params containing `sessionId`.
+
+        Returns:
+            Tuple of (session_id, loop_id).
+
+        Raises:
+            ValueError: If sessionId is missing or not found.
+        """
+        session_id = params.get("sessionId", "")
+        if not session_id:
+            raise ValueError("Missing required parameter: sessionId")
+        state = self._get_state(_current_connection.get())
+        loop_id = state.session_map.get(session_id)
+        if loop_id is None:
+            raise ValueError(f"Unknown session: {session_id}")
+        return session_id, loop_id
+
     async def _handle_session_prompt(self, params: dict[str, Any]) -> dict[str, Any]:
         """Handle `session/prompt` — enqueue a user turn.
 
         Args:
             params: ACP session/prompt params with `sessionId` and `prompt`.
         """
-        session_id = params.get("sessionId", "")
+        session_id, loop_id = self._require_session(params)
         prompt_text = ""
 
         # Extract text from prompt (ACP uses a list of content parts)
@@ -764,10 +808,6 @@ class ACPChannel(Channel):
                     prompt_text += part.get("text", "")
                 elif isinstance(part, str):
                     prompt_text += part
-
-        loop_id = self._get_state(_current_connection.get()).session_map.get(session_id)
-        if loop_id is None:
-            raise ValueError(f"Unknown session: {session_id}")
 
         await self._manager.handle_inbound(
             channel="acp",
@@ -793,10 +833,7 @@ class ACPChannel(Channel):
         Args:
             params: ACP session/cancel params with `sessionId`.
         """
-        session_id = params.get("sessionId", "")
-        loop_id = self._get_state(_current_connection.get()).session_map.get(session_id)
-        if loop_id is None:
-            raise ValueError(f"Unknown session: {session_id}")
+        session_id, loop_id = self._require_session(params)
 
         event_bus = getattr(self._manager, "_event_bus", None)
         if event_bus is not None:
@@ -826,6 +863,7 @@ class ACPChannel(Channel):
             ACP load-session response with modes and config options.
         """
         session_id = params.get("sessionId", "")
+        cwd = params.get("cwd", "/tmp")
         state = self._get_state(_current_connection.get())
 
         # If the session already exists in this connection, re-subscribe.
@@ -837,9 +875,13 @@ class ACPChannel(Channel):
                 chat_id=session_id,
                 sender_id="acp-client",
                 content="",
-                metadata={"resume": True},
+                metadata={"resume": True, "cwd": cwd},
             )
             state.session_map[session_id] = loop_id
+
+            # Track session state
+            if session_id not in state.session_states:
+                state.session_states[session_id] = _SessionState(cwd=cwd)
 
             # Subscribe to the loop's EventBus topic
             event_bus = getattr(self._manager, "_event_bus", None)
@@ -912,9 +954,9 @@ class ACPChannel(Channel):
         Returns:
             Empty response on success.
         """
-        session_id = params.get("sessionId", "")
+        session_id, loop_id = self._require_session(params)
         state = self._get_state(_current_connection.get())
-        loop_id = state.session_map.pop(session_id, None)
+        state.session_map.pop(session_id, None)
         state.session_states.pop(session_id, None)
 
         if loop_id is not None:
@@ -949,7 +991,7 @@ class ACPChannel(Channel):
         Returns:
             New session info with modes and config options.
         """
-        parent_session_id = params.get("sessionId", "")
+        parent_session_id, _parent_loop_id = self._require_session(params)
         new_session_id = str(uuid.uuid4())
         cwd = params.get("cwd", "/tmp")
 
@@ -1014,6 +1056,12 @@ class ACPChannel(Channel):
         cwd = params.get("cwd", "/tmp")
         state = self._get_state(_current_connection.get())
 
+        # session/resume is for sessions that were closed (still in map)
+        # or for sessions that need to be re-created. Validate that the
+        # session exists in the connection's map.
+        if session_id not in state.session_map:
+            raise ValueError(f"Unknown session: {session_id}")
+
         loop_id = await self._manager.handle_inbound(
             channel="acp",
             chat_id=session_id,
@@ -1061,9 +1109,8 @@ class ACPChannel(Channel):
         Returns:
             Empty response on success.
         """
-        session_id = params.get("sessionId", "")
+        session_id, loop_id = self._require_session(params)
         state = self._get_state(_current_connection.get())
-        loop_id = state.session_map.get(session_id)
 
         if loop_id is not None:
             # Cancel consumer task but keep session in map for resume
@@ -1097,7 +1144,7 @@ class ACPChannel(Channel):
         Returns:
             Empty response on success.
         """
-        session_id = params.get("sessionId", "")
+        session_id, _loop_id = self._require_session(params)
         mode_id = params.get("modeId", "default")
         state = self._get_state(_current_connection.get())
         ss = state.session_states.get(session_id)
@@ -1120,7 +1167,7 @@ class ACPChannel(Channel):
         Returns:
             Response with current config options list.
         """
-        session_id = params.get("sessionId", "")
+        session_id, _loop_id = self._require_session(params)
         config_id = params.get("configId", "")
         value = params.get("value")
         state = self._get_state(_current_connection.get())
@@ -1326,6 +1373,9 @@ class ACPChannel(Channel):
             Response with empty suggestions list.
         """
         session_id = params.get("sessionId", "")
+        state = self._get_state(_current_connection.get())
+        if session_id not in state.nes_sessions:
+            raise ValueError(f"Unknown NES session: {session_id}")
         logger.info("[ACP] nes/suggest: session=%s", session_id)
         return {
             "suggestions": [],
@@ -1348,7 +1398,9 @@ class ACPChannel(Channel):
         suggestion_id = params.get("id", "")
         state = self._get_state(_current_connection.get())
         nes_ss = state.nes_sessions.get(session_id)
-        if nes_ss is not None and suggestion_id:
+        if nes_ss is None:
+            raise ValueError(f"Unknown NES session: {session_id}")
+        if suggestion_id:
             nes_ss["suggestions"][suggestion_id] = "accepted"
         logger.info("[ACP] nes/accept: session=%s, suggestion=%s", session_id, suggestion_id)
         return {}
@@ -1370,7 +1422,9 @@ class ACPChannel(Channel):
         suggestion_id = params.get("id", "")
         state = self._get_state(_current_connection.get())
         nes_ss = state.nes_sessions.get(session_id)
-        if nes_ss is not None and suggestion_id:
+        if nes_ss is None:
+            raise ValueError(f"Unknown NES session: {session_id}")
+        if suggestion_id:
             nes_ss["suggestions"][suggestion_id] = "rejected"
         logger.info("[ACP] nes/reject: session=%s, suggestion=%s", session_id, suggestion_id)
         return {}
@@ -1389,6 +1443,8 @@ class ACPChannel(Channel):
         """
         session_id = params.get("sessionId", "")
         state = self._get_state(_current_connection.get())
+        if session_id not in state.nes_sessions:
+            raise ValueError(f"Unknown NES session: {session_id}")
         state.nes_sessions.pop(session_id, None)
         logger.info("[ACP] nes/close: session=%s", session_id)
         return {}
@@ -1410,8 +1466,8 @@ class ACPChannel(Channel):
         Returns:
             Empty response.
         """
+        session_id, _loop_id = self._require_session(params)
         uri = params.get("uri", "")
-        session_id = params.get("sessionId", "")
         language_id = params.get("languageId", "")
         version = params.get("version", 0)
         text = params.get("text", "")
@@ -1445,8 +1501,8 @@ class ACPChannel(Channel):
         Returns:
             Empty response.
         """
+        session_id, _loop_id = self._require_session(params)
         uri = params.get("uri", "")
-        session_id = params.get("sessionId", "")
         version = params.get("version", 0)
         content_changes = params.get("contentChanges", [])
         state = self._get_state(_current_connection.get())
@@ -1458,7 +1514,9 @@ class ACPChannel(Channel):
                 first = content_changes[0]
                 if isinstance(first, dict) and "text" in first:
                     doc["text"] = first["text"]
-        logger.info("[ACP] document/didChange: session=%s, uri=%s, version=%s", session_id, uri, version)
+        logger.info(
+            "[ACP] document/didChange: session=%s, uri=%s, version=%s", session_id, uri, version
+        )
         return {}
 
     async def _handle_document_did_close(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -1472,14 +1530,13 @@ class ACPChannel(Channel):
         Returns:
             Empty response.
         """
+        session_id, _loop_id = self._require_session(params)
         uri = params.get("uri", "")
-        session_id = params.get("sessionId", "")
         state = self._get_state(_current_connection.get())
         ss = state.session_states.get(session_id)
         if ss is not None:
             ss.documents.pop(uri, None)
-            if uri in ss.focused_uri:
-                ss.focused_uri.discard(uri)
+            ss.focused_uri.discard(uri)
         logger.info("[ACP] document/didClose: session=%s, uri=%s", session_id, uri)
         return {}
 
@@ -1492,8 +1549,8 @@ class ACPChannel(Channel):
         Returns:
             Empty response.
         """
+        session_id, _loop_id = self._require_session(params)
         uri = params.get("uri", "")
-        session_id = params.get("sessionId", "")
         logger.info("[ACP] document/didSave: session=%s, uri=%s", session_id, uri)
         return {}
 
@@ -1509,8 +1566,8 @@ class ACPChannel(Channel):
         Returns:
             Empty response.
         """
+        session_id, _loop_id = self._require_session(params)
         uri = params.get("uri", "")
-        session_id = params.get("sessionId", "")
         state = self._get_state(_current_connection.get())
         ss = state.session_states.get(session_id)
         if ss is not None:
