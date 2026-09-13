@@ -1,19 +1,7 @@
-# Docker Compose for Soothe Development
-# RFC-612: Multi-database PostgreSQL architecture
-#
-# Profiles:
-#   - default:    Dev dependencies (soothe-pgvector + soothe-minio)
-#   - langfuse:   Langfuse v3 observability stack (optional)
-#
-# Usage:
-#   # Dev dependencies only (default):
-#   docker compose up -d
-#   make docker-dev-up
-#
-#   # Dev deps + Langfuse UI/API:
-#   docker compose --profile langfuse up -d
-#
-# Production daemon stack: See deploy/docker-compose.yml and deploy/README.md
+# Soothe dev stack (RFC-612 multi-database PostgreSQL).
+# Profiles: default (pgvector + minio), langfuse (observability).
+# Usage: docker compose up -d  |  make docker-dev-up
+# Production: config/production/docker-compose.yml
 #
 # Default-profile services:
 #   soothe-pgvector — PostgreSQL 17 + pgvector (dev DB on port 6432)

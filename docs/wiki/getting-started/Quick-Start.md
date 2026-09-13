@@ -79,9 +79,8 @@ docker run --rm -d --name soothed \
 Production-ready stack with PostgreSQL + pgvector + Soothe daemon:
 
 ```bash
-cd deploy
-cp env-example .env
-# Edit .env with your API keys
+cd config/production
+vim example.env   # Set your API keys
 docker compose up -d
 ```
 
@@ -92,7 +91,7 @@ docker compose up -d
 | PostgreSQL + pgvector | `registry.cn-hangzhou.aliyuncs.com/lacogito/pgvector:pg17` | 5432 (internal) |
 | Soothe Daemon | `registry.cn-hangzhou.aliyuncs.com/lacogito/soothed:latest` | 8765 |
 
-**Required environment variables** (in `deploy/.env`):
+**Required environment variables** (in `config/production/example.env`):
 
 ```bash
 OPENAI_API_KEY=sk-...              # Required for production
@@ -138,7 +137,7 @@ shared_buffers: 256MB
 work_mem: 64MB
 ```
 
-Full production deployment guide: see [`deploy/README.md`](../../../deploy/README.md).
+Full production deployment guide: see [`config/production/README.md`](../../../config/production/README.md).
 
 ---
 
