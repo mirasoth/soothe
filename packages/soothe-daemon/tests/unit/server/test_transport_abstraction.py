@@ -9,7 +9,12 @@ import pytest
 from soothe_daemon.channel_manager import ChannelManager
 from soothe_daemon.channels.websocket import WebSocketChannel
 from soothe_daemon.config import SootheDaemonConfig
-from soothe_daemon.config.models import TransportConfig, WebSocketConfig
+from soothe_daemon.config.models import (
+    ACPConfig,
+    ChannelsConfig,
+    TransportConfig,
+    WebSocketConfig,
+)
 from soothe_daemon.protocol import (
     ErrorCode,
     build_error_response,
@@ -137,9 +142,10 @@ class TestChannelManager:
 
     @pytest.fixture
     def config(self) -> SootheDaemonConfig:
-        """Create test configuration with WebSocket disabled (for error tests)."""
+        """Create test configuration with all transports disabled (for error tests)."""
         return SootheDaemonConfig(
-            transports=TransportConfig(websocket=WebSocketConfig(enabled=False))
+            transports=TransportConfig(websocket=WebSocketConfig(enabled=False)),
+            channels=ChannelsConfig(acp=ACPConfig(enabled=False)),
         )
 
     @pytest.mark.asyncio

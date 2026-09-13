@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Implement production-grade Ray runner features: `RayConfig`-driven `ray.init()` cluster connection with per-actor resource constraints and `max_concurrent_actors` throttling; `LoopRunRequest.timeout_seconds` enforcement with `asyncio.timeout()`; dead-actor liveness detection via `ping()` probe to prevent stream hangs; cooperative cancellation that emits a terminal `"cancelled"` event through `emit_terminal_for_cancelled_error`; and `await_loop_dispatchable` pool lifecycle so consecutive turns on the same loop are serialized.
 
 ### Changed
+- Enable the ACP channel by default (`ACPConfig.enabled` flips from `False` to `True`); the daemon now serves the ACP WebSocket endpoint at `/acp` out of the box without requiring explicit YAML opt-in.
 - Codify Comment Hygiene (MUST) and Dead Code & Legacy Removal (MUST) as binding rules in `.agents/rules/code-style.md` and `.agents/rules/development-process.md`, referenced from `AGENTS.md` Critical Rules table.
 - Standardize docstrings across the `soothe` and `soothe-daemon` packages: single backticks only, Google-style section indentation, verbose prose trimmed, missing module/class/function docstrings added, RFC/IG identifiers removed from docstrings.
 

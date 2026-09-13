@@ -39,7 +39,7 @@ class TestACPConfig:
     def test_default_config(self):
         """Test default config values."""
         cfg = ACPConfig()
-        assert cfg.enabled is False
+        assert cfg.enabled is True
         assert cfg.agent_name == "Soothe"
         assert cfg.agent_description == "Soothe autonomous agent"
         assert cfg.default_model is None
