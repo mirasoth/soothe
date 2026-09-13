@@ -124,10 +124,10 @@ class StrangeLoopCheckpoint(BaseModel):
     # Metadata (informational only, no migration logic)
     schema_version: str = "5.0"  # RFC-626 Phase 3: execution_checkpoint pattern
 
-    # RFC-626 Phase 3: Execution-only checkpoint (optional for backward compat)
+    # RFC-626 Phase 3: Execution-only checkpoint (iteration cursor, wave metrics)
     execution_checkpoint: dict[str, Any] | None = Field(
         default=None,
-        description="ExecutionCheckpoint fields for schema 5.0 (lazy migration)",
+        description="ExecutionCheckpoint fields for schema 5.0",
     )
 
     def force_terminal_status(
@@ -207,7 +207,7 @@ def normalize_checkpoint_data(
     document for daemon bookkeeping. `StrangeLoopStateManager.load()` expects a
     full `StrangeLoopCheckpoint` schema.
 
-    Supports schema 5.0 `execution_checkpoint` field with lazy migration:
+    Supports schema 5.0 `execution_checkpoint` field:
     fills defaults for missing `execution_checkpoint`.
     """
     out = dict(data)

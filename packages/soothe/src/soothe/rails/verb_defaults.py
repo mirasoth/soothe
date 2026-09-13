@@ -264,7 +264,7 @@ DEFAULT_VERB_BRIEFS: dict[str, str] = {
         '"independence":"disjoint write-sets per slice",'
         '"rationale":"why this partition"}\n'
         "Optionally use rich flat `slices` entries "
-        '({"slice","description","tags"}) and/or `max_waves`. '
+        '({"slice","description","tags"}) and/or `max_slices`. '
         "Prose alone is not enough — never substitute a fixed default "
         "slice list. Slices must be independent (no overlapping primary "
         "write sets)."

@@ -8,12 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Add GPU-bound Ray actor support: `RayConfig.num_gpus` reserves GPU resources per actor; `LocalModelConfig` launches a vLLM/Ollama server inside the actor and injects it as a standard `ModelProviderConfig` so the agent's inference path stays fully on-device.
 - Show aggregate file-edit count and line deltas as a separate segment in TUI step card footers (e.g. `· 2 tools, 1 task · 2 files +10 -2`).
 - Implement production-grade Ray runner features: `RayConfig`-driven `ray.init()` cluster connection with per-actor resource constraints and `max_concurrent_actors` throttling; `LoopRunRequest.timeout_seconds` enforcement with `asyncio.timeout()`; dead-actor liveness detection via `ping()` probe to prevent stream hangs; cooperative cancellation that emits a terminal `"cancelled"` event through `emit_terminal_for_cancelled_error`; and `await_loop_dispatchable` pool lifecycle so consecutive turns on the same loop are serialized.
 
 ### Changed
 - Codify Comment Hygiene (MUST) and Dead Code & Legacy Removal (MUST) as binding rules in `.agents/rules/code-style.md` and `.agents/rules/development-process.md`, referenced from `AGENTS.md` Critical Rules table.
 - Standardize docstrings across the `soothe` and `soothe-daemon` packages: single backticks only, Google-style section indentation, verbose prose trimmed, missing module/class/function docstrings added, RFC/IG identifiers removed from docstrings.
+
+### Removed
+- Remove backward-compat property aliases from ACP channel (`_session_map`, `_pending_permissions`, `_event_queues`, `_consumer_tasks`); tests now use canonical `_get_state()` accessors.
+- Remove `max_waves` legacy alias from `RailJobState` and `wave_plan` state write-back; prefer `max_slices` across rails, catalog, and YAML templates.
+- Remove `VerbosityTier` backward-compat re-export from `soothe.events`; callers import directly from `soothe_sdk.core.verbosity`.
+- Remove ignored `verbosity` compat parameter from `should_show()` in `soothe-sdk`.
+- Remove `manifest` compat parameter from `WorkspaceSync.put_checkpoint()` protocol and fsspec backend.
+- Remove `stream_core_agent` backward-compatible alias from nano examples.
 
 ## [v1.0.11] - 2026-09-13
 

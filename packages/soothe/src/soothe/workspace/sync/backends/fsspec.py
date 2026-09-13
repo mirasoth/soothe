@@ -233,17 +233,13 @@ class FsspecSyncBackend:
         self,
         checkpoint_id: str,
         data: bytes,
-        manifest: Manifest | None = None,
     ) -> None:
         """Store a checkpoint payload.
 
         Args:
             checkpoint_id: Unique checkpoint identifier.
             data: Serialized checkpoint payload.
-            manifest: Unused — the payload's `manifest_snapshot` field
-                is preferred.
         """
-        del manifest
         path = self._checkpoint_path(checkpoint_id)
         await self._to_thread(self._fs.pipe, path, data)
 

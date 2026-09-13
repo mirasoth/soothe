@@ -11,7 +11,6 @@ from soothe_sdk.core.events import (
     CARD_REPLAY_END,
     CARD_WIRE_TYPES,
 )
-from soothe_sdk.core.types import VerbosityLevel
 from soothe_sdk.core.verbosity import VerbosityTier, should_show
 from soothe_sdk.ux.stream_tool_wire import STREAM_TOOL_CALL_UPDATE, TOOL_CALL_UPDATES_BATCH
 
@@ -56,9 +55,6 @@ _ALWAYS_CLIENT_WIRE_TOP_TYPES = frozenset(
         CARD_REPLAY_END,
     }
 )
-
-# Clients always receive normal-tier-or-quieter catalog events only.
-_CLIENT_WIRE_VERBOSITY_CEILING: VerbosityLevel = "normal"
 
 # LangGraph stream modes that can appear under ``{"type": "event", "mode": ...}``.
 _LANGGRAPH_MESSAGE_MODE = "messages"
@@ -164,7 +160,7 @@ def is_catalog_event_client_wire_visible(
     tier = resolve_event_verbosity_tier(event_type, event_meta)
     if tier is None:
         return True
-    return should_show(tier, _CLIENT_WIRE_VERBOSITY_CEILING)
+    return should_show(tier)
 
 
 def _decide_visibility(
