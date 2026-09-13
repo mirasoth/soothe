@@ -34,6 +34,7 @@ class SootheNanoAgent(nano_core_agent.SootheNanoAgent):
 
     @classmethod
     def create(cls, config: Any | None = None, **kwargs: Any) -> SootheNanoAgent:
+        """Build a SootheNanoAgent from config, wiring host middleware and tools."""
         from soothe.coreagent.builder import create_soothe_agent
 
         return create_soothe_agent(config, **kwargs)

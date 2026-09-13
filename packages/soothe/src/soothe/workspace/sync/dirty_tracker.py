@@ -67,6 +67,7 @@ class FileEvent:
         size: int = 0,
         status: str = "dirty",
     ) -> None:
+        """Initialize a file event with kind, mtime, size, and status."""
         self.kind = kind
         self.mtime = mtime
         self.size = size
@@ -107,6 +108,7 @@ class DirtyTracker:
         poll_interval: float = _DEFAULT_POLL_INTERVAL,
         on_dirty: Callable[[], None] | None = None,
     ) -> None:
+        """Initialize the tracker with workspace root and poll interval."""
         self._root = Path(workspace_root).resolve()
         self._poll_interval = poll_interval
         self._on_dirty = on_dirty

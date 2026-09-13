@@ -92,9 +92,9 @@ def _delivery_tracked_units(event: dict[str, Any]) -> int:
 
 
 # Wire-frame types that are already protocol-1 envelopes and must pass through
-# the legacy→``next`` translator unchanged (RFC-450 §5/§9). ``status`` is a
+# the legacy→`next` translator unchanged (RFC-450 §5/§9). `status` is a
 # defined top-level protocol-1 message type (RFC-450 §9.1), so status frames
-# are kept raw — only free-form streaming events become ``next`` payloads.
+# are kept raw — only free-form streaming events become `next` payloads.
 _PROTO1_WIRE_TYPES: frozenset[str] = frozenset(
     {
         "response",
@@ -124,14 +124,14 @@ def _to_next_envelope(event: dict[str, Any], subscription_id: str | None) -> dic
     type, not a subscription stream event.
 
     Args:
-    event: Raw wire frame dict as produced by the daemon broadcast path.
-    subscription_id: The subscriber's correlation id for the loop this
-    frame is scoped to, or `None` for daemon-global frames (in which
-    case the envelope `id` is omitted).
+        event: Raw wire frame dict as produced by the daemon broadcast path.
+        subscription_id: The subscriber's correlation id for the loop this
+        frame is scoped to, or `None` for daemon-global frames (in which
+        case the envelope `id` is omitted).
 
     Returns:
-    A protocol-1 `next` envelope dict, or the original dict if it is
-    already a protocol-1 frame or a `status` frame.
+        A protocol-1 `next` envelope dict, or the original dict if it is
+        already a protocol-1 frame or a `status` frame.
     """
     msg_type = event.get("type")
     if not isinstance(msg_type, str) or msg_type in _PROTO1_WIRE_TYPES:
@@ -141,7 +141,7 @@ def _to_next_envelope(event: dict[str, Any], subscription_id: str | None) -> dic
     if not isinstance(namespace, list):
         namespace = []
 
-    # Preserve the originating frame type as ``mode`` so protocol-1 consumers
+    # Preserve the originating frame type as `mode` so protocol-1 consumers
     # can branch on the same discriminator the legacy clients used.
     payload: dict[str, Any] = {
         "namespace": namespace,
@@ -166,10 +166,10 @@ def _queue_has_high_priority(queue: asyncio.Queue) -> bool:
     has item.
 
     Args:
-    queue: Event queue to check.
+        queue: Event queue to check.
 
     Returns:
-    True if any event has HIGH or CRITICAL priority.
+        True if any event has HIGH or CRITICAL priority.
     """
     if queue.empty():
         return False
@@ -205,16 +205,16 @@ class ClientSession:
     """Represents a connected client with loop-scoped subscriptions.
 
     Attributes:
-    client_id: Unique identifier for this client
-    transport: Channel instance handling wire I/O
-    transport_client: Channel-specific client handle (e.g. WebSocket)
-    subscriptions: Set of loop_ids this client receives events for
-    event_queue: Queue for delivering events to the client
-    sender_task: Background task that sends events to the client
-    wire_tier: Client wire filter tier (`full` or `progress`)
-    detach_requested: Whether client explicitly requested detach
-    config: Optional SootheConfig for effective streaming config
-    loop_subscription_ids: Maps loop_id → subscription correlation id for `next` envelopes
+        client_id: Unique identifier for this client
+        transport: Channel instance handling wire I/O
+        transport_client: Channel-specific client handle (e.g. WebSocket)
+        subscriptions: Set of loop_ids this client receives events for
+        event_queue: Queue for delivering events to the client
+        sender_task: Background task that sends events to the client
+        wire_tier: Client wire filter tier (`full` or `progress`)
+        detach_requested: Whether client explicitly requested detach
+        config: Optional SootheConfig for effective streaming config
+        loop_subscription_ids: Maps loop_id → subscription correlation id for `next` envelopes
     """
 
     client_id: str
@@ -232,7 +232,7 @@ class ClientSession:
     autopilot_subscribed: bool = False  # RFC-228: receives autopilot__* worker events
     config: SootheConfig | None = None  # RFC-614: daemon config reference
     stream_delivery: StreamDeliveryMode = "adaptive"  # §3.2: per-client preference
-    # Subscription correlation ids for protocol-1 ``next`` envelopes (RFC-450).
+    # Subscription correlation ids for protocol-1 `next` envelopes (RFC-450).
     loop_subscription_ids: dict[str, str] = field(default_factory=dict)  # loop_id → subscription_id
 
 
@@ -240,10 +240,10 @@ class ClientSessionManager:
     """Manages client sessions and loop-scoped subscriptions.
 
     Args:
-    event_bus: EventBus instance for routing events
-    cancel_callback: Optional async callback to cancel work for a loop_id on disconnect.
-    dispatch_cleanup_callback: Optional async callback to cleanup dispatch tasks.
-    config: Optional SootheConfig for streaming interval configuration.
+        event_bus: EventBus instance for routing events
+        cancel_callback: Optional async callback to cancel work for a loop_id on disconnect.
+        dispatch_cleanup_callback: Optional async callback to cleanup dispatch tasks.
+        config: Optional SootheConfig for streaming interval configuration.
     """
 
     def __init__(
@@ -305,11 +305,11 @@ class ClientSessionManager:
         Otherwise resolve via the client that owns in-flight work on `loop_id`.
 
         Args:
-        client_id: Connected client whose preference to read.
-        loop_id: Loop used to find the owning client when `client_id` is omitted.
+            client_id: Connected client whose preference to read.
+            loop_id: Loop used to find the owning client when `client_id` is omitted.
 
         Returns:
-        `batch` | `adaptive` | `streaming` (defaults to `adaptive`).
+            `batch` | `adaptive` | `streaming` (defaults to `adaptive`).
         """
         if client_id:
             session = self._sessions.get(client_id)
@@ -330,7 +330,7 @@ class ClientSessionManager:
         *,
         stream_delivery: StreamDeliveryMode | None = None,
         wire_tier: str = "full",
-        subscription_id: str | None = None,  # correlation id for protocol-1 ``next`` envelopes
+        subscription_id: str | None = None,  # correlation id for protocol-1 `next` envelopes
     ) -> bool:
         """Subscribe client to loop event topic; replaces prior loop subscriptions.
 
@@ -404,7 +404,7 @@ class ClientSessionManager:
         topic = loop_event_topic(loop_id)
         await self._event_bus.subscribe(topic, session.event_queue)
         session.subscriptions.add(loop_id)
-        # Store subscription_id for correlating ``next`` envelopes.
+        # Store subscription_id for correlating `next` envelopes.
         if subscription_id is not None:
             session.loop_subscription_ids[loop_id] = subscription_id
 
@@ -904,7 +904,7 @@ class ClientSessionManager:
         """Get batch timeout from config.
 
         Returns:
-        Timeout in seconds (default 0.2 = 200ms).
+            Timeout in seconds (default 0.2 = 200ms).
         """
         if self._config is None:
             return 0.2  # 200ms default
@@ -931,13 +931,13 @@ class ClientSessionManager:
         sequence through terminal frames (or times out with a degraded warning).
 
         Args:
-        loop_id: Loop scope to drain.
-        batch_timeout_s: Sender/coalesce flush window; defaults to config interval.
-        max_wait_s: Hard cap on wait time.
-        require_delivery_acks: When False, skip client ack gating (tests).
+            loop_id: Loop scope to drain.
+            batch_timeout_s: Sender/coalesce flush window; defaults to config interval.
+            max_wait_s: Hard cap on wait time.
+            require_delivery_acks: When False, skip client ack gating (tests).
 
         Returns:
-        True if queues stayed empty after the flush window, False on timeout.
+            True if queues stayed empty after the flush window, False on timeout.
         """
         import time
 

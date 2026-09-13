@@ -39,20 +39,13 @@ async def synthesize_plan(
 ) -> str:
     """Generate a plan document from step execution evidence via LLM.
 
-    Projects the `execute_step` ledger messages (tool calls, results,
-    AI text) and makes a single LLM call with the plan synthesis system
-    prompt. Returns the generated plan text.
-
     Args:
         ctx: Loop runtime context with `loop_state` containing the ledger.
         llm: Chat model for the synthesis call.
         config: Optional SootheConfig for ledger projection caps.
-        refinement_comments: User-requested plan refinement. When
-            provided (with `prior_plan`), the LLM is asked to *revise*
-            the prior plan per the comments rather than synthesize from
-            scratch.
-        prior_plan: The previous plan draft being refined. Required when
-            `refinement_comments` is set.
+        refinement_comments: User-requested plan refinement. When provided
+            with `prior_plan`, the LLM revises the prior plan per the comments.
+        prior_plan: The previous plan draft being refined.
 
     Returns:
         Generated plan document text (may be empty on failure).

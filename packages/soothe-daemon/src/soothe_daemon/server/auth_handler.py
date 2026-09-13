@@ -1,6 +1,6 @@
 """WebSocket auth message handler.
 
-Processes ``auth`` (AKSK → tokens) and ``auth_refresh`` (refresh → rotated
+Processes `auth` (AKSK → tokens) and `auth_refresh` (refresh → rotated
 tokens) messages. Messages are processed before IdentityMiddleware validation.
 """
 

@@ -29,14 +29,14 @@ def validate_and_normalize_intent_hint(
     """Validate `loop_input` intent hint.
 
     Args:
-    hint: Normalized lowercase hint from the wire message.
-    prompt_text: Coerced user text, or `None` when empty.
-    has_attachments: Whether normalized image attachments are present.
-    has_response_schema: Whether the client supplied `response_schema`.
+        hint: Normalized lowercase hint from the wire message.
+        prompt_text: Coerced user text, or `None` when empty.
+        has_attachments: Whether normalized image attachments are present.
+        has_response_schema: Whether the client supplied `response_schema`.
 
     Returns:
-    `(normalized_hint, error_message)`. On success `error_message` is `None`.
-    When `hint` is unset, returns `(None, None)` if content is present, else an error.
+        `(normalized_hint, error_message)`. On success `error_message` is `None`.
+        When `hint` is unset, returns `(None, None)` if content is present, else an error.
     """
     if not hint:
         if prompt_text is None:

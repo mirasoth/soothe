@@ -1,7 +1,4 @@
-"""Discord channel implementation using discord.py.
-
-Migrated from nanoBot with adaptations for soothe-daemon Channel architecture.
-"""
+"""Discord channel implementation using discord.py."""
 
 from __future__ import annotations
 
@@ -375,8 +372,8 @@ class DiscordChannel(Channel):
         """Initialize Discord channel.
 
         Args:
-        config: Discord configuration.
-        manager: ChannelManager for inbound routing.
+            config: Discord configuration.
+            manager: ChannelManager for inbound routing.
         """
         super().__init__(config, manager)
         if isinstance(config, dict):
@@ -460,8 +457,8 @@ class DiscordChannel(Channel):
         """Send a message through Discord.
 
         Args:
-        chat_id: Discord channel ID.
-        message: ChannelMessage to send.
+            chat_id: Discord channel ID.
+            message: ChannelMessage to send.
         """
         client = self._client
         if client is None or not client.is_ready():

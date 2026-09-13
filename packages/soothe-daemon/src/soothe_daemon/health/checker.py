@@ -191,15 +191,15 @@ class HealthChecker:
         APIs are batched per owner once per report.
 
         Args:
-        categories: Specific categories to run (None = vitals, or vitals+deep).
-        exclude: Categories to skip.
-        deep: Include deep optional categories when `categories` is None.
-        live_llm: Perform a live invoke against `router.default`.
-        require_running: Treat offline daemon as error (via daemon check message).
-        on_progress: Optional progressive diagnosis callbacks.
+            categories: Specific categories to run (None = vitals, or vitals+deep).
+            exclude: Categories to skip.
+            deep: Include deep optional categories when `categories` is None.
+            live_llm: Perform a live invoke against `router.default`.
+            require_running: Treat offline daemon as error (via daemon check message).
+            on_progress: Optional progressive diagnosis callbacks.
 
         Returns:
-        Complete health report with all check results.
+            Complete health report with all check results.
         """
         selected = self._resolve_categories(categories, exclude, deep=deep)
         self._nano_cache = None

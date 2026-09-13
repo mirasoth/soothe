@@ -71,6 +71,7 @@ class _LoopHeartbeatHandle:
     __slots__ = ("_task",)
 
     def __init__(self, task: asyncio.Task[None] | None) -> None:
+        """Store the heartbeat task to be cancelled on `stop()`."""
         self._task = task
 
     async def stop(self) -> None:
@@ -270,13 +271,13 @@ def _message_has_tool_invocation_metadata(msg: object) -> bool:
 
 
 def _message_has_usage_metadata(msg: object) -> bool:
-    """True when an AI message carries provider token usage (``usage_metadata``).
+    """True when an AI message carries provider token usage (`usage_metadata`).
 
     Providers (Anthropic, OpenAI-compatible) may emit a final stream chunk that
-    carries *only* ``usage_metadata`` — no text, no tool calls, no loop phase.
+    carries *only* `usage_metadata` — no text, no tool calls, no loop phase.
     Without this check, :func:`_ai_chunk_has_actionable_payload` drops such
     chunks at the runner, so token usage never reaches the TUI and step cards
-    show ``↑0 ↓0``. Mirrors the CLI-side filter in ``chunk_filter.py``.
+    show `↑0 ↓0`. Mirrors the CLI-side filter in `chunk_filter.py`.
     """
     from langchain_core.messages import AIMessage, AIMessageChunk
 
@@ -482,31 +483,24 @@ class StrangeLoopMixin:
     ) -> AsyncGenerator[StreamChunk]:
         """Run StrangeLoop goal execution.
 
-        Implements Reason → Act via StrangeLoop with progress events.
-
         Args:
-            user_input: Goal description to execute
-            thread_id: Thread context for execution
-            workspace: Thread-specific workspace path
-            max_iterations: Maximum loop iterations (default: 8)
-            preferred_subagent: Optional subagent hint for routing
+            user_input: Goal description to execute.
+            thread_id: Thread context for execution.
+            workspace: Thread-specific workspace path.
+            max_iterations: Maximum loop iterations.
+            preferred_subagent: Optional subagent hint for routing.
             intake_scope: Optional client-forced scope (`minimal`|`simple`|
-                `complex`). When set (and not a clarification resume), skips
-                intake classification.
-            clarification_mode: mode for this goal (`"auto"` /
-                `"manual"`). `None` falls back to
-                `config.agent.clarification.default_mode`.
-            interaction_mode: per-request CoreAgent interaction mode
-                (`"agent"` / `"ask"` / `"plan"` / `"bypass"`). Each selects
-                its own graph; `None` uses the default graph.
-            resume_interrupted: When True, recover an interrupted running goal
-                without chitchat routing or continue-keyword cancel.
-            autopilot_rail_id: Optional builtin rail id. When set, a
-                ``LoopRailInterpreter`` is bound to this goal before the
-                loop graph runs so stations can emit ``RailEvent``s.
+                `complex`). Skips intake classification when set.
+            clarification_mode: Mode for this goal (`"auto"` / `"manual"`).
+                Falls back to `config.agent.clarification.default_mode` when `None`.
+            interaction_mode: Per-request CoreAgent interaction mode
+                (`"agent"` / `"ask"` / `"plan"` / `"bypass"`).
+            resume_interrupted: When True, recover an interrupted running goal.
+            autopilot_rail_id: Optional builtin rail id; binds a
+                `LoopRailInterpreter` to this goal before the graph runs.
 
         Yields:
-            StreamChunk events during execution
+            StreamChunk events during execution.
         """
         # Ensure thread_id is always a string (caller / daemon sets runner thread id; do not mutate here)
         tid = str(thread_id or self._current_thread_id or "")
@@ -515,9 +509,9 @@ class StrangeLoopMixin:
         # One load for unified classification (tail) -,
         #
         # Materialize CoreAgent + durable LangGraph checkpointer before the
-        # StrangeLoop graph compiles. ``await_user`` (planner-subagent review,
-        # ask_user) uses ``interrupt()``; without a checkpointer that pause is
-        # not resumable and Approve / ``Command(resume=...)`` is a no-op.
+        # StrangeLoop graph compiles. `await_user` (planner-subagent review,
+        # ask_user) uses `interrupt()`; without a checkpointer that pause is
+        # not resumable and Approve / `Command(resume=...)` is a no-op.
 
         # Intake classification runs in the graph INTAKE node (after CE load);
         # social queries END before the rest of the graph.
@@ -837,7 +831,7 @@ class StrangeLoopMixin:
                     )
 
                 elif event_type == "stream_event":
-                    # Forward full ``messages`` stream for AI + tool payloads (no strip).
+                    # Forward full `messages` stream for AI + tool payloads (no strip).
                     # Forward custom tool_call_update (main + subgraph).
                     if _forward_messages_chunk(event_data):
                         yield event_data
@@ -1005,7 +999,7 @@ class StrangeLoopMixin:
                     # Surface fatal loop errors (e.g. LLM auth failures) to the
                     # TUI immediately. Don't emit StrangeLoopCompleted here —
                     # the graph continues to ROOT_EVAL → FINALIZE, which emits
-                    # ``completed`` with a proper completion report. If the
+                    # `completed` with a proper completion report. If the
                     # graph never reaches FINALIZE (e.g. crash), the TUI's
                     # stream-end safety net surfaces the error instead.
                     error_msg = str(event_data.get("error") or "Fatal error")
@@ -1057,7 +1051,7 @@ class StrangeLoopMixin:
                 await _touch_loop_after_interrupt(self._config, strange_loop_id)
                 # RFC-214: best-effort `goal_interrupted` ledger marker for the
                 # cancelled goal's partial work. The daemon cancel path
-                # (``_suspend_active_context_goals_for_interrupt``) normally writes
+                # (`_suspend_active_context_goals_for_interrupt`) normally writes
                 # this, but a hard client disconnect lands here too. Swallowed on
                 # failure.
                 await _mark_interrupted_goal_ledger(self._config, strange_loop_id)

@@ -85,6 +85,7 @@ class ReconcileNode(LoopNode):
         state: dict[str, Any],
         messages: list,
     ) -> NodeResult:
+        """Collect and commit queued DecompositionProposals into the StepDAG."""
         proposals = _collect_proposals(ctx)
         cfg = getattr(ctx.strange_loop.config.agent.loop, "decompose", None)
         if not proposals:
@@ -163,6 +164,7 @@ class ReconcileNode(LoopNode):
         state: dict[str, Any],
         result: NodeResult,
     ) -> RouteDecision:
+        """Route to DISPATCH when new steps were added, else to ROOT_EVAL."""
         payload = result.payload if isinstance(result.payload, dict) else {}
         return RouteDecision(
             kind="proceed",

@@ -39,9 +39,9 @@ def _pending_clarification(state: dict[str, Any]) -> bool:
 def _has_relay_answer(state: dict[str, Any]) -> bool:
     """True when a resume turn populated the relay answer slot.
 
-    On a clarification resume, ``await_user`` flags ``resume_turn`` so the
-    policy consumes the relay inbox head into the ``answer`` slot. This makes
-    ``_pending_clarification`` return False (its ``answer is None`` guard
+    On a clarification resume, `await_user` flags `resume_turn` so the
+    policy consumes the relay inbox head into the `answer` slot. This makes
+    `_pending_clarification` return False (its `answer is None` guard
     fails), so callers that need to route to the node which *processes* the
     answer must check this instead.
     """

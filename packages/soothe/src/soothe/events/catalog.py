@@ -160,6 +160,8 @@ def custom_event(data: dict[str, Any]) -> StreamChunk:
 
 
 class IterationStartedEvent(LifecycleEvent):
+    """An iteration started within a goal."""
+
     type: Literal["soothe.internal.iteration.started"] = "soothe.internal.iteration.started"
     iteration: int | str
     goal_id: str = ""
@@ -168,6 +170,8 @@ class IterationStartedEvent(LifecycleEvent):
 
 
 class IterationCompletedEvent(LifecycleEvent):
+    """An iteration completed within a goal."""
+
     type: Literal["soothe.internal.iteration.completed"] = "soothe.internal.iteration.completed"
     iteration: int | str
     goal_id: str = ""
@@ -176,6 +180,8 @@ class IterationCompletedEvent(LifecycleEvent):
 
 
 class CheckpointSavedEvent(LifecycleEvent):
+    """A checkpoint was saved for crash recovery."""
+
     type: Literal["soothe.internal.checkpoint.saved"] = "soothe.internal.checkpoint.saved"
     thread_id: str
     completed_steps: int = 0
@@ -183,6 +189,8 @@ class CheckpointSavedEvent(LifecycleEvent):
 
 
 class RecoveryResumedEvent(LifecycleEvent):
+    """Execution resumed from a saved checkpoint."""
+
     type: Literal["soothe.internal.recovery.resumed"] = "soothe.internal.recovery.resumed"
     thread_id: str
     completed_steps: list[str] = []  # noqa: RUF012
@@ -191,12 +199,16 @@ class RecoveryResumedEvent(LifecycleEvent):
 
 
 class LoopCreatedEvent(LifecycleEvent):
+    """A new loop was created."""
+
     type: Literal["soothe.internal.loop.created"] = "soothe.internal.loop.created"
     loop_id: str
     thread_id: str = ""
 
 
 class LoopStartedEvent(LifecycleEvent):
+    """A loop started executing."""
+
     type: Literal["soothe.internal.loop.started"] = "soothe.internal.loop.started"
     loop_id: str
     thread_id: str = ""
@@ -204,6 +216,8 @@ class LoopStartedEvent(LifecycleEvent):
 
 
 class LoopCompletedEvent(LifecycleEvent):
+    """A loop finished executing."""
+
     type: Literal["soothe.internal.loop.completed"] = "soothe.internal.loop.completed"
     loop_id: str
     thread_id: str = ""
@@ -260,6 +274,8 @@ class ConfigReloadedEvent(SootheEvent):
 
 
 class StrangeLoopStartedEvent(LifecycleEvent):
+    """A StrangeLoop goal run started."""
+
     type: Literal["soothe.cognition.strange_loop.started"] = "soothe.cognition.strange_loop.started"
     thread_id: str
     goal: str
@@ -267,6 +283,8 @@ class StrangeLoopStartedEvent(LifecycleEvent):
 
 
 class StrangeLoopCompletedEvent(LifecycleEvent):
+    """A StrangeLoop goal run completed."""
+
     type: Literal["soothe.cognition.strange_loop.completed"] = (
         "soothe.cognition.strange_loop.completed"
     )
@@ -480,6 +498,8 @@ class RelayStaleInterruptSkippedEvent(LifecycleEvent):
 
 
 class PlanCreatedEvent(ProtocolEvent):
+    """A plan was created for a goal."""
+
     type: Literal["soothe.cognition.plan.created"] = "soothe.cognition.plan.created"
     plan_id: str = ""
     goal: str = ""
@@ -489,6 +509,8 @@ class PlanCreatedEvent(ProtocolEvent):
 
 
 class PlanBatchStartedEvent(ProtocolEvent):
+    """A batch of plan steps started executing in parallel."""
+
     type: Literal["soothe.internal.plan.batch.started"] = "soothe.internal.plan.batch.started"
     batch_index: int = 0
     step_ids: list[str] = []  # noqa: RUF012
@@ -496,12 +518,16 @@ class PlanBatchStartedEvent(ProtocolEvent):
 
 
 class PlanReflectedEvent(ProtocolEvent):
+    """A plan reflection assessment was emitted."""
+
     type: Literal["soothe.cognition.plan.reflected"] = "soothe.cognition.plan.reflected"
     should_revise: bool = False
     assessment: str = ""
 
 
 class PlanDagSnapshotEvent(ProtocolEvent):
+    """A snapshot of the current plan DAG state."""
+
     type: Literal["soothe.internal.plan.dag_snapshot"] = "soothe.internal.plan.dag_snapshot"
     steps: list[dict[str, Any]] = []  # noqa: RUF012
 
@@ -522,6 +548,8 @@ class IntentClassifiedEvent(ProtocolEvent):
 
 
 class GoalCreatedEvent(ProtocolEvent):
+    """A new goal was created in the DAG."""
+
     type: Literal["soothe.cognition.goal.created"] = "soothe.cognition.goal.created"
     goal_id: str = ""
     description: str = ""
@@ -529,11 +557,15 @@ class GoalCreatedEvent(ProtocolEvent):
 
 
 class GoalCompletedEvent(ProtocolEvent):
+    """A goal completed successfully."""
+
     type: Literal["soothe.cognition.goal.completed"] = "soothe.cognition.goal.completed"
     goal_id: str = ""
 
 
 class GoalFailedEvent(ProtocolEvent):
+    """A goal failed."""
+
     type: Literal["soothe.cognition.goal.failed"] = "soothe.cognition.goal.failed"
     goal_id: str = ""
     error: str = ""
@@ -565,12 +597,16 @@ class GoalDecomposedEvent(ProtocolEvent):
 
 
 class GoalBatchStartedEvent(ProtocolEvent):
+    """A batch of goals started executing in parallel."""
+
     type: Literal["soothe.cognition.goal.batch.started"] = "soothe.cognition.goal.batch.started"
     goal_ids: list[str] = []  # noqa: RUF012
     parallel_count: int = 1
 
 
 class GoalReportEvent(ProtocolEvent):
+    """A progress report for a goal."""
+
     type: Literal["soothe.cognition.goal.reported"] = "soothe.cognition.goal.reported"
     goal_id: str = ""
     step_count: int = 0
@@ -580,6 +616,8 @@ class GoalReportEvent(ProtocolEvent):
 
 
 class GoalDirectivesAppliedEvent(ProtocolEvent):
+    """Directives were applied to a goal."""
+
     type: Literal["soothe.cognition.goal.directives.applied"] = (
         "soothe.cognition.goal.directives.applied"
     )
@@ -589,6 +627,8 @@ class GoalDirectivesAppliedEvent(ProtocolEvent):
 
 
 class GoalDeferredEvent(ProtocolEvent):
+    """A goal was deferred (paused pending a condition)."""
+
     type: Literal["soothe.cognition.goal.deferred"] = "soothe.cognition.goal.deferred"
     goal_id: str = ""
     reason: str = ""

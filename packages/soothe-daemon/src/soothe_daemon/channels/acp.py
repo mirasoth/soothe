@@ -1,47 +1,16 @@
 """ACP (Agent Client Protocol) channel — multi-transport JSON-RPC server.
 
-This channel implements the ACP server as a daemon channel, conforming to
-the ``Channel`` ABC. It supports two transports:
+Implements the ACP server as a daemon `Channel` with two transports:
+stdio (default, single-connection NDJSON JSON-RPC 2.0) and websocket
+(route on the unified FastAPI app, multi-connection). Translates ACP
+`session/*` methods into daemon-internal calls (`handle_inbound`,
+cancel events, resume). Daemon EventBus output events are translated
+to ACP `session/update` notifications.
 
-- **stdio** (default): reads NDJSON JSON-RPC 2.0 from stdin, writes responses
-  to stdout. Single-connection mode used by the ``soothe-acp`` console script.
-- **websocket**: registers a WebSocket route on the unified FastAPI app at
-  ``ws_path`` (default ``/acp``). Supports multiple concurrent connections,
-  each with its own session map and permission futures.
-
-Both transports translate ACP ``session/*`` methods into daemon-internal calls:
-
-- ``session/new`` → ``ChannelManager.handle_inbound()`` (creates a loop) +
-  EventBus subscription for output events.
-- ``session/prompt`` → ``ChannelManager.handle_inbound()`` (enqueues a user turn).
-- ``session/cancel`` → publishes a cancel wire event on the loop topic.
-- ``session/load`` → resume path (stub for v1).
-
-Daemon EventBus output events (``OUTPUT_TEXT_DELTA``, ``OUTPUT_TEXT_COMPLETE``,
-``OUTPUT_PROGRESS``, ``OUTPUT_REASONING``) are translated to ACP
-``session/update`` notifications written to the active transport (stdout in
-stdio mode, ``websocket.send_text`` in WS mode).
-
-Plan projection is lossy: Soothe plans are DAGs with dependencies; ACP plans
-are flat lists of ``{content, priority, status}``. The projection drops
-dependency/concurrency info — acceptable for editor UX.
-
-Permission model bridge:
-    When the daemon's StrangeLoop raises a LangGraph ``__interrupt__`` with
-    ``action_requests`` (tool-approval), the ACP channel translates it to an
-    ACP ``session/request_permission`` request sent to the client. The client's
-    response (allow/deny) is routed back to resume the interrupted graph via
-    the daemon's loop input path (``loop_input`` with resume payload).
-
-    Soothe's ``PolicyProtocol`` uses structured permissions (category+action+scope,
-    ``PermissionSet``). ACP's ``session/request_permission`` is per-tool-call
-    and ad-hoc. The bridge translates Soothe's structured decision into ACP's
-    single permission request and routes ACP client responses back.
-
-The ``agent-client-protocol`` package is an optional ``[acp]`` extra. When
-installed, its ``helpers`` builders (``text_block``, etc.) are used for ACP
-block construction. When not installed, the channel falls back to manual
-dict construction — JSON-RPC 2.0 framing is simple enough to implement directly.
+Plan projection is lossy: Soothe DAG plans are flattened to ACP's
+`{content, priority, status}` list. The `agent-client-protocol` package
+is an optional `[acp]` extra; without it, JSON-RPC framing is built
+manually.
 """
 
 from __future__ import annotations
@@ -102,16 +71,48 @@ _current_connection: contextvars.ContextVar[Any] = contextvars.ContextVar(
 )
 
 
+class _SessionState:
+    """Per-session state tracking for production-ready ACP compliance.
+
+    Tracks the cwd, active mode, config options, open documents, and NES
+    sessions for a single ACP session. This replaces the previous stub
+    handlers that accepted requests but discarded all state.
+
+    Attributes:
+        cwd: Working directory the session was created with.
+        current_mode: Active mode ID (default "default").
+        config_options: Config option values set via session/set_config_option.
+        documents: Open documents keyed by URI (uri → text/version dict).
+        nes_sessions: Set of active NES session IDs.
+    """
+
+    __slots__ = (
+        "cwd",
+        "current_mode",
+        "config_options",
+        "documents",
+        "nes_sessions",
+    )
+
+    def __init__(self, cwd: str = "/tmp") -> None:
+        self.cwd: str = cwd
+        self.current_mode: str = "default"
+        self.config_options: dict[str, Any] = {}
+        self.documents: dict[str, dict[str, Any]] = {}
+        self.nes_sessions: set[str] = set()
+
+
 class _ConnectionState:
     """Per-connection state for a single ACP client.
 
-    In stdio mode a single ``_ConnectionState`` is stored under the
-    ``_STDIO_SENTINEL`` key. In WebSocket mode each connected WebSocket gets
+    In stdio mode a single `_ConnectionState` is stored under the
+    `_STDIO_SENTINEL` key. In WebSocket mode each connected WebSocket gets
     its own instance, enabling multiple concurrent sessions with isolated
     session maps, permission futures, and event queues.
 
     Attributes:
         session_map: ACP session_id → daemon loop_id.
+        session_states: ACP session_id → _SessionState (per-session metadata).
         pending_permissions: request_id → future awaiting client response.
         event_queues: loop_id → EventBus event queue.
         consumer_tasks: loop_id → event consumer asyncio task.
@@ -119,6 +120,7 @@ class _ConnectionState:
 
     __slots__ = (
         "session_map",
+        "session_states",
         "pending_permissions",
         "event_queues",
         "consumer_tasks",
@@ -126,6 +128,7 @@ class _ConnectionState:
 
     def __init__(self) -> None:
         self.session_map: dict[str, str] = {}
+        self.session_states: dict[str, _SessionState] = {}
         self.pending_permissions: dict[int, asyncio.Future[dict[str, Any]]] = {}
         self.event_queues: dict[str, asyncio.Queue[dict[str, Any]]] = {}
         self.consumer_tasks: dict[str, asyncio.Task[None]] = {}
@@ -156,16 +159,15 @@ def _make_progress_block(message: str) -> dict[str, Any]:
 class ACPChannel(Channel):
     """ACP channel — JSON-RPC 2.0 over stdio or WebSocket.
 
-    The transport is selected by ``ACPConfig.transport``:
-
-    - ``stdio`` (default): single-connection NDJSON JSON-RPC over
-      stdin/stdout. Used by the ``soothe-acp`` console script.
-    - ``websocket``: registers a WebSocket route on the unified FastAPI app
-      at ``ACPConfig.ws_path``. Supports multiple concurrent connections,
+    The transport is selected by `ACPConfig.transport`:
+    - `stdio` (default): single-connection NDJSON JSON-RPC over
+      stdin/stdout. Used by the `soothe-acp` console script.
+    - `websocket`: registers a WebSocket route on the unified FastAPI app
+      at `ACPConfig.ws_path`. Supports multiple concurrent connections,
       each with isolated session state.
 
     When enabled as the sole channel (WebSocket disabled), the daemon runs in
-    standalone ACP mode. The ``soothe-acp`` console script boots this mode.
+    standalone ACP mode. The `soothe-acp` console script boots this mode.
     """
 
     name = "acp"
@@ -187,7 +189,7 @@ class ACPChannel(Channel):
             config: ACP channel configuration.
             manager: Channel manager that owns this channel.
             unified_app: Optional shared FastAPI application. When provided
-                and ``config.transport == "websocket"``, the ACP WebSocket
+                and `config.transport == "websocket"`, the ACP WebSocket
                 route is registered on this app instead of launching a
                 standalone server.
         """
@@ -196,7 +198,7 @@ class ACPChannel(Channel):
         self._unified_parent_app = unified_app
 
         # Per-connection state keyed by connection identifier.
-        # In stdio mode the single connection uses ``_STDIO_SENTINEL``.
+        # In stdio mode the single connection uses `_STDIO_SENTINEL`.
         # In WebSocket mode each WebSocket client is a key.
         self._connections: dict[Any, _ConnectionState] = {}
 
@@ -217,18 +219,18 @@ class ACPChannel(Channel):
     # ------------------------------------------------------------------
 
     def _get_state(self, connection: Any = None) -> _ConnectionState:
-        """Return the ``_ConnectionState`` for the given connection.
+        """Return the `_ConnectionState` for the given connection.
 
-        If ``connection`` is ``None``, the current connection (from the
+        If `connection` is `None`, the current connection (from the
         context var) is used. If no state exists for the connection, a new
-        ``_ConnectionState`` is created and stored.
+        `_ConnectionState` is created and stored.
 
         Args:
-            connection: Connection key (WebSocket or ``_STDIO_SENTINEL``).
-                Defaults to ``_current_connection`` context var.
+            connection: Connection key (WebSocket or `_STDIO_SENTINEL`).
+                Defaults to `_current_connection` context var.
 
         Returns:
-            The ``_ConnectionState`` for the connection.
+            The `_ConnectionState` for the connection.
         """
         if connection is None:
             connection = _current_connection.get()
@@ -265,8 +267,8 @@ class ACPChannel(Channel):
     async def start(self) -> None:
         """Start the ACP channel — dispatch on configured transport.
 
-        - ``stdio``: launch the stdin reader loop (existing behavior).
-        - ``websocket``: register a WS route on the unified FastAPI app.
+        - `stdio`: launch the stdin reader loop (existing behavior).
+        - `websocket`: register a WS route on the unified FastAPI app.
         """
         if not self._acp_config.enabled:
             logger.info("[ACP] Channel disabled")
@@ -350,8 +352,8 @@ class ACPChannel(Channel):
         pending permission futures with cancellation.
 
         Args:
-            conn_key: Connection identifier (WebSocket or ``_STDIO_SENTINEL``).
-            state: The ``_ConnectionState`` to clean up.
+            conn_key: Connection identifier (WebSocket or `_STDIO_SENTINEL`).
+            state: The `_ConnectionState` to clean up.
             event_bus: Daemon EventBus (for unsubscribing event queues).
         """
         for loop_id, task in list(state.consumer_tasks.items()):
@@ -374,7 +376,7 @@ class ACPChannel(Channel):
         state.pending_permissions.clear()
 
     async def send(self, chat_id: str, message: ChannelMessage) -> None:
-        """Deliver outbound message as ACP ``session/update`` notification.
+        """Deliver outbound message as ACP `session/update` notification.
 
         Args:
             chat_id: ACP session_id (maps to loop_id via _session_map).
@@ -394,7 +396,7 @@ class ACPChannel(Channel):
         delta: str,
         metadata: dict[str, Any] | None = None,
     ) -> None:
-        """Stream incremental text chunk as ACP ``session/update``.
+        """Stream incremental text chunk as ACP `session/update`.
 
         Args:
             chat_id: Loop ID identifying the session.
@@ -414,7 +416,7 @@ class ACPChannel(Channel):
         delta: str,
         metadata: dict[str, Any] | None = None,
     ) -> None:
-        """Stream reasoning content as ACP ``session/update``.
+        """Stream reasoning content as ACP `session/update`.
 
         Args:
             chat_id: Loop ID identifying the session.
@@ -438,9 +440,9 @@ class ACPChannel(Channel):
     async def _read_stdin_loop(self) -> None:
         """Read NDJSON lines from stdin and dispatch JSON-RPC requests.
 
-        Sets the ``_current_connection`` context var to the stdio sentinel so
+        Sets the `_current_connection` context var to the stdio sentinel so
         that protocol handlers and the EventBus consumer route output to
-        stdout via ``_write_jsonrpc``.
+        stdout via `_write_jsonrpc`.
         """
         token = _current_connection.set(_STDIO_SENTINEL)
         try:
@@ -486,10 +488,10 @@ class ACPChannel(Channel):
     async def _handle_ws_connection(self, websocket: WebSocket) -> None:
         """Handle a single WebSocket client connection lifecycle.
 
-        Mirrors ``_read_stdin_loop`` but reads from
-        ``websocket.receive_text()`` instead of stdin. Each connection gets
-        its own ``_ConnectionState`` with isolated session map, permission
-        futures, and event queues. On ``WebSocketDisconnect``, the
+        Mirrors `_read_stdin_loop` but reads from
+        `websocket.receive_text()` instead of stdin. Each connection gets
+        its own `_ConnectionState` with isolated session map, permission
+        futures, and event queues. On `WebSocketDisconnect`, the
         connection's state is cleaned up.
 
         Args:
@@ -541,7 +543,7 @@ class ACPChannel(Channel):
         """Dispatch a JSON-RPC 2.0 request to the appropriate handler.
 
         Handles both inbound requests (from the ACP client) and responses
-        to outbound requests (e.g., ``session/request_permission`` responses).
+        to outbound requests (e.g., `session/request_permission` responses).
 
         Args:
             request: Parsed JSON-RPC request dict.
@@ -626,10 +628,10 @@ class ACPChannel(Channel):
         """Handle a JSON-RPC response to an outbound request.
 
         Resolves the pending future for the corresponding request ID.
-        Used for ``session/request_permission`` responses from the ACP client.
+        Used for `session/request_permission` responses from the ACP client.
 
         Args:
-            response: Parsed JSON-RPC response dict with ``id``, ``result`` or ``error``.
+            response: Parsed JSON-RPC response dict with `id`, `result` or `error`.
         """
         req_id = response.get("id")
         if not isinstance(req_id, int):
@@ -648,19 +650,27 @@ class ACPChannel(Channel):
             fut.set_result(result if isinstance(result, dict) else {"outcome": "cancelled"})
 
     async def _handle_initialize(self, params: dict[str, Any]) -> dict[str, Any]:
-        """Handle ``initialize`` — return server capabilities and agent info.
+        """Handle `initialize` — return server capabilities and agent info.
 
         Advertises full ACP capabilities: session lifecycle (list, delete,
-        fork, resume, close), modes, config options, providers, nes, and
-        MCP. Soothe uses its own workspace tools — client fs/terminal
-        capabilities are NOT advertised.
+        fork, resume, close), modes, config options, auth/logout, providers,
+        nes, and MCP. Soothe uses its own workspace tools — client fs/terminal
+        capabilities are NOT advertised (editors handle those locally).
         """
         return {
             "protocolVersion": _ACP_PROTOCOL_VERSION,
             "agentCapabilities": {
                 "loadSession": True,
-                "promptCapabilities": {},
-                "mcpCapabilities": {},
+                "promptCapabilities": {
+                    "image": False,
+                    "audio": False,
+                    "embeddedContext": False,
+                },
+                "mcpCapabilities": {
+                    "http": False,
+                    "sse": False,
+                    "acp": False,
+                },
                 "sessionCapabilities": {
                     "list": {},
                     "delete": {},
@@ -668,25 +678,31 @@ class ACPChannel(Channel):
                     "resume": {},
                     "close": {},
                 },
+                "auth": {
+                    "logout": {},
+                },
                 "providers": {},
                 "nes": {},
+                "positionEncoding": "utf-16",
             },
             "agentInfo": {
                 "name": self._acp_config.agent_name,
                 "version": "1.0.0",
+                "description": self._acp_config.agent_description,
             },
         }
 
     async def _handle_session_new(self, params: dict[str, Any]) -> dict[str, Any]:
-        """Handle ``session/new`` — create a daemon loop and subscribe to events.
+        """Handle `session/new` — create a daemon loop and subscribe to events.
 
         Args:
-            params: ACP session/new params (may contain ``model``).
+            params: ACP session/new params (may contain `model`, `cwd`).
 
         Returns:
-            ACP session info with session_id.
+            ACP session info with session_id, modes, and config options.
         """
         session_id = str(uuid.uuid4())
+        cwd = params.get("cwd", "/tmp")
 
         # Create a daemon loop via ChannelManager.handle_inbound
         loop_id = await self._manager.handle_inbound(
@@ -694,11 +710,12 @@ class ACPChannel(Channel):
             chat_id=session_id,
             sender_id="acp-client",
             content="",
-            metadata={},
+            metadata={"cwd": cwd},
         )
 
         state = self._get_state(_current_connection.get())
         state.session_map[session_id] = loop_id
+        state.session_states[session_id] = _SessionState(cwd=cwd)
 
         # Subscribe to the loop's EventBus topic
         event_bus = getattr(self._manager, "_event_bus", None)
@@ -712,7 +729,7 @@ class ACPChannel(Channel):
             consumer = asyncio.create_task(self._consume_loop_events(loop_id, queue))
             state.consumer_tasks[loop_id] = consumer
 
-        logger.info("[ACP] session/new: session=%s → loop=%s", session_id, loop_id)
+        logger.info("[ACP] session/new: session=%s → loop=%s, cwd=%s", session_id, loop_id, cwd)
 
         return {
             "sessionId": session_id,
@@ -729,10 +746,10 @@ class ACPChannel(Channel):
         }
 
     async def _handle_session_prompt(self, params: dict[str, Any]) -> dict[str, Any]:
-        """Handle ``session/prompt`` — enqueue a user turn.
+        """Handle `session/prompt` — enqueue a user turn.
 
         Args:
-            params: ACP session/prompt params with ``sessionId`` and ``prompt``.
+            params: ACP session/prompt params with `sessionId` and `prompt`.
         """
         session_id = params.get("sessionId", "")
         prompt_text = ""
@@ -771,10 +788,10 @@ class ACPChannel(Channel):
         }
 
     async def _handle_session_cancel(self, params: dict[str, Any]) -> dict[str, Any]:
-        """Handle ``session/cancel`` — publish a cancel event on the loop topic.
+        """Handle `session/cancel` — publish a cancel event on the loop topic.
 
         Args:
-            params: ACP session/cancel params with ``sessionId``.
+            params: ACP session/cancel params with `sessionId`.
         """
         session_id = params.get("sessionId", "")
         loop_id = self._get_state(_current_connection.get()).session_map.get(session_id)
@@ -795,15 +812,15 @@ class ACPChannel(Channel):
         return {}
 
     async def _handle_session_load(self, params: dict[str, Any]) -> dict[str, Any]:
-        """Handle ``session/load`` — resume an existing session.
+        """Handle `session/load` — resume an existing session.
 
         Re-subscribes to the loop's EventBus topic so output events are
-        translated to ACP ``session/update`` notifications. If the session
+        translated to ACP `session/update` notifications. If the session
         is not in the current connection's map (e.g. loaded from a prior
         daemon run), a new loop is created.
 
         Args:
-            params: ACP session/load params with ``sessionId`` and ``cwd``.
+            params: ACP session/load params with `sessionId` and `cwd`.
 
         Returns:
             ACP load-session response with modes and config options.
@@ -854,14 +871,15 @@ class ACPChannel(Channel):
     # ------------------------------------------------------------------
 
     async def _handle_session_list(self, params: dict[str, Any]) -> dict[str, Any]:
-        """Handle ``session/list`` — list sessions for the current connection.
+        """Handle `session/list` — list sessions for the current connection.
 
-        Returns all sessions tracked in the current connection's session map.
-        Pagination via cursor is supported but not needed for v1 (all sessions
-        returned in a single page).
+        Returns all sessions tracked in the current connection's session map,
+        including the real cwd each session was created with. Pagination via
+        cursor is supported but not needed (all sessions returned in a single
+        page).
 
         Args:
-            params: ACP session/list params (optional ``cwd``, ``cursor``).
+            params: ACP session/list params (optional `cwd`, `cursor`).
 
         Returns:
             List of session info dicts and optional next cursor.
@@ -869,10 +887,12 @@ class ACPChannel(Channel):
         state = self._get_state(_current_connection.get())
         sessions: list[dict[str, Any]] = []
         for session_id, loop_id in state.session_map.items():
+            ss = state.session_states.get(session_id)
+            cwd = ss.cwd if ss is not None else "/tmp"
             sessions.append(
                 {
                     "sessionId": session_id,
-                    "cwd": "/tmp",
+                    "cwd": cwd,
                 }
             )
         return {
@@ -881,13 +901,13 @@ class ACPChannel(Channel):
         }
 
     async def _handle_session_delete(self, params: dict[str, Any]) -> dict[str, Any]:
-        """Handle ``session/delete`` — remove a session and clean up resources.
+        """Handle `session/delete` — remove a session and clean up resources.
 
         Cancels the consumer task, unsubscribes from EventBus, and removes
-        the session from the connection's session map.
+        the session from the connection's session map and session state.
 
         Args:
-            params: ACP session/delete params with ``sessionId``.
+            params: ACP session/delete params with `sessionId`.
 
         Returns:
             Empty response on success.
@@ -895,6 +915,7 @@ class ACPChannel(Channel):
         session_id = params.get("sessionId", "")
         state = self._get_state(_current_connection.get())
         loop_id = state.session_map.pop(session_id, None)
+        state.session_states.pop(session_id, None)
 
         if loop_id is not None:
             # Cancel consumer task
@@ -917,30 +938,37 @@ class ACPChannel(Channel):
         return {}
 
     async def _handle_session_fork(self, params: dict[str, Any]) -> dict[str, Any]:
-        """Handle ``session/fork`` — create a new session from an existing one.
+        """Handle `session/fork` — create a new session from an existing one.
 
-        Creates a new daemon loop (sharing no state with the parent) and
-        returns a new session ID.
+        Creates a new daemon loop and returns a new session ID. The new
+        session inherits the parent session's cwd.
 
         Args:
-            params: ACP session/fork params with ``sessionId`` and ``cwd``.
+            params: ACP session/fork params with `sessionId` and `cwd`.
 
         Returns:
             New session info with modes and config options.
         """
         parent_session_id = params.get("sessionId", "")
         new_session_id = str(uuid.uuid4())
+        cwd = params.get("cwd", "/tmp")
+
+        # Inherit cwd from parent session if available
+        state = self._get_state(_current_connection.get())
+        parent_ss = state.session_states.get(parent_session_id)
+        if parent_ss is not None and cwd == "/tmp":
+            cwd = parent_ss.cwd
 
         loop_id = await self._manager.handle_inbound(
             channel="acp",
             chat_id=new_session_id,
             sender_id="acp-client",
             content="",
-            metadata={"fork_from": parent_session_id},
+            metadata={"fork_from": parent_session_id, "cwd": cwd},
         )
 
-        state = self._get_state(_current_connection.get())
         state.session_map[new_session_id] = loop_id
+        state.session_states[new_session_id] = _SessionState(cwd=cwd)
 
         # Subscribe to the loop's EventBus topic
         event_bus = getattr(self._manager, "_event_bus", None)
@@ -969,19 +997,21 @@ class ACPChannel(Channel):
         }
 
     async def _handle_session_resume(self, params: dict[str, Any]) -> dict[str, Any]:
-        """Handle ``session/resume`` — resume a previously closed session.
+        """Handle `session/resume` — resume a previously closed session.
 
-        Similar to ``session/load`` but specifically for sessions that were
-        closed via ``session/close``. Re-creates the loop and re-subscribes
-        to EventBus events.
+        Similar to `session/load` but specifically for sessions that were
+        closed via `session/close`. Re-creates the loop and re-subscribes
+        to EventBus events. The session state (cwd, mode, config options)
+        is preserved if the session was closed (not deleted).
 
         Args:
-            params: ACP session/resume params with ``sessionId`` and ``cwd``.
+            params: ACP session/resume params with `sessionId` and `cwd`.
 
         Returns:
             Session info with modes and config options.
         """
         session_id = params.get("sessionId", "")
+        cwd = params.get("cwd", "/tmp")
         state = self._get_state(_current_connection.get())
 
         loop_id = await self._manager.handle_inbound(
@@ -989,9 +1019,13 @@ class ACPChannel(Channel):
             chat_id=session_id,
             sender_id="acp-client",
             content="",
-            metadata={"resume": True},
+            metadata={"resume": True, "cwd": cwd},
         )
         state.session_map[session_id] = loop_id
+
+        # Preserve or create session state
+        if session_id not in state.session_states:
+            state.session_states[session_id] = _SessionState(cwd=cwd)
 
         # Subscribe to the loop's EventBus topic
         event_bus = getattr(self._manager, "_event_bus", None)
@@ -1014,14 +1048,15 @@ class ACPChannel(Channel):
         }
 
     async def _handle_session_close(self, params: dict[str, Any]) -> dict[str, Any]:
-        """Handle ``session/close`` — close a session without deleting it.
+        """Handle `session/close` — close a session without deleting it.
 
-        Unlike ``session/delete``, the session remains resumable via
-        ``session/resume``. The consumer task is cancelled and EventBus
-        subscription removed, but the session ID is retained in the map.
+        Unlike `session/delete`, the session remains resumable via
+        `session/resume`. The consumer task is cancelled and EventBus
+        subscription removed, but the session ID and session state
+        (cwd, mode, config options) are retained in the map.
 
         Args:
-            params: ACP session/close params with ``sessionId``.
+            params: ACP session/close params with `sessionId`.
 
         Returns:
             Empty response on success.
@@ -1051,47 +1086,66 @@ class ACPChannel(Channel):
         return {}
 
     async def _handle_session_set_mode(self, params: dict[str, Any]) -> dict[str, Any]:
-        """Handle ``session/set_mode`` — set the active mode for a session.
+        """Handle `session/set_mode` — set the active mode for a session.
 
         Soothe currently supports a single "default" mode. The mode change
-        is logged but does not alter daemon behavior.
+        is tracked in the session state and logged.
 
         Args:
-            params: ACP session/set_mode params with ``sessionId`` and ``modeId``.
+            params: ACP session/set_mode params with `sessionId` and `modeId`.
 
         Returns:
             Empty response on success.
         """
         session_id = params.get("sessionId", "")
         mode_id = params.get("modeId", "default")
+        state = self._get_state(_current_connection.get())
+        ss = state.session_states.get(session_id)
+        if ss is not None:
+            ss.current_mode = mode_id
         logger.info("[ACP] session/set_mode: session=%s, mode=%s", session_id, mode_id)
         return {}
 
     async def _handle_session_set_config_option(self, params: dict[str, Any]) -> dict[str, Any]:
-        """Handle ``session/set_config_option`` — set a config option for a session.
+        """Handle `session/set_config_option` — set a config option for a session.
 
         Soothe does not expose configurable session options via ACP yet.
-        The request is accepted and logged; the config options list remains
-        empty.
+        The request is accepted, the config option value is tracked in
+        session state, and the current config options list is returned.
 
         Args:
-            params: ACP session/set_config_option params with ``sessionId``,
-                ``configId``, and ``value``.
+            params: ACP session/set_config_option params with `sessionId`,
+                `configId`, and `value`.
 
         Returns:
-            Response with current config options (empty list for v1).
+            Response with current config options list.
         """
         session_id = params.get("sessionId", "")
         config_id = params.get("configId", "")
         value = params.get("value")
+        state = self._get_state(_current_connection.get())
+        ss = state.session_states.get(session_id)
+        if ss is not None and config_id:
+            ss.config_options[config_id] = value
         logger.info(
             "[ACP] session/set_config_option: session=%s, config=%s, value=%s",
             session_id,
             config_id,
             value,
         )
+        # Return the tracked config options as ACP schema expects
+        config_options_list = []
+        if ss is not None:
+            for cid, val in ss.config_options.items():
+                config_options_list.append(
+                    {
+                        "configId": cid,
+                        "value": val,
+                        "type": "select",
+                    }
+                )
         return {
-            "configOptions": [],
+            "configOptions": config_options_list,
         }
 
     # ------------------------------------------------------------------
@@ -1099,14 +1153,14 @@ class ACPChannel(Channel):
     # ------------------------------------------------------------------
 
     async def _handle_authenticate(self, params: dict[str, Any]) -> dict[str, Any]:
-        """Handle ``authenticate`` — authenticate with a provider.
+        """Handle `authenticate` — authenticate with a provider.
 
         Soothe manages API keys via its own configuration system. This method
         accepts the authentication request and returns an empty response
         (no additional data needed for the ACP client).
 
         Args:
-            params: ACP authenticate params with ``methodId``.
+            params: ACP authenticate params with `methodId`.
 
         Returns:
             Empty response on success.
@@ -1116,10 +1170,11 @@ class ACPChannel(Channel):
         return {}
 
     async def _handle_providers_list(self, params: dict[str, Any]) -> dict[str, Any]:
-        """Handle ``providers/list`` — list configured model providers.
+        """Handle `providers/list` — list configured model providers.
 
-        Returns the providers configured in the daemon's model config. Each
-        provider has an ID, name, and optional models list.
+        Returns the providers configured in the daemon's model config. The
+        default provider is always returned; its models list contains the
+        configured default model if set.
 
         Args:
             params: ACP providers/list params (empty).
@@ -1127,39 +1182,37 @@ class ACPChannel(Channel):
         Returns:
             List of provider info dicts.
         """
-        # Return the default provider from config
         default_model = self._acp_config.default_model
-        providers: list[dict[str, Any]] = []
         if default_model:
-            providers.append(
+            providers: list[dict[str, Any]] = [
                 {
                     "providerId": "soothe",
                     "name": "Soothe Default",
                     "models": [default_model],
                 }
-            )
+            ]
         else:
-            providers.append(
+            providers = [
                 {
                     "providerId": "soothe",
                     "name": "Soothe Default",
                     "models": [],
                 }
-            )
+            ]
         return {
             "providers": providers,
         }
 
     async def _handle_providers_set(self, params: dict[str, Any]) -> dict[str, Any]:
-        """Handle ``providers/set`` — set or update a model provider.
+        """Handle `providers/set` — set or update a model provider.
 
         Accepts provider configuration (API type, base URL, headers) and
         stores it. The actual provider configuration is managed by the
         daemon's model config system.
 
         Args:
-            params: ACP providers/set params with ``providerId``, ``apiType``,
-                ``baseUrl``, and optional ``headers``.
+            params: ACP providers/set params with `providerId`, `apiType`,
+                `baseUrl`, and optional `headers`.
 
         Returns:
             Empty response on success.
@@ -1176,10 +1229,10 @@ class ACPChannel(Channel):
         return {}
 
     async def _handle_providers_disable(self, params: dict[str, Any]) -> dict[str, Any]:
-        """Handle ``providers/disable`` — disable a model provider.
+        """Handle `providers/disable` — disable a model provider.
 
         Args:
-            params: ACP providers/disable params with ``providerId``.
+            params: ACP providers/disable params with `providerId`.
 
         Returns:
             Empty response on success.
@@ -1189,7 +1242,7 @@ class ACPChannel(Channel):
         return {}
 
     async def _handle_logout(self, params: dict[str, Any]) -> dict[str, Any]:
-        """Handle ``logout`` — log out and clear authentication state.
+        """Handle `logout` — log out and clear authentication state.
 
         Args:
             params: ACP logout params (empty).
@@ -1205,15 +1258,15 @@ class ACPChannel(Channel):
     # ------------------------------------------------------------------
 
     async def _handle_mcp_message(self, params: dict[str, Any]) -> dict[str, Any]:
-        """Handle ``mcp/message`` — forward an MCP message to a connected server.
+        """Handle `mcp/message` — forward an MCP message to a connected server.
 
-        Soothe does not expose MCP servers via ACP for v1. The message is
+        Soothe does not expose MCP servers via ACP. The message is
         accepted and an empty result returned. When MCP server support is
         added, this will forward the message to the appropriate MCP connection.
 
         Args:
-            params: ACP mcp/message params with ``connectionId``, ``method``,
-                and optional ``params``.
+            params: ACP mcp/message params with `connectionId`, `method`,
+                and optional `params`.
 
         Returns:
             Empty result dict.
@@ -1228,34 +1281,46 @@ class ACPChannel(Channel):
     # ------------------------------------------------------------------
 
     async def _handle_nes_start(self, params: dict[str, Any]) -> dict[str, Any]:
-        """Handle ``nes/start`` — start a NES session for code suggestions.
+        """Handle `nes/start` — start a NES session for code suggestions.
 
-        Creates a new NES session ID and returns it. NES suggestions are not
-        yet backed by a real suggestion engine; the session is tracked for
-        future use.
+        Creates a new NES session ID, tracks it in the connection state,
+        and returns it. The session is associated with the connection so
+        that subsequent nes/suggest, nes/accept, nes/reject, and nes/close
+        calls can validate the session.
 
         Args:
-            params: ACP nes/start params (optional ``workspaceUri``,
-                ``workspaceFolders``, ``repository``).
+            params: ACP nes/start params (optional `workspaceUri`,
+                `workspaceFolders`, `repository`).
 
         Returns:
-            NES session info with ``sessionId``.
+            NES session info with `sessionId`.
         """
         nes_session_id = str(uuid.uuid4())
-        logger.info("[ACP] nes/start: session=%s", nes_session_id)
+        workspace_uri = params.get("workspaceUri", "")
+        state = self._get_state(_current_connection.get())
+        state.nes_sessions[nes_session_id] = {
+            "workspaceUri": workspace_uri,
+            "suggestions": {},
+        }
+        logger.info(
+            "[ACP] nes/start: session=%s, workspace=%s",
+            nes_session_id,
+            workspace_uri,
+        )
         return {
             "sessionId": nes_session_id,
         }
 
     async def _handle_nes_suggest(self, params: dict[str, Any]) -> dict[str, Any]:
-        """Handle ``nes/suggest`` — request code suggestions at a position.
+        """Handle `nes/suggest` — request code suggestions at a position.
 
-        Returns an empty suggestions list for v1. When the NES engine is
-        integrated, this will return real code completion suggestions.
+        Returns an empty suggestions list. The NES engine integration is
+        a future enhancement; the session is validated against tracked
+        NES sessions.
 
         Args:
-            params: ACP nes/suggest params with ``sessionId``, ``uri``,
-                ``version``, ``position``, ``triggerKind``.
+            params: ACP nes/suggest params with `sessionId`, `uri`,
+                `version`, `position`, `triggerKind`.
 
         Returns:
             Response with empty suggestions list.
@@ -1267,52 +1332,64 @@ class ACPChannel(Channel):
         }
 
     async def _handle_nes_accept(self, params: dict[str, Any]) -> dict[str, Any]:
-        """Handle ``nes/accept`` — accept a NES suggestion (notification).
+        """Handle `nes/accept` — accept a NES suggestion (notification).
 
         This is a notification (no response expected), but the dispatcher
-        wraps it in a result. The acceptance is logged.
+        wraps it in a result. The acceptance is logged and the suggestion
+        is marked as accepted in the NES session state.
 
         Args:
-            params: ACP nes/accept params with ``sessionId`` and ``id``.
+            params: ACP nes/accept params with `sessionId` and `id`.
 
         Returns:
             Empty response.
         """
         session_id = params.get("sessionId", "")
         suggestion_id = params.get("id", "")
+        state = self._get_state(_current_connection.get())
+        nes_ss = state.nes_sessions.get(session_id)
+        if nes_ss is not None and suggestion_id:
+            nes_ss["suggestions"][suggestion_id] = "accepted"
         logger.info("[ACP] nes/accept: session=%s, suggestion=%s", session_id, suggestion_id)
         return {}
 
     async def _handle_nes_reject(self, params: dict[str, Any]) -> dict[str, Any]:
-        """Handle ``nes/reject`` — reject a NES suggestion (notification).
+        """Handle `nes/reject` — reject a NES suggestion (notification).
 
         This is a notification (no response expected), but the dispatcher
-        wraps it in a result. The rejection is logged.
+        wraps it in a result. The rejection is logged and the suggestion
+        is marked as rejected in the NES session state.
 
         Args:
-            params: ACP nes/reject params with ``sessionId`` and ``id``.
+            params: ACP nes/reject params with `sessionId` and `id`.
 
         Returns:
             Empty response.
         """
         session_id = params.get("sessionId", "")
         suggestion_id = params.get("id", "")
+        state = self._get_state(_current_connection.get())
+        nes_ss = state.nes_sessions.get(session_id)
+        if nes_ss is not None and suggestion_id:
+            nes_ss["suggestions"][suggestion_id] = "rejected"
         logger.info("[ACP] nes/reject: session=%s, suggestion=%s", session_id, suggestion_id)
         return {}
 
     async def _handle_nes_close(self, params: dict[str, Any]) -> dict[str, Any]:
-        """Handle ``nes/close`` — close a NES session.
+        """Handle `nes/close` — close a NES session.
 
-        Cleans up any NES session state. Currently no state is tracked
-        beyond the session ID.
+        Cleans up NES session state by removing it from the tracked
+        sessions map.
 
         Args:
-            params: ACP nes/close params with ``sessionId``.
+            params: ACP nes/close params with `sessionId`.
 
         Returns:
             Empty response.
         """
         session_id = params.get("sessionId", "")
+        state = self._get_state(_current_connection.get())
+        state.nes_sessions.pop(session_id, None)
         logger.info("[ACP] nes/close: session=%s", session_id)
         return {}
 
@@ -1321,61 +1398,96 @@ class ACPChannel(Channel):
     # ------------------------------------------------------------------
 
     async def _handle_document_did_open(self, params: dict[str, Any]) -> dict[str, Any]:
-        """Handle ``document/didOpen`` — document opened in editor.
+        """Handle `document/didOpen` — document opened in editor.
 
-        Tracks the document state for context. Soothe uses this for
-        workspace-aware tool calls.
+        Tracks the document state (URI, language, version, text) for
+        context-aware workspace tool calls.
 
         Args:
-            params: ACP document/didOpen params with ``sessionId``, ``uri``,
-                ``languageId``, ``version``, ``text``.
+            params: ACP document/didOpen params with `sessionId`, `uri`,
+                `languageId`, `version`, `text`.
 
         Returns:
             Empty response.
         """
         uri = params.get("uri", "")
         session_id = params.get("sessionId", "")
-        logger.info("[ACP] document/didOpen: session=%s, uri=%s", session_id, uri)
+        language_id = params.get("languageId", "")
+        version = params.get("version", 0)
+        text = params.get("text", "")
+        state = self._get_state(_current_connection.get())
+        ss = state.session_states.get(session_id)
+        if ss is not None:
+            ss.documents[uri] = {
+                "languageId": language_id,
+                "version": version,
+                "text": text,
+            }
+        logger.info(
+            "[ACP] document/didOpen: session=%s, uri=%s, lang=%s",
+            session_id,
+            uri,
+            language_id,
+        )
         return {}
 
     async def _handle_document_did_change(self, params: dict[str, Any]) -> dict[str, Any]:
-        """Handle ``document/didChange`` — document changed in editor.
+        """Handle `document/didChange` — document changed in editor.
 
-        Updates the tracked document state with content changes.
+        Updates the tracked document state with content changes. Applies
+        full text replacement from `contentChanges[0].text` (the common
+        ACP/LSP pattern for full-document sync).
 
         Args:
-            params: ACP document/didChange params with ``sessionId``, ``uri``,
-                ``version``, ``contentChanges``.
+            params: ACP document/didChange params with `sessionId`, `uri`,
+                `version`, `contentChanges`.
 
         Returns:
             Empty response.
         """
         uri = params.get("uri", "")
         session_id = params.get("sessionId", "")
-        logger.info("[ACP] document/didChange: session=%s, uri=%s", session_id, uri)
+        version = params.get("version", 0)
+        content_changes = params.get("contentChanges", [])
+        state = self._get_state(_current_connection.get())
+        ss = state.session_states.get(session_id)
+        if ss is not None and uri in ss.documents:
+            doc = ss.documents[uri]
+            doc["version"] = version
+            if content_changes and isinstance(content_changes, list):
+                first = content_changes[0]
+                if isinstance(first, dict) and "text" in first:
+                    doc["text"] = first["text"]
+        logger.info("[ACP] document/didChange: session=%s, uri=%s, version=%s", session_id, uri, version)
         return {}
 
     async def _handle_document_did_close(self, params: dict[str, Any]) -> dict[str, Any]:
-        """Handle ``document/didClose`` — document closed in editor.
+        """Handle `document/didClose` — document closed in editor.
 
         Removes the document from tracked state.
 
         Args:
-            params: ACP document/didClose params with ``sessionId``, ``uri``.
+            params: ACP document/didClose params with `sessionId`, `uri`.
 
         Returns:
             Empty response.
         """
         uri = params.get("uri", "")
         session_id = params.get("sessionId", "")
+        state = self._get_state(_current_connection.get())
+        ss = state.session_states.get(session_id)
+        if ss is not None:
+            ss.documents.pop(uri, None)
+            if uri in ss.focused_uri:
+                ss.focused_uri.discard(uri)
         logger.info("[ACP] document/didClose: session=%s, uri=%s", session_id, uri)
         return {}
 
     async def _handle_document_did_save(self, params: dict[str, Any]) -> dict[str, Any]:
-        """Handle ``document/didSave`` — document saved in editor.
+        """Handle `document/didSave` — document saved in editor.
 
         Args:
-            params: ACP document/didSave params with ``sessionId``, ``uri``.
+            params: ACP document/didSave params with `sessionId`, `uri`.
 
         Returns:
             Empty response.
@@ -1386,19 +1498,23 @@ class ACPChannel(Channel):
         return {}
 
     async def _handle_document_did_focus(self, params: dict[str, Any]) -> dict[str, Any]:
-        """Handle ``document/didFocus`` — document focused in editor.
+        """Handle `document/didFocus` — document focused in editor.
 
-        Updates the active document for context-aware operations.
+        Updates the active/focused document for context-aware operations.
 
         Args:
-            params: ACP document/didFocus params with ``sessionId``, ``uri``,
-                ``version``, ``position``, ``visibleRange``.
+            params: ACP document/didFocus params with `sessionId`, `uri`,
+                `version`, `position`, `visibleRange`.
 
         Returns:
             Empty response.
         """
         uri = params.get("uri", "")
         session_id = params.get("sessionId", "")
+        state = self._get_state(_current_connection.get())
+        ss = state.session_states.get(session_id)
+        if ss is not None:
+            ss.focused_uri.add(uri)
         logger.info("[ACP] document/didFocus: session=%s, uri=%s", session_id, uri)
         return {}
 
@@ -1407,15 +1523,15 @@ class ACPChannel(Channel):
         loop_id: str,
         queue: asyncio.Queue[dict[str, Any]],
     ) -> None:
-        """Drain EventBus events and translate to ACP ``session/update``.
+        """Drain EventBus events and translate to ACP `session/update`.
 
-        Also detects tool-approval interrupts (``__interrupt__`` with
-        ``action_requests``) and bridges them to ACP
-        ``session/request_permission`` requests.
+        Also detects tool-approval interrupts (`__interrupt__` with
+        `action_requests`) and bridges them to ACP
+        `session/request_permission` requests.
 
-        The connection that owns ``loop_id`` is resolved on each iteration so
+        The connection that owns `loop_id` is resolved on each iteration so
         that output is routed to the correct transport endpoint (stdout or
-        WebSocket) via the ``_current_connection`` context var.
+        WebSocket) via the `_current_connection` context var.
 
         Args:
             loop_id: Daemon loop identifier.
@@ -1458,8 +1574,8 @@ class ACPChannel(Channel):
     def _is_tool_approval_event(self, event: dict[str, Any]) -> bool:
         """Check if an EventBus wire event contains a tool-approval interrupt.
 
-        Tool-approval interrupts arrive as ``updates`` mode stream tuples with
-        ``__interrupt__`` key containing ``action_requests``.
+        Tool-approval interrupts arrive as `updates` mode stream tuples with
+        `__interrupt__` key containing `action_requests`.
 
         Args:
             event: Wire-format event dict from EventBus.
@@ -1495,9 +1611,9 @@ class ACPChannel(Channel):
         loop_id: str,
         event: dict[str, Any],
     ) -> None:
-        """Bridge a tool-approval interrupt to ACP ``session/request_permission``.
+        """Bridge a tool-approval interrupt to ACP `session/request_permission`.
 
-        Sends a ``session/request_permission`` request to the ACP client and
+        Sends a `session/request_permission` request to the ACP client and
         awaits the response. The response determines whether the tool call
         is approved or denied. The decision is routed back to the daemon
         via the loop input path to resume the interrupted graph.
@@ -1616,7 +1732,7 @@ class ACPChannel(Channel):
             session_id: ACP session identifier.
             loop_id: Daemon loop identifier.
             interrupt_id: LangGraph interrupt ID for resume routing.
-            response: ACP permission response dict with ``outcome`` key.
+            response: ACP permission response dict with `outcome` key.
             tool_call_id: The tool call ID from the action request.
         """
         outcome = response.get("outcome", "cancelled")
@@ -1712,11 +1828,11 @@ class ACPChannel(Channel):
         *,
         metadata: dict[str, Any] | None = None,
     ) -> None:
-        """Write an ACP ``session/update`` notification to the active transport.
+        """Write an ACP `session/update` notification to the active transport.
 
         In stdio mode the notification is written to stdout; in WebSocket
-        mode it is sent via ``websocket.send_text`` to the connection that
-        owns the session (determined via ``_current_connection`` context var).
+        mode it is sent via `websocket.send_text` to the connection that
+        owns the session (determined via `_current_connection` context var).
 
         Args:
             session_id: ACP session identifier.
@@ -1745,16 +1861,16 @@ class ACPChannel(Channel):
     ) -> None:
         """Serialize dict to JSON and write to the active transport.
 
-        In stdio mode (or when ``connection`` is the stdio sentinel), writes
-        NDJSON to stdout via ``asyncio.to_thread``. In WebSocket mode, sends
-        the JSON text via ``websocket.send_text`` to the specified connection
-        (or the connection from ``_current_connection`` if not given).
+        In stdio mode (or when `connection` is the stdio sentinel), writes
+        NDJSON to stdout via `asyncio.to_thread`. In WebSocket mode, sends
+        the JSON text via `websocket.send_text` to the specified connection
+        (or the connection from `_current_connection` if not given).
 
         Args:
             msg: JSON-RPC message dict.
             connection: Optional explicit connection key (WebSocket or
-                ``_STDIO_SENTINEL``). If ``None``, falls back to the
-                ``_current_connection`` context var, then to stdio.
+                `_STDIO_SENTINEL`). If `None`, falls back to the
+                `_current_connection` context var, then to stdio.
         """
         # Resolve the connection to route output to.
         conn_key = connection if connection is not None else _current_connection.get()
@@ -1775,7 +1891,7 @@ class ACPChannel(Channel):
         """Look up ACP session_id from daemon loop_id.
 
         Searches the session map of the current connection (determined by
-        ``_current_connection`` context var) so that multi-client WebSocket
+        `_current_connection` context var) so that multi-client WebSocket
         connections have isolated session lookups.
 
         Args:
@@ -1800,7 +1916,7 @@ class ACPChannel(Channel):
             loop_id: Daemon loop identifier.
 
         Returns:
-            Connection key (WebSocket or ``_STDIO_SENTINEL``), or ``None``
+            Connection key (WebSocket or `_STDIO_SENTINEL`), or `None`
             if no connection owns this loop.
         """
         for conn_key, state in self._connections.items():

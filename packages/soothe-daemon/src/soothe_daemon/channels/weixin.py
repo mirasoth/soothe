@@ -163,8 +163,8 @@ class WeixinChannel(Channel):
         """Initialize Weixin channel.
 
         Args:
-        config: Weixin configuration (dict or WeixinConfig).
-        manager: ChannelManager for inbound routing.
+            config: Weixin configuration (dict or WeixinConfig).
+            manager: ChannelManager for inbound routing.
         """
         super().__init__(config, manager)
         if isinstance(config, dict):
@@ -1081,8 +1081,8 @@ class WeixinChannel(Channel):
         """Send a message through WeChat.
 
         Args:
-        chat_id: WeChat user ID.
-        message: ChannelMessage to send.
+            chat_id: WeChat user ID.
+            message: ChannelMessage to send.
         """
         if not self._client or not self._token:
             raise RuntimeError("WeChat client not initialized or not authenticated")

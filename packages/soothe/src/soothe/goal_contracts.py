@@ -124,9 +124,11 @@ class ToolCallStats(BaseModel):
     failures_by_name: dict[str, int] = Field(default_factory=dict)
 
     def total_calls(self) -> int:
+        """Total number of tool calls across all tool names."""
         return sum(self.counts_by_name.values())
 
     def total_failures(self) -> int:
+        """Total number of failed tool calls across all tool names."""
         return sum(self.failures_by_name.values())
 
 

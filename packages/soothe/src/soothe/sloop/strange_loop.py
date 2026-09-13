@@ -95,7 +95,7 @@ class StrangeLoop:
         self._ce: Any | None = None
 
         # Hot-swap target: the live LoopRuntimeContext, set inside
-        # ``run_with_progress`` so external callers (daemon RPC) can reach in
+        # `run_with_progress` so external callers (daemon RPC) can reach in
         # and swap the clarification policy mid-goal without waiting for the
         # next turn.
         self._live_runtime_ctx: Any | None = None
@@ -146,18 +146,18 @@ class StrangeLoop:
     ) -> str | None:
         """Auto-pick a LoopRail for an autopilot goal without an explicit rail.
 
-        Called when ``autopilot_rail_id == "auto"`` (user typed
-        ``/autopilot <goal>`` without a rail prefix). Delegates to
-        ``resolve_rail_for_job`` which tries: explicit → workspace
-        ``.rail-default`` → LLM-based catalog matching → config default.
-        Returns ``None`` when the picker abstains.
+        Called when `autopilot_rail_id == "auto"` (user typed
+        `/autopilot <goal>` without a rail prefix). Delegates to
+        `resolve_rail_for_job` which tries: explicit → workspace
+        `.rail-default` → LLM-based catalog matching → config default.
+        Returns `None` when the picker abstains.
 
         Args:
             goal_text: The goal description for LLM matching.
             workspace: Optional workspace path for catalog tier resolution.
 
         Returns:
-            A rail id string, or ``None`` when auto-pick abstains.
+            A rail id string, or `None` when auto-pick abstains.
         """
         try:
             from soothe.rails.selector import RailAutoPicker, resolve_rail_for_job
@@ -325,47 +325,36 @@ class StrangeLoop:
         autopilot_rail_id: str
         | None = None,  # RFC-231: autopilot rail id → bind LoopRailInterpreter
     ) -> AsyncGenerator[tuple[str, Any], None]:
-        """Run loop with progress events.
-
-        Yields progress events during execution for display.
+        """Run the goal through the StrangeLoop graph, yielding progress events.
 
         Args:
-            goal: Goal description to execute
-            thread_id: Thread context for execution
-            workspace: Thread-specific workspace path
-            max_iterations: Maximum loop iterations (default: 8)
-            loop_id: Optional loop_id (None → auto-generate UUID)
-            intent: IntentClassification. When omitted, the graph entry
-                `intent_classify` node runs classification with full CE ledger
-                projection (prior-goal completion + preamble). Loop continuation is
-                derived from the checkpoint.
-            shared_pool: SharedPostgreSQLPool for high-concurrency.
-                - new_goal: Normal goal execution flow
-                - chitchat: Handled via in-graph fast-path and runner chitchat response
-            routing_classification: `RoutingClassification` for CoreAgent middleware.
-            clarification_policy: Optional `ClarificationPolicy` used by
-                the loop graph's `await_clarification` node. When `None`, clarification
-                requests are deferred via the legacy no-policy path.
-            resume_interrupted: When True, skip the chitchat fast-path and recover
-                the in-flight `status=running` goal without continue-keyword cancel.
-            goal_trace: Optional pre-allocated `GoalLoopTrace`; when omitted and Langfuse
-                is enabled, one is opened before the graph runs so intake classification
-                and `strange-loop-graph` share one pinned trace.
-            preamble: Optional flattened list of `BaseMessage` (ancestor
-                `(user, ai)` pairs) projected by the daemon's
-                `ContextProjector`.
-                When present, seeded into the CE ledger (phase `"preamble"`)
-                after `state.bind_ce` and before the graph runs, so the
-                executing LLM begins with a real multi-turn transcript. `None`
-                or empty → existing first-user-message path unchanged.
-            autopilot_rail_id: Optional LoopRail catalog id. When set, a
-                `LoopRailInterpreter` is constructed and bound to this goal
-                via `interpreter.bind_job(goal_id, rail_id=...)` before the
-                loop graph runs, so stations can emit `RailEvent`s. Stored on
-                the runtime context alongside the interpreter.
+            goal: Goal description to execute.
+            thread_id: Thread context for execution and persistence.
+            workspace: Thread-specific workspace path.
+            max_iterations: Maximum loop iterations.
+            loop_id: Loop ID; auto-generated UUID when `None`.
+            intent: Pre-computed `IntentClassification`; classified by the
+                graph's `intent_classify` node when omitted.
+            routing_classification: `RoutingClassification` for CoreAgent.
+            intent_classifier: Optional classifier override.
+            preferred_subagent: Subagent hint for delegation.
+            shared_pool: `SharedPostgreSQLPool` for high-concurrency setups.
+            clarification_policy: `ClarificationPolicy` for the
+                `await_clarification` node; requests deferred when `None`.
+            clarification_answer: Hint that `goal` is a resume answer.
+            clarification_answers: Per-question answers for multi-question
+                clarifications.
+            resume_interrupted: Skip chitchat fast-path and recover an
+                in-flight `status=running` goal.
+            goal_trace: Pre-allocated `GoalLoopTrace` for Langfuse.
+            preamble: Ancestor `(user, ai)` message pairs to seed the CE ledger.
+            interaction_mode: CoreAgent graph selection
+                (`agent`/`ask`/`plan`/`bypass`).
+            approved_plan_path: Plan-mode approve exec goal path.
+            autopilot_rail_id: Rail ID; binds a `LoopRailInterpreter`.
 
         Yields:
-            Tuples of (event_type, event_data) for progress updates
+            `(event_type, event_data)` tuples for progress updates.
         """
         from soothe_nano.skills.catalog import (
             parse_slash_skill_user_line,
@@ -420,7 +409,7 @@ class StrangeLoop:
                 log_preview(goal, 120),
             )
 
-        # A ``/skill:`` submission owns execution: the skill body drives CoreAgent, so drop any
+        # A `/skill:` submission owns execution: the skill body drives CoreAgent, so drop any
         # specialist routing hint before it reaches loop state, routing, or the runtime context.
         if parsed_skill is not None and (preferred_subagent or routing_classification):
             logger.info(
@@ -735,6 +724,7 @@ class StrangeLoop:
             _graph_sentinel = object()
 
             async def emit(event_type: str, event_data: Any) -> None:
+                """Enqueue a typed event onto the stream queue."""
                 await queue.put((event_type, event_data))
 
             from soothe.sloop.clarification.runtime_factory import (
@@ -805,11 +795,11 @@ class StrangeLoop:
                     goal_status = getattr(ce_goal, "status", None)
                     if goal_status == "awaiting_clarification":
                         # The goal was parked for user input (plan-mode review /
-                        # ask_user). Transition it back to ``pending`` so the
-                        # graph can re-activate it via ``activate_goal``. This
+                        # ask_user). Transition it back to `pending` so the
+                        # graph can re-activate it via `activate_goal`. This
                         # happens when a worker crashed/restarted while the
                         # goal was parked — the CE persisted the
-                        # ``awaiting_clarification`` status, and the
+                        # `awaiting_clarification` status, and the
                         # clarification-resume turn must unpark it.
                         await ce_instance.answer_clarification(
                             ce_goal.id, answers=tuple(clarification_answers or [])
@@ -883,7 +873,7 @@ class StrangeLoop:
                 )
                 await ce_instance.activate_goal(ce_goal.id, loop_id=state_manager.loop_id)
 
-            # Persist CE before the graph can park on ``await_user`` (plan review
+            # Persist CE before the graph can park on `await_user` (plan review
             # / ask_user). Without this, clarification resume loads an
             # empty DAG and fabricates a blank CE goal.
             try:
@@ -912,9 +902,9 @@ class StrangeLoop:
 
             # RFC-222 §Goal-Report-Pair Projection: seed ancestor (user, ai)
             # pairs into the CE ledger as a preamble transcript before the
-            # graph runs. ``loop_messages`` is rebuilt from this ledger on
+            # graph runs. `loop_messages` is rebuilt from this ledger on
             # every access (RFC-214), so the pairs surface to the planner /
-            # plan review / executor with no extra wiring. ``None``/empty → existing path.
+            # plan review / executor with no extra wiring. `None`/empty → existing path.
             if preamble:
                 from soothe.sloop.orchestrator.stations import PHASE_PREAMBLE
 
@@ -938,17 +928,17 @@ class StrangeLoop:
                     )
 
             # RFC-231 LoopRail: when an autopilot goal carries a rail id,
-            # construct a job-scoped ``LoopRailInterpreter`` and bind the job
+            # construct a job-scoped `LoopRailInterpreter` and bind the job
             # (goal id → rail) before the loop graph runs. Stations read
-            # ``ctx.rail_interpreter`` to emit ``RailEvent``s after CE
+            # `ctx.rail_interpreter` to emit `RailEvent`s after CE
             # mutations; the interpreter alone writes the trace. Bind failure
             # is non-fatal: the goal proceeds without rail instrumentation and
             # a warning is logged so a missing/malformed rail YAML never
             # blocks execution.
             #
-            # When ``autopilot_rail_id == "auto"``, the user typed
-            # ``/autopilot <goal>`` without a rail prefix. Auto-pick a rail
-            # via ``resolve_rail_for_job`` (LLM-based catalog matching) before
+            # When `autopilot_rail_id == "auto"`, the user typed
+            # `/autopilot <goal>` without a rail prefix. Auto-pick a rail
+            # via `resolve_rail_for_job` (LLM-based catalog matching) before
             # binding. If auto-pick abstains, fall back to the config default
             # rail; if that is also unset, proceed without a rail.
             rail_interpreter: Any | None = None
@@ -1028,6 +1018,7 @@ class StrangeLoop:
             self._live_runtime_ctx = ctx
 
             async def pump_graph() -> None:
+                """Invoke the StrangeLoop graph and recover from transient DB errors."""
                 try:
                     from soothe.sloop.orchestrator.runner import (
                         invoke_strange_loop_graph,
@@ -1086,7 +1077,7 @@ class StrangeLoop:
                 pump_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await pump_task
-                # Persist a resumable interruption cursor so ``retry`` / ``resume``
+                # Persist a resumable interruption cursor so `retry` / `resume`
                 # restores the iteration counter instead of restarting the goal.
                 # Marking is best-effort: a second cancel during the save must not
                 # mask the original cancellation propagating to the caller.

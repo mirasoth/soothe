@@ -135,33 +135,9 @@ def loop_message_assistant_output_phase(msg: Any) -> str | None:
 class LoopHumanMessage(HumanMessage):
     """StrangeLoop HumanMessage with thread/iteration context.
 
-    Extends HumanMessage to capture LoopState context for:
-    - Thread tracking (thread_id)
-    - Iteration tracking (iteration)
-    - Goal context (goal_summary)
-    - Execution phase (`execute_step`, `goal_completion`, plus legacy
-      plan-spine tags still present in old ledgers)
-    - Wave tracking (wave_id for execute_wave phase)
-    - CoreAgent dedup (core_agent_message_id for reference-based dedup)
-
-    All fields are Optional to support all message creation points uniformly,
-    including planner/synthesis calls without thread context.
-
-    Inherits all langchain HumanMessage fields and behavior:
-    - content: Message text (required)
-    - type: Literal["human"] (preserved)
-    - Serialization via messages_to_dict() preserves extra fields
-
-    Example:
-        >>> msg = LoopHumanMessage(
-        ...     content="Execute: Search for relevant files",
-        ...     thread_id="thread_123",
-        ...     iteration=2,
-        ...     goal_summary="Find configuration files",
-        ...     phase="execute_step",
-        ... )
-        >>> msg.thread_id  # Access sloop metadata
-        'thread_123'
+    Extends HumanMessage to capture thread id, iteration, goal summary,
+    execution phase, wave id, and CoreAgent dedup id. All fields are optional
+    to support all message creation points uniformly.
     """
 
     # StrangeLoop context fields (all optional)
@@ -201,33 +177,10 @@ class LoopHumanMessage(HumanMessage):
 class LoopAIMessage(AIMessage):
     """StrangeLoop AIMessage with iteration metadata.
 
-    Extends AIMessage to preserve:
-    - response_metadata for token extraction (`extract_token_usage_from_messages`)
-    - usage_metadata for standardized token counts
-    - tool_calls for tool tracking
-    - StrangeLoop-specific metadata (iteration, phase)
-    - CoreAgent dedup (core_agent_message_id for reference-based dedup)
-
-    NOTE: LoopAIMessage is rarely directly instantiated - CoreAgent returns
-    AIMessage/AIMessageChunk from .astream(). This class enables future
-    wrapping/injection of custom AI messages if needed.
-
-    Inherits all langchain AIMessage fields:
-    - content: Response text (required)
-    - response_metadata: Dict with token_usage (critical for executor)
-    - usage_metadata: Standardized token counts
-    - tool_calls: List of tool invocations
-    - type: Literal["ai"] (preserved)
-
-    Example:
-        >>> ai_msg = LoopAIMessage(
-        ...     content="Found 5 files",
-        ...     response_metadata={"token_usage": {"total_tokens": 150}},
-        ...     iteration=2,
-        ...     phase="execute_wave",
-        ... )
-        >>> ai_msg.response_metadata["token_usage"]["total_tokens"]
-        150
+    Extends AIMessage to preserve response_metadata for token extraction,
+    usage_metadata for standardized counts, tool_calls, and StrangeLoop
+    context (iteration, phase, CoreAgent dedup id). Rarely directly
+    instantiated — CoreAgent returns AIMessage/AIMessageChunk from `.astream()`.
     """
 
     # StrangeLoop context fields (optional)

@@ -11,7 +11,7 @@ from langchain_core.messages import BaseMessage
 from soothe.config.constants import DEFAULT_MAX_TOOL_CALLS_PER_STEP
 from soothe.sloop.state.schemas import StepAction, StepExecutionRecord
 
-# ``task`` tool return text cap per invocation before joining (delegate finals).
+# `task` tool return text cap per invocation before joining (delegate finals).
 _DELEGATE_FINAL_PER_TASK_CAP = 80_000
 
 _TUPLE_LEN = 3
@@ -160,9 +160,9 @@ def all_tool_outcomes_failed(outcomes: list[dict[str, Any]]) -> bool:
 
     An empty outcome list means the step produced zero tool calls — the model
     either failed before emitting any tool call or produced only text. In both
-    cases nothing succeeded, so this returns ``True``. This prevents a
-    model-failure (e.g. blocked API key → ``RuntimeError("all models in pool
-    failed")``) from being swallowed as a successful empty step that the DAG
+    cases nothing succeeded, so this returns `True`. This prevents a
+    model-failure (e.g. blocked API key → `RuntimeError("all models in pool
+    failed")`) from being swallowed as a successful empty step that the DAG
     re-dispatches indefinitely.
     """
     if not outcomes:

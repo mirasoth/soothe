@@ -47,6 +47,7 @@ class CheckpointDebouncer:
         max_interval_seconds: float = _DEFAULT_MAX_INTERVAL,
         max_pending: int = _DEFAULT_MAX_PENDING,
     ) -> None:
+        """Initialize the debouncer with trigger callback and timing thresholds."""
         self._trigger = trigger
         self._debounce = debounce_seconds
         self._max_interval = max_interval_seconds

@@ -37,8 +37,8 @@ def _check_import(module_path: str, name: str) -> CheckResult:
 def _check_rail(config: Any | None) -> CheckResult:
     """Check rail config presence.
 
-    The legacy ``soothe-autopilot`` package was retired; loop-native rail
-    tuning now lives under ``agent.rail`` in the host config. This check
+    The legacy `soothe-autopilot` package was retired; loop-native rail
+    tuning now lives under `agent.rail` in the host config. This check
     only validates that the config section is present.
     """
     agent = getattr(config, "agent", None) if config is not None else None

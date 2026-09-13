@@ -1,10 +1,10 @@
 """CronService — orchestrator for cron jobs.
 
 Coordinates NL extraction, persistence, and execution through the loop-native
-submission path (loop_input with ``autopilot_rail_id``). Cron dispatch creates
-a fresh loop and enqueues a ``loop_input`` carrying the configured default
-rail id so ``StrangeLoop.run_with_progress`` binds a ``LoopRailInterpreter``
-— bypassing the removed ``AutopilotService.submit_task`` path.
+submission path (loop_input with `autopilot_rail_id`). Cron dispatch creates
+a fresh loop and enqueues a `loop_input` carrying the configured default
+rail id so `StrangeLoop.run_with_progress` binds a `LoopRailInterpreter`
+— bypassing the removed `AutopilotService.submit_task` path.
 """
 
 from __future__ import annotations
@@ -48,13 +48,13 @@ class CronService:
         """Initialize CronService.
 
         Args:
-        config: Host configuration (provides cron + autopilot.default_rail).
-        loop_input_dispatcher: Daemon LoopInputDispatcher used to enqueue
-            loop_input messages carrying ``autopilot_rail_id`` for the
+            config: Host configuration (provides cron + autopilot.default_rail).
+            loop_input_dispatcher: Daemon LoopInputDispatcher used to enqueue
+            loop_input messages carrying `autopilot_rail_id` for the
             loop-native submission path.
-        persistence_manager: Daemon persistence manager used to register
+            persistence_manager: Daemon persistence manager used to register
             loops created for cron dispatch.
-        store: Optional cron job store override.
+            store: Optional cron job store override.
         """
         self._config = config
         self._loop_input_dispatcher = loop_input_dispatcher
@@ -114,7 +114,7 @@ class CronService:
         the same stable `job_id` is never duplicated.
 
         Returns:
-        Number of newly created built-in jobs (0 if all already existed).
+            Number of newly created built-in jobs (0 if all already existed).
         """
         if not self._cron_config.enable_builtin_jobs:
             logger.debug("Built-in cron jobs disabled; skipping seed pass")
@@ -198,19 +198,19 @@ class CronService:
         """Submit job via natural language.
 
         Args:
-        natural_language: User's natural language request.
-        user_id: Owner user identifier.
-        priority: Optional priority override.
+            natural_language: User's natural language request.
+            user_id: Owner user identifier.
+            priority: Optional priority override.
 
         Returns:
-        Created CronJob with id and next_run set.
+            Created CronJob with id and next_run set.
 
         Raises:
-        AutopilotDisabledError: If autopilot scheduling is disabled or no
+            AutopilotDisabledError: If autopilot scheduling is disabled or no
             dispatch rail_id is configured.
-        ExtractionError: If NL extraction fails.
-        DuplicateCronJobError: If an equivalent active job already exists.
-        ValueError: If max_jobs limit exceeded.
+            ExtractionError: If NL extraction fails.
+            DuplicateCronJobError: If an equivalent active job already exists.
+            ValueError: If max_jobs limit exceeded.
         """
         if not self._config.agent.autopilot.enabled or self._resolve_dispatch_rail_id() is None:
             logger.warning(
@@ -291,11 +291,11 @@ class CronService:
         """List jobs for user, optionally filtered by status.
 
         Args:
-        user_id: User identifier.
-        status: Optional status filter.
+            user_id: User identifier.
+            status: Optional status filter.
 
         Returns:
-        List of CronJob objects owned by this user.
+            List of CronJob objects owned by this user.
         """
         return await self._store.list_by_user(user_id, status)
 
@@ -303,11 +303,11 @@ class CronService:
         """Cancel a pending job.
 
         Args:
-        job_id: Job identifier.
-        user_id: User identifier (for ownership validation).
+            job_id: Job identifier.
+            user_id: User identifier (for ownership validation).
 
         Returns:
-        True if cancelled, False if not found or not owned.
+            True if cancelled, False if not found or not owned.
         """
         job = await self._store.get(job_id)
         if job is None or job.user_id != user_id:
@@ -324,11 +324,11 @@ class CronService:
         """Get job details.
 
         Args:
-        job_id: Job identifier.
-        user_id: User identifier (for ownership validation).
+            job_id: Job identifier.
+            user_id: User identifier (for ownership validation).
 
         Returns:
-        CronJob if found and owned by user, None otherwise.
+            CronJob if found and owned by user, None otherwise.
         """
         job = await self._store.get(job_id)
         if job is None or job.user_id != user_id:
@@ -338,8 +338,8 @@ class CronService:
     def _resolve_dispatch_rail_id(self) -> str | None:
         """Return the rail id to bind for cron-dispatched goals.
 
-        Uses ``agent.autopilot.default_rail`` from the host config. Returns
-        ``None`` when no rail is configured (dispatch is rejected upstream).
+        Uses `agent.autopilot.default_rail` from the host config. Returns
+        `None` when no rail is configured (dispatch is rejected upstream).
         """
         rail_id = getattr(self._config.agent.autopilot, "default_rail", None)
         if isinstance(rail_id, str) and rail_id.strip():
@@ -422,11 +422,11 @@ class CronService:
         """Create a fresh loop and enqueue the cron goal via loop_input.
 
         Args:
-        job: Due CronJob to dispatch.
-        rail_id: Builtin rail id to bind for this goal.
+            job: Due CronJob to dispatch.
+            rail_id: Builtin rail id to bind for this goal.
 
         Returns:
-        The newly created loop_id.
+            The newly created loop_id.
         """
         from uuid_utils import uuid7
 
@@ -490,11 +490,11 @@ class CronService:
         """Check if recurring job has reached end condition.
 
         Args:
-        job: CronJob to check.
-        now: Current time.
+            job: CronJob to check.
+            now: Current time.
 
         Returns:
-        True if job should be marked completed due to end condition.
+            True if job should be marked completed due to end condition.
         """
         if not job.end_condition:
             return False
@@ -541,8 +541,8 @@ class CronService:
         Called when a goal dispatched from a cron job completes.
 
         Args:
-        job_id: Cron job identifier.
-        success: Whether goal execution succeeded.
+            job_id: Cron job identifier.
+            success: Whether goal execution succeeded.
         """
         job = await self._store.get(job_id)
         if job is None:

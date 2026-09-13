@@ -1,7 +1,4 @@
-"""Telegram channel implementation using python-telegram-bot.
-
-Migrated from nanoBot with adaptations for soothe-daemon Channel architecture.
-"""
+"""Telegram channel implementation using python-telegram-bot."""
 
 from __future__ import annotations
 
@@ -294,8 +291,8 @@ class TelegramChannel(Channel):
         """Initialize Telegram channel.
 
         Args:
-        config: Telegram configuration (dict or TelegramConfig).
-        manager: ChannelManager for inbound routing.
+            config: Telegram configuration (dict or TelegramConfig).
+            manager: ChannelManager for inbound routing.
         """
         super().__init__(config, manager)
         if isinstance(config, dict):
@@ -438,8 +435,8 @@ class TelegramChannel(Channel):
         """Send a message through Telegram.
 
         Args:
-        chat_id: Telegram chat ID.
-        message: ChannelMessage to send.
+            chat_id: Telegram chat ID.
+            message: ChannelMessage to send.
         """
         if not self._app:
             logger.warning("[Telegram] bot not running")

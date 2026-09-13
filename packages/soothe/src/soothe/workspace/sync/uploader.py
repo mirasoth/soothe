@@ -55,6 +55,7 @@ class BackgroundUploader:
         poll_interval: float = 2.0,
         on_backpressure: Any = None,
     ) -> None:
+        """Initialize the uploader with backend, checkpoint store, and thresholds."""
         self._backend = backend
         self._store = store
         self._max_pending = max_pending

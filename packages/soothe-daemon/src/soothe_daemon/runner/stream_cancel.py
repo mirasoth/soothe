@@ -34,19 +34,19 @@ async def await_cancellable_stream(
     """Run `stream_factory` with cancel-event polling and unexpected-cancel retry.
 
     Args:
-    stream_factory: Zero-arg factory returning the stream awaitable (fresh
-    each attempt so retries do not reuse a completed coroutine).
-    cancel_event: Cooperative cancel flag from the pool (`threading.Event`
-    or multiprocessing equivalent).
-    worker_id: Worker id for logs.
-    loop_id: Client loop id for logs.
-    request_id: Request id for logs.
-    unexpected_retries: Extra attempts after unexpected `CancelledError`.
-    poll_interval_s: How often to check `cancel_event`.
+        stream_factory: Zero-arg factory returning the stream awaitable (fresh
+            each attempt so retries do not reuse a completed coroutine).
+        cancel_event: Cooperative cancel flag from the pool (`threading.Event`
+            or multiprocessing equivalent).
+        worker_id: Worker id for logs.
+        loop_id: Client loop id for logs.
+        request_id: Request id for logs.
+        unexpected_retries: Extra attempts after unexpected `CancelledError`.
+        poll_interval_s: How often to check `cancel_event`.
 
     Raises:
-    asyncio.CancelledError: When `cancel_event` is set (cooperative cancel).
-    RuntimeError: When unexpected `CancelledError` retries are exhausted.
+        asyncio.CancelledError: When `cancel_event` is set (cooperative cancel).
+        RuntimeError: When unexpected `CancelledError` retries are exhausted.
     """
     attempts = 1 + max(0, int(unexpected_retries))
     for attempt in range(1, attempts + 1):
@@ -119,13 +119,13 @@ def emit_terminal_for_cancelled_error(
     """Map a leaked `CancelledError` to cancelled vs error terminal.
 
     Args:
-    cancel_event: Cooperative cancel flag.
-    emit_cancelled: Emit cooperative cancel terminal.
-    emit_error: Emit error terminal with the given exception.
-    worker_id: Worker id for logs.
-    loop_id: Loop id for logs.
-    request_id: Request id for logs.
-    where: Short site label for logs (e.g. `_execute`, `run_until_complete`).
+        cancel_event: Cooperative cancel flag.
+        emit_cancelled: Emit cooperative cancel terminal.
+        emit_error: Emit error terminal with the given exception.
+        worker_id: Worker id for logs.
+        loop_id: Loop id for logs.
+        request_id: Request id for logs.
+        where: Short site label for logs (e.g. `_execute`, `run_until_complete`).
     """
     if cancel_event.is_set():
         logger.warning(

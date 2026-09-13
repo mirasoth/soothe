@@ -62,6 +62,7 @@ class LoopContextProjector:
     """Single entry point for projecting the CE ledger into a message list."""
 
     def __init__(self, config: Any | None = None) -> None:
+        """Store the optional config used to derive plan-ledger projection defaults."""
         self.config = config
 
     def project(

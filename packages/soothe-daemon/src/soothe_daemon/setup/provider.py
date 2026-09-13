@@ -92,10 +92,10 @@ def run_provider_wizard(
     """Interactively configure a provider in `nano.yml`.
 
     Returns:
-    Updated config dict that was written.
+        Updated config dict that was written.
 
     Raises:
-    ProviderSetupCancelledError: On user cancel / EOF.
+        ProviderSetupCancelledError: On user cancel / EOF.
     """
     inn = stdin if stdin is not None else sys.stdin
     out = stdout if stdout is not None else sys.stdout
@@ -201,7 +201,7 @@ def merge_provider_from_env(nano_path: Path) -> dict[str, Any] | None:
     minimal OpenAI/Anthropic provider from env and sets `router.default`.
 
     Returns:
-    Updated config dict if a write occurred, else `None`.
+        Updated config dict if a write occurred, else `None`.
     """
     existing = load_yaml_dict(nano_path)
     openai_key = os.environ.get("OPENAI_API_KEY", "").strip()

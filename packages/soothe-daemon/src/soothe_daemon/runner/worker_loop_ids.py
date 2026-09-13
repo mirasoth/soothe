@@ -1,8 +1,4 @@
-"""Helpers for classifying loop IDs that belong to internal worker pools.
-
-These helpers were relocated from the retired ``soothe_autopilot.workers.pool``
-module so the daemon no longer depends on the deleted package.
-"""
+"""Helpers for classifying loop IDs that belong to internal worker pools."""
 
 from __future__ import annotations
 

@@ -461,13 +461,16 @@ class ConfigWatcher:
             """Handler for file system events on config files."""
 
             def __init__(self, watcher: ConfigWatcher):
+                """Bind to the parent watcher and initialize an empty path set."""
                 self._watcher = watcher
                 self._watched_paths: set[Path] = set()
 
             def add_path(self, path: Path) -> None:
+                """Register a config file path to watch for modifications."""
                 self._watched_paths.add(path)
 
             def on_modified(self, event: FileSystemEvent) -> None:
+                """Forward modification events for watched paths to the watcher."""
                 if event.is_directory:
                     return
                 path = Path(event.src_path).resolve()
@@ -475,6 +478,7 @@ class ConfigWatcher:
                     self._watcher._on_file_modified(path)
 
             def on_created(self, event: FileSystemEvent) -> None:
+                """Forward creation events for watched paths (e.g., editor atomic save)."""
                 # Handle file creation (e.g., after editor atomic save)
                 if event.is_directory:
                     return
@@ -518,6 +522,7 @@ class ConfigWatcher:
             return
 
         def handle_sighup(_signum: int, _frame: Any) -> None:
+            """Handle SIGHUP by triggering an immediate config reload."""
             _logger.info("Received SIGHUP, triggering config reload")
             self.reload_now()
 

@@ -147,6 +147,7 @@ class LoopRelay:
         emit: Callable[[str, Any], Awaitable[None]],
         inbox: RelayInbox | None = None,
     ) -> None:
+        """Initialize relay with loop id, emit callback, and optional inbox."""
         self._loop_id = loop_id
         self._emit = emit
         self._inbox: RelayInbox = inbox if inbox is not None else RelayInbox()
@@ -545,12 +546,14 @@ class LoopRelay:
     # ------------------------------------------------------------------
 
     async def emit_recovered(self, *, reason: str, origin: str | None = None) -> None:
+        """Emit a relay-recovered event with reason and optional origin."""
         await self._emit(
             RELAY_RECOVERED,
             {"loop_id": self._loop_id, "reason": reason, "origin": origin},
         )
 
     async def emit_stale_skipped(self, *, ticket_id: str) -> None:
+        """Emit a stale-interrupt-skipped event for the given ticket id."""
         await self._emit(
             RELAY_STALE_INTERRUPT_SKIPPED,
             {"loop_id": self._loop_id, "ticket_id": ticket_id},

@@ -145,6 +145,7 @@ class WavePlan(BaseModel):
         visited: set[str] = set()
 
         def visit(node: str) -> None:
+            """Topologically visit a node, raising on cycles."""
             if node in visited:
                 return
             if node in visiting:

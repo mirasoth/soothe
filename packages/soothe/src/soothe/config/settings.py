@@ -99,22 +99,27 @@ class _SootheConfigLoggingFileView:
     __slots__ = ("_cfg",)
 
     def __init__(self, cfg: SootheConfig) -> None:
+        """Bind to the owning SootheConfig instance."""
         self._cfg = cfg
 
     @property
     def level(self) -> str:
+        """File log level."""
         return self._cfg.observability.log_file_level
 
     @property
     def path(self) -> str | None:
+        """File log output path."""
         return self._cfg.observability.log_file_path
 
     @property
     def max_bytes(self) -> int:
+        """Max bytes before log rotation."""
         return self._cfg.observability.log_file_max_bytes
 
     @property
     def backup_count(self) -> int:
+        """Number of rotated backup files to retain."""
         return self._cfg.observability.log_file_backup_count
 
 
@@ -124,26 +129,32 @@ class SootheConfigLoggingView:
     __slots__ = ("_cfg",)
 
     def __init__(self, cfg: SootheConfig) -> None:
+        """Bind to the owning SootheConfig instance."""
         self._cfg = cfg
 
     @property
     def verbosity(self) -> str:
+        """Console verbosity level."""
         return self._cfg.observability.verbosity
 
     @property
     def file(self) -> _SootheConfigLoggingFileView:
+        """Nested file-logging view."""
         return _SootheConfigLoggingFileView(self._cfg)
 
     @property
     def console(self) -> ConsoleLoggingConfig:
+        """Console logging configuration."""
         return self._cfg.observability.console
 
     @property
     def global_history(self) -> GlobalHistoryConfig:
+        """Global history logging configuration."""
         return self._cfg.observability.global_history
 
     @property
     def report_output(self) -> ReportOutputConfig:
+        """Goal-completion report output configuration."""
         return self._cfg.agent.loop.report_output
 
     @property
@@ -613,8 +624,8 @@ class SootheConfig(BaseSettings):
             ValueError: If db_key is not in postgres_databases mapping.
         """
         # Prefer multi-database base DSN when set and fully resolved (plain or ${ENV}).
-        # Unresolved ``${VAR}`` placeholders (template defaults) fall through to
-        # ``soothe_postgres_dsn`` — same dual-support rule as Langfuse/deepxiv.
+        # Unresolved `${VAR}` placeholders (template defaults) fall through to
+        # `soothe_postgres_dsn` — same dual-support rule as Langfuse/deepxiv.
         base_raw = self.persistence.postgres_base_dsn
         if base_raw:
             base_dsn = _resolve_env(base_raw)
@@ -833,9 +844,9 @@ class SootheConfig(BaseSettings):
         return router
 
     def resolve_model(self, role: ModelRole = "default") -> str:
-        """Resolve a single ``provider:model`` string for *role*.
+        """Resolve a single `provider:model` string for *role*.
 
-        Multi-spec values return the first spec. Falls back to ``default``.
+        Multi-spec values return the first spec. Falls back to `default`.
         """
         if role == "embedding":
             return self.embedding_model
@@ -850,9 +861,9 @@ class SootheConfig(BaseSettings):
         return default_specs[0] if default_specs else router.default
 
     def resolve_model_specs(self, role: ModelRole = "default") -> list[str]:
-        """Resolve *role* to a list of ``provider:model`` specs.
+        """Resolve *role* to a list of `provider:model` specs.
 
-        Falls back to ``default``. ``embedding`` returns ``[embedding_model]``.
+        Falls back to `default`. `embedding` returns `[embedding_model]`.
         """
         if role == "embedding":
             return [self.embedding_model]

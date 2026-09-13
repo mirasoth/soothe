@@ -60,14 +60,17 @@ def reset_decompose_runtime(tokens: DecomposeRuntimeTokens) -> None:
 
 
 def current_step_id() -> str | None:
+    """Return the decompose step id for the current task context, if any."""
     return _current_step_id.get()
 
 
 def current_wave_seq() -> int:
+    """Return the current execution wave sequence number."""
     return _wave_seq.get()
 
 
 def current_proposal_sink() -> list[DecompositionProposal] | None:
+    """Return the proposal sink list for the current task context, if any."""
     return _proposal_sink.get()
 
 

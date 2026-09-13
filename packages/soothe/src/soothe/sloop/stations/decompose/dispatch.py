@@ -161,6 +161,7 @@ class DispatchNode(LoopNode):
         state: dict[str, Any],
         messages: list,
     ) -> NodeResult:
+        """Claim ready StepDAG nodes and stage them for execute dispatch."""
         from soothe.sloop.stations.execute.loop_budget import enforce_loop_budget
 
         terminal = await enforce_loop_budget(ctx)
@@ -337,6 +338,7 @@ class DispatchNode(LoopNode):
         state: dict[str, Any],
         result: NodeResult,
     ) -> RouteDecision:
+        """Route after dispatch: terminal on budget exhaustion, else to execute."""
         payload = result.payload if isinstance(result.payload, dict) else {}
         if payload.get("budget_terminal"):
             return RouteDecision(

@@ -411,11 +411,11 @@ class RailConfig(BaseModel):
 
     # === Cancel escalation (RFC-222 H8 revised) ===
     # Goal cancel / deadline paths first request cooperative cancellation
-    # (``runner.cancel()``), then poll ``runner.is_idle()``; if the worker
+    # (`runner.cancel()`), then poll `runner.is_idle()`; if the worker
     # does not go idle within the retry budget, escalate to
-    # ``runner.force_kill()`` so a worker blocked mid-LLM-call or in sync code
+    # `runner.force_kill()` so a worker blocked mid-LLM-call or in sync code
     # is guaranteed terminated rather than orphaned. Mirrors the query engine's
-    # ``_cancel_loop`` ladder (SootheDaemonConfig.cancel_* knobs).
+    # `_cancel_loop` ladder (SootheDaemonConfig.cancel_* knobs).
     cancel_retry_count: int = Field(
         default=3,
         ge=1,
@@ -474,22 +474,22 @@ class WorkspaceReservationConfig(BaseModel):
 
 
 class WorkspaceSyncConfig(BaseModel):
-    """Durable object-store backend for agent workspace materialization (RFC-906).
+    """Durable object-store backend for agent workspace materialization.
 
-    When ``source_uri`` is set, the daemon constructs an
+    When `source_uri` is set, the daemon constructs an
     :class:`~soothe.workspace.sync.FsspecSyncBackend` via
     :func:`~soothe.workspace.sync.construct_sync_backend` to materialize
     resources, checkpoint dirty files, and publish artifacts to the
     configured S3/GCS/Azure bucket.
 
     Args:
-        source_uri: Object-store URI (e.g. ``s3://bucket/prefix``).
-            Only ``s3``, ``gs``, and ``az`` schemes are permitted.
+        source_uri: Object-store URI (e.g. `s3://bucket/prefix`).
+            Only `s3`, `gs`, and `az` schemes are permitted.
         storage_options: Backend-specific options forwarded to fsspec
             (endpoint_url, credentials, etc.). Prefer environment variables
             or IAM roles over explicit credential dicts for production.
         publish_prefix: Artifact publication prefix. Defaults to
-            ``<source_uri>/artifacts/`` when unset.
+            `<source_uri>/artifacts/` when unset.
     """
 
     source_uri: str | None = Field(
@@ -507,7 +507,7 @@ class WorkspaceSyncConfig(BaseModel):
 
     @property
     def is_enabled(self) -> bool:
-        """True when ``source_uri`` is set."""
+        """True when `source_uri` is set."""
         return bool(self.source_uri)
 
 

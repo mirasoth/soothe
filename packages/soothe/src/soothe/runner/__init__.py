@@ -750,20 +750,16 @@ class SootheRunner(
     ) -> bool:
         """Hot-swap the agent mode on the running goal.
 
-        Swaps the live CoreAgent graph when `interaction_mode` changes (the
-        bypass graph omits `interrupt_on` for mutating tools), then rebuilds
-        the clarification policy via the live `StrangeLoop`. The execute node
-        reads `strange_loop.core_agent` fresh each wave; all graphs share the
-        checkpointer so thread state survives.
+        Swaps the live CoreAgent graph when `interaction_mode` changes (bypass
+        omits `interrupt_on`), then rebuilds the clarification policy.
 
         Args:
-            mode: `"auto"` or `"manual"`.
-            interaction_mode: `"bypass"` or `None`. Only agent sub-modes are
+            mode: `auto` or `manual`.
+            interaction_mode: `bypass` or `None`. Only agent sub-modes are
                 hot-swappable; `plan`/`ask` apply on the next turn dispatch.
 
         Returns:
-            `True` on a live goal, `False` when none is running. Graph-swap
-            failures are logged and skipped; the policy swap still runs.
+            `True` on a live goal, `False` when none is running.
         """
         agent = self._live_loop_agent
         if agent is None:
@@ -803,51 +799,34 @@ class SootheRunner(
         approved_plan_path: str | None = None,  # Bug #3: plan-mode approve exec goal
         autopilot_rail_id: str | None = None,  # RFC-231: rail id → LoopRailInterpreter
     ) -> AsyncGenerator[StreamChunk]:
-        """Stream agent execution with protocol orchestration.
+        """Stream agent execution, yielding `(namespace, mode, data)` chunks.
 
-        Yields `(namespace, mode, data)` tuples in the canonical
-        format.  Protocol events are emitted as `custom` events with
-        `soothe.*` type prefix.
-
-        **Two execution modes** (selected in priority order):
-        - `autopilot_job` set: daemon-dispatched goal, runs
-          `_run_autopilot_job` which hydrates from the bundle and emits a
-          `GoalCompletionChunk` at the end. StrangeLoop never sees the DAG.
-          `user_input` is ignored.
-        - Default: Agentic loop with Reason → Act iteration.
+        When `autopilot_job` is set, runs a daemon-dispatched goal directly.
+        Otherwise runs the default StrangeLoop agentic loop.
 
         Args:
-            user_input: The user's query text.
-            thread_id: Thread ID for persistence. Generated if not provided.
-            workspace: Thread-specific workspace path. When omitted, resolved via
-                `resolve_workspace_for_stream` (daemon default, then cwd). The
-                resolved path is always a non-empty absolute directory string for this call.
-            preferred_subagent: Optional subagent hint merged into StrangeLoop.
-            intake_scope: Optional client-forced intake scope
-                (`minimal`|`simple`|`complex`); skips the intake LLM when set.
-            client_loop_id: Daemon client loop scope for logging and stream correlation.
-            autopilot_job: When set, signals an autopilot-dispatched job.
-                Worker hydrates StrangeLoop from `autopilot_job.merged_context` and runs
-                `autopilot_job.goal_description`; `user_input` is ignored. Emits a
-                `GoalCompletionChunk` exactly once before the terminal chunk.
-                `None` (default) keeps today's behavior.
-            clarification_mode: per-request mode (`"auto"` / `"manual"`).
-                `None` falls back to `config.agent.clarification.default_mode`.
-                Ignored when `autopilot_job` is set (autopilot forces `"auto"`).
-            interaction_mode: per-request CoreAgent interaction mode
-                (`"agent"` / `"ask"` / `"plan"` / `"bypass"`). Each selects
-                its own graph; `None` uses the default `"agent"` graph.
-            clarification_answer: When True, hints that `user_input` is the
-                answer to a pending clarification. The runner verifies via the
-                loop's persisted state and resumes the graph via
-                `Command(resume=...)`; falls back to a normal turn when no
-                clarification is actually pending.
-            clarification_answers: Per-question answer list for multi-question
-                clarifications. When provided alongside `clarification_answer`,
-                resumes the graph with one answer per question instead of
-                broadcasting a single string. `None` falls back to treating
-                `user_input` as a single answer string (broadcast to all
-                questions if there are several).
+            user_input: User query text (ignored when `autopilot_job` is set).
+            thread_id: Persistence thread ID; generated when omitted.
+            workspace: Thread workspace path; resolved when omitted.
+            preferred_subagent: Optional subagent hint for StrangeLoop.
+            intake_scope: Forced intake scope (`minimal`/`simple`/`complex`);
+                skips the intake LLM when set.
+            client_loop_id: Daemon loop scope for logging and correlation.
+            autopilot_job: Autopilot-dispatched goal bundle; emits a single
+                `GoalCompletionChunk`.
+            clarification_mode: Per-request `auto`/`manual` override.
+            interaction_mode: CoreAgent graph selection
+                (`agent`/`ask`/`plan`/`bypass`).
+            clarification_answer: Hint that `user_input` answers a pending
+                clarification.
+            clarification_answers: Per-question answers for multi-question
+                clarifications; `None` treats `user_input` as a single answer.
+            resume_interrupted: Resume from a daemon crash checkpoint.
+            approved_plan_path: Plan-mode approve exec goal path.
+            autopilot_rail_id: Rail ID for `LoopRailInterpreter`.
+
+        Yields:
+            `StreamChunk` tuples with `soothe.*`-prefixed protocol events.
         """
         # Update thread_id for logging if one is provided
         from soothe.logging import set_thread_id

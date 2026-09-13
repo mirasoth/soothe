@@ -208,10 +208,10 @@ class SootheDaemon(DaemonHandlersMixin):
         """Create IdentityService from daemon identity config.
 
         Returns:
-        IdentityService instance configured with JWT key and SQLite backend.
+            IdentityService instance configured with JWT key and SQLite backend.
 
         Raises:
-        RuntimeError: If JWT signing key is required but not available.
+            RuntimeError: If JWT signing key is required but not available.
         """
 
         from soothe.identity.identity_service import IdentityService
@@ -262,7 +262,7 @@ class SootheDaemon(DaemonHandlersMixin):
         """Build identity runtime bundle for agent/runner injection.
 
         Returns:
-        IdentityRuntime when identity service is enabled, else None.
+            IdentityRuntime when identity service is enabled, else None.
         """
         if self._identity_service is None:
             return None
@@ -301,7 +301,7 @@ class SootheDaemon(DaemonHandlersMixin):
         Atomically swaps config instances and emits event on the bus.
 
         Args:
-        event: Config reload event with old/new config and error info.
+            event: Config reload event with old/new config and error info.
         """
         if event.error is not None:
             logger.error(
@@ -329,7 +329,7 @@ class SootheDaemon(DaemonHandlersMixin):
         """Emit config reload event on the event bus for client notification.
 
         Args:
-        event: Config reload event to emit.
+            event: Config reload event to emit.
         """
         import asyncio
 
@@ -371,12 +371,12 @@ class SootheDaemon(DaemonHandlersMixin):
         """Enable hot-reload for agent and/or daemon config files.
 
         Args:
-        agent_config_path: Path to nano.yml (defaults to ~/.soothe/config/nano.yml).
-        daemon_config_path: Path to daemon.yml (defaults to ~/.soothe/config/daemon.yml).
-        validate_before_reload: Whether to validate config before swapping (default True).
-        When True, the loaded config undergoes Pydantic validation before being swapped
-        into the active config. If validation fails, the swap is skipped and an error
-        is logged with ConfigReloadedEvent emitted with the error field.
+            agent_config_path: Path to nano.yml (defaults to ~/.soothe/config/nano.yml).
+            daemon_config_path: Path to daemon.yml (defaults to ~/.soothe/config/daemon.yml).
+            validate_before_reload: Whether to validate config before swapping (default True).
+            When True, the loaded config undergoes Pydantic validation before being swapped
+            into the active config. If validation fails, the swap is skipped and an error
+            is logged with ConfigReloadedEvent emitted with the error field.
         """
         from pathlib import Path
 
@@ -817,11 +817,11 @@ class SootheDaemon(DaemonHandlersMixin):
         ack envelope with daemon readiness state and heartbeat interval.
 
         Args:
-        accept_proto: Protocol versions the client supports.
-        client_capabilities: Capabilities the client declared.
+            accept_proto: Protocol versions the client supports.
+            client_capabilities: Capabilities the client declared.
 
         Returns:
-        Wire-ready `connection_ack` message dict.
+            Wire-ready `connection_ack` message dict.
         """
         from soothe_daemon import __version__
 
@@ -863,10 +863,10 @@ class SootheDaemon(DaemonHandlersMixin):
         router when it processes `connection_init`.
 
         Args:
-        _transport_client: Transport-specific client object (unused).
+            _transport_client: Transport-specific client object (unused).
 
         Returns:
-        List containing the initial status message.
+            List containing the initial status message.
         """
         initial_state = (
             "running" if self._has_active_queries() else ("idle" if self._running else "stopped")
@@ -886,11 +886,11 @@ class SootheDaemon(DaemonHandlersMixin):
         Uses socket probe first (fast), falls back to lsof if needed.
 
         Args:
-        host: Host address to check.
-        port: TCP port number.
+            host: Host address to check.
+            port: TCP port number.
 
         Returns:
-        True if port is accepting connections, False otherwise.
+            True if port is accepting connections, False otherwise.
         """
         import socket as sock_mod
 
@@ -1686,8 +1686,8 @@ class SootheDaemon(DaemonHandlersMixin):
         existing message handling logic with concurrency control.
 
         Args:
-        client_id: Unique client identifier
-        msg: Message dict from a transport client.
+            client_id: Unique client identifier
+            msg: Message dict from a transport client.
         """
         # Create a task with semaphore control and tracking
         task = asyncio.create_task(self._dispatch_with_semaphore(client_id, msg))
@@ -1705,8 +1705,8 @@ class SootheDaemon(DaemonHandlersMixin):
         reaching this method.
 
         Args:
-        client_id: Unique client identifier
-        msg: Message dict from a transport client.
+            client_id: Unique client identifier
+            msg: Message dict from a transport client.
         """
         async with self._dispatch_semaphore:
             try:
@@ -1736,7 +1736,7 @@ class SootheDaemon(DaemonHandlersMixin):
         """Cancel pending dispatch tasks for disconnected client.
 
         Args:
-        client_id: Client identifier being disconnected
+            client_id: Client identifier being disconnected
         """
         # Set client_id context for full ID in daemon.log
         set_client_id(client_id)
@@ -1773,10 +1773,10 @@ class SootheDaemon(DaemonHandlersMixin):
         """Find PID of process listening on a TCP port using lsof.
 
         Args:
-        port: TCP port number.
+            port: TCP port number.
 
         Returns:
-        PID if found, None otherwise.
+            PID if found, None otherwise.
         """
         from soothe_daemon.bootstrap.port_lookup import find_listening_pid
 
@@ -1793,10 +1793,10 @@ class SootheDaemon(DaemonHandlersMixin):
         by port (to handle orphan daemons with missing PID files).
 
         Args:
-        timeout: Maximum seconds to wait before SIGKILL escalation.
+            timeout: Maximum seconds to wait before SIGKILL escalation.
 
         Returns:
-        True if a signal was sent and daemon stopped, False if no daemon found.
+            True if a signal was sent and daemon stopped, False if no daemon found.
         """
         stopped = False
         pid: int | None = None
@@ -1865,11 +1865,11 @@ class SootheDaemon(DaemonHandlersMixin):
         """Wait for a process to exit, escalating to SIGKILL if needed.
 
         Args:
-        pid: Process ID to wait for.
-        timeout: Maximum seconds before SIGKILL escalation.
+            pid: Process ID to wait for.
+            timeout: Maximum seconds before SIGKILL escalation.
 
         Returns:
-        True if process exited, False if still running.
+            True if process exited, False if still running.
         """
         import time
 

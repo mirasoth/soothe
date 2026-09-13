@@ -79,6 +79,7 @@ class LoopRailInterpreter:
         rail_pause_auto_clarify: bool = True,
         on_user_intervention: Callable[[str], Awaitable[None]] | None = None,
     ) -> None:
+        """Initialize the interpreter with CE, builtins, guards, and trace store."""
         self._ce = ce
         if builtins is not None:
             self._builtins = builtins
@@ -99,10 +100,12 @@ class LoopRailInterpreter:
 
     @property
     def builtins(self) -> RailBuiltinExecutor:
+        """The builtin verb executor."""
         return self._builtins
 
     @property
     def trace_store(self) -> RailTraceStore:
+        """The rail trace store."""
         return self._trace
 
     def set_guard_evaluator(self, guards: GuardEvaluator) -> None:

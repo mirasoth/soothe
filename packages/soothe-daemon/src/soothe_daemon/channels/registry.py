@@ -98,10 +98,10 @@ def discover_enabled(enabled_names: set[str]) -> dict[str, type[Channel]]:
     (entry_points). Only imports enabled channels.
 
     Args:
-    enabled_names: Set of channel names that are enabled in config.
+        enabled_names: Set of channel names that are enabled in config.
 
     Returns:
-    Dict mapping channel name to Channel class.
+        Dict mapping channel name to Channel class.
     """
     channels: dict[str, type[Channel]] = {}
 
@@ -122,10 +122,10 @@ def discover_all() -> dict[str, type[Channel]]:
     """Return all available channels (built-in + plugins).
 
     Imports ALL discovered channels, which may be slow. Prefer
-    discover_enabled() when you have a specific set to load.
+    `discover_enabled()` when you have a specific set to load.
 
     Returns:
-    Dict mapping channel name to Channel class.
+        Dict mapping channel name to Channel class.
     """
     # Get all candidate names
     built_in_names = set(discover_channel_names())

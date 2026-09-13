@@ -107,6 +107,7 @@ Good defer:
 
 
 def build_veritas_system_prompt() -> str:
+    """Return the veritas system prompt for clarification answering."""
     return _SYSTEM_PROMPT
 
 
@@ -189,25 +190,22 @@ def build_veritas_user_prompt(
     max_context_steps: int = 8,
     agent_instructions_max_chars: int = 25_000,
 ) -> str:
-    """Render the per-request context for veritas.
+    """Render the per-request context prompt for veritas.
 
-    For `tool_approval` origin, a slim prompt is used: only
-    tool name, args, user request, and goal description. No AGENTS.md, no
-    prior clarifications, no recent step outputs. This keeps the LLM cost
-    minimal for the ambiguous-case tail that reaches Stage 4.
+    For `tool_approval` origin, renders a slim prompt (tool name, args, user
+    request, goal description only) to minimize LLM cost.
 
-    For all other origins, the full context prompt is used: the workspace's
-    project instructions (`AGENTS.md` preferred, then `CLAUDE.md`) are
-    loaded via the shared loader and inlined as an
-    `=== Project instructions ===` section so veritas's answers respect the
-    target repo's guidance. `LoopStateView.workspace_summary`
-    carries the thread workspace path at all three origins (execute,
-    delegate, rail pause), which the loader resolves relative to.
+    For other origins, renders the full context: project instructions
+    (`AGENTS.md` preferred) are inlined so answers respect the repo's rules.
+    `LoopStateView.workspace_summary` carries the workspace path for
+    instruction loading.
 
-    `agent_instructions_max_chars` defaults to the loader's own cap
-    (25,000) so a typical `AGENTS.md` / `CLAUDE.md` inlines verbatim —
-    the full project rules reach veritas, not a truncated headline. Only
-    unusually large files degrade to a partial headline + `read_file` hint.
+    Args:
+        request: Clarification request with origin, pending questions, and
+            loop state view.
+        max_context_steps: Max recent step outputs to include.
+        agent_instructions_max_chars: Cap for inlined project instructions;
+            defaults to the loader's 25,000-char limit.
     """
     # RFC-622 §9b: slim prompt for tool-approval fallback.
     if request.origin_node == "tool_approval":

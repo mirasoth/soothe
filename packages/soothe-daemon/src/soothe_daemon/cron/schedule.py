@@ -104,13 +104,13 @@ def _parse_duration(value: str) -> timedelta:
     """Parse a duration string like '2h', '30m', '1h30m', '1d'.
 
     Args:
-    value: Duration string.
+        value: Duration string.
 
     Returns:
-    Parsed timedelta.
+        Parsed timedelta.
 
     Raises:
-    ValueError: If value cannot be parsed.
+        ValueError: If value cannot be parsed.
     """
     m = _DURATION_RE.fullmatch(value)
     if not m or not any(m.groups()):
@@ -144,12 +144,12 @@ def _next_cron(expr: str, after: datetime, schedule_tz: tzinfo) -> datetime | No
     steps (`*/5`), and lists (`1,3,5`).
 
     Args:
-    expr: Cron expression (5 fields).
-    after: Reference instant (UTC-aware).
-    schedule_tz: Timezone used to interpret cron wall-clock fields.
+        expr: Cron expression (5 fields).
+        after: Reference instant (UTC-aware).
+        schedule_tz: Timezone used to interpret cron wall-clock fields.
 
     Returns:
-    Next matching datetime in UTC.
+        Next matching datetime in UTC.
     """
     parts = expr.strip().split()
     cron_field_count = 5  # standard 5-field cron: min hour dom month dow
@@ -186,11 +186,11 @@ def _matches_constraints(dt: datetime, constraints: dict[str, set[int]]) -> bool
     """Check if a datetime matches all cron constraints.
 
     Args:
-    dt: Datetime to check.
-    constraints: Dict of field name → set of valid values.
+        dt: Datetime to check.
+        constraints: Dict of field name → set of valid values.
 
     Returns:
-    True if datetime matches all constraints.
+        True if datetime matches all constraints.
     """
     checks = {
         "minute": dt.minute,
@@ -213,12 +213,12 @@ def _parse_cron_field(pattern: str, lo: int, hi: int) -> set[int] | None:
     """Parse a single cron field into a set of valid values.
 
     Args:
-    pattern: Cron field pattern (`*`, `1-5`, `*/2`, `1,3,5`).
-    lo: Minimum valid value.
-    hi: Maximum valid value.
+        pattern: Cron field pattern (`*`, `1-5`, `*/2`, `1,3,5`).
+        lo: Minimum valid value.
+        hi: Maximum valid value.
 
     Returns:
-    Set of valid values, or None if pattern is invalid.
+        Set of valid values, or None if pattern is invalid.
     """
     values: set[int] = set()
     for part in pattern.split(","):
