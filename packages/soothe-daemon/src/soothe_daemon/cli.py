@@ -700,7 +700,7 @@ def run_acp() -> None:
 
     cfg = SootheDaemonConfig()
     cfg.transports.websocket.enabled = False
-    cfg.channels.acp = ACPConfig(enabled=True)
+    cfg.channels.acp = ACPConfig(enabled=True, transport="stdio")
     run_daemon(daemon_config=cfg)
 
 
