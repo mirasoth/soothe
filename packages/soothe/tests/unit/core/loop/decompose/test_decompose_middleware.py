@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
 from langchain.agents.middleware.types import ModelRequest
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from soothe.prompts import PARALLEL_NUDGE_ADDENDUM
+from soothe.sloop.decompose.middleware import reset_decompose_injection_log_state
 from soothe.sloop.decompose.runtime import bind_decompose_runtime, reset_decompose_runtime
 from soothe.sloop.middleware import DecomposeTaskMiddleware
 from soothe.sloop.utils.config_keys import (
@@ -187,3 +190,43 @@ def test_nudge_idempotent_on_repeat_hook() -> None:
         once = _run_through_hook(DecomposeTaskMiddleware(), _request())
         twice = _run_through_hook(DecomposeTaskMiddleware(), once)
     assert twice.system_message.content.count(PARALLEL_NUDGE_ADDENDUM) == 1
+
+
+# ── Injection log dedup (one DEBUG line per step) ───────────────────────────
+
+
+def test_injection_log_fires_once_per_step(caplog: pytest.LogCaptureFixture) -> None:
+    """``modify_request`` runs on every model call, so without per-step dedup
+    a single step floods the DEBUG log with identical "injecting
+    decompose_task" lines (1549× observed in one loop). The injection must
+    still happen every call (tool stays reachable) but the log fires once.
+    """
+    reset_decompose_injection_log_state()
+    caplog.set_level(logging.DEBUG, logger="soothe.sloop.decompose.middleware")
+    middleware = DecomposeTaskMiddleware()
+    conf = {SOOTHE_DECOMPOSE_STEP_ID_KEY: "DEDUP-01"}
+    with patch(_CONFIGURABLE, return_value=conf):
+        for _ in range(5):
+            forwarded = _run_through_hook(middleware, _request())
+            # Tool stays reachable on every call.
+            assert "decompose_task" in _tool_names(forwarded)
+
+    injection_logs = [r for r in caplog.records if "injecting decompose_task" in r.getMessage()]
+    assert len(injection_logs) == 1, (
+        f"expected one injection log per step, got {len(injection_logs)}"
+    )
+
+
+def test_injection_log_fires_again_for_a_new_step(caplog: pytest.LogCaptureFixture) -> None:
+    """A different step_id logs its injection again (dedup is per-step, not global)."""
+    reset_decompose_injection_log_state()
+    caplog.set_level(logging.DEBUG, logger="soothe.sloop.decompose.middleware")
+    middleware = DecomposeTaskMiddleware()
+    with patch(_CONFIGURABLE, return_value={SOOTHE_DECOMPOSE_STEP_ID_KEY: "STEP-A"}):
+        _run_through_hook(middleware, _request())
+        _run_through_hook(middleware, _request())
+    with patch(_CONFIGURABLE, return_value={SOOTHE_DECOMPOSE_STEP_ID_KEY: "STEP-B"}):
+        _run_through_hook(middleware, _request())
+
+    injection_logs = [r for r in caplog.records if "injecting decompose_task" in r.getMessage()]
+    assert len(injection_logs) == 2
