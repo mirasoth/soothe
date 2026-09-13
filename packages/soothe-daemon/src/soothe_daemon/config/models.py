@@ -56,7 +56,7 @@ class ACPConfig(BaseModel):
     `soothe-acp` console script for standalone mode).
     """
 
-    enabled: bool = False
+    enabled: bool = True
     agent_name: str = "Soothe"
     agent_description: str = "Soothe autonomous agent"
     default_model: str | None = None

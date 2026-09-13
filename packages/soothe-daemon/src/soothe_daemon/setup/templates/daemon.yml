@@ -24,10 +24,11 @@ channels:
   send_tool_hints: false
   show_reasoning: true
   send_max_retries: 3
-  # ACP (Agent Client Protocol) — stdio JSON-RPC server for editor/IDE integration
-  # Enable for standalone ACP mode (run `soothe-acp`); disable WebSocket when ACP is sole channel
+  # ACP (Agent Client Protocol) — JSON-RPC server for editor/IDE integration
+  # Enabled by default (WebSocket transport at ws_path). Set transport to "stdio"
+  # for standalone ACP mode (run `soothe-acp`); disable WebSocket when ACP is sole channel
   acp:
-    enabled: false
+    enabled: true
     agent_name: "Soothe"
     agent_description: "Soothe autonomous agent"
     default_model: null
