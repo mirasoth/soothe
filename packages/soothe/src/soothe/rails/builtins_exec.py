@@ -119,9 +119,8 @@ class RailJobState:
     # Test knobs / decompose plans (None = unset; coalesce at use sites)
     scout_count: int | None = None
     decompose_plan: list[dict[str, Any]] | None = None
-    # Fan-out catalog (streaming spawn; wave_index is legacy/trace only)
+    # Fan-out catalog (streaming spawn; wave_index is trace only)
     wave_index: int = 0
-    max_waves: int = 32  # legacy alias / default expansion budget; prefer max_slices
     max_slices: int | None = None
     wave_slices: list[str] | None = None
     spawned_slices: dict[str, str] = field(default_factory=dict)
@@ -167,10 +166,10 @@ class RailJobState:
         )
 
     def effective_max_slices(self) -> int:
-        """Catalog expansion budget (default max_waves / 32)."""
+        """Catalog expansion budget (default 32 when unset)."""
         if self.max_slices is not None:
             return int(self.max_slices)
-        return int(self.max_waves) if self.max_waves else 32
+        return 32
 
 
 @dataclass
@@ -369,7 +368,6 @@ class RailBuiltinExecutor:
             if base.decompose_plan is not None
             else donor.decompose_plan,
             wave_index=max(base.wave_index, donor.wave_index),
-            max_waves=max(base.max_waves, donor.max_waves),
             max_slices=base.max_slices if base.max_slices is not None else donor.max_slices,
             wave_slices=base.wave_slices if base.wave_slices is not None else donor.wave_slices,
             spawned_slices=spawned,
@@ -425,7 +423,6 @@ class RailBuiltinExecutor:
                 "scout_count": state.scout_count,
                 "decompose_plan": state.decompose_plan,
                 "wave_index": state.wave_index,
-                "max_waves": state.max_waves,
                 "max_slices": state.max_slices,
                 "wave_slices": state.wave_slices,
                 "spawned_slices": state.spawned_slices,
@@ -478,6 +475,8 @@ class RailBuiltinExecutor:
                 if k and v:
                     spawned[str(k)] = str(v)
         max_slices = int(raw["max_slices"]) if raw.get("max_slices") is not None else None
+        if max_slices is None and raw.get("max_waves") is not None:
+            max_slices = int(raw["max_waves"])
         return RailJobState(
             job_id=str(raw.get("job_id") or job_id),
             rail_id=str(raw.get("rail_id") or ""),
@@ -488,7 +487,6 @@ class RailBuiltinExecutor:
             scout_count=int(raw["scout_count"]) if raw.get("scout_count") is not None else None,
             decompose_plan=raw.get("decompose_plan"),
             wave_index=int(raw.get("wave_index") or 0),
-            max_waves=int(raw.get("max_waves") or 32),
             max_slices=max_slices,
             wave_slices=raw.get("wave_slices"),
             spawned_slices=spawned,
@@ -665,7 +663,7 @@ class RailBuiltinExecutor:
 
         Returns the bound `_do_*_steps` handler for the five supported
         verbs, or `None` when the verb has no step variant (fall through to
-        the goal-level `_do_*` handler for backward compat).
+        the goal-level `_do_*` handler).
         """
         mapping = {
             "decompose_parallel": "_do_decompose_parallel_steps",
@@ -927,7 +925,7 @@ class RailBuiltinExecutor:
         slices: list[dict[str, Any]] | None = None,
         rationale: str | None = None,
         independence: str | None = None,
-        max_waves: int | None = None,
+        max_slices: int | None = None,
         scout_count: int | None = None,
         source_path: str | None = None,
     ) -> WavePlan | None:
@@ -946,7 +944,7 @@ class RailBuiltinExecutor:
                     slices=slices,
                     rationale=rationale,
                     independence=independence,
-                    max_waves=max_waves,
+                    max_slices=max_slices,
                     scout_count=scout_count,
                 )
             elif isinstance(plan, WavePlan):
@@ -999,10 +997,6 @@ class RailBuiltinExecutor:
             state.scout_count = int(updates["scout_count"])
         if updates.get("max_slices") is not None:
             state.max_slices = int(updates["max_slices"])
-            state.max_waves = max(state.max_waves, int(updates["max_slices"]))
-        elif updates.get("max_waves") is not None:
-            state.max_waves = max(state.wave_index, int(updates["max_waves"]))
-            state.max_slices = int(updates["max_waves"])
         if source_path:
             state.wave_plan_source_path = source_path
         logger.info(

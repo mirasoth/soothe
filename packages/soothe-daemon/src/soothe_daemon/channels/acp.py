@@ -247,30 +247,6 @@ class ACPChannel(Channel):
             self._connections[connection] = state
         return state
 
-    # Backward-compatible property aliases (tests access these directly).
-    # They reflect the *current* connection's state, which in stdio mode is
-    # always the single sentinel connection.
-
-    @property
-    def _session_map(self) -> dict[str, str]:
-        """Session map for the current connection."""
-        return self._get_state().session_map
-
-    @property
-    def _pending_permissions(self) -> dict[int, asyncio.Future[dict[str, Any]]]:
-        """Pending permission futures for the current connection."""
-        return self._get_state().pending_permissions
-
-    @property
-    def _event_queues(self) -> dict[str, asyncio.Queue[dict[str, Any]]]:
-        """Event queues for the current connection."""
-        return self._get_state().event_queues
-
-    @property
-    def _consumer_tasks(self) -> dict[str, asyncio.Task[None]]:
-        """Consumer tasks for the current connection."""
-        return self._get_state().consumer_tasks
-
     async def start(self) -> None:
         """Start the ACP channel — dispatch on configured transport.
 
@@ -386,7 +362,7 @@ class ACPChannel(Channel):
         """Deliver outbound message as ACP `session/update` notification.
 
         Args:
-            chat_id: ACP session_id (maps to loop_id via _session_map).
+            chat_id: ACP session_id (maps to loop_id via the session map).
             message: ChannelMessage to deliver.
         """
         session_id = self._loop_to_session(chat_id)

@@ -109,7 +109,7 @@ class WavePlan(BaseModel):
         default=None,
         ge=1,
         le=64,
-        description="Legacy alias for max_slices expansion budget",
+        description="Expansion budget alias for max_slices (accepted on ingest)",
     )
     independence: str | None = None
     rationale: str | None = Field(
@@ -167,7 +167,7 @@ class WavePlan(BaseModel):
         return list(self.wave_slices)
 
     def expansion_budget(self) -> int | None:
-        """Preferred `max_slices`, else legacy `max_waves`."""
+        """Preferred `max_slices` expansion budget."""
         if self.max_slices is not None:
             return int(self.max_slices)
         if self.max_waves is not None:
@@ -544,7 +544,9 @@ def wave_plan_to_dict(plan: WavePlan) -> dict[str, Any]:
         payload["rationale"] = plan.rationale
     if plan.scout_count is not None:
         payload["scout_count"] = plan.scout_count
-    if plan.max_waves is not None:
+    if plan.max_slices is not None:
+        payload["max_slices"] = plan.max_slices
+    elif plan.max_waves is not None:
         payload["max_waves"] = plan.max_waves
     return payload
 
@@ -843,7 +845,6 @@ def apply_wave_plan_to_state_fields(plan: WavePlan) -> dict[str, Any]:
     budget = plan.expansion_budget()
     if budget is not None:
         updates["max_slices"] = budget
-        updates["max_waves"] = budget  # legacy alias on rail state
     return updates
 
 

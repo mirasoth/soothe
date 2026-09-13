@@ -16,7 +16,7 @@ applies_when: |
 
 fanout:
   require_plan: true
-  max_waves: 32
+  max_slices: 32
 
 worktrees:
   enabled: true
@@ -57,8 +57,8 @@ verbs:
             "independence":"disjoint write-sets per migration slice",
             "rationale":"why this partition"}
             Optionally use rich flat `slices` entries
-            ({"slice","description","tags","depends_on"}) and/or `max_slices`
-            / `max_waves`. Prose alone is not enough — never substitute a
+            ({"slice","description","tags","depends_on"}) and/or `max_slices`.
+            Prose alone is not enough — never substitute a
             fixed default slice list. Slices must be independent (no
             overlapping primary write sets). Slices with omitted depends_on
             are ready after architecture (streaming fan-out).
