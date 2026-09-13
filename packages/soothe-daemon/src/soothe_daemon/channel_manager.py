@@ -65,6 +65,7 @@ class ChannelManager:
         self._unified_app: FastAPI | None = None
         self._unified_server: uvicorn.Server | None = None
         self._unified_serve_task: asyncio.Task[None] | None = None
+        self._acp_ws_enabled: bool = False
 
         # Message handler wired before start_all(); channels read it from manager state.
         self._message_handler: Callable[[str, dict[str, Any]], None] | None = None
@@ -182,8 +183,16 @@ class ChannelManager:
         if not self._config.transports.websocket.enabled and not acp_enabled:
             raise RuntimeError("At least one transport channel (websocket or acp) must be enabled")
 
-        # Create unified FastAPI app for WebSocket (only when WebSocket is enabled)
-        if self._config.transports.websocket.enabled:
+        # Determine whether ACP is in WebSocket transport mode.
+        self._acp_ws_enabled = (
+            acp_enabled and getattr(self._config.channels.acp, "transport", "stdio") == "websocket"
+        )
+
+        # Create the unified FastAPI app when either native WebSocket or
+        # ACP-WS transport is enabled.  Both register WS routes on this app.
+        ws_enabled = self._config.transports.websocket.enabled
+        need_unified_app = ws_enabled or self._acp_ws_enabled
+        if need_unified_app:
             self._unified_app = FastAPI(
                 title="Soothe Daemon",
                 description="WebSocket API for Soothe",
@@ -204,7 +213,8 @@ class ChannelManager:
                 """
                 return {"status": "ok"}
 
-            # Create WebSocket channel
+        # Create WebSocket channel (when native WebSocket is enabled)
+        if ws_enabled:
             ws_channel = WebSocketChannel(
                 self._config.transports.websocket,
                 manager=self,
@@ -220,9 +230,20 @@ class ChannelManager:
         if acp_enabled:
             from soothe_daemon.channels.acp import ACPChannel
 
-            acp_channel = ACPChannel(self._config.channels.acp, manager=self)
+            if self._acp_ws_enabled and self._unified_app is None:
+                raise RuntimeError(
+                    "ACP WebSocket transport requires a unified FastAPI app, but none was created"
+                )
+
+            acp_channel = ACPChannel(
+                self._config.channels.acp,
+                manager=self,
+                unified_app=self._unified_app if self._acp_ws_enabled else None,
+            )
             self._channels["acp"] = acp_channel
-            logger.debug("Configured ACP channel")
+            logger.debug(
+                "Configured ACP channel (%s transport)", self._config.channels.acp.transport
+            )
 
         # Apply global channel settings to all channels
         for channel in self._channels.values():
@@ -231,7 +252,11 @@ class ChannelManager:
             channel.show_reasoning = getattr(self._config.channels, "show_reasoning", True)
 
     async def _start_unified_listener(self) -> None:
-        """Bind one uvicorn server for the FastAPI WebSocket app."""
+        """Bind one uvicorn server for the FastAPI WebSocket app.
+
+        Serves all WS-transport routes registered on ``self._unified_app``
+        (native WebSocket at ``/`` and/or ACP WebSocket at ``/acp``).
+        """
         if self._unified_app is None:
             return
 
@@ -261,10 +286,22 @@ class ChannelManager:
 
         protocol = "wss" if ws.tls_enabled else "ws"
         logger.info(
-            "WebSocket channel listening on %s://%s:%d",
+            "Unified WS listener on %s://%s:%d (routes: %s)",
             protocol,
             ws.host,
             ws.port,
+            ", ".join(
+                route
+                for route, enabled in [
+                    ("/", self._config.transports.websocket.enabled),
+                    (
+                        getattr(self._config.channels.acp, "ws_path", "/acp"),
+                        getattr(self._config.channels.acp, "transport", "stdio") == "websocket"
+                        and self._config.channels.acp.enabled,
+                    ),
+                ]
+                if enabled
+            ),
         )
 
     async def start_all(self) -> None:
@@ -290,7 +327,9 @@ class ChannelManager:
 
         try:
             await asyncio.gather(*start_tasks)
-            if self._unified_app is not None and self._config.transports.websocket.enabled:
+            if self._unified_app is not None and (
+                self._config.transports.websocket.enabled or self._acp_ws_enabled
+            ):
                 await self._start_unified_listener()
             self._started = True
             logger.debug(

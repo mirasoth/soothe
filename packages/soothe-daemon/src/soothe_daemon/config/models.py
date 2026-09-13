@@ -50,9 +50,10 @@ class TransportConfig(BaseModel):
 class ACPConfig(BaseModel):
     """ACP (Agent Client Protocol) channel configuration.
 
-    ACP provides a stdio JSON-RPC server for editor/IDE integration.
-    When enabled as the sole channel (WebSocket disabled), the daemon
-    runs in standalone ACP mode via the ``soothe-acp`` console script.
+    ACP provides a JSON-RPC server for editor/IDE integration. By default it
+    runs over a WebSocket endpoint at ``ws_path``; when ``transport`` is set to
+    ``"stdio"`` the ACP server runs over stdin/stdout instead (used by the
+    ``soothe-acp`` console script for standalone mode).
     """
 
     enabled: bool = False
@@ -60,6 +61,8 @@ class ACPConfig(BaseModel):
     agent_description: str = "Soothe autonomous agent"
     default_model: str | None = None
     session_timeout_seconds: int = 3600
+    transport: Literal["stdio", "websocket"] = "websocket"
+    ws_path: str = "/acp"
 
 
 class ChannelsConfig(BaseModel):

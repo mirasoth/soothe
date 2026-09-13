@@ -1,8 +1,15 @@
-"""ACP (Agent Client Protocol) channel — stdio JSON-RPC server.
+"""ACP (Agent Client Protocol) channel — multi-transport JSON-RPC server.
 
 This channel implements the ACP server as a daemon channel, conforming to
-the ``Channel`` ABC. It listens on stdio (NDJSON JSON-RPC 2.0) and translates
-ACP ``session/*`` methods into daemon-internal calls:
+the ``Channel`` ABC. It supports two transports:
+
+- **stdio** (default): reads NDJSON JSON-RPC 2.0 from stdin, writes responses
+  to stdout. Single-connection mode used by the ``soothe-acp`` console script.
+- **websocket**: registers a WebSocket route on the unified FastAPI app at
+  ``ws_path`` (default ``/acp``). Supports multiple concurrent connections,
+  each with its own session map and permission futures.
+
+Both transports translate ACP ``session/*`` methods into daemon-internal calls:
 
 - ``session/new`` → ``ChannelManager.handle_inbound()`` (creates a loop) +
   EventBus subscription for output events.
@@ -12,7 +19,8 @@ ACP ``session/*`` methods into daemon-internal calls:
 
 Daemon EventBus output events (``OUTPUT_TEXT_DELTA``, ``OUTPUT_TEXT_COMPLETE``,
 ``OUTPUT_PROGRESS``, ``OUTPUT_REASONING``) are translated to ACP
-``session/update`` notifications written to stdout.
+``session/update`` notifications written to the active transport (stdout in
+stdio mode, ``websocket.send_text`` in WS mode).
 
 Plan projection is lossy: Soothe plans are DAGs with dependencies; ACP plans
 are flat lists of ``{content, priority, status}``. The projection drops
@@ -40,11 +48,15 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import contextvars
 import json
 import sys
 import uuid
 from logging import getLogger
 from typing import TYPE_CHECKING, Any
+
+from fastapi import FastAPI, WebSocket
+from starlette.websockets import WebSocketDisconnect
 
 from soothe_daemon.channels.base import Channel
 from soothe_daemon.channels.message import ChannelMessage
@@ -73,6 +85,49 @@ except ImportError:
 # Default timeout for permission responses from the ACP client (seconds).
 _PERMISSION_TIMEOUT_S = 120.0
 
+# Sentinel key used for the single stdio connection in the _connections dict.
+# In stdio mode there is exactly one connection (the stdin/stdout pipe); in
+# WebSocket mode each connected client gets its own _ConnectionState entry
+# keyed by its WebSocket object.
+_STDIO_SENTINEL: str = "__stdio__"
+
+# Context var tracking the connection currently being serviced. Protocol
+# handlers and the EventBus consumer use this to route output to the correct
+# transport endpoint without an explicit connection parameter at every call
+# site. Set by _read_stdin_loop / _handle_ws_connection before dispatching.
+_current_connection: contextvars.ContextVar[Any] = contextvars.ContextVar(
+    "_acp_current_connection", default=_STDIO_SENTINEL
+)
+
+
+class _ConnectionState:
+    """Per-connection state for a single ACP client.
+
+    In stdio mode a single ``_ConnectionState`` is stored under the
+    ``_STDIO_SENTINEL`` key. In WebSocket mode each connected WebSocket gets
+    its own instance, enabling multiple concurrent sessions with isolated
+    session maps, permission futures, and event queues.
+
+    Attributes:
+        session_map: ACP session_id → daemon loop_id.
+        pending_permissions: request_id → future awaiting client response.
+        event_queues: loop_id → EventBus event queue.
+        consumer_tasks: loop_id → event consumer asyncio task.
+    """
+
+    __slots__ = (
+        "session_map",
+        "pending_permissions",
+        "event_queues",
+        "consumer_tasks",
+    )
+
+    def __init__(self) -> None:
+        self.session_map: dict[str, str] = {}
+        self.pending_permissions: dict[int, asyncio.Future[dict[str, Any]]] = {}
+        self.event_queues: dict[str, asyncio.Queue[dict[str, Any]]] = {}
+        self.consumer_tasks: dict[str, asyncio.Task[None]] = {}
+
 
 def _make_text_block(content: str) -> dict[str, Any]:
     """Build an ACP text block, using SDK helper if available."""
@@ -97,7 +152,15 @@ def _make_progress_block(message: str) -> dict[str, Any]:
 
 
 class ACPChannel(Channel):
-    """ACP stdio channel — JSON-RPC 2.0 over stdin/stdout.
+    """ACP channel — JSON-RPC 2.0 over stdio or WebSocket.
+
+    The transport is selected by ``ACPConfig.transport``:
+
+    - ``stdio`` (default): single-connection NDJSON JSON-RPC over
+      stdin/stdout. Used by the ``soothe-acp`` console script.
+    - ``websocket``: registers a WebSocket route on the unified FastAPI app
+      at ``ACPConfig.ws_path``. Supports multiple concurrent connections,
+      each with isolated session state.
 
     When enabled as the sole channel (WebSocket disabled), the daemon runs in
     standalone ACP mode. The ``soothe-acp`` console script boots this mode.
@@ -109,87 +172,204 @@ class ACPChannel(Channel):
     supports_outbound = True
     supports_streaming = True
 
-    def __init__(self, config: ACPConfig, manager: ChannelManager) -> None:
+    def __init__(
+        self,
+        config: ACPConfig,
+        manager: ChannelManager,
+        *,
+        unified_app: FastAPI | None = None,
+    ) -> None:
         """Initialize ACP channel.
 
         Args:
             config: ACP channel configuration.
             manager: Channel manager that owns this channel.
+            unified_app: Optional shared FastAPI application. When provided
+                and ``config.transport == "websocket"``, the ACP WebSocket
+                route is registered on this app instead of launching a
+                standalone server.
         """
         super().__init__(config, manager)
         self._acp_config = config
+        self._unified_parent_app = unified_app
 
-        # ACP session_id → daemon loop_id
-        self._session_map: dict[str, str] = {}
+        # Per-connection state keyed by connection identifier.
+        # In stdio mode the single connection uses ``_STDIO_SENTINEL``.
+        # In WebSocket mode each WebSocket client is a key.
+        self._connections: dict[Any, _ConnectionState] = {}
 
-        # loop_id → EventBus event queue
-        self._event_queues: dict[str, asyncio.Queue[dict[str, Any]]] = {}
-
-        # loop_id → event consumer task
-        self._consumer_tasks: dict[str, asyncio.Task[None]] = {}
-
-        # Stdin reader task
+        # Stdin reader task (stdio mode only).
         self._stdin_task: asyncio.Task[None] | None = None
 
         # Running flag
         self._running = False
 
-        # Pending permission requests: request_id → future that the consumer task awaits.
-        # The stdin reader resolves these futures when the client responds.
-        self._pending_permissions: dict[int, asyncio.Future[dict[str, Any]]] = {}
-
         # Monotonic request ID counter for outbound JSON-RPC requests.
         self._next_request_id = 1
 
+        # Whether the WS route has been registered on the unified app.
+        self._ws_route_registered = False
+
+    # ------------------------------------------------------------------
+    # Per-connection state accessors
+    # ------------------------------------------------------------------
+
+    def _get_state(self, connection: Any = None) -> _ConnectionState:
+        """Return the ``_ConnectionState`` for the given connection.
+
+        If ``connection`` is ``None``, the current connection (from the
+        context var) is used. If no state exists for the connection, a new
+        ``_ConnectionState`` is created and stored.
+
+        Args:
+            connection: Connection key (WebSocket or ``_STDIO_SENTINEL``).
+                Defaults to ``_current_connection`` context var.
+
+        Returns:
+            The ``_ConnectionState`` for the connection.
+        """
+        if connection is None:
+            connection = _current_connection.get()
+        state = self._connections.get(connection)
+        if state is None:
+            state = _ConnectionState()
+            self._connections[connection] = state
+        return state
+
+    # Backward-compatible property aliases (tests access these directly).
+    # They reflect the *current* connection's state, which in stdio mode is
+    # always the single sentinel connection.
+
+    @property
+    def _session_map(self) -> dict[str, str]:
+        """Session map for the current connection."""
+        return self._get_state().session_map
+
+    @property
+    def _pending_permissions(self) -> dict[int, asyncio.Future[dict[str, Any]]]:
+        """Pending permission futures for the current connection."""
+        return self._get_state().pending_permissions
+
+    @property
+    def _event_queues(self) -> dict[str, asyncio.Queue[dict[str, Any]]]:
+        """Event queues for the current connection."""
+        return self._get_state().event_queues
+
+    @property
+    def _consumer_tasks(self) -> dict[str, asyncio.Task[None]]:
+        """Consumer tasks for the current connection."""
+        return self._get_state().consumer_tasks
+
     async def start(self) -> None:
-        """Start the ACP stdio server — launch stdin reader loop."""
+        """Start the ACP channel — dispatch on configured transport.
+
+        - ``stdio``: launch the stdin reader loop (existing behavior).
+        - ``websocket``: register a WS route on the unified FastAPI app.
+        """
         if not self._acp_config.enabled:
             logger.info("[ACP] Channel disabled")
             return
 
         self._running = True
+
+        if self._acp_config.transport == "websocket":
+            await self._start_ws_transport()
+        else:
+            await self._start_stdio_transport()
+
+    async def _start_stdio_transport(self) -> None:
+        """Launch the stdin reader loop for stdio transport."""
         self._stdin_task = asyncio.create_task(self._read_stdin_loop())
         logger.info(
             "[ACP] Channel started (agent_name=%s, stdio JSON-RPC)",
             self._acp_config.agent_name,
         )
 
+    async def _start_ws_transport(self) -> None:
+        """Register the ACP WebSocket route on the unified FastAPI app."""
+        if self._unified_parent_app is None:
+            logger.error(
+                "[ACP] WebSocket transport requires a unified FastAPI app; falling back to stdio"
+            )
+            await self._start_stdio_transport()
+            return
+
+        if not self._ws_route_registered:
+            ws_path = self._acp_config.ws_path
+
+            @self._unified_parent_app.websocket(ws_path)
+            async def _acp_ws_endpoint(websocket: WebSocket) -> None:
+                await self._handle_ws_connection(websocket)
+
+            self._ws_route_registered = True
+            logger.info(
+                "[ACP] WebSocket route registered at %s (agent_name=%s)",
+                ws_path,
+                self._acp_config.agent_name,
+            )
+
     async def stop(self) -> None:
-        """Stop the ACP channel — cancel all tasks and clean up."""
+        """Stop the ACP channel — cancel all tasks and clean up.
+
+        Iterates over all connections (stdio sentinel + any WebSocket
+        clients) and tears down their consumer tasks, event subscriptions,
+        and pending permission futures.
+        """
         self._running = False
 
-        # Cancel stdin reader
+        # Cancel stdin reader (stdio mode)
         if self._stdin_task is not None:
             self._stdin_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self._stdin_task
             self._stdin_task = None
 
-        # Cancel all consumer tasks and unsubscribe
+        # Tear down every connection's consumer tasks and subscriptions.
         event_bus = getattr(self._manager, "_event_bus", None)
-        for loop_id, task in list(self._consumer_tasks.items()):
+        for conn_key, state in list(self._connections.items()):
+            await self._cleanup_connection(conn_key, state, event_bus)
+
+        self._connections.clear()
+
+        # Flush stdout (stdio mode)
+        await _flush_stdout()
+
+        logger.info("[ACP] Channel stopped")
+
+    async def _cleanup_connection(
+        self,
+        conn_key: Any,
+        state: _ConnectionState,
+        event_bus: Any,
+    ) -> None:
+        """Tear down a single connection's state.
+
+        Cancels consumer tasks, unsubscribes EventBus queues, and resolves
+        pending permission futures with cancellation.
+
+        Args:
+            conn_key: Connection identifier (WebSocket or ``_STDIO_SENTINEL``).
+            state: The ``_ConnectionState`` to clean up.
+            event_bus: Daemon EventBus (for unsubscribing event queues).
+        """
+        for loop_id, task in list(state.consumer_tasks.items()):
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await task
-            queue = self._event_queues.pop(loop_id, None)
+            queue = state.event_queues.pop(loop_id, None)
             if queue is not None and event_bus is not None:
                 topic = loop_event_topic(loop_id)
                 with contextlib.suppress(Exception):
                     await event_bus.unsubscribe(topic, queue)
 
-        self._consumer_tasks.clear()
-        self._session_map.clear()
+        state.consumer_tasks.clear()
+        state.session_map.clear()
 
         # Resolve any pending permission futures with a cancellation error
-        for fut in list(self._pending_permissions.values()):
+        for fut in list(state.pending_permissions.values()):
             if not fut.done():
                 fut.cancel()
-        self._pending_permissions.clear()
-
-        # Flush stdout
-        await _flush_stdout()
-
-        logger.info("[ACP] Channel stopped")
+        state.pending_permissions.clear()
 
     async def send(self, chat_id: str, message: ChannelMessage) -> None:
         """Deliver outbound message as ACP ``session/update`` notification.
@@ -250,40 +430,49 @@ class ACPChannel(Channel):
         await self._send_session_update(session_id, [block], metadata=metadata)
 
     # ------------------------------------------------------------------
-    # JSON-RPC stdio loop
+    # JSON-RPC transport loops
     # ------------------------------------------------------------------
 
     async def _read_stdin_loop(self) -> None:
-        """Read NDJSON lines from stdin and dispatch JSON-RPC requests."""
-        while self._running:
-            try:
-                line = await asyncio.to_thread(self._read_line)
-                if line is None:
-                    # EOF on stdin — client disconnected
-                    logger.info("[ACP] stdin EOF, shutting down")
-                    self._running = False
-                    break
-                line = line.strip()
-                if not line:
-                    continue
+        """Read NDJSON lines from stdin and dispatch JSON-RPC requests.
 
-                request = json.loads(line)
-                await self._dispatch_request(request)
-            except asyncio.CancelledError:
-                raise
-            except json.JSONDecodeError as e:
-                await self._write_jsonrpc(
-                    {
-                        "jsonrpc": "2.0",
-                        "id": None,
-                        "error": {
-                            "code": -32700,
-                            "message": f"Parse error: {e}",
-                        },
-                    }
-                )
-            except Exception:
-                logger.exception("[ACP] Error processing stdin line")
+        Sets the ``_current_connection`` context var to the stdio sentinel so
+        that protocol handlers and the EventBus consumer route output to
+        stdout via ``_write_jsonrpc``.
+        """
+        token = _current_connection.set(_STDIO_SENTINEL)
+        try:
+            while self._running:
+                try:
+                    line = await asyncio.to_thread(self._read_line)
+                    if line is None:
+                        # EOF on stdin — client disconnected
+                        logger.info("[ACP] stdin EOF, shutting down")
+                        self._running = False
+                        break
+                    line = line.strip()
+                    if not line:
+                        continue
+
+                    request = json.loads(line)
+                    await self._dispatch_request(request)
+                except asyncio.CancelledError:
+                    raise
+                except json.JSONDecodeError as e:
+                    await self._write_jsonrpc(
+                        {
+                            "jsonrpc": "2.0",
+                            "id": None,
+                            "error": {
+                                "code": -32700,
+                                "message": f"Parse error: {e}",
+                            },
+                        }
+                    )
+                except Exception:
+                    logger.exception("[ACP] Error processing stdin line")
+        finally:
+            _current_connection.reset(token)
 
     def _read_line(self) -> str | None:
         """Read one line from stdin (blocking). Returns None on EOF."""
@@ -291,6 +480,60 @@ class ACPChannel(Channel):
         if not line:
             return None
         return line
+
+    async def _handle_ws_connection(self, websocket: WebSocket) -> None:
+        """Handle a single WebSocket client connection lifecycle.
+
+        Mirrors ``_read_stdin_loop`` but reads from
+        ``websocket.receive_text()`` instead of stdin. Each connection gets
+        its own ``_ConnectionState`` with isolated session map, permission
+        futures, and event queues. On ``WebSocketDisconnect``, the
+        connection's state is cleaned up.
+
+        Args:
+            websocket: The connected WebSocket instance.
+        """
+        await websocket.accept()
+        # Ensure a _ConnectionState exists for this connection.
+        self._get_state(websocket)
+
+        token = _current_connection.set(websocket)
+        try:
+            while self._running:
+                try:
+                    raw = await websocket.receive_text()
+                except WebSocketDisconnect:
+                    logger.info("[ACP] WebSocket client disconnected")
+                    break
+
+                line = raw.strip()
+                if not line:
+                    continue
+
+                try:
+                    request = json.loads(line)
+                    await self._dispatch_request(request)
+                except json.JSONDecodeError as e:
+                    await self._write_jsonrpc(
+                        {
+                            "jsonrpc": "2.0",
+                            "id": None,
+                            "error": {
+                                "code": -32700,
+                                "message": f"Parse error: {e}",
+                            },
+                        },
+                        connection=websocket,
+                    )
+                except Exception:
+                    logger.exception("[ACP] Error processing WebSocket message")
+        finally:
+            _current_connection.reset(token)
+            # Clean up this connection's state.
+            event_bus = getattr(self._manager, "_event_bus", None)
+            state = self._connections.pop(websocket, None)
+            if state is not None:
+                await self._cleanup_connection(websocket, state, event_bus)
 
     async def _dispatch_request(self, request: dict[str, Any]) -> None:
         """Dispatch a JSON-RPC 2.0 request to the appropriate handler.
@@ -368,7 +611,7 @@ class ACPChannel(Channel):
             logger.warning("[ACP] Response with non-integer id: %s", req_id)
             return
 
-        fut = self._pending_permissions.pop(req_id, None)
+        fut = self._get_state(_current_connection.get()).pending_permissions.pop(req_id, None)
         if fut is None:
             logger.warning("[ACP] No pending permission for request id %s", req_id)
             return
@@ -416,19 +659,20 @@ class ACPChannel(Channel):
             metadata={},
         )
 
-        self._session_map[session_id] = loop_id
+        state = self._get_state(_current_connection.get())
+        state.session_map[session_id] = loop_id
 
         # Subscribe to the loop's EventBus topic
         event_bus = getattr(self._manager, "_event_bus", None)
         if event_bus is not None:
             queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=1000)
-            self._event_queues[loop_id] = queue
+            state.event_queues[loop_id] = queue
             topic = loop_event_topic(loop_id)
             await event_bus.subscribe(topic, queue)
 
             # Start consumer task to drain events and translate to ACP
             consumer = asyncio.create_task(self._consume_loop_events(loop_id, queue))
-            self._consumer_tasks[loop_id] = consumer
+            state.consumer_tasks[loop_id] = consumer
 
         logger.info("[ACP] session/new: session=%s → loop=%s", session_id, loop_id)
 
@@ -456,7 +700,7 @@ class ACPChannel(Channel):
                 elif isinstance(part, str):
                     prompt_text += part
 
-        loop_id = self._session_map.get(session_id)
+        loop_id = self._get_state(_current_connection.get()).session_map.get(session_id)
         if loop_id is None:
             raise ValueError(f"Unknown session: {session_id}")
 
@@ -478,7 +722,7 @@ class ACPChannel(Channel):
             params: ACP session/cancel params with ``sessionId``.
         """
         session_id = params.get("sessionId", "")
-        loop_id = self._session_map.get(session_id)
+        loop_id = self._get_state(_current_connection.get()).session_map.get(session_id)
         if loop_id is None:
             raise ValueError(f"Unknown session: {session_id}")
 
@@ -523,6 +767,10 @@ class ACPChannel(Channel):
         ``action_requests``) and bridges them to ACP
         ``session/request_permission`` requests.
 
+        The connection that owns ``loop_id`` is resolved on each iteration so
+        that output is routed to the correct transport endpoint (stdout or
+        WebSocket) via the ``_current_connection`` context var.
+
         Args:
             loop_id: Daemon loop identifier.
             queue: EventBus subscription queue for this loop.
@@ -540,6 +788,13 @@ class ACPChannel(Channel):
                 event = item
             else:
                 continue
+
+            # Resolve the connection that owns this loop_id and set the context
+            # var so _write_jsonrpc routes output to the correct endpoint.
+            conn_key = self._find_connection_for_loop(loop_id)
+            if conn_key is None:
+                continue
+            _current_connection.set(conn_key)
 
             session_id = self._loop_to_session(loop_id)
             if not session_id:
@@ -653,7 +908,7 @@ class ACPChannel(Channel):
             self._next_request_id += 1
 
             fut: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
-            self._pending_permissions[req_id] = fut
+            self._get_state(_current_connection.get()).pending_permissions[req_id] = fut
 
             request = {
                 "jsonrpc": "2.0",
@@ -811,7 +1066,11 @@ class ACPChannel(Channel):
         *,
         metadata: dict[str, Any] | None = None,
     ) -> None:
-        """Write an ACP ``session/update`` notification to stdout.
+        """Write an ACP ``session/update`` notification to the active transport.
+
+        In stdio mode the notification is written to stdout; in WebSocket
+        mode it is sent via ``websocket.send_text`` to the connection that
+        owns the session (determined via ``_current_connection`` context var).
 
         Args:
             session_id: ACP session identifier.
@@ -832,14 +1091,35 @@ class ACPChannel(Channel):
         }
         await self._write_jsonrpc(notification)
 
-    async def _write_jsonrpc(self, msg: dict[str, Any]) -> None:
-        """Serialize dict to JSON and write to stdout with newline delimiter.
+    async def _write_jsonrpc(
+        self,
+        msg: dict[str, Any],
+        *,
+        connection: Any = None,
+    ) -> None:
+        """Serialize dict to JSON and write to the active transport.
+
+        In stdio mode (or when ``connection`` is the stdio sentinel), writes
+        NDJSON to stdout via ``asyncio.to_thread``. In WebSocket mode, sends
+        the JSON text via ``websocket.send_text`` to the specified connection
+        (or the connection from ``_current_connection`` if not given).
 
         Args:
             msg: JSON-RPC message dict.
+            connection: Optional explicit connection key (WebSocket or
+                ``_STDIO_SENTINEL``). If ``None``, falls back to the
+                ``_current_connection`` context var, then to stdio.
         """
-        text = json.dumps(msg) + "\n"
-        await asyncio.to_thread(_write_stdout, text)
+        # Resolve the connection to route output to.
+        conn_key = connection if connection is not None else _current_connection.get()
+
+        if conn_key is not _STDIO_SENTINEL and isinstance(conn_key, WebSocket):
+            text = json.dumps(msg) + "\n"
+            await conn_key.send_text(text)
+        else:
+            # Stdio path — write to stdout via a thread to avoid blocking.
+            text = json.dumps(msg) + "\n"
+            await asyncio.to_thread(_write_stdout, text)
 
     # ------------------------------------------------------------------
     # Session mapping helpers
@@ -848,21 +1128,44 @@ class ACPChannel(Channel):
     def _loop_to_session(self, loop_id: str) -> str | None:
         """Look up ACP session_id from daemon loop_id.
 
+        Searches the session map of the current connection (determined by
+        ``_current_connection`` context var) so that multi-client WebSocket
+        connections have isolated session lookups.
+
         Args:
             loop_id: Daemon loop identifier.
 
         Returns:
             ACP session_id, or None if not found.
         """
-        for session_id, lid in self._session_map.items():
+        state = self._get_state(_current_connection.get())
+        for session_id, lid in state.session_map.items():
             if lid == loop_id:
                 return session_id
         return None
 
+    def _find_connection_for_loop(self, loop_id: str) -> Any:
+        """Find the connection key that owns the given loop_id.
+
+        Used by the EventBus consumer to resolve which connection a loop
+        belongs to, so output can be routed to the correct WebSocket client.
+
+        Args:
+            loop_id: Daemon loop identifier.
+
+        Returns:
+            Connection key (WebSocket or ``_STDIO_SENTINEL``), or ``None``
+            if no connection owns this loop.
+        """
+        for conn_key, state in self._connections.items():
+            if loop_id in state.session_map.values():
+                return conn_key
+        return None
+
     @property
     def client_count(self) -> int:
-        """Return number of active ACP sessions."""
-        return len(self._session_map)
+        """Return number of active ACP sessions across all connections."""
+        return sum(len(s.session_map) for s in self._connections.values())
 
 
 # ---------------------------------------------------------------------------
