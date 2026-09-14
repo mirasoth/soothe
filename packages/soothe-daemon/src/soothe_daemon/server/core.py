@@ -99,6 +99,9 @@ class SootheDaemon(DaemonHandlersMixin):
         self._daemon_workspace = resolve_daemon_workspace()
         logger.info("Daemon workspace: %s", self._daemon_workspace)
 
+        # RFC-906: Workspace sync manager (lazy-init when workspace_sync is enabled)
+        self._workspace_manager: Any = None  # WorkspaceManager | None
+
         # Incremental skill index (mtime-cached, global user skills only)
         from soothe_nano.skills.index import SkillIndex
 
@@ -287,6 +290,55 @@ class SootheDaemon(DaemonHandlersMixin):
             get_display_card_store().delete_loop(loop_id)
 
         return _purge_display_loop
+
+    def _get_workspace_manager(self) -> Any:
+        """Lazily construct the workspace sync manager (RFC-906).
+
+        Returns the singleton :class:`~soothe.workspace.sync.WorkspaceManager`,
+        creating it on first access when ``config.workspace_sync`` is enabled.
+
+        Returns:
+            The daemon's ``WorkspaceManager`` instance.
+
+        Raises:
+            RuntimeError: If workspace sync is not enabled in config.
+        """
+        if self._workspace_manager is not None:
+            return self._workspace_manager
+        if not self._config.workspace_sync.is_enabled:
+            raise RuntimeError("workspace_sync is not enabled in config")
+        from pathlib import Path
+
+        from soothe.config import SOOTHE_HOME
+        from soothe.workspace.state.factory import create_workspace_state_store
+        from soothe.workspace.sync import WorkspaceManager
+
+        home = Path(SOOTHE_HOME).expanduser()
+        workspaces_root = home / "data" / "workspaces-sync"
+        cas_root = home / "data" / "agent-cache"
+        workspaces_root.mkdir(parents=True, exist_ok=True)
+        cas_root.mkdir(parents=True, exist_ok=True)
+
+        config = self._config
+
+        def _state_store_factory(loop_id: str, workspace_dir: Any = None) -> Any:
+            return create_workspace_state_store(
+                config=config,
+                loop_id=loop_id,
+                workspace_dir=workspace_dir,
+            )
+
+        self._workspace_manager = WorkspaceManager(
+            workspaces_root=workspaces_root,
+            cas_root=cas_root,
+            state_store_factory=_state_store_factory,
+        )
+        logger.info(
+            "Workspace sync manager initialized: root=%s cas=%s",
+            workspaces_root,
+            cas_root,
+        )
+        return self._workspace_manager
 
     def _on_sighup_reload(self) -> None:
         """Handle SIGHUP signal for config reload."""
@@ -1553,6 +1605,12 @@ class SootheDaemon(DaemonHandlersMixin):
         if self._persistence_manager is not None:
             with contextlib.suppress(Exception):
                 await self._persistence_manager.close()
+
+        # RFC-906: Close workspace sync manager (drain open workspaces)
+        if self._workspace_manager is not None:
+            with contextlib.suppress(Exception):
+                await self._workspace_manager.close_all()
+            self._workspace_manager = None
 
         try:
             # Skip SQLite WAL housekeeping when the process is in PostgreSQL mode.

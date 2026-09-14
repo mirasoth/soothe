@@ -60,28 +60,35 @@ async def synthesize_plan(
         config=config,
     )
 
-    # Project execute_step ledger messages as evidence.
-    wrapper = GraphPromptWrapper(config)
-    ledger_cfg = None
-    if config is not None:
-        ledger_cfg = config.agent.loop.plan_prompt_ledger
-    projection = wrapper.project_ledger(
-        kind="synthesis",
-        state=state,
-        ledger_cfg=ledger_cfg,
-    )
-    ledger_msgs = list(projection.messages)
-
-    # Assemble the message list: system + ledger evidence + human trigger.
-    messages: list[Any] = [SystemMessage(content=system_text)]
-    messages.extend(ledger_msgs)
-
     is_refinement = bool((refinement_comments or "").strip()) and bool((prior_plan or "").strip())
+
+    # During refinement, the prior plan is already passed via the refinement
+    # trigger. Projecting the ledger here re-injects the old plan body as a
+    # "prior goal completion" report, which anchors the LLM on the stale plan
+    # and suppresses the requested changes. Skip ledger projection entirely
+    # for refinement passes — the refinement trigger carries everything needed.
     if is_refinement:
+        messages: list[Any] = [SystemMessage(content=system_text)]
         messages.append(
             HumanMessage(content=_build_refinement_trigger(refinement_comments, prior_plan))
         )
+        ledger_msgs: list[Any] = []
     else:
+        # Project execute_step ledger messages as evidence.
+        wrapper = GraphPromptWrapper(config)
+        ledger_cfg = None
+        if config is not None:
+            ledger_cfg = config.agent.loop.plan_prompt_ledger
+        projection = wrapper.project_ledger(
+            kind="synthesis",
+            state=state,
+            ledger_cfg=ledger_cfg,
+        )
+        ledger_msgs = list(projection.messages)
+
+        # Assemble the message list: system + ledger evidence + human trigger.
+        messages = [SystemMessage(content=system_text)]
+        messages.extend(ledger_msgs)
         messages.append(HumanMessage(content=_PLAN_SYNTHESIS_HUMAN_TRIGGER))
 
     approx_chars = sum(len(str(getattr(m, "content", ""))) for m in messages)
