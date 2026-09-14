@@ -289,9 +289,14 @@ class LocalModelServer:
         return False
 
     def _health_url(self) -> str:
-        """Get the health check URL for the configured backend."""
+        """Get the health check URL for the configured backend.
+
+        vLLM exposes its liveness probe at ``/health`` (root), separate from the
+        OpenAI-compatible API mounted at ``/v1``. Polling ``/v1/health`` returns
+        404 and makes ``launch()`` wait the full ``startup_timeout`` then fail.
+        """
         if self._config.backend == "vllm":
-            return f"{self._api_base}/health"
+            return f"http://127.0.0.1:{self._port}/health"
         # Ollama health endpoint.
         return f"http://127.0.0.1:{self._port}/api/tags"
 

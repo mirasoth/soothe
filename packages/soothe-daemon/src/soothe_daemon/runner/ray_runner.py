@@ -13,6 +13,7 @@ from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
 
 import ray
+from ray.exceptions import RayActorError
 from ray.util.queue import Queue
 from soothe.protocols.runner import LoopRunRequest
 
@@ -29,6 +30,11 @@ logger = logging.getLogger(__name__)
 # Timeout for each queue.get_async() poll — short enough to detect dead
 # actors quickly, long enough to avoid excessive CPU spinning.
 _QUEUE_GET_TIMEOUT_S = 5.0
+
+# Timeout for the liveness ping in _is_actor_alive. Ray raises RayActorError
+# quickly once an actor process is gone, so this only bounds the wait for a
+# responsive-but-busy actor (e.g. one still in __init__ loading a local model).
+_ACTOR_LIVENESS_PING_TIMEOUT_S = 30.0
 
 # ---------------------------------------------------------------------------
 # Cluster connection state (module-level singleton).
@@ -80,6 +86,8 @@ def _ensure_ray_init(daemon_config: SootheDaemonConfig | None) -> None:
                 actor_opts["num_gpus"] = ray_config.num_gpus
             if ray_config.object_store_memory > 0:
                 actor_opts["object_store_memory"] = ray_config.object_store_memory
+            if ray_config.runtime_env:
+                actor_opts["runtime_env"] = ray_config.runtime_env
             max_actors = ray_config.max_concurrent_actors
 
         if not ray.is_initialized():
@@ -260,8 +268,6 @@ class RayLoopRunner:
         timeout. If the actor has died (process crash), raises
         RayActorError so the stream consumer unblocks.
         """
-        from ray.exceptions import RayActorError
-
         while True:
             try:
                 kind, payload = await asyncio.wait_for(
@@ -293,14 +299,23 @@ class RayLoopRunner:
             yield payload
 
     def _is_actor_alive(self) -> bool:
-        """Check if the Ray actor is still alive via a short-timeout ping."""
+        """Return True unless the actor is confirmed dead.
+
+        A ping is queued behind any in-flight ``__init__`` (e.g. a local-model
+        actor loading vLLM, which can take a minute), so a *timeout* does NOT
+        mean the actor is dead — only ``RayActorError`` (the process is gone)
+        is treated as death. This avoids false-positive ``RayActorError``
+        mid-stream while a GPU-bound actor is still constructing.
+        """
         if self._actor is None:
             return False
         try:
-            ray.get(self._actor.ping.remote(), timeout=1.0)
+            ray.get(self._actor.ping.remote(), timeout=_ACTOR_LIVENESS_PING_TIMEOUT_S)
             return True
-        except Exception:  # noqa: BLE001
+        except RayActorError:
             return False
+        except Exception:  # noqa: BLE001  (timeout/network — actor still busy)
+            return True
 
     async def cancel(self) -> None:
         if self._actor is None:

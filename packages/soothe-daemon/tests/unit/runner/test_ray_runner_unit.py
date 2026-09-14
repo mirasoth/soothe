@@ -184,6 +184,61 @@ class TestEnsureRayInit:
 
         _reset_ray_state_for_testing()
 
+    def test_actor_options_include_runtime_env_when_set(self) -> None:
+        """RayConfig.runtime_env is folded into _actor_options."""
+        import soothe_daemon.runner.ray_runner as rrm
+
+        _reset_ray_state_for_testing = rrm._reset_ray_state_for_testing
+        _ensure_ray_init = rrm._ensure_ray_init
+
+        _reset_ray_state_for_testing()
+
+        runtime_env = {
+            "env_vars": {
+                "LD_LIBRARY_PATH": "/opt/cuda/lib64:/opt/nvidia/cu13/lib",
+                "VLLM_NO_USAGE_STATS": "1",
+            }
+        }
+        daemon_cfg = SootheDaemonConfig(
+            loop_runner=LoopRunnerConfig(
+                runner_mode="ray",
+                ray=RayConfig(num_gpus=1.0, runtime_env=runtime_env),
+            ),
+        )
+
+        with patch("soothe_daemon.runner.ray_runner.ray", ray_mock) as mock_r:
+            mock_r.is_initialized.return_value = False
+            _ensure_ray_init(daemon_cfg)
+
+            assert rrm._actor_options.get("runtime_env") == runtime_env
+            assert rrm._actor_options.get("num_gpus") == 1.0
+
+        _reset_ray_state_for_testing()
+
+    def test_actor_options_no_runtime_env_when_none(self) -> None:
+        """When RayConfig.runtime_env is None, runtime_env is not in actor_options."""
+        import soothe_daemon.runner.ray_runner as rrm
+
+        _reset_ray_state_for_testing = rrm._reset_ray_state_for_testing
+        _ensure_ray_init = rrm._ensure_ray_init
+
+        _reset_ray_state_for_testing()
+
+        daemon_cfg = SootheDaemonConfig(
+            loop_runner=LoopRunnerConfig(
+                runner_mode="ray",
+                ray=RayConfig(num_gpus=1.0),
+            ),
+        )
+
+        with patch("soothe_daemon.runner.ray_runner.ray", ray_mock) as mock_r:
+            mock_r.is_initialized.return_value = False
+            _ensure_ray_init(daemon_cfg)
+
+            assert "runtime_env" not in rrm._actor_options
+
+        _reset_ray_state_for_testing()
+
 
 class TestAwaitLoopDispatchable:
     """`await_loop_dispatchable` serializes consecutive turns on the same loop."""
@@ -245,3 +300,64 @@ class TestRayLoopRunnerConstructor:
         agent_cfg = MagicMock()
         runner = RayLoopRunner("loop-2", agent_cfg)
         assert runner._daemon_config is None
+
+
+class TestRayLoopRunnerLiveness:
+    """`_is_actor_alive` distinguishes a dead actor from a busy one.
+
+    A local-model actor blocks in ``__init__`` while loading vLLM (a minute or
+    more) and cannot answer a ping during that window. A ping *timeout* must
+    NOT be reported as death — only ``RayActorError`` (process gone) is.
+
+    The module global ``RayActorError`` is patched to a local class so the
+    tests don't depend on the shared ``ray.exceptions`` mock resolving to a
+    real class (sibling tests can leave a bare MagicMock in sys.modules).
+    """
+
+    _DEAD = type("_DeadActorError", (Exception,), {})
+
+    def _make_runner(self):
+        from soothe_daemon.runner.ray_runner import RayLoopRunner
+
+        runner = RayLoopRunner("loop-x", MagicMock(), MagicMock())
+        runner._actor = MagicMock()
+        return runner
+
+    def test_no_actor_returns_false(self) -> None:
+        runner = self._make_runner()
+        runner._actor = None
+        assert runner._is_actor_alive() is False
+
+    def test_ping_ok_returns_true(self) -> None:
+        runner = self._make_runner()
+        with patch("soothe_daemon.runner.ray_runner.ray") as mock_ray:
+            mock_ray.get.return_value = True
+            assert runner._is_actor_alive() is True
+            mock_ray.get.assert_called_once()
+
+    def test_ray_actor_error_means_dead(self) -> None:
+        runner = self._make_runner()
+        with (
+            patch("soothe_daemon.runner.ray_runner.RayActorError", self._DEAD),
+            patch("soothe_daemon.runner.ray_runner.ray") as mock_ray,
+        ):
+            mock_ray.get.side_effect = self._DEAD("actor gone")
+            assert runner._is_actor_alive() is False
+
+    def test_timeout_means_busy_not_dead(self) -> None:
+        runner = self._make_runner()
+        with (
+            patch("soothe_daemon.runner.ray_runner.RayActorError", self._DEAD),
+            patch("soothe_daemon.runner.ray_runner.ray") as mock_ray,
+        ):
+            mock_ray.get.side_effect = TimeoutError()
+            assert runner._is_actor_alive() is True
+
+    def test_other_exception_means_busy_not_dead(self) -> None:
+        runner = self._make_runner()
+        with (
+            patch("soothe_daemon.runner.ray_runner.RayActorError", self._DEAD),
+            patch("soothe_daemon.runner.ray_runner.ray") as mock_ray,
+        ):
+            mock_ray.get.side_effect = RuntimeError("transient")
+            assert runner._is_actor_alive() is True
