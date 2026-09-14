@@ -51,7 +51,7 @@ class TestSootheConfig:
         assert "max_evidence_turns" not in type(cfg.agent.rail).model_fields
         assert "evidence_max_iterations" not in type(cfg.agent.rail).model_fields
         assert cfg.agent.loop.max_iterations == 99
-        assert cfg.agent.loop.dispatch_idle_seconds == 300.0
+        assert cfg.agent.loop.dispatch_idle_seconds == 180.0
         assert cfg.agent.middleware.llm_rate_limit.enabled is True
         assert len(cfg.vector_stores) == 1
         assert cfg.vector_stores[0].name == "sqlite_vec_default"

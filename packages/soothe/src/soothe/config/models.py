@@ -969,11 +969,16 @@ class StrangeLoopConfig(BaseModel):
         return data
 
     dispatch_idle_seconds: float = Field(
-        default=300.0,
+        default=180.0,
         description=(
             "Deadlock detector: max seconds of stream inactivity when no root-level "
-            "tool is pending. Resets on every real chunk. When it fires, the step "
-            "is retried up to dispatch_retry_max times before failing. Default 300s."
+            "tool is pending — i.e. the gap waiting for the LLM to produce its next "
+            "chunk after the last tool result. Resets on every real chunk. When it "
+            "fires, the step is retried up to dispatch_retry_max times before "
+            "failing. Retries use progressive backoff: each retry shortens the idle "
+            "deadline (attempt n uses base × 0.85^n, floored at 60s), so genuine "
+            "deadlocks fail faster while still giving the LLM adequate time to "
+            "respond on each retry. Default 180s."
         ),
         ge=0,
         le=86_400,
@@ -993,8 +998,9 @@ class StrangeLoopConfig(BaseModel):
         description=(
             "Max retries when dispatch_idle_seconds fires (0 = no retry, step fails "
             "on first timeout). Retries reuse the LangGraph checkpoint so prior tool "
-            "results are preserved. Total timeout budget is "
-            "dispatch_idle_seconds × (dispatch_retry_max + 1)."
+            "results are preserved. Each retry shortens the idle deadline via "
+            "progressive backoff (base × 0.85^n, floored at 60s), so total timeout "
+            "budget is less than dispatch_idle_seconds × (dispatch_retry_max + 1)."
         ),
         ge=0,
         le=10,
