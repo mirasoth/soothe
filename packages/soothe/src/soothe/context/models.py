@@ -76,6 +76,7 @@ class StepExecution(BaseModel):
     subagent_task_completions: int = 0
     hit_subagent_cap: bool = False
     hit_tool_budget: bool = False
+    hit_identical_repeat: bool = False
 
 
 class DeferredItem(BaseModel):

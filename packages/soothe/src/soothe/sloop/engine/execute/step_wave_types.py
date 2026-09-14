@@ -57,6 +57,7 @@ class _ActStreamBudget:
     tool_call_count: int = 0
     hit_subagent_cap: bool = False
     hit_tool_budget: bool = False
+    hit_identical_repeat: bool = False
 
 
 @dataclass(frozen=True, slots=True)

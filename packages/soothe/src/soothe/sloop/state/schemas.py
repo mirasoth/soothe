@@ -461,6 +461,8 @@ class StepExecutionRecord(BaseModel):
         subagent_task_completions: Completed `task` tool results at graph root.
         hit_subagent_cap: True when streaming stopped early due to subagent task cap.
         hit_tool_budget: True when streaming stopped early due to per-step tool call cap.
+        hit_identical_repeat: True when the same tool+args was invoked N consecutive
+            times, tripping the degenerate-repetition circuit breaker.
     """
 
     step_id: str
@@ -475,6 +477,7 @@ class StepExecutionRecord(BaseModel):
     subagent_task_completions: int = 0
     hit_subagent_cap: bool = False
     hit_tool_budget: bool = False
+    hit_identical_repeat: bool = False
     had_recoverable_tool_errors: bool = False
 
     def to_evidence_string(self, *, truncate: bool = True) -> str:
@@ -597,6 +600,7 @@ def _step_node_to_result(node: Any) -> StepExecutionRecord:
         subagent_task_completions=ex.subagent_task_completions,
         hit_subagent_cap=ex.hit_subagent_cap,
         hit_tool_budget=ex.hit_tool_budget,
+        hit_identical_repeat=getattr(ex, "hit_identical_repeat", False),
     )
 
 
@@ -716,6 +720,7 @@ class LoopState(BaseModel):
     last_wave_subagent_task_count: int = 0
     last_wave_hit_subagent_cap: bool = False
     last_wave_hit_tool_budget: bool = False
+    last_wave_hit_identical_repeat: bool = False
     last_wave_output_length: int = 0
     last_wave_error_count: int = 0
     total_tokens_used: int = 0
@@ -1181,6 +1186,7 @@ class LoopState(BaseModel):
         self.last_wave_subagent_task_count = 0
         self.last_wave_hit_subagent_cap = False
         self.last_wave_hit_tool_budget = False
+        self.last_wave_hit_identical_repeat = False
         self.last_wave_output_length = 0
         self.last_wave_error_count = 0
 
