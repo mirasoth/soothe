@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 import traceback
@@ -27,6 +28,7 @@ from soothe_sdk.ux.execute_namespace import is_step_level_execute_namespace_key
 
 from soothe.config.constants import (
     DEFAULT_CODE_EXEC_MAX_OUTPUT_CHARS,
+    DEFAULT_IDENTICAL_TOOL_CALL_THRESHOLD,
     DEFAULT_MAX_TOOL_CALLS_PER_STEP,
     DEFAULT_TOOL_OUTPUT_CHARS,
 )
@@ -146,6 +148,11 @@ if TYPE_CHECKING:
     from soothe.config import SootheConfig
 
 logger = logging.getLogger(__name__)
+
+# Tools exempt from the identical-repeat circuit breaker. `write_todos` is a
+# control-plane meta-tool that may legitimately repeat while the model
+# re-plans its todo list mid-step.
+_IDENTICAL_REPEAT_EXEMPT: frozenset[str] = frozenset({"write_todos"})
 
 
 # --- Helper functions ---
@@ -637,6 +644,7 @@ class Executor:
         outcomes: list[dict[str, Any]],
         output: str,
         hit_tool_budget: bool,
+        hit_identical_repeat: bool = False,
         step_id: str | None = None,
         fallback_tool_name: str = "unknown",
     ) -> dict[str, Any]:
@@ -662,6 +670,8 @@ class Executor:
         if hit_tool_budget:
             primary["tool_budget_exhausted"] = True
             primary["tools_completed"] = primary.get("tools_completed") or len(outcomes)
+        if hit_identical_repeat:
+            primary["identical_repeat_breaker"] = True
         return primary
 
     def _step_brief_hydration_enabled(self) -> bool:
@@ -1322,6 +1332,7 @@ class Executor:
         # OR cap hit (any step hit cap)
         hit_cap = any(r.hit_subagent_cap for r in step_results)
         hit_tool_budget = any(r.hit_tool_budget for r in step_results)
+        hit_identical_repeat = any(r.hit_identical_repeat for r in step_results)
 
         # Count execution failures only (recoverable per-tool errors stay in logs).
         error_count = sum(1 for r in step_results if not r.success)
@@ -1334,6 +1345,7 @@ class Executor:
         state.last_wave_subagent_task_count = total_subagent_tasks
         state.last_wave_hit_subagent_cap = hit_cap
         state.last_wave_hit_tool_budget = hit_tool_budget
+        state.last_wave_hit_identical_repeat = hit_identical_repeat
         state.last_wave_output_length = output_length
         state.last_wave_error_count = error_count
 
@@ -2028,6 +2040,7 @@ class Executor:
                             subagent_task_completions=0,
                             hit_subagent_cap=False,
                             hit_tool_budget=False,
+                            hit_identical_repeat=False,
                         )
                         all_step_results.append(step_result)
                         yield step_result
@@ -2656,6 +2669,7 @@ class Executor:
                 outcomes=stream_outcomes,
                 output=output,
                 hit_tool_budget=budget.hit_tool_budget,
+                hit_identical_repeat=budget.hit_identical_repeat,
                 step_id=step.id,
             )
             if execution_metrics:
@@ -2774,13 +2788,14 @@ class Executor:
                 )
             else:
                 logger.info(
-                    "Step %s completed successfully in %dms (main_tools=%d, subgraph_tools=%d, subagent_cap_hit=%s, tool_budget_hit=%s)",
+                    "Step %s completed successfully in %dms (main_tools=%d, subgraph_tools=%d, subagent_cap_hit=%s, tool_budget_hit=%s, identical_repeat_hit=%s)",
                     step.id,
                     duration_ms,
                     main_tool_call_count,
                     subgraph_tool_call_count,
                     budget.hit_subagent_cap,
                     budget.hit_tool_budget,
+                    budget.hit_identical_repeat,
                 )
             if execution_metrics:
                 logger.debug(
@@ -2924,6 +2939,7 @@ class Executor:
                     subagent_task_completions=budget.subagent_task_completions,
                     hit_subagent_cap=budget.hit_subagent_cap,
                     hit_tool_budget=budget.hit_tool_budget,
+                    hit_identical_repeat=budget.hit_identical_repeat,
                     had_recoverable_tool_errors=bool(has_tool_error and step_success),
                 ),
                 messages=messages,
@@ -2969,6 +2985,7 @@ class Executor:
                         subagent_task_completions=0,
                         hit_subagent_cap=False,
                         hit_tool_budget=False,
+                        hit_identical_repeat=False,
                     ),
                     messages=[],
                     delegate_final="",
@@ -3020,6 +3037,7 @@ class Executor:
                     subagent_task_completions=0,
                     hit_subagent_cap=False,
                     hit_tool_budget=False,
+                    hit_identical_repeat=False,
                 ),
                 messages=[],
                 delegate_final="",
@@ -3098,6 +3116,14 @@ class Executor:
         watchdog_seconds = self._dispatch_idle_seconds_for_attempt(dispatch_attempt)
         last_progress_at = time.perf_counter()
 
+        # Degenerate-repetition circuit breaker: tracks consecutive identical
+        # tool calls within a single Act stream. When the same tool is invoked
+        # with the same arguments N times in a row (heartbeat-sentinel recovery
+        # re-emitting the same call, model stuck in a repetition attractor),
+        # the stream is stopped to prevent wasted compute.
+        last_tool_signature: str | None = None
+        identical_repeat_count = 0
+
         def _maybe_cap_subagent_tasks(msg: ToolMessage) -> bool:
             """Return True if the stream must stop (cap exceeded)."""
             if budget is None:
@@ -3127,6 +3153,8 @@ class Executor:
             nonlocal search_calls_shell_fallback
             nonlocal evidence_reads_total
             nonlocal last_progress_at
+            nonlocal last_tool_signature
+            nonlocal identical_repeat_count
 
             messages.append(msg)
             tool_call_count += 1
@@ -3235,6 +3263,26 @@ class Executor:
                         "Tool budget reached (count=%d, max=%d), stopping Act stream with partial results",
                         tool_call_count,
                         budget.max_tool_calls_per_step,
+                    )
+                    return True
+
+            if budget is not None and tool_name not in _IDENTICAL_REPEAT_EXEMPT and logged_args:
+                signature = f"{tool_name}:{json.dumps(logged_args, sort_keys=True, default=str)}"
+                if signature == last_tool_signature:
+                    identical_repeat_count += 1
+                else:
+                    identical_repeat_count = 1
+                last_tool_signature = signature
+                if identical_repeat_count >= DEFAULT_IDENTICAL_TOOL_CALL_THRESHOLD:
+                    budget.hit_identical_repeat = True
+                    logger.warning(
+                        "Identical tool-call repeat breaker tripped: "
+                        "%s invoked %d consecutive time(s) with identical args "
+                        "(step=%s, tool#%d), stopping Act stream",
+                        tool_name,
+                        identical_repeat_count,
+                        step_id or "?",
+                        tool_call_count,
                     )
                     return True
             return False

@@ -151,6 +151,7 @@ class StepPlanningSubengine:
                 subagent_task_completions=r.subagent_task_completions,
                 hit_subagent_cap=r.hit_subagent_cap,
                 hit_tool_budget=r.hit_tool_budget,
+                hit_identical_repeat=r.hit_identical_repeat,
             )
             if r.success:
                 goal.steps.mark_completed(r.step_id, execution)
