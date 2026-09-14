@@ -28,6 +28,7 @@ _LOOP_COLUMN_MIGRATIONS: dict[str, str] = {
     "ai_message_count": "INTEGER NOT NULL DEFAULT 0",
     "execution_checkpoint": "TEXT",  # RFC-626 Phase 3: ExecutionCheckpoint JSON blob
     "resume_topic": "TEXT",
+    "workspace_sync_source": "TEXT",  # RFC-906: remote workspace sync URI
 }
 
 # RFC-626: pre-slim goal_records columns upgraded on first open.
@@ -159,7 +160,7 @@ class SQLitePersistenceBackend(StrangeLoopPersistenceBackend):
                    client_workspace, detached_at, user_id, client_workspace_id,
                    is_ephemeral, last_message_at, current_workspace,
                    human_message_count, ai_message_count, execution_checkpoint,
-                   resume_topic
+                   resume_topic, workspace_sync_source
             FROM agentloop_loops WHERE loop_id = ?
         """,
             (loop_id,),
@@ -190,6 +191,7 @@ class SQLitePersistenceBackend(StrangeLoopPersistenceBackend):
             "ai_message_count": row[17] or 0,
             "execution_checkpoint": json.loads(row[18]) if row[18] else None,
             "resume_topic": row[19],
+            "workspace_sync_source": row[20],
         }
 
     async def update_loop_metadata(
@@ -232,6 +234,7 @@ class SQLitePersistenceBackend(StrangeLoopPersistenceBackend):
             "last_message_at",
             "current_workspace",
             "resume_topic",
+            "workspace_sync_source",
         }
         updates = {k: v for k, v in fields.items() if k in _allowed}
         if not updates:

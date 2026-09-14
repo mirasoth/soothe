@@ -1782,14 +1782,17 @@ class MessageRouter:
             client_id: Client connection identifier.
             msg: Request message; may contain optional `workspace` and `user` fields.
         """
-        from soothe.workspace import resolve_loop_workspace, validate_client_workspace
+        from soothe.workspace import (
+            is_remote_workspace_uri,
+            resolve_loop_workspace,
+            translate_client_path_to_container,
+            validate_client_workspace,
+        )
         from uuid_utils import uuid7
 
         d = self._daemon
         request_id = msg.get("request_id")
         is_ephemeral = bool(msg.get("is_ephemeral", False))
-
-        from soothe.workspace import translate_client_path_to_container
 
         mount = d._config.workspace_mount
         host_root = mount.host_root if mount and mount.is_configured else None
@@ -1798,108 +1801,149 @@ class MessageRouter:
         # Generate new loop_id
         loop_id = str(uuid7())
 
-        # Resolve optional client workspace hint. Invalid hints fall back to
-        # daemon workspace via _bind_execution_thread_for_loop.
-        client_workspace: str | None = None
+        # --- Workspace sync source detection (RFC-906 §51) ---
         raw_workspace = msg.get("client_workspace") or msg.get("workspace")
+        sync_source: str | None = msg.get("workspace_sync_source")
+
+        # S8: reject URI schemes not in the allowlist (SSRF prevention)
         if isinstance(raw_workspace, str) and raw_workspace.strip():
-            try:
-                resolved = validate_client_workspace(raw_workspace)
-            except ValueError as e:
+            if is_remote_workspace_uri(raw_workspace):
+                sync_source = raw_workspace.strip()
+                raw_workspace = None
+            elif "://" in raw_workspace:
+                scheme = raw_workspace.split("://", 1)[0].lower()
                 logger.warning(
-                    "[loop_new] Rejecting invalid client workspace %r: %s", raw_workspace, e
+                    "[loop_new] Loop %s rejecting unsupported workspace scheme %r",
+                    loop_id,
+                    scheme,
                 )
-            else:
-                if resolved.exists():
-                    client_workspace = str(resolved)
-                    logger.info(
-                        "[loop_new] Loop %s using client workspace: %s",
-                        loop_id,
-                        client_workspace,
-                    )
-                elif host_root is not None:
-                    # RFC-621: host paths are not present literally in the container;
-                    # accept when mappable under workspace_mount.host_root.
-                    try:
-                        translate_client_path_to_container(
-                            resolved,
-                            host_root=host_root,
-                            container_root=container_root,
-                        )
-                    except ValueError as e:
-                        logger.info(
-                            "[loop_new] Loop %s ignoring client workspace (not under host_root): %s",
-                            loop_id,
-                            e,
-                        )
-                    else:
-                        client_workspace = str(resolved)
-                        logger.info(
-                            "[loop_new] Loop %s using mapped client workspace: %s",
-                            loop_id,
-                            client_workspace,
-                        )
-                else:
-                    logger.info(
-                        "[loop_new] Loop %s ignoring client workspace (not on daemon host): %s",
-                        loop_id,
-                        resolved,
-                    )
-
-        # Extract user identity for workspace isolation
-        user: str | None = None
-        raw_user = msg.get("user_id") or msg.get("user")  # Support both field names
-        if isinstance(raw_user, str) and raw_user.strip():
-            user = raw_user.strip()
-            logger.info("[loop_new] Loop %s user identity: %s", loop_id, user)
-
-        raw_client_ws_id = msg.get("client_workspace_id")
-        client_workspace_id: str | None = None
-        if isinstance(raw_client_ws_id, str) and raw_client_ws_id.strip():
-            client_workspace_id = raw_client_ws_id.strip()
-
-        workspace_mapping: dict[str, str] | None = None
-        if host_root is not None and container_root is not None:
-            workspace_mapping = {
-                "host_root": host_root,
-                "container_root": container_root,
-            }
-
-        try:
-            if client_workspace is not None and host_root is not None:
-                effective_workspace = translate_client_path_to_container(
-                    client_workspace,
-                    host_root=host_root,
-                    container_root=container_root,
-                )
-            else:
-                effective_workspace = resolve_loop_workspace(
-                    loop_id=loop_id,
-                    client_workspace=client_workspace,
-                    user_id=user,
-                    client_workspace_id=client_workspace_id,
-                    workspace_mapping=workspace_mapping,
-                )
-        except ValueError as e:
-            if client_workspace is not None and host_root is not None:
-                logger.warning("[loop_new] Loop %s workspace mount error: %s", loop_id, e)
                 await d._send_client_message(
                     client_id,
                     build_error_response(
                         ErrorCode.WORKSPACE_RESOLUTION_FAILED,
-                        str(e),
+                        f"unsupported workspace URI scheme: {scheme!r}. Allowed: s3, gs, az",
                         request_id=request_id,
                     ),
                 )
                 return
-            logger.warning(
-                "[loop_new] Loop %s workspace resolution failed (%s); using daemon workspace",
-                loop_id,
-                e,
-            )
-            from soothe.workspace import resolve_daemon_workspace
 
-            effective_workspace = resolve_daemon_workspace()
+        # Fall back to config default when no explicit sync source provided
+        if sync_source is None and d._config.workspace_sync.is_enabled:
+            sync_source = d._config.workspace_sync.source_uri
+        if isinstance(sync_source, str):
+            sync_source = sync_source.strip() or None
+
+        # --- Resolve effective workspace ---
+        client_workspace: str | None = None
+        user: str | None = None
+        client_workspace_id: str | None = None
+        if sync_source is not None:
+            # Remote workspace sync path (RFC-906)
+            effective_workspace = await self._open_sync_workspace(
+                client_id=client_id,
+                request_id=request_id,
+                loop_id=loop_id,
+                sync_source=sync_source,
+            )
+            if effective_workspace is None:
+                return
+        else:
+            # Existing local-path resolution (RFC-621)
+            if isinstance(raw_workspace, str) and raw_workspace.strip():
+                try:
+                    resolved = validate_client_workspace(raw_workspace)
+                except ValueError as e:
+                    logger.warning(
+                        "[loop_new] Rejecting invalid client workspace %r: %s", raw_workspace, e
+                    )
+                else:
+                    if resolved.exists():
+                        client_workspace = str(resolved)
+                        logger.info(
+                            "[loop_new] Loop %s using client workspace: %s",
+                            loop_id,
+                            client_workspace,
+                        )
+                    elif host_root is not None:
+                        try:
+                            translate_client_path_to_container(
+                                resolved,
+                                host_root=host_root,
+                                container_root=container_root,
+                            )
+                        except ValueError as e:
+                            logger.info(
+                                "[loop_new] Loop %s ignoring client workspace (not under host_root): %s",
+                                loop_id,
+                                e,
+                            )
+                        else:
+                            client_workspace = str(resolved)
+                            logger.info(
+                                "[loop_new] Loop %s using mapped client workspace: %s",
+                                loop_id,
+                                client_workspace,
+                            )
+                    else:
+                        logger.info(
+                            "[loop_new] Loop %s ignoring client workspace (not on daemon host): %s",
+                            loop_id,
+                            resolved,
+                        )
+
+            # Extract user identity for workspace isolation
+            user = None
+            raw_user = msg.get("user_id") or msg.get("user")
+            if isinstance(raw_user, str) and raw_user.strip():
+                user = raw_user.strip()
+                logger.info("[loop_new] Loop %s user identity: %s", loop_id, user)
+
+            raw_client_ws_id = msg.get("client_workspace_id")
+            if isinstance(raw_client_ws_id, str) and raw_client_ws_id.strip():
+                client_workspace_id = raw_client_ws_id.strip()
+
+            workspace_mapping: dict[str, str] | None = None
+            if host_root is not None and container_root is not None:
+                workspace_mapping = {
+                    "host_root": host_root,
+                    "container_root": container_root,
+                }
+
+            try:
+                if client_workspace is not None and host_root is not None:
+                    effective_workspace = translate_client_path_to_container(
+                        client_workspace,
+                        host_root=host_root,
+                        container_root=container_root,
+                    )
+                else:
+                    effective_workspace = resolve_loop_workspace(
+                        loop_id=loop_id,
+                        client_workspace=client_workspace,
+                        user_id=user,
+                        client_workspace_id=client_workspace_id,
+                        workspace_mapping=workspace_mapping,
+                    )
+            except ValueError as e:
+                if client_workspace is not None and host_root is not None:
+                    logger.warning("[loop_new] Loop %s workspace mount error: %s", loop_id, e)
+                    await d._send_client_message(
+                        client_id,
+                        build_error_response(
+                            ErrorCode.WORKSPACE_RESOLUTION_FAILED,
+                            str(e),
+                            request_id=request_id,
+                        ),
+                    )
+                    return
+                logger.warning(
+                    "[loop_new] Loop %s workspace resolution failed (%s); using daemon workspace",
+                    loop_id,
+                    e,
+                )
+                from soothe.workspace import resolve_daemon_workspace
+
+                effective_workspace = resolve_daemon_workspace()
 
         # Create loop directory (still needed for goals/ and working_memory/ subdirs)
         loop_dir = PersistenceDirectoryManager.get_loop_directory(loop_id)
@@ -1929,6 +1973,8 @@ class MessageRouter:
                 "host_root": host_root,
                 "container_root": container_root,
             }
+        if sync_source is not None:
+            meta_updates["workspace_sync_source"] = sync_source
         await d._persistence_manager.update_loop_metadata(loop_id, **meta_updates)
 
         logger.info(
@@ -1952,6 +1998,85 @@ class MessageRouter:
                 "container_workspace": str(effective_workspace),
             }
         await self._send_response(client_id, request_id, result)
+
+    async def _open_sync_workspace(
+        self,
+        *,
+        client_id: Any,
+        request_id: str | None,
+        loop_id: str,
+        sync_source: str,
+    ) -> str | None:
+        """Open a remote-sync workspace for a new loop (RFC-906 §51).
+
+        Constructs the sync backend, opens a local workspace via the daemon's
+        ``WorkspaceManager``, and returns the local root path. The agent
+        sees an ordinary filesystem path — never the remote URI (§52).
+
+        Args:
+            client_id: Client connection identifier (for error responses).
+            request_id: Originating request correlation id.
+            loop_id: The newly generated loop id.
+            sync_source: Remote object-store URI (``s3://``, ``gs://``, ``az://``).
+
+        Returns:
+            The local workspace root path, or ``None`` if an error response
+            was already sent to the client.
+        """
+        d = self._daemon
+        from soothe.workspace.sync import WorkspaceSyncError, construct_sync_backend
+
+        try:
+            backend = construct_sync_backend(
+                sync_source,
+                d._config.workspace_sync.storage_options,
+            )
+            wm = d._get_workspace_manager()
+            ws = await wm.open_from_uri(run_id=loop_id, backend=backend)
+            logger.info(
+                "[loop_new] Loop %s opened sync workspace: %s (source=%s)",
+                loop_id,
+                ws.root,
+                sync_source,
+            )
+            return str(ws.root)
+        except WorkspaceSyncError as e:
+            logger.warning("[loop_new] Loop %s workspace sync open failed: %s", loop_id, e)
+            await d._send_client_message(
+                client_id,
+                build_error_response(
+                    ErrorCode.WORKSPACE_RESOLUTION_FAILED,
+                    f"workspace sync failed: {e}",
+                    request_id=request_id,
+                ),
+            )
+            return None
+        except ValueError as e:
+            logger.warning(
+                "[loop_new] Loop %s sync backend construction failed: %s",
+                loop_id,
+                e,
+            )
+            await d._send_client_message(
+                client_id,
+                build_error_response(
+                    ErrorCode.WORKSPACE_RESOLUTION_FAILED,
+                    f"workspace sync backend error: {e}",
+                    request_id=request_id,
+                ),
+            )
+            return None
+        except Exception as e:
+            logger.exception("[loop_new] Loop %s unexpected workspace sync error", loop_id)
+            await d._send_client_message(
+                client_id,
+                build_error_response(
+                    ErrorCode.WORKSPACE_RESOLUTION_FAILED,
+                    f"workspace sync error: {e}",
+                    request_id=request_id,
+                ),
+            )
+            return None
 
     async def _handle_loop_input(self, client_id: Any, msg: dict[str, Any]) -> None:
         """Handle loop_input RPC: authorize, then enqueue to the loop's isolated input queue."""
