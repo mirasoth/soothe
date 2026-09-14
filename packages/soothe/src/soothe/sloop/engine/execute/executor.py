@@ -435,6 +435,27 @@ class Executor:
             return 0.0
         return max(0.0, float(self._config.agent.loop.dispatch_idle_seconds))
 
+    _DISPATCH_BACKOFF_FACTOR = 0.85
+    """Per-retry idle deadline multiplier. Attempt n uses base × factor^n."""
+
+    _DISPATCH_BACKOFF_FLOOR_SECONDS = 60.0
+    """Minimum idle deadline after backoff, so retries still allow LLM scheduling."""
+
+    def _dispatch_idle_seconds_for_attempt(self, attempt: int) -> float:
+        """Idle deadline for a dispatch attempt, with progressive backoff.
+
+        Attempt 0 uses the full base; subsequent attempts shorten the deadline
+        by ``_DISPATCH_BACKOFF_FACTOR`` per retry, floored at
+        ``_DISPATCH_BACKOFF_FLOOR_SECONDS``. This makes genuine deadlocks fail
+        faster on retry instead of waiting the full base each time, while still
+        giving the LLM adequate time to respond on each retry.
+        """
+        base = self._dispatch_idle_seconds()
+        if base <= 0 or attempt <= 0:
+            return base
+        scaled = base * (self._DISPATCH_BACKOFF_FACTOR**attempt)
+        return max(self._DISPATCH_BACKOFF_FLOOR_SECONDS, scaled)
+
     def _execute_action_retry_max(self) -> int:
         if self._config is None:
             return 1
@@ -879,6 +900,7 @@ class Executor:
         step_id: str | None = None,  # for heartbeat correlation + capture
         step_description: str | None = None,  # captured for resume identity
         step_start_perf: float | None = None,  # perf_counter baseline for prior_duration_ms
+        dispatch_attempt: int = 0,  # 0-based retry index for progressive backoff
     ) -> AsyncGenerator[Any, None]:
         """Run `CoreAgent.astream` with interrupt capture and resume.
 
@@ -888,7 +910,8 @@ class Executor:
         first call uses it as `Command(resume=...)` to re-enter after a prior
         clarification was answered.  Yields heartbeat sentinels during long
         waits.  `step_start_perf` accumulates pre-interrupt elapsed time onto
-        `resume_ticket.prior_duration_ms`.
+        `resume_ticket.prior_duration_ms`.  `dispatch_attempt` drives
+        progressive idle-deadline backoff across retries.
         """
         interrupt_iterations = 0
         current_input: dict[str, Any] | Command = (
@@ -909,10 +932,11 @@ class Executor:
             )
             # LLM timeout: LLMRateLimitMiddleware. Dispatch watchdog: idle timer
             # (root pending-tool set; nested msgs are progress only).
+            # Progressive backoff: later retries use a shorter idle deadline.
             chunk_reader = GraphStreamChunkReader(
                 chunk_iter,
                 step_id=step_id,
-                idle_timeout=self._dispatch_idle_seconds(),
+                idle_timeout=self._dispatch_idle_seconds_for_attempt(dispatch_attempt),
             )
             try:
                 while True:
@@ -2454,6 +2478,7 @@ class Executor:
                         step_id=step.id,  # for heartbeat correlation + capture
                         step_description=step.full_description or step.description,
                         step_start_perf=start,
+                        dispatch_attempt=dispatch_retries_done,
                     )
 
                     pass_output = ""
@@ -2471,6 +2496,7 @@ class Executor:
                         step_id=step.id,
                         step_description=step.description,
                         pre_streamed_message_ids=checkpoint_message_ids,
+                        dispatch_attempt=dispatch_retries_done,
                     ):
                         if chunk.event is not None:
                             _append_parallel_stream_event(events, chunk.event, live_event_queue)
@@ -3013,6 +3039,7 @@ class Executor:
         step_id: str | None = None,
         step_description: str = "",
         pre_streamed_message_ids: frozenset[str] | None = None,
+        dispatch_attempt: int = 0,
     ) -> AsyncGenerator[_StreamCollectChunk, None]:
         """Stream events for real-time display while accumulating the final result.
 
@@ -3030,6 +3057,8 @@ class Executor:
                 checkpoint before this call (resume path). Root-graph
                 AIMessages whose id is in this set have their wire events
                 suppressed.
+            dispatch_attempt: 0-based retry index for progressive idle-deadline
+                backoff in the no-progress watchdog.
 
         Yields:
             `_StreamCollectChunk` — wire events then one finalized summary.
@@ -3064,8 +3093,9 @@ class Executor:
         outcomes: list[dict] = []
 
         no_progress_watchdog_triggered = 0
-        # use idle_timeout (tool-aware) for no-progress watchdog.
-        watchdog_seconds = self._dispatch_idle_seconds()
+        # use idle_timeout (tool-aware) for no-progress watchdog, with
+        # progressive backoff so retries fail genuine deadlocks faster.
+        watchdog_seconds = self._dispatch_idle_seconds_for_attempt(dispatch_attempt)
         last_progress_at = time.perf_counter()
 
         def _maybe_cap_subagent_tasks(msg: ToolMessage) -> bool:
