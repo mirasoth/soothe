@@ -295,3 +295,49 @@ class TestLocalModelServerHealthCheck:
             result = server._wait_for_health()
 
         assert result is False
+
+    def test_vllm_health_url_is_root_health(self) -> None:
+        # vLLM exposes its liveness probe at /health (root), separate from the
+        # OpenAI API at /v1. /v1/health returns 404 and would stall launch().
+        cfg = LocalModelConfig(backend="vllm", model_name="m", port=8765)
+        server = LocalModelServer(cfg)
+        server._port = 8765
+        server._api_base = "http://127.0.0.1:8765/v1"
+        assert server._health_url() == "http://127.0.0.1:8765/health"
+
+    def test_ollama_health_url(self) -> None:
+        cfg = LocalModelConfig(backend="ollama", model_name="m", port=11434)
+        server = LocalModelServer(cfg)
+        server._port = 11434
+        assert server._health_url() == "http://127.0.0.1:11434/api/tags"
+
+    def test_health_check_polls_vllm_root_health(self) -> None:
+        # Regression: _wait_for_health must GET /health, not /v1/health (404).
+        cfg = LocalModelConfig(
+            backend="vllm", model_name="m", port=8765, startup_timeout_seconds=10
+        )
+        server = LocalModelServer(cfg)
+        server._port = 8765
+        server._api_base = "http://127.0.0.1:8765/v1"
+
+        mock_proc = MagicMock()
+        mock_proc.poll.return_value = None  # alive
+        server._process = mock_proc
+
+        mock_resp = MagicMock()
+        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        mock_resp.status = 200
+
+        with (
+            patch(
+                "soothe_daemon.runner.local_model_server.urllib.request.urlopen",
+                return_value=mock_resp,
+            ) as mock_urlopen,
+            patch("soothe_daemon.runner.local_model_server.time.sleep"),
+        ):
+            result = server._wait_for_health()
+
+        assert result is True
+        polled = mock_urlopen.call_args[0][0]
+        assert polled.full_url == "http://127.0.0.1:8765/health"

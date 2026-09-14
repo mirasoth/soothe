@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from soothe.identity.runtime import (
@@ -285,6 +285,17 @@ class RayConfig(BaseModel):
     log_to_driver: bool = Field(
         default=True,
         description="Stream Ray logs to the driver process.",
+    )
+    runtime_env: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Ray runtime_env applied to each LoopRunnerActor via "
+            "actor.options(runtime_env=...). Used to inject per-actor "
+            "environment the cluster image doesn't provide — e.g. "
+            "{'env_vars': {'LD_LIBRARY_PATH': '...', 'HF_HOME': '...', "
+            "'VLLM_NO_USAGE_STATS': '1'}}. Note: env_vars set by Ray "
+            "replace the image value, so include the full path list."
+        ),
     )
     num_gpus: float = Field(
         default=0.0,
