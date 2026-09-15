@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.0.12] - 2026-09-15
+
+### Fixed
+- Bump `soothe-nano` floor from `1.2.27` to `1.2.28`: thinking-only streams (e.g. glm-5.2 with `hide_thinking_tokens=True`) now trigger failover in `MultiModelChatModel` instead of silently surfacing empty content. The `ThinkingStreamFilter` strips thinking blocks, leaving whitespace-only chunks; the streaming failover path now detects this post-strip emptiness via `_chunk_has_content()` and fails over to the next endpoint instead of returning empty content to the user.
+- Add empty-response retry to `synthesize_plan`: thinking models that spend their entire output budget on internal reasoning (producing zero visible plan text after thinking-token stripping) now trigger up to 2 retry attempts with a nudge message steering the model toward emitting visible output. `plan_mode_review` emits `plan_refinement_failed` with `reason: "empty_response_after_retries"` when all retries are exhausted.
+
 ### Added
 - Wire workspace sync (RFC-906 §51) into the daemon `_handle_loop_new` handler: detect remote object-store URIs (`s3://`, `gs://`, `az://`) in `client_workspace`/`workspace_sync_source` message fields, construct the fsspec sync backend via `construct_sync_backend()`, open a local workspace via `WorkspaceManager.open_from_uri()`, and persist `workspace_sync_source` in loop metadata. Non-allowlisted URI schemes (`file://`, `sftp://`, `http://`) are rejected with `WORKSPACE_RESOLUTION_FAILED` (S8: SSRF prevention). Falls back to `config.workspace_sync.source_uri` when no explicit sync source is provided, enabling workspace sync locally from dev config.
 - Add `workspace_sync_source` column to the SQLite `agentloop_loops` table and extend the metadata read/write whitelists in both SQLite and PostgreSQL persistence backends so the sync source URI survives across StrangeLoop checkpoint replaces.
@@ -27,6 +33,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Remove ignored `verbosity` compat parameter from `should_show()` in `soothe-sdk`.
 - Remove `manifest` compat parameter from `WorkspaceSync.put_checkpoint()` protocol and fsspec backend.
 - Remove `stream_core_agent` backward-compatible alias from nano examples.
+
+[Compare with previous version]: https://github.com/mirasoth/soothe/compare/v1.0.11...v1.0.12
 
 ## [v1.0.11] - 2026-09-13
 
