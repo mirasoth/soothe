@@ -30,14 +30,16 @@
 | 15 | Reentrant Loop State (MUST) | [persistence-and-loops.md](.agents/rules/persistence-and-loops.md) |
 | 16 | API Exposure (Minimum-Exposure) (MUST) | [package-boundaries.md](.agents/rules/package-boundaries.md) |
 | 17 | Docstrings (MUST) | [code-style.md](.agents/rules/code-style.md) |
+| 18 | Comment Hygiene (MUST) | [code-style.md](.agents/rules/code-style.md) |
+| 19 | Dead Code & Legacy Removal (MUST) | [development-process.md](.agents/rules/development-process.md) |
 
 ## 📁 Rules Files
 
 | File | Contents |
 |------|----------|
-| [development-process.md](.agents/rules/development-process.md) | Design docs, ecosystem-first, test location, verification, cleanse→verify→fix, workflow |
+| [development-process.md](.agents/rules/development-process.md) | Design docs, ecosystem-first, test location, verification, cleanse→verify→fix, dead code removal, workflow |
 | [package-boundaries.md](.agents/rules/package-boundaries.md) | DAG, placement table, import allow/deny, hard bans, API exposure |
-| [code-style.md](.agents/rules/code-style.md) | Terminology, no keyword heuristics, docstrings, code style |
+| [code-style.md](.agents/rules/code-style.md) | Terminology, no keyword heuristics, docstrings, comment hygiene, code style |
 | [persistence-and-loops.md](.agents/rules/persistence-and-loops.md) | Unified persistence backend, reentrant loop state |
 | [release-and-governance.md](.agents/rules/release-and-governance.md) | AI attribution, drift governance, changelog, release process |
 | [project-reference.md](.agents/rules/project-reference.md) | Structure, quick reference, plugin system, what NOT to implement |

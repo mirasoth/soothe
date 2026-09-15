@@ -53,11 +53,10 @@ The fastest way to deploy Soothe in production.
 
 ```bash
 # Navigate to deployment directory
-cd soothe/deploy
+cd soothe/config/production
 
-# Create environment file
-cp env-example .env
-vim .env
+# Edit environment file
+vim example.env
 ```
 
 **Required environment variables**:
@@ -78,7 +77,7 @@ SOOTHE_POSTGRES_BASE_DSN=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@soot
 SOOTHE_POSTGRES_VECTORS_DSN=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@soothe-pgvector:5432/soothe_vectors
 ```
 
-**Security**: Never commit `.env` to version control. Use secrets management for production.
+**Security**: Never commit secrets to version control. `example.env` uses `${VAR}` substitution — values come from the host shell environment, not the file itself.
 
 ### Step 2: Create Agent Configuration
 
@@ -189,7 +188,7 @@ docker compose exec soothe-pgvector psql -U postgres -d soothe_metadata \
 
 ### Production Docker Compose Configuration
 
-Key settings (see `deploy/docker-compose.yml` for full file):
+Key settings (see `config/production/docker-compose.yml` for full file):
 
 - `restart: unless-stopped` — Auto-restart on failure
 - Health checks — Container health monitoring
@@ -231,7 +230,7 @@ For environments without Docker or requiring direct hardware access.
 3. **Create user**: `sudo useradd -r -s /bin/false soothe`
 4. **Install Soothe**: `sudo /opt/soothe/venv/bin/pip install soothe-daemon soothe`
 5. **Configure**: Create `/var/lib/soothe/config/nano.yml` and `/etc/default/soothe` with environment variables
-6. **Create systemd service**: See `deploy/soothed.service` template
+6. **Create systemd service**: See `config/production/soothed.service` template
 
 ### systemd Service Template
 
@@ -241,7 +240,7 @@ Key settings (`/etc/systemd/system/soothed.service`):
 - `ExecStart=/opt/soothe/venv/bin/soothed start --foreground`
 - `Restart=on-failure` — Auto-restart
 
-See `deploy/soothed.service` for the full template with security hardening options.
+See `config/production/soothed.service` for the full template with security hardening options.
 
 ## Kubernetes Deployment
 NoNewPrivileges=true
@@ -691,7 +690,7 @@ After successful production deployment:
 ## Related Documentation
 
 - [Deployment Guide Overview](index.md) - Deployment architecture overview
-- [Docker Compose Reference](../../../deploy/docker-compose.yml) - Production stack definition
+- [Docker Compose Reference](../../../config/production/docker-compose.yml) - Production stack definition
 - [Configuration Guide](../configuration-guide/index.md) - Complete YAML reference
 - [Daemon Management](../daemon-management.md) - Daemon lifecycle commands
 - [Multi-Transport](../multi-transport.md) - Transport configuration
@@ -699,4 +698,4 @@ After successful production deployment:
 
 ---
 
-**Questions?** Check [Troubleshooting](../troubleshooting.md) or the [Production Deployment README](../../../deploy/README.md).
+**Questions?** Check [Troubleshooting](../troubleshooting.md) or the [Production Deployment README](../../../config/production/README.md).

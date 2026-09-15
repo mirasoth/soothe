@@ -66,6 +66,7 @@ class EvalStepMiddleware(AgentMiddleware):
     tools = [_DECOMPOSE_TOOL]
 
     def modify_request(self, request: ModelRequest[ContextT]) -> ModelRequest[ContextT]:
+        """Ensure decompose_task tool and coverage-audit addendum for eval steps."""
         configurable = _decompose_runtime.langgraph_configurable()
         if not configurable.get(SOOTHE_EVAL_STEP_ID_KEY):
             return request
@@ -84,6 +85,7 @@ class EvalStepMiddleware(AgentMiddleware):
         request: ModelRequest[ContextT],
         handler: Callable[[ModelRequest[ContextT]], ModelResponse[Any]],
     ) -> ModelResponse[Any]:
+        """Synchronously apply modify_request then call the handler."""
         return handler(self.modify_request(request))
 
     async def awrap_model_call(
@@ -91,6 +93,7 @@ class EvalStepMiddleware(AgentMiddleware):
         request: ModelRequest[ContextT],
         handler: Callable[[ModelRequest[ContextT]], Awaitable[ModelResponse[Any]]],
     ) -> ModelResponse[Any]:
+        """Asynchronously apply modify_request then await the handler."""
         return await handler(self.modify_request(request))
 
     async def awrap_tool_call(

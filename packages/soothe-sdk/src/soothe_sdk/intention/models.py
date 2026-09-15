@@ -10,9 +10,10 @@ from pydantic import BaseModel, Field
 class TaskComplexity(StrEnum):
     """Unified task complexity levels for routing decisions.
 
-    - minimal: No tools needed (direct reply)
-    - simple: Single focused step
-    - complex: Architecture, migration, deep multi-phase work
+    - minimal: direct factual reply; no tools needed
+    - simple: one cohesive deliverable in one area/module (single leaf)
+    - complex: 2+ independent areas/modules that could run in parallel, or a
+      multi-phase sequence needing separate context per phase
     """
 
     MINIMAL = "minimal"

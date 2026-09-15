@@ -55,12 +55,12 @@ def normalize_api_key_for_yaml(
     return `${env_var}`. Dummy local keys (`ollama`) stay literal.
 
     Args:
-    api_key: User-entered key or placeholder.
-    soothe_home: Soothe home directory.
-    env_var: Environment variable name to use for raw secrets.
+        api_key: User-entered key or placeholder.
+        soothe_home: Soothe home directory.
+        env_var: Environment variable name to use for raw secrets.
 
     Returns:
-    Value to store in `nano.yml` `api_key`.
+        Value to store in `nano.yml` `api_key`.
     """
     stripped = api_key.strip()
     if is_env_placeholder(stripped) or not looks_like_secret(stripped):

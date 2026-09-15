@@ -80,7 +80,7 @@ class RailDefinition:
         flow: NL-first event hooks (list of mappings).
         rules: Explicit rule list (list of mappings).
         fanout: Optional rail-declared fan-out policy. Keys may include
-            `require_plan`, `scout_count`, `max_waves`. WavePlan slices
+            `require_plan`, `scout_count`, `max_slices`. WavePlan slices
             come from the architecture goal completion report; `artifact` is
             rejected. Engine must not invent fan-out — it lives in rail YAML.
         worktrees: Optional rail-declared worktree lifecycle policy. Keys:
@@ -177,14 +177,23 @@ def _normalize_fanout(raw: Any, *, path: Path) -> dict[str, Any]:
         if sc < 1 or sc > 32:
             raise RailCatalogError(f"{path}: fanout.scout_count out of range 1..32")
         out["scout_count"] = sc
-    if "max_waves" in raw and raw["max_waves"] is not None:
+    if "max_slices" in raw and raw["max_slices"] is not None:
+        try:
+            ms = int(raw["max_slices"])
+        except (TypeError, ValueError) as exc:
+            raise RailCatalogError(f"{path}: fanout.max_slices must be an int") from exc
+        if ms < 1 or ms > 64:
+            raise RailCatalogError(f"{path}: fanout.max_slices out of range 1..64")
+        out["max_slices"] = ms
+    elif "max_waves" in raw and raw["max_waves"] is not None:
+        # Accept legacy `max_waves` key from older rail YAML.
         try:
             mw = int(raw["max_waves"])
         except (TypeError, ValueError) as exc:
             raise RailCatalogError(f"{path}: fanout.max_waves must be an int") from exc
         if mw < 1 or mw > 32:
             raise RailCatalogError(f"{path}: fanout.max_waves out of range 1..32")
-        out["max_waves"] = mw
+        out["max_slices"] = mw
     return out
 
 

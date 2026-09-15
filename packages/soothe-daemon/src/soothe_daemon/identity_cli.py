@@ -1,4 +1,4 @@
-"""Identity service CLI commands. Commands."""
+"""Identity service CLI commands."""
 
 from __future__ import annotations
 

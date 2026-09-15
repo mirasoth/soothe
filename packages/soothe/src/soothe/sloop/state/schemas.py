@@ -62,27 +62,10 @@ into the clarification relay."""
 class PlanGenerateStep(BaseModel):
     """Single step in plan-generate structured output.
 
-    Separate from `StepAction` so the LLM schema omits executor-only fields
-    (`subagent`, `evidence_refs`). Converted to `StepAction` when building
-    `AgentDecision`.
-
-    When `kind == "ask_user"` the executor does NOT invoke CoreAgent for this
-    step — instead it routes `questions` through the configured
-    `ClarificationPolicy` and records a synthesized successful step
-    result containing the answers.
-
-    Attributes:
-        id: Step identifier (auto-generated if omitted).
-        description: Brief summary for TUI display and logging (under 20 words).
-        full_description: Detailed execution prompt with key inputs, file paths,
-            identifiers, and context needed to execute independently.
-        expected_output: Expected result for evidence accumulation.
-        dependencies: Step IDs this depends on (for DAG execution).
-        continues_from: Completed composite step ids from prior plan waves (merged into dependencies).
-        kind: `action` (normal) or `ask_user` (clarification relay).
-        questions: Questions for `ask_user` steps.
-        execution_hint: Preferred execution routing from the planner.
-        subagent: Subagent name when `execution_hint='subagent'`.
+    Separate from `StepAction` so the LLM schema omits executor-only fields.
+    Converted to `StepAction` when building `AgentDecision`. When
+    `kind == "ask_user"`, the executor routes `questions` through the
+    `ClarificationPolicy` instead of invoking CoreAgent.
     """
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4())[:8])
@@ -116,27 +99,9 @@ class PlanGenerateStep(BaseModel):
 class StepAction(BaseModel):
     """Single step in execution strategy.
 
-    Keep execution-critical fields (used by executor).
-    `full_description` carries detailed execution context.
-     / `kind` and `questions` carry planner-emitted
-    `ask_user` steps through to the clarification relay.
-
-    Attributes:
-        id: Step identifier; after plan assembly use `assign_plan_step_ids` (`<PLANID>-<model-id>`).
-        description: Brief summary for TUI display and logging (under 20 words).
-        full_description: Detailed execution prompt with key inputs, file paths,
-            identifiers, and context needed to execute independently.
-        expected_output: Expected result for evidence accumulation.
-        dependencies: Step IDs this depends on (for DAG execution).
-        kind: `action` (normal CoreAgent execution), `ask_user`
-            (clarification relay short-circuit), or engine-injected `eval`.
-        questions: When `kind == "ask_user"`, the questions to surface to
-            the user (TUI manual mode) or veritas (auto mode).
-        execution_hint: Planner routing hint (`subagent` → delegate via `task`).
-        subagent: Named subagent when `execution_hint='subagent'`.
-        requires_tool_use: When set, execute deliverable gate requires successful tool use
-            (for direct-answer steps).
-        is_dag_root: True when this step has no CE `parent_step_id`.
+    Carries execution-critical fields used by the executor, including
+    `full_description` for detailed context and `kind`/`questions` for
+    `ask_user` steps routed through the clarification relay.
     """
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4())[:8])
@@ -312,23 +277,8 @@ def trailing_numeric_suffix_from_step_id(step_id: str) -> int | None:
 class PlanResult(BaseModel):
     """Plan phase output with full reasoning chain.
 
-    Result of the Plan-And-Execute loop's Plan phase, which combines planning,
-    progress assessment, and goal-distance estimation in a single structured response.
-
-    Descriptive progress levels instead of numeric, removed confidence field.
-
-    Attributes:
-        status: Whether to finish, continue current plan, or replan.
-        goal_progress: Descriptive progress level (none | low | medium | high | complete).
-        assessment_reasoning: Optional status justification (often empty after ).
-        next_action: Internal orchestration hint (not shown in TUI).
-        full_action: Complete concatenated action from both phases (max 500 chars).
-        plan_action: Reuse the in-flight AgentDecision or supply a new one.
-        decision: New steps to run when plan_action is new; None when keep.
-        evidence_summary: Accumulated evidence text (often filled after parsing).
-        full_output: Final user-visible answer when status is done.
-        require_goal_completion: Whether an extra goal completion LLM call is needed.
-            When False, the last AIMessage can be used directly.
+    Combines planning, progress assessment, and goal-distance estimation
+    in a single structured response.
     """
 
     status: Literal["continue", "replan", "done"]
@@ -433,22 +383,10 @@ class WaveStepProgress(BaseModel):
 
 
 class PriorProgressDigest(BaseModel):
-    """Compact, truthful snapshot of the most recent execute wave.
+    """Compact snapshot of the most recent execute wave.
 
-    Refreshed by the executor at the end of every wave (parallel or sequential).
-    Used for interrupt digests and execute-side progress context. Never used as
-    a code-side override for structured LLM output — the deterministic
-    `derived_progress_hint` is shown verbatim so consumers can disagree.
-
-    Attributes:
-        iteration: Iteration that produced the wave.
-        wave_index: 0-based wave within that iteration.
-        steps_completed: Number of successful steps in the wave.
-        steps_failed: Number of failed steps in the wave.
-        tool_calls: Up to 8 `ToolCallHead` rows in arrival order.
-        evidence_excerpts: Up to 3 deduplicated AI-text excerpts, each ≤200 chars.
-        step_summaries: Up to 8 per-step rows rendered like execute `PRIOR STEPS`.
-        derived_progress_hint: Pure-function classification over wave outputs.
+    Refreshed by the executor at the end of every wave. Used for interrupt
+    digests and execute-side progress context.
     """
 
     iteration: int
@@ -523,6 +461,8 @@ class StepExecutionRecord(BaseModel):
         subagent_task_completions: Completed `task` tool results at graph root.
         hit_subagent_cap: True when streaming stopped early due to subagent task cap.
         hit_tool_budget: True when streaming stopped early due to per-step tool call cap.
+        hit_identical_repeat: True when the same tool+args was invoked N consecutive
+            times, tripping the degenerate-repetition circuit breaker.
     """
 
     step_id: str
@@ -537,6 +477,7 @@ class StepExecutionRecord(BaseModel):
     subagent_task_completions: int = 0
     hit_subagent_cap: bool = False
     hit_tool_budget: bool = False
+    hit_identical_repeat: bool = False
     had_recoverable_tool_errors: bool = False
 
     def to_evidence_string(self, *, truncate: bool = True) -> str:
@@ -659,40 +600,16 @@ def _step_node_to_result(node: Any) -> StepExecutionRecord:
         subagent_task_completions=ex.subagent_task_completions,
         hit_subagent_cap=ex.hit_subagent_cap,
         hit_tool_budget=ex.hit_tool_budget,
+        hit_identical_repeat=getattr(ex, "hit_identical_repeat", False),
     )
 
 
 class LoopState(BaseModel):
-    """State for agentic loop.
+    """State for the agentic loop.
 
     Bounded lists prevent memory leaks from unbounded accumulation during
-    long-running queries with many iterations.
-
-    Attributes:
-        goal: Goal description (after any `/skill:` expansion for orchestration).
-        goal_user_submission: Original user line when `goal` was expanded from `/skill:`;
-            used for Langfuse trace input so dashboards stay aligned with submitted text.
-        skill_context: Skill reference only (SKILL.md body) when `goal` was expanded from
-            `/skill:`; used in execute-step `<SKILL_CONTEXT>` (not the full composed goal).
-        thread_id: Thread context
-        workspace: Thread-specific workspace path
-        iteration: Current iteration number
-        max_iterations: Maximum iterations allowed
-        current_decision: Current AgentDecision being executed
-        plan_id: Active plan scope (3 uppercase letters); new plan allocates, keep reuses.
-        completed_step_ids: Set of completed step IDs (CE-backed property when bound)
-        previous_plan: Previous Plan phase result
-        step_results: All step results from execution (CE-backed property when bound)
-        evidence_summary: Accumulated evidence summary
-        started_at: Loop start timestamp
-        total_duration_ms: Total loop duration
-        working_memory: Loop working-memory instance when enabled.
-        loop_messages: Unified message ledger (CE-backed property when bound).
-        last_wave_answer_from_delegate_final: True when the latest execute wave answer came from `task` tool returns
-            (`task_tool_aggregate` provenance), not root-graph assistant stream.
-        last_execute_wave_parallel_multi_step: True when the last wave ran multiple parallel steps.
-        continue_loop: flag — True when this loop has prior goals (carrier for executor wiring).
-        prior_progress: per-wave digest produced by the executor.
+    long-running queries with many iterations. Several fields are CE-backed
+    properties when bound to a ContextEngine.
     """
 
     goal: str
@@ -782,6 +699,7 @@ class LoopState(BaseModel):
         super().__init_subclass__(**kwargs)
 
     def __init__(self, **kwargs: Any) -> None:
+        """Initialize the loop state and apply captured property kwargs to caches."""
         super().__init__(**kwargs)
         # Apply any captured property kwargs to the private caches
         pending = getattr(self.__class__, "_pending_kwargs_store", {})
@@ -802,6 +720,7 @@ class LoopState(BaseModel):
     last_wave_subagent_task_count: int = 0
     last_wave_hit_subagent_cap: bool = False
     last_wave_hit_tool_budget: bool = False
+    last_wave_hit_identical_repeat: bool = False
     last_wave_output_length: int = 0
     last_wave_error_count: int = 0
     total_tokens_used: int = 0
@@ -1267,6 +1186,7 @@ class LoopState(BaseModel):
         self.last_wave_subagent_task_count = 0
         self.last_wave_hit_subagent_cap = False
         self.last_wave_hit_tool_budget = False
+        self.last_wave_hit_identical_repeat = False
         self.last_wave_output_length = 0
         self.last_wave_error_count = 0
 

@@ -1,12 +1,10 @@
-"""Integration tests for Ray loop runner using a multi-node ``Cluster`` (RFC-221).
+"""Integration tests for Ray loop runner using a multi-node Cluster.
 
-Uses ``ray.cluster_utils.Cluster`` to start a head node plus worker nodes, then
-validates Ray scheduling and ``RayLoopRunner`` queue draining.
+Uses ray.cluster_utils.Cluster to start a head node plus worker nodes,
+then validates Ray scheduling and RayLoopRunner queue draining.
 
-**Requirements**: optional ``ray`` package. Tests are skipped when Ray is not
-installed.
-
-**Invocation**: marked ``integration`` — run with ``pytest --run-integration``.
+Requires the optional `ray` package. Marked `integration` — run with
+`pytest --run-integration`.
 """
 
 from __future__ import annotations
@@ -89,11 +87,7 @@ def test_ray_cluster_multi_node_resources(ray_multi_node_cluster) -> None:
 
 @pytest.mark.asyncio
 async def test_ray_loop_runner_streams_chunks_with_stub_actor(ray_multi_node_cluster) -> None:
-    """``RayLoopRunner`` drains ``ray.util.queue.Queue`` from a remote actor.
-
-    The real ``LoopRunnerActor`` builds a full ``SootheRunner``; this test
-    substitutes a lightweight stub so no LLM or heavy config is required.
-    """
+    """RayLoopRunner drains ray.util.queue.Queue from a remote actor."""
 
     @ray.remote
     class StubLoopRunnerActor:
@@ -106,6 +100,9 @@ async def test_ray_loop_runner_streams_chunks_with_stub_actor(ray_multi_node_clu
 
         async def cancel(self) -> None:
             pass
+
+        def ping(self) -> bool:
+            return True
 
     with patch("soothe_daemon.runner.ray_actor.LoopRunnerActor", StubLoopRunnerActor):
         from soothe_daemon.runner.ray_runner import RayLoopRunner
@@ -135,6 +132,9 @@ async def test_ray_loop_runner_cancel_releases_blocked_run(ray_multi_node_cluste
         async def cancel(self) -> None:
             self._released.set()
 
+        def ping(self) -> bool:
+            return True
+
     with patch("soothe_daemon.runner.ray_actor.LoopRunnerActor", HeldStubLoopRunnerActor):
         from soothe_daemon.runner.ray_runner import RayLoopRunner
 
@@ -146,6 +146,102 @@ async def test_ray_loop_runner_cancel_releases_blocked_run(ray_multi_node_cluste
         await asyncio.wait_for(drain_task, timeout=15.0)
 
     assert collected == [(("ns",), "messages", "held")]
+
+
+@pytest.mark.asyncio
+async def test_ray_loop_runner_timeout_surfaces_error(ray_multi_node_cluster) -> None:
+    """Request timeout_seconds causes run() to raise RuntimeError."""
+
+    @ray.remote
+    class SlowStubLoopRunnerActor:
+        def __init__(self, _config: object) -> None:
+            self._released = asyncio.Event()
+
+        async def run(self, _request: LoopRunRequest, queue: Any) -> None:
+            await queue.put_async(("chunk", (("ns",), "messages", "starting")))
+            await self._released.wait()
+            await queue.put_async(("done", None))
+
+        async def cancel(self) -> None:
+            self._released.set()
+
+        def ping(self) -> bool:
+            return True
+
+    with patch("soothe_daemon.runner.ray_actor.LoopRunnerActor", SlowStubLoopRunnerActor):
+        from soothe_daemon.runner.ray_runner import RayLoopRunner
+
+        runner = RayLoopRunner("ray-integ-timeout", MagicMock(), MagicMock())
+        with pytest.raises((TimeoutError, RuntimeError)):
+            async for _chunk in runner.run(_make_request(timeout_seconds=0.5)):
+                pass
+
+
+@pytest.mark.asyncio
+async def test_ray_loop_runner_dead_actor_surfaces_error(ray_multi_node_cluster) -> None:
+    """When the actor dies mid-stream, run() surfaces RayActorError."""
+
+    @ray.remote
+    class DyingStubLoopRunnerActor:
+        def __init__(self, _config: object) -> None:
+            pass
+
+        async def run(self, _request: LoopRunRequest, queue: Any) -> None:
+            await queue.put_async(("chunk", (("ns",), "messages", "before-crash")))
+            # Simulate actor process crash — never sends "done".
+            await asyncio.sleep(300)
+
+        async def cancel(self) -> None:
+            pass
+
+        def ping(self) -> bool:
+            return True
+
+    with patch("soothe_daemon.runner.ray_actor.LoopRunnerActor", DyingStubLoopRunnerActor):
+        from soothe_daemon.runner.ray_runner import RayLoopRunner
+
+        runner = RayLoopRunner("ray-integ-dead-actor", MagicMock(), MagicMock())
+        collected: list[Any] = []
+        drain_task = asyncio.create_task(_collect(runner.run(_make_request()), collected))
+        await asyncio.sleep(1.0)
+
+        # Kill the actor to simulate a process crash.
+        assert runner._actor is not None
+        ray.kill(runner._actor)
+
+        # The drain loop should detect the dead actor and raise.
+        with pytest.raises((Exception,)):  # noqa: PT011
+            await asyncio.wait_for(drain_task, timeout=30.0)
+
+    assert collected == [(("ns",), "messages", "before-crash")]
+
+
+@pytest.mark.asyncio
+async def test_ray_loop_runner_await_loop_dispatchable(ray_multi_node_cluster) -> None:
+    """await_loop_dispatchable serializes consecutive turns on the same loop."""
+
+    from soothe_daemon.runner.ray_runner import (
+        _mark_loop_busy,
+        _mark_loop_idle,
+        _reset_ray_state_for_testing,
+        await_loop_dispatchable,
+    )
+
+    _reset_ray_state_for_testing()
+
+    # When not busy, returns immediately.
+    await asyncio.wait_for(await_loop_dispatchable("test-loop"), timeout=1.0)
+
+    # When busy, blocks until idle.
+    _mark_loop_busy("test-loop")
+    wait_task = asyncio.create_task(await_loop_dispatchable("test-loop"))
+    await asyncio.sleep(0.2)
+    assert not wait_task.done(), "await_loop_dispatchable should block while busy"
+
+    _mark_loop_idle("test-loop")
+    await asyncio.wait_for(wait_task, timeout=2.0)
+
+    _reset_ray_state_for_testing()
 
 
 async def _collect(gen: Any, out: list[Any]) -> None:

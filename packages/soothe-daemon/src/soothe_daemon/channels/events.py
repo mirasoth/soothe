@@ -65,7 +65,7 @@ class AgentUIEvent(OutputEvent):
     or render as fallback text.
 
     Attributes:
-    payload: JSON-serializable UI specification.
+        payload: JSON-serializable UI specification.
     """
 
     type: str = OUTPUT_UI_RENDER
@@ -79,8 +79,8 @@ class ProgressEvent(OutputEvent):
     May be filtered by channel settings (send_progress flag).
 
     Attributes:
-    message: Progress message text.
-    tool_name: Optional tool name being executed.
+        message: Progress message text.
+        tool_name: Optional tool name being executed.
     """
 
     type: str = OUTPUT_PROGRESS
@@ -95,8 +95,8 @@ class ReasoningEvent(OutputEvent):
     Channels with low-emphasis UI affordances may render this distinctly.
 
     Attributes:
-    content: Reasoning text.
-    stream_id: Optional stream identifier for streaming reasoning.
+        content: Reasoning text.
+        stream_id: Optional stream identifier for streaming reasoning.
     """
 
     type: str = OUTPUT_REASONING

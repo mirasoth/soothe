@@ -39,7 +39,7 @@ class TestACPConfig:
     def test_default_config(self):
         """Test default config values."""
         cfg = ACPConfig()
-        assert cfg.enabled is False
+        assert cfg.enabled is True
         assert cfg.agent_name == "Soothe"
         assert cfg.agent_description == "Soothe autonomous agent"
         assert cfg.default_model is None
@@ -80,8 +80,8 @@ class TestACPChannelInit:
         assert channel.config == config
         assert channel._manager == manager
         assert channel.is_running is False
-        assert channel._session_map == {}
-        assert channel._pending_permissions == {}
+        assert channel._get_state().session_map == {}
+        assert channel._get_state().pending_permissions == {}
 
     def test_client_count_zero(self):
         """Test client_count is zero initially."""
@@ -98,7 +98,7 @@ class TestACPChannelSession:
 
     @pytest.mark.asyncio
     async def test_session_new_creates_loop(self):
-        """Test session/new creates a loop and populates _session_map."""
+        """Test session/new creates a loop and populates the session map."""
         config = ACPConfig(enabled=True)
         manager = MagicMock()
         manager.handle_inbound = AsyncMock(return_value="acp:test-session-id")
@@ -110,12 +110,12 @@ class TestACPChannelSession:
 
         assert "sessionId" in result
         session_id = result["sessionId"]
-        assert session_id in channel._session_map
-        assert channel._session_map[session_id] == "acp:test-session-id"
+        assert session_id in channel._get_state().session_map
+        assert channel._get_state().session_map[session_id] == "acp:test-session-id"
         assert channel.client_count == 1
 
         # Clean up consumer task
-        for task in channel._consumer_tasks.values():
+        for task in channel._get_state().consumer_tasks.values():
             task.cancel()
 
     @pytest.mark.asyncio
@@ -143,7 +143,7 @@ class TestACPChannelSession:
         assert call_kwargs.kwargs["content"] == "Hello"
 
         # Clean up consumer task
-        for task in channel._consumer_tasks.values():
+        for task in channel._get_state().consumer_tasks.values():
             task.cancel()
 
     @pytest.mark.asyncio
@@ -169,7 +169,7 @@ class TestACPChannelSession:
         assert published_msg["command"] == "cancel"
 
         # Clean up consumer task
-        for task in channel._consumer_tasks.values():
+        for task in channel._get_state().consumer_tasks.values():
             task.cancel()
 
 
@@ -249,7 +249,7 @@ class TestACPPermissionBridge:
         # Manually register a session without starting consumer task
         session_id = "test-session-123"
         loop_id = "acp:perm-test"
-        channel._session_map[session_id] = loop_id
+        channel._get_state().session_map[session_id] = loop_id
         return channel, session_id, loop_id
 
     def test_is_tool_approval_event_positive(self):
@@ -338,7 +338,7 @@ class TestACPPermissionBridge:
 
             # Resolve the pending future with "allow"
             req_id = req["id"]
-            fut = channel._pending_permissions[req_id]
+            fut = channel._get_state().pending_permissions[req_id]
             fut.set_result({"outcome": "selected", "optionId": "allow_once"})
 
             # Wait for the bridge to complete
@@ -353,7 +353,7 @@ class TestACPPermissionBridge:
         assert resume_msg["resume_payload"]["int-001"]["decisions"][0]["type"] == "approve"
 
         # Clean up
-        for task in channel._consumer_tasks.values():
+        for task in channel._get_state().consumer_tasks.values():
             task.cancel()
 
     @pytest.mark.asyncio
@@ -390,7 +390,7 @@ class TestACPPermissionBridge:
             await asyncio.sleep(0.1)
 
             req_id = written_messages[0]["id"]
-            fut = channel._pending_permissions[req_id]
+            fut = channel._get_state().pending_permissions[req_id]
             fut.set_result({"outcome": "selected", "optionId": "reject_once"})
 
             await asyncio.wait_for(bridge_task, timeout=5.0)
@@ -398,7 +398,7 @@ class TestACPPermissionBridge:
         resume_msg = channel._manager._event_bus.publish.call_args.args[1]
         assert resume_msg["resume_payload"]["int-002"]["decisions"][0]["type"] == "reject"
 
-        for task in channel._consumer_tasks.values():
+        for task in channel._get_state().consumer_tasks.values():
             task.cancel()
 
     @pytest.mark.asyncio
@@ -438,7 +438,7 @@ class TestACPPermissionBridge:
         resume_msg = channel._manager._event_bus.publish.call_args.args[1]
         assert resume_msg["resume_payload"]["int-003"]["decisions"][0]["type"] == "reject"
 
-        for task in channel._consumer_tasks.values():
+        for task in channel._get_state().consumer_tasks.values():
             task.cancel()
 
     @pytest.mark.asyncio
@@ -449,7 +449,7 @@ class TestACPPermissionBridge:
         # Create a pending permission
         req_id = 42
         fut: asyncio.Future[dict] = asyncio.get_running_loop().create_future()
-        channel._pending_permissions[req_id] = fut
+        channel._get_state().pending_permissions[req_id] = fut
 
         # Simulate a response from the ACP client
         response = {
@@ -463,7 +463,7 @@ class TestACPPermissionBridge:
         result = fut.result()
         assert result["outcome"] == "selected"
         assert result["optionId"] == "allow_always"
-        assert req_id not in channel._pending_permissions
+        assert req_id not in channel._get_state().pending_permissions
 
     @pytest.mark.asyncio
     async def test_handle_response_with_error_resolves_cancelled(self):
@@ -472,7 +472,7 @@ class TestACPPermissionBridge:
 
         req_id = 99
         fut: asyncio.Future[dict] = asyncio.get_running_loop().create_future()
-        channel._pending_permissions[req_id] = fut
+        channel._get_state().pending_permissions[req_id] = fut
 
         response = {
             "jsonrpc": "2.0",
@@ -492,7 +492,7 @@ class TestACPPermissionBridge:
         response = {"jsonrpc": "2.0", "id": 999, "result": {}}
         # Should not raise
         await channel._handle_response(response)
-        assert len(channel._pending_permissions) == 0
+        assert len(channel._get_state().pending_permissions) == 0
 
     @pytest.mark.asyncio
     async def test_dispatch_request_routes_response(self):
@@ -501,7 +501,7 @@ class TestACPPermissionBridge:
 
         req_id = 55
         fut: asyncio.Future[dict] = asyncio.get_running_loop().create_future()
-        channel._pending_permissions[req_id] = fut
+        channel._get_state().pending_permissions[req_id] = fut
 
         # A response has no "method" key but has "id"
         response = {
@@ -526,9 +526,9 @@ class TestACPPermissionBridge:
 
         req_id = 77
         fut: asyncio.Future[dict] = asyncio.get_running_loop().create_future()
-        channel._pending_permissions[req_id] = fut
+        channel._get_state().pending_permissions[req_id] = fut
 
         await channel.stop()
 
         assert fut.cancelled() or fut.done()
-        assert len(channel._pending_permissions) == 0
+        assert len(channel._get_state().pending_permissions) == 0

@@ -11,8 +11,8 @@ class LoopBroadcastBudget:
     """Semaphore-backed budget keyed by `loop_id`.
 
     Args:
-    max_in_flight_per_loop: Max concurrent in-flight broadcasts per loop.
-    `0` disables limiting.
+        max_in_flight_per_loop: Max concurrent in-flight broadcasts per loop.
+        `0` disables limiting.
     """
 
     def __init__(self, max_in_flight_per_loop: int) -> None:

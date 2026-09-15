@@ -23,6 +23,7 @@ class GlobalInputHistory:
         max_size: int = 5000,
         dedup_window: int = 10,
     ) -> None:
+        """Initialize the history file path, size cap, and dedup window."""
         self.history_file = Path(
             history_file or Path(SOOTHE_DATA_DIR) / "history.jsonl"
         ).expanduser()

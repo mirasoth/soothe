@@ -28,6 +28,24 @@ _PLAN_SYNTHESIS_HUMAN_TRIGGER = (
 # blowing up the input-token budget on large plans.
 _PRIOR_PLAN_MAX_CHARS = 8000
 
+# Maximum number of retry attempts when the LLM returns an empty response
+# (i.e., all output was thinking tokens that got stripped, leaving no
+# visible plan text). Thinking models occasionally spend their entire
+# budget reasoning inside <think> blocks without producing any final
+# output text — a retry with a nudge message coaxes the model to emit
+# the plan in the visible content channel.
+_MAX_EMPTY_RETRIES = 2
+
+# Nudge message appended on retry to steer thinking models toward
+# emitting visible (non-thinking) output rather than spending the
+# entire budget on internal reasoning.
+_EMPTY_RETRY_NUDGE = (
+    "Your previous response contained only internal reasoning with no visible "
+    "plan document. Output the complete plan now as your final answer — do not "
+    "use <think> tags or reasoning blocks, output only the plan document text "
+    "following the template."
+)
+
 
 async def synthesize_plan(
     ctx: LoopRuntimeContext,
@@ -39,20 +57,13 @@ async def synthesize_plan(
 ) -> str:
     """Generate a plan document from step execution evidence via LLM.
 
-    Projects the `execute_step` ledger messages (tool calls, results,
-    AI text) and makes a single LLM call with the plan synthesis system
-    prompt. Returns the generated plan text.
-
     Args:
         ctx: Loop runtime context with `loop_state` containing the ledger.
         llm: Chat model for the synthesis call.
         config: Optional SootheConfig for ledger projection caps.
-        refinement_comments: User-requested plan refinement. When
-            provided (with `prior_plan`), the LLM is asked to *revise*
-            the prior plan per the comments rather than synthesize from
-            scratch.
-        prior_plan: The previous plan draft being refined. Required when
-            `refinement_comments` is set.
+        refinement_comments: User-requested plan refinement. When provided
+            with `prior_plan`, the LLM revises the prior plan per the comments.
+        prior_plan: The previous plan draft being refined.
 
     Returns:
         Generated plan document text (may be empty on failure).
@@ -67,28 +78,35 @@ async def synthesize_plan(
         config=config,
     )
 
-    # Project execute_step ledger messages as evidence.
-    wrapper = GraphPromptWrapper(config)
-    ledger_cfg = None
-    if config is not None:
-        ledger_cfg = config.agent.loop.plan_prompt_ledger
-    projection = wrapper.project_ledger(
-        kind="synthesis",
-        state=state,
-        ledger_cfg=ledger_cfg,
-    )
-    ledger_msgs = list(projection.messages)
-
-    # Assemble the message list: system + ledger evidence + human trigger.
-    messages: list[Any] = [SystemMessage(content=system_text)]
-    messages.extend(ledger_msgs)
-
     is_refinement = bool((refinement_comments or "").strip()) and bool((prior_plan or "").strip())
+
+    # During refinement, the prior plan is already passed via the refinement
+    # trigger. Projecting the ledger here re-injects the old plan body as a
+    # "prior goal completion" report, which anchors the LLM on the stale plan
+    # and suppresses the requested changes. Skip ledger projection entirely
+    # for refinement passes — the refinement trigger carries everything needed.
     if is_refinement:
+        messages: list[Any] = [SystemMessage(content=system_text)]
         messages.append(
             HumanMessage(content=_build_refinement_trigger(refinement_comments, prior_plan))
         )
+        ledger_msgs: list[Any] = []
     else:
+        # Project execute_step ledger messages as evidence.
+        wrapper = GraphPromptWrapper(config)
+        ledger_cfg = None
+        if config is not None:
+            ledger_cfg = config.agent.loop.plan_prompt_ledger
+        projection = wrapper.project_ledger(
+            kind="synthesis",
+            state=state,
+            ledger_cfg=ledger_cfg,
+        )
+        ledger_msgs = list(projection.messages)
+
+        # Assemble the message list: system + ledger evidence + human trigger.
+        messages = [SystemMessage(content=system_text)]
+        messages.extend(ledger_msgs)
         messages.append(HumanMessage(content=_PLAN_SYNTHESIS_HUMAN_TRIGGER))
 
     approx_chars = sum(len(str(getattr(m, "content", ""))) for m in messages)
@@ -99,22 +117,41 @@ async def synthesize_plan(
         is_refinement,
     )
 
-    start = time.perf_counter()
-    try:
-        response = await llm.ainvoke(messages)
-    except Exception:
-        logger.exception("[PlanSynthesis] LLM call failed")
-        return ""
+    # Retry loop: thinking models (e.g. glm-5.2 with hide_thinking_tokens=True)
+    # can spend their entire output budget on internal reasoning, producing
+    # zero visible text after thinking-token stripping. On empty output we
+    # append a nudge message and retry, up to _MAX_EMPTY_RETRIES times.
+    attempt = 0
+    while True:
+        start = time.perf_counter()
+        try:
+            response = await llm.ainvoke(messages)
+        except Exception:
+            logger.exception("[PlanSynthesis] LLM call failed")
+            return ""
 
-    elapsed_ms = int((time.perf_counter() - start) * 1000)
-    plan_text = _extract_text(response).strip()
+        elapsed_ms = int((time.perf_counter() - start) * 1000)
+        plan_text = _extract_text(response).strip()
 
-    logger.info(
-        "[PlanSynthesis] LLM call completed: elapsed_ms=%d plan_chars=%d",
-        elapsed_ms,
-        len(plan_text),
-    )
-    return plan_text
+        logger.info(
+            "[PlanSynthesis] LLM call completed: elapsed_ms=%d plan_chars=%d attempt=%d",
+            elapsed_ms,
+            len(plan_text),
+            attempt,
+        )
+
+        if plan_text or attempt >= _MAX_EMPTY_RETRIES:
+            return plan_text
+
+        # Empty response on a non-final attempt: nudge and retry.
+        logger.warning(
+            "[PlanSynthesis] Empty response after thinking-token strip "
+            "(attempt=%d/%d); appending nudge and retrying",
+            attempt + 1,
+            _MAX_EMPTY_RETRIES,
+        )
+        messages.append(HumanMessage(content=_EMPTY_RETRY_NUDGE))
+        attempt += 1
 
 
 def _render_plan_synthesis_system_prompt(

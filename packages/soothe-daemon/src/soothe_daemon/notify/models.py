@@ -2,9 +2,6 @@
 
 Channel-agnostic payloads produced by the host NotificationRouter and
 consumed by daemon NotifySink adapters (email, webhook, Feishu, …).
-
-These models were relocated from ``soothe_autopilot.notify.models`` so the
-daemon no longer depends on the ``soothe-autopilot`` package for notify.
 """
 
 from __future__ import annotations
@@ -26,13 +23,12 @@ NotifyKind = Literal[
 class Severity(StrEnum):
     """Severity classification for notify intents.
 
-    Drift-aware escalation (see `router._severity_for`):
     - `info`    — normal completion, no drift signals.
     - `warning` — suspended timeout, maturity blockers, or repeated
-      failures below the retry budget (the job is *drifting* away from
+      failures below the retry budget (the job is drifting away from
       a healthy outcome but is not yet terminal).
     - `error`   — terminal failure, or retry/send-back budgets
-      exhausted (the job has *drifted* past recovery).
+      exhausted (the job has drifted past recovery).
     """
 
     INFO = "info"

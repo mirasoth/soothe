@@ -107,6 +107,7 @@ class IntakeOnlyTaskGuardMiddleware(AgentMiddleware):
         request: ToolCallRequest,
         handler: Callable[[ToolCallRequest], Awaitable[Any]],
     ) -> Any:
+        """Block intake-only subagent calls from the open `task` catalog."""
         tool_call = getattr(request, "tool_call", None)
         tool_name = tool_call.get("name") if isinstance(tool_call, dict) else None
         if tool_name != _TASK_TOOL_NAME:

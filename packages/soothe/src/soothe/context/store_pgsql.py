@@ -28,6 +28,7 @@ class PgsqlContextPersistence:
         *,
         config: SootheConfig | None = None,
     ) -> None:
+        """Initialize with loop_id and optional SootheConfig for lazy writer/pool."""
         self._loop_id = loop_id
         self._config = config
         self._loop_writer: Any = None
@@ -64,6 +65,7 @@ class PgsqlContextPersistence:
         return pool
 
     async def save_dag(self, dag: GoalStepDAG) -> None:
+        """Persist a GoalStepDAG via the shared loop persistence writer."""
         writer = await self._ensure_loop_writer()
         try:
             await writer.submit_save_ce_dag(self._loop_id, dag)
@@ -72,6 +74,7 @@ class PgsqlContextPersistence:
             raise
 
     async def load_dag(self) -> GoalStepDAG | None:
+        """Load and restore a GoalStepDAG from PostgreSQL, or `None`."""
         try:
             pool = await self._shared_pool()
             async with pool.connection() as conn:
@@ -98,6 +101,7 @@ class PgsqlContextPersistence:
             return None
 
     async def save_ledger(self, messages: list[dict[str, Any]]) -> None:
+        """Persist ledger messages via the shared loop persistence writer."""
         writer = await self._ensure_loop_writer()
         try:
             await writer.submit_save_ce_ledger(self._loop_id, messages)
@@ -106,6 +110,7 @@ class PgsqlContextPersistence:
             raise
 
     async def load_ledger(self) -> list[dict[str, Any]]:
+        """Load ledger messages from PostgreSQL, or `[]` on error."""
         try:
             pool = await self._shared_pool()
             async with pool.connection() as conn:
@@ -129,6 +134,7 @@ class PgsqlContextPersistence:
             return []
 
     async def clear(self) -> None:
+        """Delete all DAG and ledger rows for this loop_id."""
         try:
             pool = await self._shared_pool()
             async with pool.connection() as conn:

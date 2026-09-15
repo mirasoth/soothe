@@ -5,8 +5,9 @@ from __future__ import annotations
 from typing import Literal
 
 from soothe_sdk.core.events import ProtocolEvent
+from soothe_sdk.core.verbosity import VerbosityTier
 
-from soothe.events import VerbosityTier, register_event
+from soothe.events import register_event
 
 
 class LoopAgentReasonEvent(ProtocolEvent):

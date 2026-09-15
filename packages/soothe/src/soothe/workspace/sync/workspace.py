@@ -64,6 +64,7 @@ class Workspace:
         checkpoint_mgr: CheckpointManager | None,
         uploader: BackgroundUploader | None,
     ) -> None:
+        """Initialize the workspace sync session with all sub-components."""
         self.run_id = run_id
         self.root = root
         self._backend = backend

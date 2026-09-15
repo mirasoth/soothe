@@ -146,16 +146,16 @@ def _thread_worker_body(
     - Exit on stop_event, idle timeout (scaled workers only), or max requests
 
     Args:
-    config: SootheConfig (shared memory, no pickling needed).
-    worker_id: Unique worker identifier for logging.
-    request_queue: threading.Queue for receiving requests.
-    response_queue: threading.Queue for sending responses.
-    cancel_event: threading.Event for cooperative cancellation.
-    stop_event: threading.Event for shutdown signal.
-    idle_timeout_seconds: Exit after this many seconds idle (scaled workers only).
-    max_requests: Exit after this many requests completed.
-    default_timeout_seconds: Default per-request timeout if not specified.
-    is_baseline_worker: When True, wait indefinitely for work (min pool slot).
+        config: SootheConfig (shared memory, no pickling needed).
+        worker_id: Unique worker identifier for logging.
+        request_queue: threading.Queue for receiving requests.
+        response_queue: threading.Queue for sending responses.
+        cancel_event: threading.Event for cooperative cancellation.
+        stop_event: threading.Event for shutdown signal.
+        idle_timeout_seconds: Exit after this many seconds idle (scaled workers only).
+        max_requests: Exit after this many requests completed.
+        default_timeout_seconds: Default per-request timeout if not specified.
+        is_baseline_worker: When True, wait indefinitely for work (min pool slot).
     """
     # Create dedicated event loop for this thread
     loop = asyncio.new_event_loop()
@@ -798,8 +798,8 @@ class ThreadPool:
         still waiting on the response queue (crash, forced exit, or delivery gap).
 
         Returns:
-        True if recovery ran (synthetic `done` or stale bookkeeping cleared)
-        and the caller should skip the generic dead-worker error path.
+            True if recovery ran (synthetic `done` or stale bookkeeping cleared)
+            and the caller should skip the generic dead-worker error path.
         """
         req_id = worker.current_request_id
         if req_id is None or worker.dead_failure_routed:
@@ -1294,8 +1294,8 @@ class ThreadPool:
         will handle cleanup on the next iteration.
 
         Args:
-        worker_id: Worker thread to cancel.
-        timeout: Seconds to wait for thread self-termination.
+            worker_id: Worker thread to cancel.
+            timeout: Seconds to wait for thread self-termination.
         """
         worker = self._workers.get(worker_id)
         if worker is None:

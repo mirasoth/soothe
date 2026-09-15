@@ -397,7 +397,7 @@ class WecomChannel(Channel):
         Download and decrypt media from WeCom.
 
         Returns:
-        file_path or None if download failed
+            file_path or None if download failed
         """
         try:
             data, fname = await self._client.download_file(file_url, aes_key)

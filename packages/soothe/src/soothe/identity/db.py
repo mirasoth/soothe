@@ -67,20 +67,24 @@ class IdentityDbConnection:
     """
 
     def __init__(self, backend: IdentityBackend, conn: Any) -> None:
+        """Bind to a backend type and raw connection object."""
         self.backend = backend
         self._conn = conn
 
     def execute(self, sql: str, params: tuple[Any, ...] | list[Any] = ()) -> Any:
+        """Execute SQL, translating `?` placeholders to `%s` for PostgreSQL."""
         if self.backend == "postgresql":
             pg_sql = _QMARK.sub("%s", sql)
             return self._conn.execute(pg_sql, params)
         return self._conn.execute(sql, params)
 
     def commit(self) -> None:
+        """Commit the transaction (no-op for SQLite; runtime owns it)."""
         if self.backend == "postgresql":
             self._conn.commit()
 
     def close(self) -> None:
+        """Close the underlying connection (no-op for SQLite)."""
         if self.backend == "postgresql":
             self._conn.close()
 

@@ -256,10 +256,10 @@ async def check_persistence(config: SootheConfig | None = None) -> CategoryResul
     """Check persistence layer gated on `persistence.default_backend`.
 
     Args:
-    config: SootheConfig instance
+        config: SootheConfig instance
 
     Returns:
-    CategoryResult with persistence check results
+        CategoryResult with persistence check results
     """
     backend = _default_backend(config)
     checks: list[CheckResult] = [

@@ -61,6 +61,7 @@ class SqliteWorkspaceStateStore:
     """
 
     def __init__(self, *, db_path: Path, loop_id: str) -> None:
+        """Initialize the SQLite connection and create the workspace schema."""
         self._db_path = db_path
         self._loop_id = loop_id
         db_path.parent.mkdir(parents=True, exist_ok=True)

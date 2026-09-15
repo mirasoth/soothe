@@ -108,6 +108,7 @@ class IntakeClassifier:
         assistant_name: str = "Soothe",
         assistant_identity: AssistantIdentity | None = None,
     ) -> None:
+        """Initialize the fast model, config, and assistant identity for intake."""
         self._fast_model = model
         self._soothe_config = soothe_config
         self._assistant_name = (assistant_name or "Soothe").strip() or "Soothe"

@@ -411,11 +411,11 @@ class RailConfig(BaseModel):
 
     # === Cancel escalation (RFC-222 H8 revised) ===
     # Goal cancel / deadline paths first request cooperative cancellation
-    # (``runner.cancel()``), then poll ``runner.is_idle()``; if the worker
+    # (`runner.cancel()`), then poll `runner.is_idle()`; if the worker
     # does not go idle within the retry budget, escalate to
-    # ``runner.force_kill()`` so a worker blocked mid-LLM-call or in sync code
+    # `runner.force_kill()` so a worker blocked mid-LLM-call or in sync code
     # is guaranteed terminated rather than orphaned. Mirrors the query engine's
-    # ``_cancel_loop`` ladder (SootheDaemonConfig.cancel_* knobs).
+    # `_cancel_loop` ladder (SootheDaemonConfig.cancel_* knobs).
     cancel_retry_count: int = Field(
         default=3,
         ge=1,
@@ -474,22 +474,22 @@ class WorkspaceReservationConfig(BaseModel):
 
 
 class WorkspaceSyncConfig(BaseModel):
-    """Durable object-store backend for agent workspace materialization (RFC-906).
+    """Durable object-store backend for agent workspace materialization.
 
-    When ``source_uri`` is set, the daemon constructs an
+    When `source_uri` is set, the daemon constructs an
     :class:`~soothe.workspace.sync.FsspecSyncBackend` via
     :func:`~soothe.workspace.sync.construct_sync_backend` to materialize
     resources, checkpoint dirty files, and publish artifacts to the
     configured S3/GCS/Azure bucket.
 
     Args:
-        source_uri: Object-store URI (e.g. ``s3://bucket/prefix``).
-            Only ``s3``, ``gs``, and ``az`` schemes are permitted.
+        source_uri: Object-store URI (e.g. `s3://bucket/prefix`).
+            Only `s3`, `gs`, and `az` schemes are permitted.
         storage_options: Backend-specific options forwarded to fsspec
             (endpoint_url, credentials, etc.). Prefer environment variables
             or IAM roles over explicit credential dicts for production.
         publish_prefix: Artifact publication prefix. Defaults to
-            ``<source_uri>/artifacts/`` when unset.
+            `<source_uri>/artifacts/` when unset.
     """
 
     source_uri: str | None = Field(
@@ -507,7 +507,7 @@ class WorkspaceSyncConfig(BaseModel):
 
     @property
     def is_enabled(self) -> bool:
-        """True when ``source_uri`` is set."""
+        """True when `source_uri` is set."""
         return bool(self.source_uri)
 
 
@@ -969,11 +969,16 @@ class StrangeLoopConfig(BaseModel):
         return data
 
     dispatch_idle_seconds: float = Field(
-        default=300.0,
+        default=180.0,
         description=(
             "Deadlock detector: max seconds of stream inactivity when no root-level "
-            "tool is pending. Resets on every real chunk. When it fires, the step "
-            "is retried up to dispatch_retry_max times before failing. Default 300s."
+            "tool is pending — i.e. the gap waiting for the LLM to produce its next "
+            "chunk after the last tool result. Resets on every real chunk. When it "
+            "fires, the step is retried up to dispatch_retry_max times before "
+            "failing. Retries use progressive backoff: each retry shortens the idle "
+            "deadline (attempt n uses base × 0.85^n, floored at 60s), so genuine "
+            "deadlocks fail faster while still giving the LLM adequate time to "
+            "respond on each retry. Default 180s."
         ),
         ge=0,
         le=86_400,
@@ -993,8 +998,9 @@ class StrangeLoopConfig(BaseModel):
         description=(
             "Max retries when dispatch_idle_seconds fires (0 = no retry, step fails "
             "on first timeout). Retries reuse the LangGraph checkpoint so prior tool "
-            "results are preserved. Total timeout budget is "
-            "dispatch_idle_seconds × (dispatch_retry_max + 1)."
+            "results are preserved. Each retry shortens the idle deadline via "
+            "progressive backoff (base × 0.85^n, floored at 60s), so total timeout "
+            "budget is less than dispatch_idle_seconds × (dispatch_retry_max + 1)."
         ),
         ge=0,
         le=10,

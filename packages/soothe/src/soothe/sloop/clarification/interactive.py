@@ -30,8 +30,8 @@ logger = logging.getLogger(__name__)
 class InteractiveClarificationPolicy:
     """Relay clarifications to a human via the TUI with a durable pause.
 
-    When a ``ToolApprovalPipeline`` is attached (manual mode), it pre-filters
-    ``tool_approval`` requests — deny/safety stages auto-reject, allow rules
+    When a `ToolApprovalPipeline` is attached (manual mode), it pre-filters
+    `tool_approval` requests — deny/safety stages auto-reject, allow rules
     auto-approve.  Only rule-unresolved actions reach the human.
     """
 
@@ -42,6 +42,7 @@ class InteractiveClarificationPolicy:
         tool_approval_pipeline: ToolApprovalPipeline | None = None,
         manual_allow_rules: bool = False,
     ) -> None:
+        """Wire the emit callback and optional tool-approval pipeline."""
         self._emit = emit
         self._tool_approval_pipeline = tool_approval_pipeline
         self._manual_allow_rules = manual_allow_rules
@@ -52,7 +53,7 @@ class InteractiveClarificationPolicy:
         self._emit = emit
 
     async def answer(self, request: ClarificationRequest) -> ClarificationAnswer:
-        """Pause for a human answer.  ``await_clarification`` already emitted."""
+        """Pause for a human answer.  `await_clarification` already emitted."""
         self._escalated_rule_id = None
         static = self._evaluate_tool_approval_pipeline(request)
         if static is not None:
@@ -63,10 +64,10 @@ class InteractiveClarificationPolicy:
     async def answer_as_manual_fallback(
         self, request: ClarificationRequest, *, announce: bool = True
     ) -> ClarificationAnswer:
-        """Re-announce as ``mode=manual`` then pause (auto→manual upgrade).
+        """Re-announce as `mode=manual` then pause (auto→manual upgrade).
 
-        The TUI only mounts the interactive card for ``mode=manual`` emits;
-        resume replays pass ``announce=False`` since the card already exists.
+        The TUI only mounts the interactive card for `mode=manual` emits;
+        resume replays pass `announce=False` since the card already exists.
         """
         answer = await self._answer(request, announce=announce)
         return self._merge_escalated_rule_id(answer)
@@ -119,7 +120,7 @@ class InteractiveClarificationPolicy:
         self, request: ClarificationRequest
     ) -> ClarificationAnswer | None:
         """Run the tool-approval pipeline pre-filter.  Returns a static answer
-        or ``None`` to fall through to the human interrupt."""
+        or `None` to fall through to the human interrupt."""
         if request.origin_node != ORIGIN_TOOL_APPROVAL or self._tool_approval_pipeline is None:
             return None
         action_requests = request.metadata.get("action_requests", [])
@@ -194,7 +195,7 @@ class InteractiveClarificationPolicy:
 
     @staticmethod
     def _normalize_payload(payload: Any) -> list[str] | None:
-        """Extract a raw answer list from an interrupt payload, or ``None``."""
+        """Extract a raw answer list from an interrupt payload, or `None`."""
         if payload is None:
             return None
         if isinstance(payload, str):

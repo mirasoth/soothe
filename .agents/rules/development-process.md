@@ -26,6 +26,13 @@ Before marking work done, every time:
 ## DO NOT Cheat Tests
 Fix the implementation, not test expectations. "Passing tests" ≠ "Working correctly."
 
+## Dead Code & Legacy Removal (MUST)
+- When touching a module for any reason, remove dead code, backward-compatibility shims, and superseded helpers *in the same change* — do not leave them for a future cleanup pass.
+- Run vulture (via `./scripts/verify_finally.sh`) and act on findings ≥90% confidence. Unreachable branches, unused imports, and orphaned functions are removed, not suppressed with `# noqa`.
+- Do not add backward-compatibility aliases (`old_name = new_name`, `_v1` suffixes, `@deprecated` shims). When an API changes, update all call sites in the monorepo and delete the old surface.
+- Do not leave `# TODO: remove this`, `# legacy`, `# backward compat`, or `# deprecated` markers in the codebase. Either remove the code or track it as a design doc — comments are not a backlog.
+- Vulture-whitelisted entries in `vulture_whitelist.txt` must include a one-line reason. Review the whitelist periodically; remove entries whose code was deleted.
+
 ## Workflow
 1. **Plan**: Explore codebase → ask when alternatives exist → ExitPlanMode for approval
 2. **Implement**: Place code per package-boundaries rules → check ecosystem → follow patterns → `make lint`

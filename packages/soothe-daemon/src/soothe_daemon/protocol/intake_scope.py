@@ -15,12 +15,12 @@ def validate_and_normalize_intake_scope(
     """Validate optional `loop_input.intake_scope`.
 
     Args:
-    raw: Client value from the wire message.
-    intent_hint: Normalized `intent_hint` for the same turn (may be unset).
+        raw: Client value from the wire message.
+        intent_hint: Normalized `intent_hint` for the same turn (may be unset).
 
     Returns:
-    `(normalized_scope, error_message)`. On success `error_message` is
-    `None`. Unset / empty returns `(None, None)`.
+        `(normalized_scope, error_message)`. On success `error_message` is
+        `None`. Unset / empty returns `(None, None)`.
     """
     try:
         scope = parse_intake_scope(raw)

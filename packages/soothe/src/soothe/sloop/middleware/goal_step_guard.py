@@ -23,6 +23,7 @@ class GoalStepGuardMiddleware(AgentMiddleware):
     """Host policy from LangGraph `configurable` for goal synthesis."""
 
     def modify_request(self, request: ModelRequest[ContextT]) -> ModelRequest[ContextT]:
+        """Disable model tools during goal synthesis read-only mode."""
         conf = _decompose_runtime.langgraph_configurable()
 
         if not conf.get(SOOTHE_GOAL_SYNTHESIS_CONFIG_KEY):

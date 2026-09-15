@@ -63,6 +63,7 @@ class CheckpointManager:
         max_deltas: int = _DEFAULT_MAX_DELTAS,
         max_cumulative_dirty: int = _DEFAULT_MAX_CUMULATIVE_DIRTY,
     ) -> None:
+        """Initialize the checkpoint manager with backend, CAS, and dirty tracker."""
         self._run_id = run_id
         self._backend = backend
         self._cas = cas

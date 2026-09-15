@@ -24,6 +24,7 @@ class CompositionConflictError(ValueError):
     """Raised when split config composition finds incompatible overlaps."""
 
     def __init__(self, conflicts: list[CompositionConflict]) -> None:
+        """Store conflicts and build a human-readable error message."""
         self.conflicts = list(conflicts)
         details = "; ".join(
             f"{c.key_path}: base={c.base_value!r}, overlay={c.overlay_value!r}"

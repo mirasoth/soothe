@@ -55,3 +55,55 @@ def test_build_intake_system_prompt_formats_assistant_name_in_examples() -> None
 def test_intake_human_task_avoids_identity_priming() -> None:
     assert INTAKE_CLASSIFY_HUMAN_TASK == "Classify the user message above. JSON only."
     assert "Identity replies" not in INTAKE_CLASSIFY_HUMAN_TASK
+
+
+# ── Complexity-calibration regression guards ─────────────────────────────────
+# These assert the prompt carries the operational complexity criteria and the
+# anti-over-classification rule. Without them the LLM reverts to labeling any
+# analysis/research as complex, inflating complex routing (observed in loop
+# b976 where every continuation goal was complex). See TaskComplexity docstring.
+
+
+def test_prompt_has_operational_complexity_criteria() -> None:
+    prompt = INTAKE_CLASSIFY_SYSTEM_PROMPT
+    # Complex is defined by structural independence, not by "is it analysis".
+    assert "2+ INDEPENDENT areas/modules/deliverables" in prompt
+    assert "could proceed in parallel" in prompt
+
+
+def test_prompt_has_anti_over_classification_rule() -> None:
+    prompt = INTAKE_CLASSIFY_SYSTEM_PROMPT
+    assert "Do NOT label work complex merely because" in prompt
+    assert "A single cohesive analysis or report is simple" in prompt
+
+
+def test_prompt_grounds_complex_verdict_in_reasoning() -> None:
+    """The reasoning must name the independent areas for complex goals —
+    chain-of-thought grounding that improves classification accuracy."""
+    prompt = INTAKE_CLASSIFY_SYSTEM_PROMPT
+    assert "name the 2+ independent areas/phases" in prompt
+
+
+def test_prompt_single_deliverable_examples_are_simple() -> None:
+    """Few-shot calibration: single analysis/report/plan deliverables are
+    simple, not complex."""
+    prompt = INTAKE_CLASSIFY_SYSTEM_PROMPT
+    assert '"research the market for electric bikes" → is_task:true' in prompt
+    assert (
+        '"research the market for electric bikes" → is_task:true,'
+        " response_language:en, social_response:null, task_complexity:simple"
+    ) in prompt
+    assert '"analyze last quarter\'s sales data and summarize trends" → is_task:true' in prompt
+    assert "task_complexity:simple" in prompt.split("analyze last quarter")[1].splitlines()[0]
+
+
+def test_prompt_has_genuinely_multi_area_complex_examples() -> None:
+    """Few-shot calibration: complex examples must show 2+ named independent
+    areas (so the model learns complex = multi-area, not = big/analysis)."""
+    prompt = INTAKE_CLASSIFY_SYSTEM_PROMPT
+    assert '"implement authentication, billing, and notifications"' in prompt
+    assert (
+        '"implement authentication, billing, and notifications" → is_task:true,'
+        " response_language:en, social_response:null, task_complexity:complex"
+    ) in prompt
+    assert '"migrate the monolith into the orders, payments, and shipping services"' in prompt

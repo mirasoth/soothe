@@ -1,4 +1,4 @@
-"""SootheDaemonConfig -- top-level configuration for the Soothe daemon server."""
+"""SootheDaemonConfig — top-level configuration for the Soothe daemon server."""
 
 from __future__ import annotations
 

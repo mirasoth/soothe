@@ -148,17 +148,17 @@ _REMOTE_SYNC_SCHEMES: frozenset[str] = frozenset({"s3", "gs", "az"})
 
 
 def is_remote_workspace_uri(value: str) -> bool:
-    """Check if ``value`` is a remote object-store URI (s3://, gs://, az://).
+    """Check if `value` is a remote object-store URI (s3://, gs://, az://).
 
     Uses an explicit scheme allowlist — NOT a substring check on '://'.
-    This prevents SSRF via ``file://``, ``sftp://``, ``http://``,
-    ``ftp://``, etc.
+    This prevents SSRF via `file://`, `sftp://`, `http://`,
+    `ftp://`, etc.
 
     Args:
         value: The string to check.
 
     Returns:
-        ``True`` if ``value`` is a URI with a scheme in the allowlist.
+        `True` if `value` is a URI with a scheme in the allowlist.
     """
     if "://" not in value:
         return False

@@ -63,4 +63,5 @@ class DagPlanningContext:
 
     @property
     def has_prior_state(self) -> bool:
+        """True when at least one step has been recorded."""
         return self.total_steps > 0

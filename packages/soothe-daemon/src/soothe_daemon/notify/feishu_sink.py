@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 class FeishuNotifySink:
-    """Outbound Feishu IM alerts (stub — no live API send in Phase 1)."""
+    """Outbound Feishu IM alerts (stub — no live API send)."""
 
     name = "feishu"
 
@@ -67,7 +67,7 @@ class FeishuNotifySink:
                 ok=True,
                 detail="stub: no feishu targets",
             )
-        # Phase 1: do not call Lark API — prove registry path only.
+        # Do not call Lark API — prove registry path only.
         logger.info(
             "Feishu notify stub (live send deferred) job=%s kind=%s targets=%d",
             intent.job_id,

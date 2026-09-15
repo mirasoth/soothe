@@ -61,24 +61,10 @@ def derive_intake_label_from_task_complexity(
 class IntentClassification(BaseModel):
     """Primary intent classification model.
 
-    4-class LLM intake classification:
-    - `chitchat`: small talk; `chitchat_response` is emitted directly to the client.
-    - `minimal`: direct execute via DISPATCH root; skips the coverage Eval phase
-      and finalizes from the CoreAgent result (no LLM decision).
-    - `simple`: single focused deliverable; an LLM decision at ROOT_EVAL
-      dynamically determines whether a coverage Eval is warranted.
-    - `complex`: multi-phase / parallel workstreams; runs the full coverage
-      Eval gate. The runner / StrangeLoop derive loop continuation structurally
-      from the checkpoint.
-
-    `intake_label` drives `route_after_preprocess`.
-
-    Args:
-        intake_label: 4-class intake label for branch routing.
-        reasoning: Brief reasoning for classification.
-        chitchat_response: Direct reply for `chitchat` intake only.
-        task_short_description: Short step-card title for agentic goals.
-        task_complexity: Routing complexity level.
+    4-class LLM intake classification: `chitchat` (direct reply), `minimal`
+    (direct execute, no Eval), `simple` (single deliverable, dynamic Eval),
+    `complex` (multi-phase, full Eval gate). `intake_label` drives
+    `route_after_preprocess`.
     """
 
     intake_label: IntakeLabel = Field(

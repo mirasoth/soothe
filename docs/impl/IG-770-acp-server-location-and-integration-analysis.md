@@ -78,6 +78,51 @@ not the launch requirement.
 | Transport dispatch hook (subagent resolver) | `packages/soothe/src/soothe/coreagent/builder.py` (host override) | Must NOT edit `soothe-nano` directly (DAG rule §7b); inject dispatch from host |
 | Daemon-side ACP channel (standalone mode only) | `packages/soothe-daemon/src/soothe_daemon/channels/acp.py` | Only if standalone in-process mode is supported; daemon-backed mode needs no daemon changes |
 
+### WebSocket Transport Exception
+
+The stdio-adapter-in-`soothe` ruling above is the default deployment mode. When
+ACP is served over **WebSocket transport** instead of stdio, the ACP server
+lives in `soothe-daemon` as a built-in channel rather than as a stdio adapter
+in `soothe`. This is a controlled exception to the ruling, not a reversal of
+it. The three reasons that motivated the stdio ruling do not apply under WS
+transport:
+
+1. **§7b boundary concern does not apply.** The stdio ruling's §7b worry was
+   that a daemon-backed ACP adapter would need to import `soothe_client` (the
+   WS client) into `soothe_daemon` runtime source — a banned import. A WS ACP
+   endpoint does not use an out-of-process WS client; it is mounted directly
+   on the daemon's own FastAPI/ASGI server. No `soothe_client` import is
+   needed, so the §7b ban is not triggered.
+
+2. **No transport mismatch.** The stdio ruling's second concern was forcing
+   stdio handling into the daemon's WebSocket-native process model. Under WS
+   transport, ACP `session/*` JSON-RPC arrives over WebSocket — the same
+   transport the daemon already speaks. WS↔WS is transport-consistent; there
+   is no stdio-to-WS bridge to maintain.
+
+3. **Daemon-as-source-of-truth is preserved.** The stdio ruling's third
+   concern was that an in-daemon channel might short-circuit the normal
+   plumbing. A WS ACP channel is a standard `Channel` registered with
+   `ChannelManager`, so turns flow through the identical
+   `ChannelManager` → `EventBus` → `SootheRunner` → `StrangeLoop` path as
+   every other channel. Durability, MCP session lifecycle, and checkpointing
+   are inherited automatically.
+
+**Configuration control:** The `ACPConfig.transport` field selects the mode:
+
+| `ACPConfig.transport` | ACP-Server location | Adapter type |
+|-----------------------|----------------------|--------------|
+| `"stdio"` (default) | `packages/soothe` (`src/soothe/remote/acp/`) | Thin stdio process → daemon WS wire protocol |
+| `"websocket"` | `packages/soothe-daemon` (`src/soothe_daemon/channels/acp.py`) | Built-in daemon channel on the FastAPI server |
+
+The stdio ruling from the original Decision remains **unchanged** for stdio
+mode. This exception applies solely to the WebSocket transport variant.
+
+> **Note:** This is documentation-only; no runtime impact. IG-770 is a Draft
+> analysis doc, so recording a deployment variant is consistent with its
+> analysis-only nature. Implementation of the WS channel, if pursued, will
+> follow the standard design-doc and Changes-sequence process.
+
 ---
 
 ## Two-Direction Integration

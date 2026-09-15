@@ -107,6 +107,7 @@ class WestWorldMiddleware(AgentMiddleware):
     """
 
     def modify_request(self, request: ModelRequest[ContextT]) -> ModelRequest[ContextT]:
+        """Inject decompose-task trigger context when step-mode conditions match."""
         conf = _decompose_runtime.langgraph_configurable()
         # Guard: only on a real decompose step thread.
         step_id = _decompose_runtime.current_step_id() or conf.get(SOOTHE_DECOMPOSE_STEP_ID_KEY)

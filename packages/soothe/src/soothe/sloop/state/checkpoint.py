@@ -124,10 +124,10 @@ class StrangeLoopCheckpoint(BaseModel):
     # Metadata (informational only, no migration logic)
     schema_version: str = "5.0"  # RFC-626 Phase 3: execution_checkpoint pattern
 
-    # RFC-626 Phase 3: Execution-only checkpoint (optional for backward compat)
+    # RFC-626 Phase 3: Execution-only checkpoint (iteration cursor, wave metrics)
     execution_checkpoint: dict[str, Any] | None = Field(
         default=None,
-        description="ExecutionCheckpoint fields for schema 5.0 (lazy migration)",
+        description="ExecutionCheckpoint fields for schema 5.0",
     )
 
     def force_terminal_status(
@@ -139,20 +139,10 @@ class StrangeLoopCheckpoint(BaseModel):
     ) -> bool:
         """Force a running checkpoint into a terminal state (fatal_error handler).
 
-        When `pump_graph` crashes or a graph node sets
-        `last_outcome="fatal"`, the runner now emits a wire-visible
-        `fatal_error` event, but the checkpoint may still be left
-        `status="running"` if the crash bypassed `finalize_goal`.
-        This method transitions the loop to a terminal status and marks
-        the active goal as cancelled/failed so recovery and
-        reconciliation can proceed.
-
         Args:
             terminal_status: Terminal loop status. Defaults to `idle` so the
-                daemon can accept the next goal. Use `cancelled` for hard
-                kills (user disconnect, unrecoverable crash).
-            goal_status: Status to set on the in-flight goal. Defaults to
-                `cancelled` for infrastructure failures.
+                daemon can accept the next goal. Use `cancelled` for hard kills.
+            goal_status: Status to set on the in-flight goal.
             goal_index: Index into `goal_history`. When `None`, uses
                 `current_goal_index`.
 
@@ -217,7 +207,7 @@ def normalize_checkpoint_data(
     document for daemon bookkeeping. `StrangeLoopStateManager.load()` expects a
     full `StrangeLoopCheckpoint` schema.
 
-    Supports schema 5.0 `execution_checkpoint` field with lazy migration:
+    Supports schema 5.0 `execution_checkpoint` field:
     fills defaults for missing `execution_checkpoint`.
     """
     out = dict(data)
