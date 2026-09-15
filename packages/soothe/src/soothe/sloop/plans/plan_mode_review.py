@@ -460,13 +460,19 @@ async def node_plan_review(ctx: LoopRuntimeContext, state: dict[str, Any]) -> di
                 ctx.scratch.plan_review_comments = None
                 await ctx.emit("plan_refinement_completed", {"plan_chars": len(refined)})
             else:
-                # Synthesis failed — keep the old draft pending and clear the
-                # stale comments so a subsequent approve does not re-trigger.
+                # Synthesis failed (empty after retries or exception) — keep the
+                # old draft pending and clear the stale comments so a subsequent
+                # approve does not re-trigger. Emit the prior plan so the user
+                # can manually re-submit refinement comments.
                 logger.warning(
-                    "[PlanModeReview] Refinement synthesis failed; re-emitting prior draft"
+                    "[PlanModeReview] Refinement synthesis failed after retries; "
+                    "re-emitting prior draft"
                 )
                 ctx.scratch.plan_review_comments = None
-                await ctx.emit("plan_refinement_failed", {})
+                await ctx.emit(
+                    "plan_refinement_failed",
+                    {"reason": "empty_response_after_retries"},
+                )
         return out
 
     # Fresh plan review: prefer extracting the plan from the step's final AI

@@ -28,6 +28,24 @@ _PLAN_SYNTHESIS_HUMAN_TRIGGER = (
 # blowing up the input-token budget on large plans.
 _PRIOR_PLAN_MAX_CHARS = 8000
 
+# Maximum number of retry attempts when the LLM returns an empty response
+# (i.e., all output was thinking tokens that got stripped, leaving no
+# visible plan text). Thinking models occasionally spend their entire
+# budget reasoning inside <think> blocks without producing any final
+# output text — a retry with a nudge message coaxes the model to emit
+# the plan in the visible content channel.
+_MAX_EMPTY_RETRIES = 2
+
+# Nudge message appended on retry to steer thinking models toward
+# emitting visible (non-thinking) output rather than spending the
+# entire budget on internal reasoning.
+_EMPTY_RETRY_NUDGE = (
+    "Your previous response contained only internal reasoning with no visible "
+    "plan document. Output the complete plan now as your final answer — do not "
+    "use <think> tags or reasoning blocks, output only the plan document text "
+    "following the template."
+)
+
 
 async def synthesize_plan(
     ctx: LoopRuntimeContext,
@@ -99,22 +117,41 @@ async def synthesize_plan(
         is_refinement,
     )
 
-    start = time.perf_counter()
-    try:
-        response = await llm.ainvoke(messages)
-    except Exception:
-        logger.exception("[PlanSynthesis] LLM call failed")
-        return ""
+    # Retry loop: thinking models (e.g. glm-5.2 with hide_thinking_tokens=True)
+    # can spend their entire output budget on internal reasoning, producing
+    # zero visible text after thinking-token stripping. On empty output we
+    # append a nudge message and retry, up to _MAX_EMPTY_RETRIES times.
+    attempt = 0
+    while True:
+        start = time.perf_counter()
+        try:
+            response = await llm.ainvoke(messages)
+        except Exception:
+            logger.exception("[PlanSynthesis] LLM call failed")
+            return ""
 
-    elapsed_ms = int((time.perf_counter() - start) * 1000)
-    plan_text = _extract_text(response).strip()
+        elapsed_ms = int((time.perf_counter() - start) * 1000)
+        plan_text = _extract_text(response).strip()
 
-    logger.info(
-        "[PlanSynthesis] LLM call completed: elapsed_ms=%d plan_chars=%d",
-        elapsed_ms,
-        len(plan_text),
-    )
-    return plan_text
+        logger.info(
+            "[PlanSynthesis] LLM call completed: elapsed_ms=%d plan_chars=%d attempt=%d",
+            elapsed_ms,
+            len(plan_text),
+            attempt,
+        )
+
+        if plan_text or attempt >= _MAX_EMPTY_RETRIES:
+            return plan_text
+
+        # Empty response on a non-final attempt: nudge and retry.
+        logger.warning(
+            "[PlanSynthesis] Empty response after thinking-token strip "
+            "(attempt=%d/%d); appending nudge and retrying",
+            attempt + 1,
+            _MAX_EMPTY_RETRIES,
+        )
+        messages.append(HumanMessage(content=_EMPTY_RETRY_NUDGE))
+        attempt += 1
 
 
 def _render_plan_synthesis_system_prompt(
