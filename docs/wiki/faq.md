@@ -355,7 +355,7 @@ See [Transport Guide](multi-transport.md).
 
 **Docker Compose** (recommended):
 ```bash
-cd deploy && cp env-example .env && vim .env && docker compose up -d
+cd config/production && vim example.env && docker compose up -d
 ```
 
 See [Production Setup](deployment/production-setup.md) for full guide.

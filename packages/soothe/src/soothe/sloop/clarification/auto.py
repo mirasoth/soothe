@@ -57,6 +57,7 @@ class AutoClarificationPolicy:
         autopilot_retry_on_fail: bool = True,
         tool_approval_pipeline: ToolApprovalPipeline | None = None,
     ) -> None:
+        """Wire veritas, fallback policy, and tool-approval pipeline."""
         self._veritas_answer = veritas_answer
         self._min_confidence = min_confidence
         self._interactive_fallback = interactive_fallback
@@ -67,22 +68,27 @@ class AutoClarificationPolicy:
 
     @property
     def min_confidence(self) -> float:
+        """Minimum veritas confidence threshold for auto-answering."""
         return self._min_confidence
 
     @property
     def degrade_to_manual_on_failure(self) -> bool:
+        """Whether to fall back to interactive policy on veritas failure."""
         return self._degrade_to_manual_on_failure
 
     @property
     def autopilot_retry_on_fail(self) -> bool:
+        """Whether to emit a synthetic retry answer when veritas fails."""
         return self._autopilot_retry_on_fail
 
     @property
     def force_manual_origins(self) -> frozenset[str]:
+        """Origins that must skip veritas and go straight to the human."""
         return self._force_manual_origins
 
     @property
     def interactive_fallback(self) -> ClarificationPolicy | None:
+        """Interactive policy used when auto-answering is unavailable."""
         return self._interactive_fallback
 
     def requires_manual(self, origin_node: str) -> bool:
@@ -90,6 +96,7 @@ class AutoClarificationPolicy:
         return origin_node in self._force_manual_origins
 
     async def answer(self, request: ClarificationRequest) -> ClarificationAnswer:
+        """Resolve a clarification request via veritas, pipeline, or fallback."""
         # --- tool-approval pipeline (deny-list-first) ---
         if request.origin_node == "tool_approval" and self._tool_approval_pipeline is not None:
             return await self._answer_tool_approval(request)
@@ -104,7 +111,7 @@ class AutoClarificationPolicy:
     async def _answer_tool_approval(self, request: ClarificationRequest) -> ClarificationAnswer:
         """Deny-list-first pipeline evaluation for tool_approval origins.
 
-        ``escalate`` (banned safety rule) routes to the human relay when one
+        `escalate` (banned safety rule) routes to the human relay when one
         is attached; under autopilot it degrades to an instructive reject.
         """
         # Resume replay: the answer is in flight; re-evaluating would

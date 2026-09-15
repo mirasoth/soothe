@@ -47,7 +47,7 @@ class FakeBackend:
     def __init__(self) -> None:
         self.calls: list[tuple[str, bytes]] = []
 
-    async def put_checkpoint(self, checkpoint_id: str, data: bytes, manifest: Any = None) -> None:
+    async def put_checkpoint(self, checkpoint_id: str, data: bytes) -> None:
         self.calls.append((checkpoint_id, data))
 
 
@@ -151,9 +151,7 @@ class TestBackgroundUploader:
         """A failed upload leaves the checkpoint pending for retry."""
 
         class FailingBackend:
-            async def put_checkpoint(
-                self, checkpoint_id: str, data: bytes, manifest: Any = None
-            ) -> None:
+            async def put_checkpoint(self, checkpoint_id: str, data: bytes) -> None:
                 raise RuntimeError("network error")
 
         uploader = BackgroundUploader(

@@ -36,6 +36,19 @@ logger = logging.getLogger(__name__)
 
 _DECOMPOSE_TOOL = build_decompose_task_tool()
 
+# Per-step dedup for the injection DEBUG log. ``modify_request`` fires on
+# every model call within a step, so without dedup a single step floods the
+# log with identical "injecting decompose_task" lines (1549× in one loop was
+# observed). This is ephemeral diagnostic state — not loop state — and never
+# needs to survive a worker exit; it only suppresses redundant DEBUG lines.
+_INJECTION_LOGGED_STEPS: set[str] = set()
+_INJECTION_LOG_CAP = 512
+
+
+def reset_decompose_injection_log_state() -> None:
+    """Clear per-step injection-log dedup state (test isolation)."""
+    _INJECTION_LOGGED_STEPS.clear()
+
 
 def _override_write_todos_description(tools: list[Any]) -> list[Any]:
     out: list[Any] = []
@@ -185,6 +198,7 @@ class DecomposeTaskMiddleware(AgentMiddleware):
     # ------------------------------------------------------------------
 
     def modify_request(self, request: ModelRequest[ContextT]) -> ModelRequest[ContextT]:
+        """Inject decompose-task tool and prompt addendum for step-mode threads."""
         conf = _decompose_runtime.langgraph_configurable()
         if conf.get(SOOTHE_EVAL_STEP_ID_KEY):
             # EvalStepMiddleware owns the Eval tool/prompt policy
@@ -216,14 +230,18 @@ class DecomposeTaskMiddleware(AgentMiddleware):
             before = len(tools)
             already_present = "decompose_task" in {getattr(t, "name", None) for t in tools}
             tools = _ensure_decompose_tool(tools)
-            logger.debug(
-                "[decompose] injecting decompose_task on step %s thread "
-                "(tools=%d→%d already_present=%s)",
-                step_id,
-                before,
-                len(tools),
-                already_present,
-            )
+            if step_id not in _INJECTION_LOGGED_STEPS:
+                if len(_INJECTION_LOGGED_STEPS) >= _INJECTION_LOG_CAP:
+                    _INJECTION_LOGGED_STEPS.clear()
+                _INJECTION_LOGGED_STEPS.add(step_id)
+                logger.debug(
+                    "[decompose] injecting decompose_task on step %s thread "
+                    "(tools=%d→%d already_present=%s)",
+                    step_id,
+                    before,
+                    len(tools),
+                    already_present,
+                )
 
         # Build system-prompt addendum.
         addendum = THREAD_POLICY_SYSTEM_ADDENDUM

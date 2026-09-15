@@ -1,4 +1,4 @@
-"""Channel module."""
+"""Communication channels: WebSocket, Telegram, Discord, Slack, and more."""
 
 from soothe_daemon.channels.base import Channel
 from soothe_daemon.channels.events import (

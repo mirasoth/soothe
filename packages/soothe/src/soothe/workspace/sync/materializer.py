@@ -41,6 +41,7 @@ class Materializer:
         cas: CASCache,
         workspace_root: str | Path,
     ) -> None:
+        """Initialize the materializer with backend, CAS, and workspace root."""
         self._backend = backend
         self._cas = cas
         self._root = Path(workspace_root)

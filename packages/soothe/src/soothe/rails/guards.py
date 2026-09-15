@@ -86,6 +86,7 @@ class ScriptedGuardEvaluator:
         return cls(scripts=scripts)
 
     async def evaluate(self, ctx: GuardContext) -> GuardResult:
+        """Return the next scripted result for the matching event/condition."""
         key_name = (ctx.event, ctx.condition_name or "")
         key_text = (ctx.event, ctx.condition_text)
         for key in (key_name, key_text):
@@ -113,6 +114,7 @@ class AlwaysMatchGuardEvaluator:
     reasoning: str = "always-match test guard"
 
     async def evaluate(self, ctx: GuardContext) -> GuardResult:
+        """Always return a matched result with confidence 1.0."""
         return GuardResult(matched=True, confidence=1.0, reasoning=self.reasoning)
 
 
@@ -526,6 +528,7 @@ class LLMGuardEvaluator:
     short_circuit_calls: int = 0
 
     async def evaluate(self, ctx: GuardContext) -> GuardResult:
+        """Evaluate the condition via structured LLM call or structural short-circuit."""
         from pydantic import BaseModel, Field
         from soothe_nano.llm import (
             StructuredOutputError,

@@ -62,6 +62,7 @@ class GoalLoopTrace:
 
     @property
     def enabled(self) -> bool:
+        """True when Langfuse tracing is enabled in config."""
         return self.soothe_config.observability.langfuse.enabled
 
     def _configurable(self) -> dict[str, Any]:

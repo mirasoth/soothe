@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-# Import VerbosityTier from SDK for backward compatibility
 from soothe_sdk.core.events import (
     ERROR,
     LLM_RETRY_ATTEMPT,
@@ -12,7 +11,6 @@ from soothe_sdk.core.events import (
     POLICY_DENIED,
     STREAM_END,
 )
-from soothe_sdk.core.verbosity import VerbosityTier
 
 from .catalog import (
     AUTOPILOT_CHECKPOINT_SAVED,
@@ -133,8 +131,6 @@ from .visibility import (
 )
 
 __all__ = [
-    # Verbosity tier (from SDK)
-    "VerbosityTier",
     # All event constants (from catalog)
     "ITERATION_STARTED",
     "ITERATION_COMPLETED",

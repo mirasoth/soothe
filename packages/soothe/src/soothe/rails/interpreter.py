@@ -79,6 +79,7 @@ class LoopRailInterpreter:
         rail_pause_auto_clarify: bool = True,
         on_user_intervention: Callable[[str], Awaitable[None]] | None = None,
     ) -> None:
+        """Initialize the interpreter with CE, builtins, guards, and trace store."""
         self._ce = ce
         if builtins is not None:
             self._builtins = builtins
@@ -99,10 +100,12 @@ class LoopRailInterpreter:
 
     @property
     def builtins(self) -> RailBuiltinExecutor:
+        """The builtin verb executor."""
         return self._builtins
 
     @property
     def trace_store(self) -> RailTraceStore:
+        """The rail trace store."""
         return self._trace
 
     def set_guard_evaluator(self, guards: GuardEvaluator) -> None:
@@ -124,7 +127,7 @@ class LoopRailInterpreter:
             the daemon scheduler (capacity clamp).
 
         LoopRail concerns (from YAML / multi-form WavePlan transfer, never submit kwargs):
-          - When `fanout:` is present: `require_plan`, scout/max_waves.
+          - When `fanout:` is present: `require_plan`, scout/max_slices.
             Absent `fanout:` → no wave-plan pollution.
           - WavePlan slices applied into `RailJobState` (SoT) from structured
             fields, recommended dumps, wave_plan_path, or completion findings.
@@ -154,7 +157,7 @@ class LoopRailInterpreter:
         # Fan-out / wave fields only when the rail declares ``fanout:``.
         if fanout:
             scout = int(fanout["scout_count"]) if "scout_count" in fanout else 2
-            max_waves = int(fanout["max_waves"]) if "max_waves" in fanout else 3
+            max_slices = int(fanout["max_slices"]) if "max_slices" in fanout else 3
             require_plan = bool(fanout.get("require_plan", False))
             state = RailJobState(
                 job_id=job_id,
@@ -163,7 +166,7 @@ class LoopRailInterpreter:
                 scout_count=scout,
                 fanout_enabled=True,
                 require_plan=require_plan,
-                max_waves=max_waves,
+                max_slices=max_slices,
                 engine_max_parallel_goals=budget,
                 verb_overrides=verb_overrides,
                 worktrees_enabled=wt_enabled,

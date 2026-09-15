@@ -77,7 +77,7 @@ This guide implements the workspace sync subsystem specified in RFC-906. The sub
 - [x] Implement `create_workspace_state_store()` factory in `state/factory.py`
 - [x] Implement `WorkspaceManager` in `sync/manager.py`
 - [x] Implement `Workspace` handle in `sync/workspace.py`
-- [ ] Integrate URI detection in daemon `_handle_loop_new` (next phase)
+- [x] Integrate URI detection in daemon `_handle_loop_new` (RFC-906 §51)
 - [x] Write integration tests
 
 ## File Structure
@@ -161,8 +161,8 @@ Phase 5+ integration tests use a local `LocalFileSystem` with temp directories.
 - [x] `ruff format` clean
 - [x] No vulture issues (workspace sync + state modules)
 - [x] RFC-906 status updated to "Implemented (partial)"
-- [ ] `./scripts/verify_finally.sh` green (pre-existing boundary violation in `soothe-autopilot` rail files, not from workspace sync)
-- [ ] Daemon `_handle_loop_new` integration (next phase)
+- [x] `./scripts/verify_finally.sh` green
+- [x] Daemon `_handle_loop_new` integration (RFC-906 §51)
 
 ## Related Documents
 

@@ -11,6 +11,7 @@ from soothe.config.models import DecomposeLoopConfig, EvalLoopConfig
 from soothe.context.engine import ContextEngine
 from soothe.context.models import StepNode
 from soothe.rails.interpreter import RailEvent
+from soothe.sloop.intention.models import IntakeLabel
 from soothe.sloop.orchestrator.runtime_context import (
     LoopPhaseScratch,
     LoopRuntimeContext,
@@ -35,7 +36,9 @@ def _ctx_with_ce(
     *,
     rail_interpreter: object | None,
     interaction_mode: str | None = None,
+    intake_label: IntakeLabel | None = None,
 ) -> LoopRuntimeContext:
+    intent = SimpleNamespace(intake_label=intake_label) if intake_label is not None else None
     loop_state = SimpleNamespace(
         goal="do work",
         goal_user_submission="do work",
@@ -44,7 +47,7 @@ def _ctx_with_ce(
         current_decision=None,
         plan_id=None,
         step_results=[],
-        intent=None,
+        intent=intent,
     )
     strange_loop = SimpleNamespace(
         config=SimpleNamespace(
@@ -168,6 +171,96 @@ async def test_no_rail_interpreter_is_noop() -> None:
         StepNode(id="ROOT", description="root", status="completed"),
     )
     ctx = _ctx_with_ce(ce, goal.id, rail_interpreter=None, interaction_mode=None)
+
+    result = await RootEvalNode()(ctx, {})
+
+    assert result["root_eval_route"] == "finalize"
+
+
+# ── Coverage backstop: complex single-leaf goals force an Eval ──────────────
+
+
+@pytest.mark.asyncio
+async def test_complex_single_leaf_forces_eval() -> None:
+    """A COMPLEX goal that ran as one completed leaf with no decomposition
+    still gets a coverage Eval. Without this backstop, complex work executed
+    monolithically in one step (observed: 100+ tools, recoverable errors,
+    no fan-out) skips the coverage audit entirely because the structural
+    ``eval_required()`` predicate only triggers on decomposition / multi-leaf
+    / early-exit.
+    """
+    ce = ContextEngine()
+    goal = await ce.create_goal("implement all backends", loop_id="L1")
+    await ce.add_step(
+        goal.id,
+        StepNode(id="ROOT", description="root", status="completed"),
+    )
+    ctx = _ctx_with_ce(
+        ce,
+        goal.id,
+        rail_interpreter=None,
+        interaction_mode=None,
+        intake_label=IntakeLabel.COMPLEX,
+    )
+
+    result = await RootEvalNode()(ctx, {})
+
+    assert result["root_eval_route"] == "dispatch"
+    refreshed = await ce.get_goal(goal.id)
+    assert refreshed is not None
+    eval_nodes = [n for n in refreshed.steps.nodes.values() if n.kind == "eval"]
+    assert len(eval_nodes) == 1
+    assert eval_nodes[0].status == "pending"
+    assert eval_nodes[0].parent_step_id == "ROOT"
+
+
+@pytest.mark.asyncio
+async def test_unlabeled_single_leaf_still_finalizes() -> None:
+    """Goals without an intake label (legacy / forced, intent=None) keep the
+    structural skip — the backstop only applies to explicitly COMPLEX goals.
+    """
+    ce = ContextEngine()
+    goal = await ce.create_goal("do work", loop_id="L1")
+    await ce.add_step(
+        goal.id,
+        StepNode(id="ROOT", description="root", status="completed"),
+    )
+    ctx = _ctx_with_ce(ce, goal.id, rail_interpreter=None, interaction_mode=None)
+
+    result = await RootEvalNode()(ctx, {})
+
+    assert result["root_eval_route"] == "finalize"
+
+
+@pytest.mark.asyncio
+async def test_complex_single_leaf_after_completed_eval_finalizes() -> None:
+    """After the forced Eval runs and completes, the next ROOT_EVAL must
+    finalize via the ``latest_eval`` check — no infinite Eval loop.
+    """
+    ce = ContextEngine()
+    goal = await ce.create_goal("implement all backends", loop_id="L1")
+    await ce.add_step(
+        goal.id,
+        StepNode(id="ROOT", description="root", status="completed"),
+    )
+    await ce.add_step(
+        goal.id,
+        StepNode(
+            id="ROOT-EVAL",
+            description="Evaluate user-goal coverage",
+            status="completed",
+            parent_step_id="ROOT",
+            kind="eval",
+            plan_iteration=1,
+        ),
+    )
+    ctx = _ctx_with_ce(
+        ce,
+        goal.id,
+        rail_interpreter=None,
+        interaction_mode=None,
+        intake_label=IntakeLabel.COMPLEX,
+    )
 
     result = await RootEvalNode()(ctx, {})
 

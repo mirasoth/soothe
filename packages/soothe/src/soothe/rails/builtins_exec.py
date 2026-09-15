@@ -119,9 +119,8 @@ class RailJobState:
     # Test knobs / decompose plans (None = unset; coalesce at use sites)
     scout_count: int | None = None
     decompose_plan: list[dict[str, Any]] | None = None
-    # Fan-out catalog (streaming spawn; wave_index is legacy/trace only)
+    # Fan-out catalog (streaming spawn; wave_index is trace only)
     wave_index: int = 0
-    max_waves: int = 32  # legacy alias / default expansion budget; prefer max_slices
     max_slices: int | None = None
     wave_slices: list[str] | None = None
     spawned_slices: dict[str, str] = field(default_factory=dict)
@@ -167,10 +166,10 @@ class RailJobState:
         )
 
     def effective_max_slices(self) -> int:
-        """Catalog expansion budget (default max_waves / 32)."""
+        """Catalog expansion budget (default 32 when unset)."""
         if self.max_slices is not None:
             return int(self.max_slices)
-        return int(self.max_waves) if self.max_waves else 32
+        return 32
 
 
 @dataclass
@@ -206,6 +205,7 @@ class RailBuiltinExecutor:
         on_user_intervention: UserInterventionFn | None = None,
         pause_clarify_fn: PauseClarifyFn | None = None,
     ) -> None:
+        """Initialize the executor with ContextEngine and optional config."""
         self._ce = ce
         self._jobs: dict[str, RailJobState] = {}
         self._lock = asyncio.Lock()
@@ -266,10 +266,12 @@ class RailBuiltinExecutor:
             self._persist_rail_state_unlocked(state)
 
     async def job_state(self, job_id: str) -> RailJobState | None:
+        """Return the rail job state for `job_id`, or `None`."""
         async with self._lock:
             return self._jobs.get(job_id)
 
     async def annotation(self, goal_id: str, job_id: str) -> GoalAnnotation:
+        """Return the goal annotation for `goal_id` within `job_id`."""
         async with self._lock:
             state = self._jobs[job_id]
             return state.annotations.setdefault(goal_id, GoalAnnotation())
@@ -366,7 +368,6 @@ class RailBuiltinExecutor:
             if base.decompose_plan is not None
             else donor.decompose_plan,
             wave_index=max(base.wave_index, donor.wave_index),
-            max_waves=max(base.max_waves, donor.max_waves),
             max_slices=base.max_slices if base.max_slices is not None else donor.max_slices,
             wave_slices=base.wave_slices if base.wave_slices is not None else donor.wave_slices,
             spawned_slices=spawned,
@@ -422,7 +423,6 @@ class RailBuiltinExecutor:
                 "scout_count": state.scout_count,
                 "decompose_plan": state.decompose_plan,
                 "wave_index": state.wave_index,
-                "max_waves": state.max_waves,
                 "max_slices": state.max_slices,
                 "wave_slices": state.wave_slices,
                 "spawned_slices": state.spawned_slices,
@@ -475,6 +475,8 @@ class RailBuiltinExecutor:
                 if k and v:
                     spawned[str(k)] = str(v)
         max_slices = int(raw["max_slices"]) if raw.get("max_slices") is not None else None
+        if max_slices is None and raw.get("max_waves") is not None:
+            max_slices = int(raw["max_waves"])
         return RailJobState(
             job_id=str(raw.get("job_id") or job_id),
             rail_id=str(raw.get("rail_id") or ""),
@@ -485,7 +487,6 @@ class RailBuiltinExecutor:
             scout_count=int(raw["scout_count"]) if raw.get("scout_count") is not None else None,
             decompose_plan=raw.get("decompose_plan"),
             wave_index=int(raw.get("wave_index") or 0),
-            max_waves=int(raw.get("max_waves") or 32),
             max_slices=max_slices,
             wave_slices=raw.get("wave_slices"),
             spawned_slices=spawned,
@@ -540,6 +541,7 @@ class RailBuiltinExecutor:
         return out
 
     async def tags_by_goal(self, job_id: str) -> dict[str, list[str]]:
+        """Return trigger tags keyed by goal_id for `job_id`."""
         async with self._lock:
             return self._tags_by_goal_unlocked(job_id)
 
@@ -602,10 +604,10 @@ class RailBuiltinExecutor:
         has a native `plan_and_implement` (research synthesis plan+writer
         instead of code planning+implementation).
 
-        Step-DAG mode (RFC-904): when ``state.step_mode`` is True, catalog
-        verbs route to their step-level variants (``_do_*_steps``) which
-        operate on the goal's ``StepDAG`` via ``plan_commit_from_proposals``
-        instead of spawning child goals. YAML ``do:`` recipes still take
+        Step-DAG mode: when `state.step_mode` is True, catalog
+        verbs route to their step-level variants (`_do_*_steps`) which
+        operate on the goal's `StepDAG` via `plan_commit_from_proposals`
+        instead of spawning child goals. YAML `do:` recipes still take
         precedence over step-variants.
         """
         try:
@@ -659,9 +661,9 @@ class RailBuiltinExecutor:
     ) -> Callable[..., Awaitable[BuiltinResult]] | None:
         """Map a goal-level verb name to its step-DAG variant when in step_mode.
 
-        Returns the bound ``_do_*_steps`` handler for the five supported
-        verbs, or ``None`` when the verb has no step variant (fall through to
-        the goal-level ``_do_*`` handler for backward compat).
+        Returns the bound `_do_*_steps` handler for the five supported
+        verbs, or `None` when the verb has no step variant (fall through to
+        the goal-level `_do_*` handler).
         """
         mapping = {
             "decompose_parallel": "_do_decompose_parallel_steps",
@@ -923,7 +925,7 @@ class RailBuiltinExecutor:
         slices: list[dict[str, Any]] | None = None,
         rationale: str | None = None,
         independence: str | None = None,
-        max_waves: int | None = None,
+        max_slices: int | None = None,
         scout_count: int | None = None,
         source_path: str | None = None,
     ) -> WavePlan | None:
@@ -942,7 +944,7 @@ class RailBuiltinExecutor:
                     slices=slices,
                     rationale=rationale,
                     independence=independence,
-                    max_waves=max_waves,
+                    max_slices=max_slices,
                     scout_count=scout_count,
                 )
             elif isinstance(plan, WavePlan):
@@ -995,10 +997,6 @@ class RailBuiltinExecutor:
             state.scout_count = int(updates["scout_count"])
         if updates.get("max_slices") is not None:
             state.max_slices = int(updates["max_slices"])
-            state.max_waves = max(state.max_waves, int(updates["max_slices"]))
-        elif updates.get("max_waves") is not None:
-            state.max_waves = max(state.wave_index, int(updates["max_waves"]))
-            state.max_slices = int(updates["max_waves"])
         if source_path:
             state.wave_plan_source_path = source_path
         logger.info(
@@ -2317,9 +2315,9 @@ class RailBuiltinExecutor:
     def _ensure_root_step(self, job_id: str, state: RailJobState) -> StepNode | None:
         """Return the goal's root StepNode, creating one when the DAG is empty.
 
-        Mirrors ``sloop.stations.decompose.dispatch._ensure_root_step`` but
+        Mirrors `sloop.stations.decompose.dispatch._ensure_root_step` but
         without grounding / loop-state coupling — rail step-mode only needs a
-        root anchor for ``plan_commit_from_proposals``.
+        root anchor for `plan_commit_from_proposals`.
         """
         goal = self._ce._dag.get_goal(job_id)
         if goal is None:
@@ -2346,11 +2344,11 @@ class RailBuiltinExecutor:
     async def _do_decompose_parallel_steps(
         self, *, job_id: str, trigger_goal_id: str | None
     ) -> BuiltinResult:
-        """Step-DAG variant of ``decompose_parallel``.
+        """Step-DAG variant of `decompose_parallel`.
 
-        Builds ``DecompositionProposal`` objects from ``decompose_plan`` (or
-        synthetic scout specs) and commits child ``StepNode`` objects onto the
-        goal's StepDAG via ``plan_commit_from_proposals``. Marks the root
+        Builds `DecompositionProposal` objects from `decompose_plan` (or
+        synthetic scout specs) and commits child `StepNode` objects onto the
+        goal's StepDAG via `plan_commit_from_proposals`. Marks the root
         step decomposed.
         """
         del trigger_goal_id
@@ -2421,10 +2419,10 @@ class RailBuiltinExecutor:
     async def _do_plan_and_implement_steps(
         self, *, job_id: str, trigger_goal_id: str | None
     ) -> BuiltinResult:
-        """Step-DAG variant of ``plan_and_implement``.
+        """Step-DAG variant of `plan_and_implement`.
 
         Marks scout (exploration) steps decomposed, then adds a single
-        implement ``StepNode`` child under the root. The implement step
+        implement `StepNode` child under the root. The implement step
         depends on completed scout steps.
         """
         del trigger_goal_id
@@ -2473,9 +2471,9 @@ class RailBuiltinExecutor:
         )
 
     async def _do_review_step(self, *, job_id: str, trigger_goal_id: str | None) -> BuiltinResult:
-        """Step-DAG variant of ``review``.
+        """Step-DAG variant of `review`.
 
-        Adds a review ``StepNode`` child under the root, depending on the
+        Adds a review `StepNode` child under the root, depending on the
         trigger step (or the latest completed action step).
         """
         state = await self._require(job_id)
@@ -2527,9 +2525,9 @@ class RailBuiltinExecutor:
     async def _do_qa_verify_step(
         self, *, job_id: str, trigger_goal_id: str | None
     ) -> BuiltinResult:
-        """Step-DAG variant of ``qa_verify``.
+        """Step-DAG variant of `qa_verify`.
 
-        Adds a QA verify ``StepNode`` child under the root, depending on the
+        Adds a QA verify `StepNode` child under the root, depending on the
         trigger step (or the latest completed action step).
         """
         state = await self._require(job_id)
@@ -2580,10 +2578,10 @@ class RailBuiltinExecutor:
     async def _do_complete_job_step(
         self, *, job_id: str, trigger_goal_id: str | None
     ) -> BuiltinResult:
-        """Step-DAG variant of ``complete_job``.
+        """Step-DAG variant of `complete_job`.
 
         Marks the root step completed (when the action tree is green) and
-        latches ``RailJobState.completed``. Does not spawn child goals or
+        latches `RailJobState.completed`. Does not spawn child goals or
         land git branches — step-mode jobs manage their own completion.
         """
         del trigger_goal_id

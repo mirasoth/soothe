@@ -1,7 +1,4 @@
-"""Shared utilities for platform channel implementations.
-
-Migrated from nanoBot's nanobot.utils.helpers with adaptations for soothe-daemon.
-"""
+"""Shared utilities for platform channel implementations."""
 
 from __future__ import annotations
 
@@ -70,13 +67,13 @@ def build_image_content_blocks(
     """Build native image blocks plus a short text label.
 
     Args:
-    raw: Image binary data.
-    mime: MIME type.
-    path: File path for metadata.
-    label: Text label to append.
+        raw: Image binary data.
+        mime: MIME type.
+        path: File path for metadata.
+        label: Text label to append.
 
     Returns:
-    List of content blocks for LLM vision input.
+        List of content blocks for LLM vision input.
     """
     b64 = base64.b64encode(raw).decode()
     return [
@@ -95,10 +92,10 @@ def strip_think(text: str) -> str:
     Handles Anthropic-style thinking blocks and other model-specific formats.
 
     Args:
-    text: Text with potential thinking blocks.
+        text: Text with potential thinking blocks.
 
     Returns:
-    Cleaned text without thinking blocks.
+        Cleaned text without thinking blocks.
     """
     # Remove well-formed <thought> blocks
     text = re.sub(r"<thought>[\s\S]*?</thought>", "", text)
@@ -125,10 +122,10 @@ def extract_think(text: str) -> tuple[str | None, str]:
     """Extract thinking content from inline blocks.
 
     Args:
-    text: Text with potential thinking blocks.
+        text: Text with potential thinking blocks.
 
     Returns:
-    Tuple of (thinking_text, cleaned_text).
+        Tuple of (thinking_text, cleaned_text).
     """
     parts: list[str] = []
     for m in re.finditer(r"<thought>([\s\S]*?)</thought>", text):
@@ -141,10 +138,10 @@ def escape_html(text: str) -> str:
     """Escape HTML special characters.
 
     Args:
-    text: Text to escape.
+        text: Text to escape.
 
     Returns:
-    HTML-safe text.
+        HTML-safe text.
     """
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
@@ -153,10 +150,10 @@ def strip_markdown_inline(text: str) -> str:
     """Strip markdown inline formatting from text.
 
     Args:
-    text: Markdown formatted text.
+        text: Markdown formatted text.
 
     Returns:
-    Plain text without markdown syntax.
+        Plain text without markdown syntax.
     """
     text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
     text = re.sub(r"__(.+?)__", r"\1", text)
@@ -169,10 +166,10 @@ def strip_markdown_block(text: str) -> str:
     """Strip block-level and inline markdown for readable plain-text preview.
 
     Args:
-    text: Markdown formatted text.
+        text: Markdown formatted text.
 
     Returns:
-    Plain text suitable for display during streaming edits.
+        Plain text suitable for display during streaming edits.
     """
     # Code blocks -> just the code
     text = re.sub(r"```[\w]*\n?([\s\S]*?)```", r"\1", text)

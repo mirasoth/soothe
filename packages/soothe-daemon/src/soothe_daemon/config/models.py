@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from soothe.identity.runtime import (
     AKSKConfig as AKSKConfig,
 )
@@ -50,16 +50,19 @@ class TransportConfig(BaseModel):
 class ACPConfig(BaseModel):
     """ACP (Agent Client Protocol) channel configuration.
 
-    ACP provides a stdio JSON-RPC server for editor/IDE integration.
-    When enabled as the sole channel (WebSocket disabled), the daemon
-    runs in standalone ACP mode via the ``soothe-acp`` console script.
+    ACP provides a JSON-RPC server for editor/IDE integration. By default it
+    runs over a WebSocket endpoint at `ws_path`; when `transport` is set to
+    `"stdio"` the ACP server runs over stdin/stdout instead (used by the
+    `soothe-acp` console script for standalone mode).
     """
 
-    enabled: bool = False
+    enabled: bool = True
     agent_name: str = "Soothe"
     agent_description: str = "Soothe autonomous agent"
     default_model: str | None = None
     session_timeout_seconds: int = 3600
+    transport: Literal["stdio", "websocket"] = "websocket"
+    ws_path: str = "/acp"
 
 
 class ChannelsConfig(BaseModel):
@@ -99,17 +102,17 @@ class ProcessPoolConfig(BaseModel):
     For high-concurrency scenarios, consider PGBouncer as external connection proxy.
 
     Args:
-    min_pool_size: Minimum workers to keep pooled (startup baseline).
-    max_pool_size: Maximum workers to scale up under load.
-    idle_timeout_seconds: Idle worker timeout before graceful exit.
-    max_requests_per_worker: Max requests before worker respawn (prevents memory buildup).
-    request_timeout_seconds: Default per-request timeout (0 = no timeout).
-    heartbeat_interval_seconds: Worker heartbeat interval for stuck detection.
-    stuck_worker_timeout_seconds: Time since last heartbeat before marking worker stuck.
-    dispatch_wait_stats_enabled: Log periodic dispatch wait / queue-depth histograms.
-    dispatch_wait_stats_interval_seconds: Seconds between log emissions when enabled.
-    dispatch_wait_stats_idle_pause_seconds: Skip logging if no pool dispatch activity
-    for this many seconds (window discarded, like EventBus size stats).
+        min_pool_size: Minimum workers to keep pooled (startup baseline).
+        max_pool_size: Maximum workers to scale up under load.
+        idle_timeout_seconds: Idle worker timeout before graceful exit.
+        max_requests_per_worker: Max requests before worker respawn (prevents memory buildup).
+        request_timeout_seconds: Default per-request timeout (0 = no timeout).
+        heartbeat_interval_seconds: Worker heartbeat interval for stuck detection.
+        stuck_worker_timeout_seconds: Time since last heartbeat before marking worker stuck.
+        dispatch_wait_stats_enabled: Log periodic dispatch wait / queue-depth histograms.
+        dispatch_wait_stats_interval_seconds: Seconds between log emissions when enabled.
+        dispatch_wait_stats_idle_pause_seconds: Skip logging if no pool dispatch activity
+        for this many seconds (window discarded, like EventBus size stats).
     """
 
     min_pool_size: int = Field(
@@ -187,6 +190,74 @@ class ProcessPoolConfig(BaseModel):
         return max(self.min_pool_size, self.max_pool_size)
 
 
+class LocalModelConfig(BaseModel):
+    """Local model server configuration for GPU-bound Ray actors.
+
+    When set on ``RayConfig.local_model``, each ``LoopRunnerActor`` launches
+    a local model server (vLLM or Ollama) and routes inference to it instead
+    of a remote API endpoint.
+
+    The local server exposes an OpenAI-compatible HTTP endpoint that the
+    agent's ``LLMFactory`` resolves as a standard provider — no changes
+    to the inference path.
+    """
+
+    backend: Literal["vllm", "ollama"] = Field(
+        default="vllm",
+        description="Inference backend: vLLM (high-throughput, GPU) or Ollama (lightweight).",
+    )
+    model_name: str = Field(
+        description="HuggingFace model ID (vLLM) or Ollama model tag.",
+    )
+    provider_name: str = Field(
+        default="local_gpu",
+        description="Provider name injected into SootheConfig.providers for routing.",
+    )
+    port: int = Field(
+        default=0,
+        ge=0,
+        le=65535,
+        description="Port for the local server (0 = auto-allocate from 8765-8800).",
+    )
+    gpu_memory_utilization: float = Field(
+        default=0.9,
+        ge=0.1,
+        le=1.0,
+        description="vLLM GPU memory fraction (vLLM backend only).",
+    )
+    tensor_parallel_size: int = Field(
+        default=1,
+        ge=1,
+        description="vLLM tensor parallelism (must match num_gpus for multi-GPU).",
+    )
+    max_model_len: int | None = Field(
+        default=None,
+        description="Maximum context length override (vLLM --max-model-len).",
+    )
+    quantization: str | None = Field(
+        default=None,
+        description="Quantization method (e.g. 'awq', 'gptq', None for fp16).",
+    )
+    startup_timeout_seconds: int = Field(
+        default=120,
+        ge=10,
+        le=600,
+        description="Max seconds to wait for the model server to become healthy.",
+    )
+    extra_args: list[str] = Field(
+        default_factory=list,
+        description="Additional CLI args passed to the backend server.",
+    )
+    override_roles: list[str] = Field(
+        default_factory=lambda: ["default"],
+        description=(
+            "Model roles to override with the local model "
+            "(e.g. ['default', 'fast', 'think']). "
+            "Roles not listed keep their configured remote provider."
+        ),
+    )
+
+
 class RayConfig(BaseModel):
     """Ray distributed loop execution configuration (Ray actors)."""
 
@@ -215,6 +286,45 @@ class RayConfig(BaseModel):
         default=True,
         description="Stream Ray logs to the driver process.",
     )
+    runtime_env: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Ray runtime_env applied to each LoopRunnerActor via "
+            "actor.options(runtime_env=...). Used to inject per-actor "
+            "environment the cluster image doesn't provide — e.g. "
+            "{'env_vars': {'LD_LIBRARY_PATH': '...', 'HF_HOME': '...', "
+            "'VLLM_NO_USAGE_STATS': '1'}}. Note: env_vars set by Ray "
+            "replace the image value, so include the full path list."
+        ),
+    )
+    num_gpus: float = Field(
+        default=0.0,
+        ge=0.0,
+        description=(
+            "GPUs to reserve per Ray actor (0 = no GPU). Set to 1.0 when local_model is configured."
+        ),
+    )
+    local_model: LocalModelConfig | None = Field(
+        default=None,
+        description=(
+            "When set, each Ray actor launches a local model server "
+            "and routes inference to it. Requires num_gpus >= 1."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _validate_local_model_gpu(self) -> RayConfig:
+        """Ensure GPU allocation when local_model is configured."""
+        if self.local_model is not None:
+            min_gpus = float(self.local_model.tensor_parallel_size)
+            if self.num_gpus < min_gpus:
+                msg = (
+                    f"RayConfig.num_gpus must be >= {min_gpus:.0f} "
+                    f"(tensor_parallel_size) when local_model is configured, "
+                    f"got {self.num_gpus}."
+                )
+                raise ValueError(msg)
+        return self
 
 
 class ThreadPoolConfig(BaseModel):
@@ -274,37 +384,35 @@ class ThreadPoolConfig(BaseModel):
 
 
 class FirecrackerConfig(BaseModel):
-    """Firecracker microVM runner configuration (RFC-221 substrate).
+    """Firecracker microVM runner configuration.
 
     Executes Soothe agent loops inside AWS Firecracker microVMs for strong
-    per-loop isolation. Each VM runs the same `_pool_worker_body` /
-    `SootheRunner` code as the process pool, but bridges stream chunks
-    host↔guest over virtio-vsock instead of `multiprocessing.Queue`.
+    per-loop isolation. Each VM runs the same worker body as the process
+    pool, but bridges stream chunks host↔guest over virtio-vsock instead
+    of `multiprocessing.Queue`.
 
-    **Linux-only — officially supported on Linux only.** Firecracker
-    requires `AF_VSOCK`, the `firecracker` binary, and a Linux host with
-    KVM. The module is import-safe on non-Linux (no import-time crash),
-    but `LoopRunnerFactory` raises `RuntimeError` if `runner_mode` is set
-    to `firecracker` on a non-Linux host. Use `thread_pool` or
-    `process_pool` on macOS/Windows.
+    Linux-only: requires `AF_VSOCK`, the `firecracker` binary, and a Linux
+    host with KVM. The module is import-safe on non-Linux, but
+    `LoopRunnerFactory` raises `RuntimeError` if selected on a non-Linux
+    host. Use `thread_pool` or `process_pool` on macOS/Windows.
 
     Args:
-    kernel_image_path: Path to the pre-built kernel image (vmlinux).
-    rootfs_image_path: Path to the pre-built rootfs image (ext4).
-    firecracker_binary_path: Path to the `firecracker` binary.
-    min_pool_size: Minimum warm microVMs at daemon startup.
-    max_pool_size: Maximum microVMs to scale up under load.
-    vsock_port_base: Base vsock port (per-VM port = base + worker_index).
-    vm_cpu_count: vCPUs per microVM.
-    vm_mem_mib: Memory per microVM (MiB).
-    idle_timeout_seconds: Idle VM timeout before graceful shutdown.
-    max_requests_per_worker: Max requests before VM respawn.
-    request_timeout_seconds: Default per-request timeout (0 = no timeout).
-    reuse_runner: Reuse one SootheRunner per VM between requests.
-    warmup_runner: Create cached SootheRunner at VM startup when reuse_runner is true.
-    warmup_core_agent: Materialize LazyCoreAgent during VM warmup when warmup_runner is true.
-    workspace_mount_mode: How the agent workspace is surfaced into the guest.
-    extra_kernel_args: Extra kernel command-line arguments appended at boot.
+        kernel_image_path: Path to the pre-built kernel image (vmlinux).
+        rootfs_image_path: Path to the pre-built rootfs image (ext4).
+        firecracker_binary_path: Path to the `firecracker` binary.
+        min_pool_size: Minimum warm microVMs at daemon startup.
+        max_pool_size: Maximum microVMs to scale up under load.
+        vsock_port_base: Base vsock port (per-VM port = base + worker_index).
+        vm_cpu_count: vCPUs per microVM.
+        vm_mem_mib: Memory per microVM (MiB).
+        idle_timeout_seconds: Idle VM timeout before graceful shutdown.
+        max_requests_per_worker: Max requests before VM respawn.
+        request_timeout_seconds: Default per-request timeout (0 = no timeout).
+        reuse_runner: Reuse one SootheRunner per VM between requests.
+        warmup_runner: Create cached SootheRunner at VM startup when reuse_runner is true.
+        warmup_core_agent: Materialize LazyCoreAgent during VM warmup when warmup_runner is true.
+        workspace_mount_mode: How the agent workspace is surfaced into the guest.
+        extra_kernel_args: Extra kernel command-line arguments appended at boot.
     """
 
     kernel_image_path: str = Field(
@@ -396,37 +504,33 @@ class FirecrackerConfig(BaseModel):
 
 
 class BoxLiteConfig(BaseModel):
-    """BoxLite container runner configuration (RFC-221 substrate).
+    """BoxLite container runner configuration.
 
     Executes Soothe agent loops inside lightweight containers via the
     `boxlite` Python SDK for per-loop isolation. Each container runs the
-    same `_pool_worker_body` / `SootheRunner` code as the process pool,
-    but bridges stream chunks host↔container over the boxlite tunnel /
-    exec stream instead of `multiprocessing.Queue`.
+    same worker body as the process pool, but bridges stream chunks
+    host↔container over the boxlite exec stream instead of
+    `multiprocessing.Queue`.
 
-    **Cross-platform — supported on Linux, macOS, and Windows.** Unlike
-    Firecracker (which requires `AF_VSOCK` and KVM, Linux-only), BoxLite
-    uses the `boxlite` library (an embeddable VM runtime) and standard
-    networking, making it usable on any host with the `boxlite` package
-    installed. The module is import-safe everywhere (no platform-specific
-    imports at module level); `LoopRunnerFactory` validates that the
-    `boxlite` library is importable and that `container_image` is set at
+    Cross-platform (Linux, macOS, Windows); the `boxlite` SDK is imported
+    lazily so the module is import-safe everywhere. `LoopRunnerFactory`
+    validates `boxlite` importability and `container_image` presence at
     construction time.
 
     Args:
-    container_image: OCI image containing the Soothe worker env + entrypoint.
-    rootfs_path: Optional local OCI layout directory (overrides image if provided).
-    min_pool_size: Minimum warm containers at daemon startup.
-    max_pool_size: Maximum containers to scale up under load.
-    container_cpu_count: Number of CPU cores per container.
-    container_mem_mib: Memory limit per container in MiB.
-    idle_timeout_seconds: Idle container timeout before graceful shutdown.
-    max_requests_per_worker: Max requests before container respawn.
-    request_timeout_seconds: Default per-request timeout (0 = no timeout).
-    reuse_runner: Reuse one SootheRunner per container between requests.
-    warmup_runner: Create cached SootheRunner at container startup when reuse_runner is true.
-    warmup_core_agent: Materialize LazyCoreAgent during container warmup when warmup_runner is true.
-    workspace_mount_mode: How the agent workspace is surfaced into the container.
+        container_image: OCI image containing the Soothe worker env + entrypoint.
+        rootfs_path: Optional local OCI layout directory (overrides image if provided).
+        min_pool_size: Minimum warm containers at daemon startup.
+        max_pool_size: Maximum containers to scale up under load.
+        container_cpu_count: Number of CPU cores per container.
+        container_mem_mib: Memory limit per container in MiB.
+        idle_timeout_seconds: Idle container timeout before graceful shutdown.
+        max_requests_per_worker: Max requests before container respawn.
+        request_timeout_seconds: Default per-request timeout (0 = no timeout).
+        reuse_runner: Reuse one SootheRunner per container between requests.
+        warmup_runner: Create cached SootheRunner at container startup when reuse_runner is true.
+        warmup_core_agent: Materialize LazyCoreAgent during container warmup when warmup_runner is true.
+        workspace_mount_mode: How the agent workspace is surfaced into the container.
     """
 
     container_image: str = Field(
@@ -506,19 +610,19 @@ class BoxLiteConfig(BaseModel):
 
 
 class LoopRunnerConfig(BaseModel):
-    """Unified loop runner configuration (RFC-221).
+    """Unified loop runner configuration.
 
     Groups the runner-mode selector and all five runner sub-configs into a
-    single nested block.  Selection is via ``runner_mode`` — a single string
-    field, not per-runner ``enabled`` booleans.
+    single nested block. Selection is via `runner_mode` — a single string
+    field, not per-runner `enabled` booleans.
 
     Args:
         runner_mode: Active runner substrate.
-        thread_pool: Tuning for ``runner_mode='thread_pool'``.
-        process_pool: Tuning for ``runner_mode='process_pool'``.
-        ray: Tuning for ``runner_mode='ray'``.
-        firecracker: Tuning for ``runner_mode='firecracker'``.
-        boxlite: Tuning for ``runner_mode='boxlite'``.
+        thread_pool: Tuning for `runner_mode='thread_pool'`.
+        process_pool: Tuning for `runner_mode='process_pool'`.
+        ray: Tuning for `runner_mode='ray'`.
+        firecracker: Tuning for `runner_mode='firecracker'`.
+        boxlite: Tuning for `runner_mode='boxlite'`.
     """
 
     runner_mode: Literal["thread_pool", "process_pool", "ray", "firecracker", "boxlite"] = Field(

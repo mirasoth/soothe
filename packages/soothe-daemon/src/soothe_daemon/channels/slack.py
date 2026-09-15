@@ -1,7 +1,4 @@
-"""Slack channel implementation using Socket Mode.
-
-Migrated from nanoBot with adaptations for soothe-daemon Channel architecture.
-"""
+"""Slack channel implementation using Socket Mode."""
 
 from __future__ import annotations
 
@@ -110,8 +107,8 @@ class SlackChannel(Channel):
         """Initialize Slack channel.
 
         Args:
-        config: Slack configuration.
-        manager: ChannelManager for inbound routing.
+            config: Slack configuration.
+            manager: ChannelManager for inbound routing.
         """
         super().__init__(config, manager)
         if isinstance(config, dict):
@@ -181,8 +178,8 @@ class SlackChannel(Channel):
         """Send a message through Slack.
 
         Args:
-        chat_id: Slack channel/user ID.
-        message: ChannelMessage to send.
+            chat_id: Slack channel/user ID.
+            message: ChannelMessage to send.
         """
         if not self._web_client:
             logger.warning("[Slack] Client not running")

@@ -41,6 +41,7 @@ class IntakeResult:
     )
 
     def __init__(self, intake_result: IntakeLLMResult) -> None:
+        """Classify an intake result into task vs. social with intent metadata."""
         self._is_task = intake_result.is_task
         self._intake_result = intake_result
 
@@ -98,6 +99,7 @@ class IntakeCoordinator:
         assistant_name: str = "Soothe",
         assistant_identity: AssistantIdentity | None = None,
     ) -> None:
+        """Initialize the intake classifier and store config for tracing."""
         self._intake_classifier = IntakeClassifier(
             fast_model,
             soothe_config,

@@ -89,9 +89,9 @@ def setup_daemon_logging(
     (defaults to `soothe.log` unless `log_file` is overridden).
 
     Args:
-    level: Log level for file output (DEBUG, INFO, WARNING, ERROR).
-    log_file: Optional custom log file path.
-    foreground: When True, also logs to stdout at INFO level.
+        level: Log level for file output (DEBUG, INFO, WARNING, ERROR).
+        log_file: Optional custom log file path.
+        foreground: When True, also logs to stdout at INFO level.
     """
     log_dir = Path(SOOTHE_HOME) / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)

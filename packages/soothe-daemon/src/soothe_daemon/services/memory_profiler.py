@@ -151,11 +151,11 @@ class MemoryProfiler:
         that statistics("lineno") misses because it groups by count.
 
         Args:
-        snapshot: Snapshot to analyze (takes new if None).
-        min_size_kb: Minimum allocation size to include (default 100KB).
+            snapshot: Snapshot to analyze (takes new if None).
+            min_size_kb: Minimum allocation size to include (default 100KB).
 
         Returns:
-        List of large allocations with traceback, size, and count.
+            List of large allocations with traceback, size, and count.
         """
         if not self._running:
             return []
@@ -192,7 +192,7 @@ class MemoryProfiler:
         delivery is slower than worker production.
 
         Returns:
-        Dict with pending_responses count and per-worker queue metrics.
+            Dict with pending_responses count and per-worker queue metrics.
         """
         try:
             from soothe_daemon.runner.thread_runner import ThreadPool
@@ -248,7 +248,7 @@ class MemoryProfiler:
         """Get counts of Python objects by type using gc.get_objects().
 
         Returns:
-        Dict mapping type name to count for top 30 object types.
+            Dict mapping type name to count for top 30 object types.
         """
         gc.collect()
         from collections import Counter
@@ -264,11 +264,11 @@ class MemoryProfiler:
         """Compare two snapshots and return allocation differences.
 
         Args:
-        old_snapshot: Earlier snapshot (uses last_snapshot if None).
-        new_snapshot: Later snapshot (takes new if None).
+            old_snapshot: Earlier snapshot (uses last_snapshot if None).
+            new_snapshot: Later snapshot (takes new if None).
 
         Returns:
-        Dict with growth statistics and per-allocation changes.
+            Dict with growth statistics and per-allocation changes.
         """
         if not self._running:
             raise RuntimeError("MemoryProfiler not running")
@@ -354,7 +354,7 @@ class MemoryProfiler:
         """Force garbage collection and report collected objects.
 
         Returns:
-        Dict with GC statistics and memory before/after.
+            Dict with GC statistics and memory before/after.
         """
         before_rss = self._process.memory_info().rss / 1024 / 1024
 

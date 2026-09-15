@@ -24,6 +24,7 @@ class RelayError(Exception):
         origin: str | None = None,
         ticket_id: str | None = None,
     ) -> None:
+        """Store origin and ticket_id alongside the error message."""
         super().__init__(message)
         self.origin = origin
         self.ticket_id = ticket_id

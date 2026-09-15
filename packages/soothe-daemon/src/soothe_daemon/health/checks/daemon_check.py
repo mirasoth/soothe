@@ -309,10 +309,10 @@ async def check_daemon(config: SootheDaemonConfig | None = None) -> CategoryResu
     over PID file checks.
 
     Args:
-    config: `SootheDaemonConfig` instance for transport configuration
+        config: `SootheDaemonConfig` instance for transport configuration
 
     Returns:
-    CategoryResult with daemon check results
+        CategoryResult with daemon check results
     """
     checks: list[CheckResult] = []
 

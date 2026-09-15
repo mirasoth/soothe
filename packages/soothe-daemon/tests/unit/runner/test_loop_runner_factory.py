@@ -100,7 +100,7 @@ class TestLoopRunnerFactoryDistributedMode:
             factory = LoopRunnerFactory(daemon_cfg, agent_cfg)
             runner = factory.create_runner("loop-distributed")
 
-        mock_ray_runner_cls.assert_called_once_with("loop-distributed", agent_cfg)
+        mock_ray_runner_cls.assert_called_once_with("loop-distributed", agent_cfg, daemon_cfg)
         assert runner is fake_runner_instance
 
 

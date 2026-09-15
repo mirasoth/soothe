@@ -52,6 +52,7 @@ class WorkspaceManager:
         backend: WorkspaceSyncBackend | None = None,
         state_store_factory: Callable[..., WorkspaceStateStore] | None = None,
     ) -> None:
+        """Initialize the sync manager with workspace/CAS roots and optional backend."""
         self._workspaces_root = workspaces_root
         self._cas_root = cas_root
         self._backend = backend

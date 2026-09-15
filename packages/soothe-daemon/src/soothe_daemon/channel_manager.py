@@ -65,6 +65,7 @@ class ChannelManager:
         self._unified_app: FastAPI | None = None
         self._unified_server: uvicorn.Server | None = None
         self._unified_serve_task: asyncio.Task[None] | None = None
+        self._acp_ws_enabled: bool = False
 
         # Message handler wired before start_all(); channels read it from manager state.
         self._message_handler: Callable[[str, dict[str, Any]], None] | None = None
@@ -74,8 +75,8 @@ class ChannelManager:
         """Set the unified message handler for all channels.
 
         Args:
-        handler: Callback to handle incoming messages from any channel.
-        Takes (client_id, message) as arguments.
+            handler: Callback to handle incoming messages from any channel.
+            Takes (client_id, message) as arguments.
         """
         self._message_handler = handler
 
@@ -83,7 +84,7 @@ class ChannelManager:
         """Set the handshake callback for initial client messages.
 
         Args:
-        callback: Callback to generate initial handshake messages.
+            callback: Callback to generate initial handshake messages.
         """
         self._handshake_callback = callback
 
@@ -102,15 +103,15 @@ class ChannelManager:
         publishes ChannelMessageReceived to EventBus.
 
         Args:
-        channel: Channel name (e.g., "websocket", "telegram").
-        chat_id: Conversation identifier on the platform.
-        sender_id: User identifier on the platform.
-        content: Message text.
-        media: Optional attachments.
-        metadata: Optional channel-specific metadata.
+            channel: Channel name (e.g., "websocket", "telegram").
+            chat_id: Conversation identifier on the platform.
+            sender_id: User identifier on the platform.
+            content: Message text.
+            media: Optional attachments.
+            metadata: Optional channel-specific metadata.
 
         Returns:
-        loop_id for this conversation.
+            loop_id for this conversation.
         """
         # Create or retrieve loop_id
         loop_id = self._get_or_create_loop_id(channel, chat_id)
@@ -144,11 +145,11 @@ class ChannelManager:
         """Get existing loop_id or create new one for (channel, chat_id).
 
         Args:
-        channel: Channel name.
-        chat_id: Conversation identifier.
+            channel: Channel name.
+            chat_id: Conversation identifier.
 
         Returns:
-        loop_id for this conversation.
+            loop_id for this conversation.
         """
         key = (channel, chat_id)
 
@@ -182,8 +183,16 @@ class ChannelManager:
         if not self._config.transports.websocket.enabled and not acp_enabled:
             raise RuntimeError("At least one transport channel (websocket or acp) must be enabled")
 
-        # Create unified FastAPI app for WebSocket (only when WebSocket is enabled)
-        if self._config.transports.websocket.enabled:
+        # Determine whether ACP is in WebSocket transport mode.
+        self._acp_ws_enabled = (
+            acp_enabled and getattr(self._config.channels.acp, "transport", "stdio") == "websocket"
+        )
+
+        # Create the unified FastAPI app when either native WebSocket or
+        # ACP-WS transport is enabled.  Both register WS routes on this app.
+        ws_enabled = self._config.transports.websocket.enabled
+        need_unified_app = ws_enabled or self._acp_ws_enabled
+        if need_unified_app:
             self._unified_app = FastAPI(
                 title="Soothe Daemon",
                 description="WebSocket API for Soothe",
@@ -204,7 +213,8 @@ class ChannelManager:
                 """
                 return {"status": "ok"}
 
-            # Create WebSocket channel
+        # Create WebSocket channel (when native WebSocket is enabled)
+        if ws_enabled:
             ws_channel = WebSocketChannel(
                 self._config.transports.websocket,
                 manager=self,
@@ -220,9 +230,20 @@ class ChannelManager:
         if acp_enabled:
             from soothe_daemon.channels.acp import ACPChannel
 
-            acp_channel = ACPChannel(self._config.channels.acp, manager=self)
+            if self._acp_ws_enabled and self._unified_app is None:
+                raise RuntimeError(
+                    "ACP WebSocket transport requires a unified FastAPI app, but none was created"
+                )
+
+            acp_channel = ACPChannel(
+                self._config.channels.acp,
+                manager=self,
+                unified_app=self._unified_app if self._acp_ws_enabled else None,
+            )
             self._channels["acp"] = acp_channel
-            logger.debug("Configured ACP channel")
+            logger.debug(
+                "Configured ACP channel (%s transport)", self._config.channels.acp.transport
+            )
 
         # Apply global channel settings to all channels
         for channel in self._channels.values():
@@ -231,7 +252,11 @@ class ChannelManager:
             channel.show_reasoning = getattr(self._config.channels, "show_reasoning", True)
 
     async def _start_unified_listener(self) -> None:
-        """Bind one uvicorn server for the FastAPI WebSocket app."""
+        """Bind one uvicorn server for the FastAPI WebSocket app.
+
+        Serves all WS-transport routes registered on `self._unified_app`
+        (native WebSocket at `/` and/or ACP WebSocket at `/acp`).
+        """
         if self._unified_app is None:
             return
 
@@ -261,17 +286,29 @@ class ChannelManager:
 
         protocol = "wss" if ws.tls_enabled else "ws"
         logger.info(
-            "WebSocket channel listening on %s://%s:%d",
+            "Unified WS listener on %s://%s:%d (routes: %s)",
             protocol,
             ws.host,
             ws.port,
+            ", ".join(
+                route
+                for route, enabled in [
+                    ("/", self._config.transports.websocket.enabled),
+                    (
+                        getattr(self._config.channels.acp, "ws_path", "/acp"),
+                        getattr(self._config.channels.acp, "transport", "stdio") == "websocket"
+                        and self._config.channels.acp.enabled,
+                    ),
+                ]
+                if enabled
+            ),
         )
 
     async def start_all(self) -> None:
         """Start all enabled channels.
 
         Raises:
-        RuntimeError: If no message handler set or WebSocket not enabled.
+            RuntimeError: If no message handler set or WebSocket not enabled.
         """
         if self._started:
             logger.warning("Channel manager already started")
@@ -290,7 +327,9 @@ class ChannelManager:
 
         try:
             await asyncio.gather(*start_tasks)
-            if self._unified_app is not None and self._config.transports.websocket.enabled:
+            if self._unified_app is not None and (
+                self._config.transports.websocket.enabled or self._acp_ws_enabled
+            ):
                 await self._start_unified_listener()
             self._started = True
             logger.debug(
@@ -336,7 +375,7 @@ class ChannelManager:
         """Broadcast message to all channels.
 
         Args:
-        message: Message dict to broadcast.
+            message: Message dict to broadcast.
         """
         if not self._started:
             logger.warning("Broadcast called but channel manager not started")
@@ -373,9 +412,9 @@ class ChannelManager:
         """Send message to specific channel/chat.
 
         Args:
-        channel_name: Target channel name.
-        chat_id: Target conversation identifier.
-        message: ChannelMessage or dict to send.
+            channel_name: Target channel name.
+            chat_id: Target conversation identifier.
+            message: ChannelMessage or dict to send.
         """
         channel = self._channels.get(channel_name)
         if channel is None:
@@ -399,9 +438,9 @@ class ChannelManager:
         """Send with exponential backoff retry.
 
         Args:
-        channel: Channel instance.
-        chat_id: Target conversation.
-        message: Message to send.
+            channel: Channel instance.
+            chat_id: Target conversation.
+            message: Message to send.
         """
         max_retries = getattr(self._config.channels, "send_max_retries", 3)
         max_attempts = max(max_retries, 1)
@@ -436,10 +475,10 @@ class ChannelManager:
         """Transcribe audio via configured provider.
 
         Args:
-        file_path: Path to audio file.
+            file_path: Path to audio file.
 
         Returns:
-        Transcribed text, or empty string on failure.
+            Transcribed text, or empty string on failure.
         """
         # TODO: Implement transcription using configured provider
         # (moved from nanobot channel-level to manager-level)
@@ -449,10 +488,10 @@ class ChannelManager:
         """Get channel by name.
 
         Args:
-        name: Channel name.
+            name: Channel name.
 
         Returns:
-        Channel instance, or None if not found.
+            Channel instance, or None if not found.
         """
         return self._channels.get(name)
 
@@ -460,11 +499,11 @@ class ChannelManager:
         """Get loop_id for a (channel, chat_id) pair.
 
         Args:
-        channel: Channel name.
-        chat_id: Conversation identifier.
+            channel: Channel name.
+            chat_id: Conversation identifier.
 
         Returns:
-        loop_id, or None if not mapped.
+            loop_id, or None if not mapped.
         """
         return self._channel_to_loop.get((channel, chat_id))
 
@@ -472,10 +511,10 @@ class ChannelManager:
         """Get (channel, chat_id) for a loop_id.
 
         Args:
-        loop_id: Loop identifier.
+            loop_id: Loop identifier.
 
         Returns:
-        (channel, chat_id) tuple, or None if not mapped.
+            (channel, chat_id) tuple, or None if not mapped.
         """
         return self._loop_to_channel.get(loop_id)
 
@@ -493,7 +532,7 @@ class ChannelManager:
         """Get information about all channels.
 
         Returns:
-        List of channel info dicts.
+            List of channel info dicts.
         """
         return [
             {
@@ -529,9 +568,9 @@ class ChannelManager:
         For non-streaming channels, buffers deltas until stream end.
 
         Args:
-        channel_name: Target channel name.
-        chat_id: Target conversation.
-        message: ChannelMessage with streaming metadata.
+            channel_name: Target channel name.
+            chat_id: Target conversation.
+            message: ChannelMessage with streaming metadata.
         """
         channel = self._channels.get(channel_name)
         if channel is None:
@@ -573,9 +612,9 @@ class ChannelManager:
         """Send streaming delta to channel (with optional coalescing).
 
         Args:
-        channel: Channel instance.
-        chat_id: Target conversation.
-        message: Delta message.
+            channel: Channel instance.
+            chat_id: Target conversation.
+            message: Delta message.
         """
         # Coalesce deltas if enabled
         coalesced = await self._coalesce_stream_delta(channel, chat_id, message)
@@ -600,9 +639,9 @@ class ChannelManager:
         """Send stream end marker.
 
         Args:
-        channel: Channel instance.
-        chat_id: Target conversation.
-        message: End marker message.
+            channel: Channel instance.
+            chat_id: Target conversation.
+            message: End marker message.
         """
         # Send any remaining delta content with end flag
         if hasattr(channel, "send_delta"):
@@ -625,12 +664,12 @@ class ChannelManager:
         Simple implementation: just return the message (coalescing is optional).
 
         Args:
-        channel: Channel instance.
-        chat_id: Target conversation.
-        message: Incoming delta.
+            channel: Channel instance.
+            chat_id: Target conversation.
+            message: Incoming delta.
 
         Returns:
-        Coalesced message (or original if no coalescing).
+            Coalesced message (or original if no coalescing).
         """
         # For now, return original message
         # Full coalescing implementation would buffer and merge consecutive deltas
@@ -645,9 +684,9 @@ class ChannelManager:
         """Buffer delta for non-streaming channel.
 
         Args:
-        channel_name: Channel name.
-        chat_id: Target conversation.
-        message: Delta to buffer.
+            channel_name: Channel name.
+            chat_id: Target conversation.
+            message: Delta to buffer.
         """
         key = (channel_name, chat_id)
         if key not in self._stream_buffers:
@@ -662,8 +701,8 @@ class ChannelManager:
         """Flush buffered deltas as complete message.
 
         Args:
-        channel_name: Channel name.
-        chat_id: Target conversation.
+            channel_name: Channel name.
+            chat_id: Target conversation.
         """
         key = (channel_name, chat_id)
         if key not in self._stream_buffers:

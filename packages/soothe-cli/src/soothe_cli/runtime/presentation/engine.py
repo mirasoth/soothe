@@ -67,7 +67,7 @@ class PresentationEngine:
 
     def tier_visible(self, tier: VerbosityTier) -> bool:
         """Return whether content at the given event tier should display (fixed normal UX)."""
-        return should_show(tier, "normal")
+        return should_show(tier)
 
     def should_emit_reason(
         self,

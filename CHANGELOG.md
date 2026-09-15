@@ -7,8 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.0.12] - 2026-09-15
+
+### Fixed
+- Bump `soothe-nano` floor from `1.2.27` to `1.2.28`: thinking-only streams (e.g. glm-5.2 with `hide_thinking_tokens=True`) now trigger failover in `MultiModelChatModel` instead of silently surfacing empty content. The `ThinkingStreamFilter` strips thinking blocks, leaving whitespace-only chunks; the streaming failover path now detects this post-strip emptiness via `_chunk_has_content()` and fails over to the next endpoint instead of returning empty content to the user.
+- Add empty-response retry to `synthesize_plan`: thinking models that spend their entire output budget on internal reasoning (producing zero visible plan text after thinking-token stripping) now trigger up to 2 retry attempts with a nudge message steering the model toward emitting visible output. `plan_mode_review` emits `plan_refinement_failed` with `reason: "empty_response_after_retries"` when all retries are exhausted.
+
 ### Added
+- Wire workspace sync (RFC-906 §51) into the daemon `_handle_loop_new` handler: detect remote object-store URIs (`s3://`, `gs://`, `az://`) in `client_workspace`/`workspace_sync_source` message fields, construct the fsspec sync backend via `construct_sync_backend()`, open a local workspace via `WorkspaceManager.open_from_uri()`, and persist `workspace_sync_source` in loop metadata. Non-allowlisted URI schemes (`file://`, `sftp://`, `http://`) are rejected with `WORKSPACE_RESOLUTION_FAILED` (S8: SSRF prevention). Falls back to `config.workspace_sync.source_uri` when no explicit sync source is provided, enabling workspace sync locally from dev config.
+- Add `workspace_sync_source` column to the SQLite `agentloop_loops` table and extend the metadata read/write whitelists in both SQLite and PostgreSQL persistence backends so the sync source URI survives across StrangeLoop checkpoint replaces.
+- Add GPU-bound Ray actor support: `RayConfig.num_gpus` reserves GPU resources per actor; `LocalModelConfig` launches a vLLM/Ollama server inside the actor and injects it as a standard `ModelProviderConfig` so the agent's inference path stays fully on-device.
 - Show aggregate file-edit count and line deltas as a separate segment in TUI step card footers (e.g. `· 2 tools, 1 task · 2 files +10 -2`).
+- Implement production-grade Ray runner features: `RayConfig`-driven `ray.init()` cluster connection with per-actor resource constraints and `max_concurrent_actors` throttling; `LoopRunRequest.timeout_seconds` enforcement with `asyncio.timeout()`; dead-actor liveness detection via `ping()` probe to prevent stream hangs; cooperative cancellation that emits a terminal `"cancelled"` event through `emit_terminal_for_cancelled_error`; and `await_loop_dispatchable` pool lifecycle so consecutive turns on the same loop are serialized.
+
+### Changed
+- Optimize CoreAgent dispatch stall detection: set `dispatch_idle_seconds` default to 180s and add progressive backoff so each dispatch retry shortens the idle deadline (attempt n uses base × 0.85^n, floored at 60s). The idle timer fires only during the LLM-response gap (no root tools pending), so 180s gives slow LLM first-token latency adequate headroom while genuine deadlocks still fail in ~440s total (180 + 153 + 130 + 60) instead of 1200s (4 × 300s) before the circuit breaker trips.
+- Enable the ACP channel by default (`ACPConfig.enabled` flips from `False` to `True`); the daemon now serves the ACP WebSocket endpoint at `/acp` out of the box without requiring explicit YAML opt-in.
+- Codify Comment Hygiene (MUST) and Dead Code & Legacy Removal (MUST) as binding rules in `.agents/rules/code-style.md` and `.agents/rules/development-process.md`, referenced from `AGENTS.md` Critical Rules table.
+- Standardize docstrings across the `soothe` and `soothe-daemon` packages: single backticks only, Google-style section indentation, verbose prose trimmed, missing module/class/function docstrings added, RFC/IG identifiers removed from docstrings.
+
+### Removed
+- Remove backward-compat property aliases from ACP channel (`_session_map`, `_pending_permissions`, `_event_queues`, `_consumer_tasks`); tests now use canonical `_get_state()` accessors.
+- Remove `max_waves` legacy alias from `RailJobState` and `wave_plan` state write-back; prefer `max_slices` across rails, catalog, and YAML templates.
+- Remove `VerbosityTier` backward-compat re-export from `soothe.events`; callers import directly from `soothe_sdk.core.verbosity`.
+- Remove ignored `verbosity` compat parameter from `should_show()` in `soothe-sdk`.
+- Remove `manifest` compat parameter from `WorkspaceSync.put_checkpoint()` protocol and fsspec backend.
+- Remove `stream_core_agent` backward-compatible alias from nano examples.
+
+[Compare with previous version]: https://github.com/mirasoth/soothe/compare/v1.0.11...v1.0.12
 
 ## [v1.0.11] - 2026-09-13
 

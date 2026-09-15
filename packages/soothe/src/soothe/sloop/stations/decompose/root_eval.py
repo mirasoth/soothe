@@ -136,13 +136,13 @@ async def _emit_dag_idle_rail_event(
     """Emit a dag_idle RailEvent when the action tree is green and idle.
 
     Fires once at the coverage-ready gate so rail rules can trigger
-    complete_job or review/qa transitions. Reads ``ctx.rail_interpreter``;
+    complete_job or review/qa transitions. Reads `ctx.rail_interpreter`;
     no-op when unbound. Handle failures are logged and swallowed so a rail
     rule error never blocks the ROOT_EVAL decision.
 
     Args:
         ctx: Loop runtime context carrying the rail interpreter.
-        goal: CE goal whose ``steps`` StepDAG is coverage-ready.
+        goal: CE goal whose `steps` StepDAG is coverage-ready.
     """
     rail = ctx.rail_interpreter
     goal_id = ctx.ce_goal_id
@@ -179,6 +179,7 @@ class RootEvalNode(LoopNode):
         state: dict[str, Any],
         messages: list,
     ) -> NodeResult:
+        """Evaluate root goal completion: retry, dispatch, or finalize."""
         if getattr(ctx, "interaction_mode", None) in _READONLY_MODES:
             # Retry failed steps before finalizing in read-only modes.
             if ctx.ce is not None and ctx.ce_goal_id:
@@ -231,7 +232,7 @@ class RootEvalNode(LoopNode):
                 # SIMPLE tasks: the LLM decides dynamically whether a coverage
                 # audit is warranted based on the full execution evidence.
                 # The LLM sees the step history, close reports, and outcomes,
-                # and may override the structural ``eval_required()`` predicate
+                # and may override the structural `eval_required()` predicate
                 # in either direction.
                 if intake_label == IntakeLabel.SIMPLE:
                     from soothe.sloop.eval.eval_decision import decide_eval_required
@@ -254,12 +255,27 @@ class RootEvalNode(LoopNode):
                     # should_run_eval=True → fall through to Eval insertion.
 
                 # COMPLEX (and unlabeled) tasks use the structural
-                # ``eval_required()`` predicate: insert Eval when the action
+                # `eval_required()` predicate: insert Eval when the action
                 # tree shows decomposition, multi-leaf, or early-exit; skip
                 # otherwise (single-leaf no-decompose no early-exit).
                 elif not goal.steps.eval_required():
-                    logger.info("[root_eval] eval skip predicate matched; finalize")
-                    return NodeResult(payload={"root_eval_route": "finalize"})
+                    # Coverage backstop: a goal classified COMPLEX that ran
+                    # as a single completed leaf without decomposition still
+                    # warrants a coverage audit. Complex work executed
+                    # monolithically in one step (observed: 100+ tools,
+                    # recoverable errors, no fan-out) is exactly where
+                    # unverified gaps hide, and the documented contract is
+                    # that complex goals run the full coverage Eval gate.
+                    # Unlabeled (None) goals continue to trust the structural
+                    # skip, preserving existing behavior for legacy/forced
+                    # goals that never passed through intake classification.
+                    if intake_label != IntakeLabel.COMPLEX:
+                        logger.info("[root_eval] eval skip predicate matched; finalize")
+                        return NodeResult(payload={"root_eval_route": "finalize"})
+                    logger.info(
+                        "[root_eval] complex goal ran as single leaf; force Eval (no decomposition)"
+                    )
+                    # Fall through to Eval insertion below.
 
                 eval_cfg = getattr(ctx.strange_loop.config.agent.loop, "eval", None)
                 max_rounds = positive_config_int(
@@ -303,6 +319,7 @@ class RootEvalNode(LoopNode):
         state: dict[str, Any],
         result: NodeResult,
     ) -> RouteDecision:
+        """Route based on root-eval decision: dispatch, finalize, or fatal."""
         payload = result.payload if isinstance(result.payload, dict) else {}
         route = str(payload.get("root_eval_route") or "finalize")
         patch = {"root_eval_route": route}

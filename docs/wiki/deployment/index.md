@@ -145,11 +145,10 @@ Using Docker Compose (recommended):
 
 ```bash
 # 1. Clone deployment files
-cd soothe/deploy
+cd soothe/config/production
 
 # 2. Configure environment
-cp env-example .env
-vim .env  # Set API keys, passwords
+vim example.env   # Set API keys, passwords
 
 # 3. Create nano.yml
 cp nano.yml ~/.soothe/config/nano.yml
@@ -177,7 +176,7 @@ See [Production Setup](production-setup.md) for detailed steps.
 
 **Use**: Standard production deployments
 
-See: `deploy/docker-compose.yml` and [Production Setup](production-setup.md)
+See: `config/production/docker-compose.yml` and [Production Setup](production-setup.md)
 
 ### Pattern 2: Kubernetes
 

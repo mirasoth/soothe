@@ -960,11 +960,11 @@ class SignalChannel(Channel):
         Add a message to the group's rolling buffer.
 
         Args:
-        group_id: The group ID
-        sender_name: Display name of sender
-        sender_number: Phone number of sender
-        message_text: The message content
-        timestamp: Message timestamp
+            group_id: The group ID
+            sender_name: Display name of sender
+            sender_number: Phone number of sender
+            message_text: The message content
+            timestamp: Message timestamp
         """
         # Create buffer for this group if it doesn't exist
         if group_id not in self._group_buffers:
@@ -992,10 +992,10 @@ class SignalChannel(Channel):
         Get formatted context from the group's message buffer.
 
         Args:
-        group_id: The group ID
+            group_id: The group ID
 
         Returns:
-        Formatted string of recent messages (excluding the current one)
+            Formatted string of recent messages (excluding the current one)
         """
         if group_id not in self._group_buffers:
             return ""
@@ -1191,11 +1191,11 @@ class SignalChannel(Channel):
         Determine if the bot should respond to a group message.
 
         Args:
-        message_text: The message text content
-        mentions: List of mentions from Signal (format: [{"number": "+1234567890", "start": 0, "length": 10}])
+            message_text: The message text content
+            mentions: List of mentions from Signal (format: [{"number": "+1234567890", "start": 0, "length": 10}])
 
         Returns:
-        True if bot should respond, False otherwise
+            True if bot should respond, False otherwise
         """
         # Group reply behavior is controlled only by group.require_mention.
         if not self.config.group.require_mention:
@@ -1247,11 +1247,11 @@ class SignalChannel(Channel):
         the mentions array which provides start position and length.
 
         Args:
-        text: Original message text
-        mentions: List of mention objects with start/length positions
+            text: Original message text
+            mentions: List of mention objects with start/length positions
 
         Returns:
-        Text with bot mentions removed
+            Text with bot mentions removed
         """
         if not text:
             return text

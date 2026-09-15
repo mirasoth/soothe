@@ -81,10 +81,10 @@ class ExtractionResult:
         """Check if extraction confidence meets threshold.
 
         Args:
-        threshold: Minimum confidence required (default 0.5).
+            threshold: Minimum confidence required (default 0.5).
 
         Returns:
-        True if confidence >= threshold.
+            True if confidence >= threshold.
         """
         return self.confidence >= threshold
 
@@ -92,7 +92,7 @@ class ExtractionResult:
         """Convert to dictionary for serialization.
 
         Returns:
-        Dictionary representation.
+            Dictionary representation.
         """
         return {
             "description": self.description,
@@ -109,19 +109,19 @@ class CronJob:
     """A scheduled job for the cron service.
 
     Attributes:
-    id: Unique job identifier (UUID hex).
-    user_id: Owner user identifier.
-    description: Task description in imperative form.
-    schedule_kind: Kind of schedule.
-    schedule_value: Parsed schedule value.
-    end_condition: Optional end condition for recurring jobs.
-    priority: Goal priority (1-100, default 50).
-    status: Current job status.
-    next_run: Computed next execution time.
-    last_run: Last execution time (null if never run).
-    run_count: Number of times this job has been executed.
-    created_at: Creation timestamp.
-    updated_at: Last modification timestamp.
+        id: Unique job identifier (UUID hex).
+        user_id: Owner user identifier.
+        description: Task description in imperative form.
+        schedule_kind: Kind of schedule.
+        schedule_value: Parsed schedule value.
+        end_condition: Optional end condition for recurring jobs.
+        priority: Goal priority (1-100, default 50).
+        status: Current job status.
+        next_run: Computed next execution time.
+        last_run: Last execution time (null if never run).
+        run_count: Number of times this job has been executed.
+        created_at: Creation timestamp.
+        updated_at: Last modification timestamp.
     """
 
     id: str
@@ -142,7 +142,7 @@ class CronJob:
         """Check if this job is recurring.
 
         Returns:
-        True if schedule kind is EVERY or CRON.
+            True if schedule kind is EVERY or CRON.
         """
         return self.schedule_kind in (ScheduleKind.EVERY, ScheduleKind.CRON)
 
@@ -150,7 +150,7 @@ class CronJob:
         """Check if this job is one-shot (non-recurring).
 
         Returns:
-        True if schedule kind is ONCE, DELAY, or AT.
+            True if schedule kind is ONCE, DELAY, or AT.
         """
         return self.schedule_kind in (ScheduleKind.ONCE, ScheduleKind.DELAY, ScheduleKind.AT)
 
@@ -158,10 +158,10 @@ class CronJob:
         """Check if this job is due for execution.
 
         Args:
-        now: Reference time. Defaults to current time.
+            now: Reference time. Defaults to current time.
 
         Returns:
-        True if status is PENDING and next_run <= now.
+            True if status is PENDING and next_run <= now.
         """
         now = now or datetime.now(tz=UTC)
         return self.status == JobStatus.PENDING and self.next_run <= now
@@ -170,7 +170,7 @@ class CronJob:
         """Convert to dictionary for serialization.
 
         Returns:
-        Dictionary representation suitable for DB storage.
+            Dictionary representation suitable for DB storage.
         """
         return {
             "id": self.id,
@@ -193,10 +193,10 @@ class CronJob:
         """Create CronJob from dictionary.
 
         Args:
-        data: Dictionary with job fields.
+            data: Dictionary with job fields.
 
         Returns:
-        CronJob instance.
+            CronJob instance.
         """
         return cls(
             id=data["id"],

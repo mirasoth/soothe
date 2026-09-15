@@ -19,10 +19,12 @@ class LazyCoreAgent(nano_lazy.LazyCoreAgent):
 
     @property
     def intake_only_subagents(self) -> list[SubAgent | CompiledSubAgent]:
+        """Intake-only specialists not exposed on the open `task` catalog."""
         agent = self.materialize()
         return list(getattr(agent, "intake_only_subagents", []))
 
     def lookup_intake_only_subagent(self, name: str) -> SubAgent | CompiledSubAgent | None:
+        """Return an intake-only subagent spec by name, or None if not found."""
         agent = self.materialize()
         lookup = getattr(agent, "lookup_intake_only_subagent", None)
         return lookup(name) if callable(lookup) else None

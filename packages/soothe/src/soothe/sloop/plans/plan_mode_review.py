@@ -426,31 +426,13 @@ async def _refine_plan(ctx: LoopRuntimeContext) -> str:
 
 
 async def node_plan_review(ctx: LoopRuntimeContext, state: dict[str, Any]) -> dict[str, Any]:
-    """Plan review graph node: collect plan, write artifact, record completion, emit clarification.
+    """Plan review graph node: collect plan, write artifact, emit clarification.
 
     When `interaction_mode == "plan"`, `route_after_root_eval` routes here
-    instead of `FINALIZE`. This node:
-
-    1. Extracts the plan document from the step's final AI message (the
-       plan-mode addendum instructs the agent to output `## Plan: <title>`
-       as its last message). When the agent followed that instruction, no LLM
-       call is needed — the step result already IS the plan. This mirrors the
-       `LEDGER_DIRECT` completion strategy and avoids a synthesis call.
-    2. Falls back to LLM synthesis (`synthesize_plan`) only when extraction
-       fails — e.g. the final message lacks the `## Plan:` marker (agent
-       narrated instead of producing a plan, or an error truncated output).
-    3. Writes the plan to `.soothe/plans/` via `save_plan_draft`.
-    4. Records a `goal_completion` Human–AI pair in the ledger with the full
-       plan body as the AI message (so subsequent goals see a clean terminal
-       report, not intermediate `execute_step` messages).
-    5. Returns a pending clarification (`ORIGIN_PLAN_MODE_REVIEW`) so the
-       graph routes to `AWAIT_USER` for the approve/reject/refine popup.
-
-    On clarification resume (approve/reject/refine), `route_after_clarification`
-    routes back here; `handle_plan_mode_review_answer` processes the answer and
-    records the user's action in the ledger. On Refine with comments,
-    the node runs an async refinement re-synthesis (`synthesize_plan` with the
-    comments + prior plan) so the user sees a *revised* plan, not the same draft.
+    instead of `FINALIZE`. This node extracts the plan from the step's final
+    AI message, writes it to `.soothe/plans/`, records a `goal_completion`
+    Human-AI pair, and returns a pending clarification for approve/reject/refine.
+    On Refine with comments, re-synthesizes the plan via `synthesize_plan`.
     """
     # If this is a clarification-resume turn, handle the answer first.
     _relay_state = state.get("relay_state") or {}
@@ -478,13 +460,19 @@ async def node_plan_review(ctx: LoopRuntimeContext, state: dict[str, Any]) -> di
                 ctx.scratch.plan_review_comments = None
                 await ctx.emit("plan_refinement_completed", {"plan_chars": len(refined)})
             else:
-                # Synthesis failed — keep the old draft pending and clear the
-                # stale comments so a subsequent approve does not re-trigger.
+                # Synthesis failed (empty after retries or exception) — keep the
+                # old draft pending and clear the stale comments so a subsequent
+                # approve does not re-trigger. Emit the prior plan so the user
+                # can manually re-submit refinement comments.
                 logger.warning(
-                    "[PlanModeReview] Refinement synthesis failed; re-emitting prior draft"
+                    "[PlanModeReview] Refinement synthesis failed after retries; "
+                    "re-emitting prior draft"
                 )
                 ctx.scratch.plan_review_comments = None
-                await ctx.emit("plan_refinement_failed", {})
+                await ctx.emit(
+                    "plan_refinement_failed",
+                    {"reason": "empty_response_after_retries"},
+                )
         return out
 
     # Fresh plan review: prefer extracting the plan from the step's final AI

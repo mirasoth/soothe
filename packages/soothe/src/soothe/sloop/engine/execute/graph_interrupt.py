@@ -58,6 +58,7 @@ class DispatchTimeoutError(Exception):
         step_id: str | None = None,
         reason: str = "idle",
     ) -> None:
+        """Store timeout, step id, and reason, then build the error message."""
         self.timeout_seconds = timeout_seconds
         self.step_id = step_id
         self.reason = reason
@@ -173,6 +174,7 @@ class GraphStreamChunkReader:
         step_id: str | None = None,
         heartbeat_interval: float | None = None,
     ) -> None:
+        """Initialize the idle monitor with chunk iterator and timeout settings."""
         self._chunk_iter = chunk_iter
         self._step_id = step_id
         self._heartbeat_interval = heartbeat_interval or _STREAM_HEARTBEAT_INTERVAL_S

@@ -94,18 +94,18 @@ async def purge_loop_execution_data(daemon: Any, loop_id: str, metadata: dict[st
     """Remove execution persistence for a loop; keep workspace directories.
 
     Args:
-    daemon: `SootheDaemon` instance.
-    loop_id: Loop identifier.
-    metadata: Loop metadata dict (thread ids, status).
+        daemon: `SootheDaemon` instance.
+        loop_id: Loop identifier.
+        metadata: Loop metadata dict (thread ids, status).
 
     Returns:
-    True if purge completed, False if skipped (e.g. still running).
+        True if purge completed, False if skipped (e.g. still running).
 
-    The purge gate is liveness-aware: a row still marked `status="running"`
-    is only protected when an active runner can be confirmed for the loop.
-    This reclaims zombie loops whose persisted status was never flipped to
-    `idle` because the runner died without a teardown hook. The liveness
-    check mirrors `auto_resume._loop_has_active_runner`.
+        The purge gate is liveness-aware: a row still marked `status="running"`
+        is only protected when an active runner can be confirmed for the loop.
+        This reclaims zombie loops whose persisted status was never flipped to
+        `idle` because the runner died without a teardown hook. The liveness
+        check mirrors `auto_resume._loop_has_active_runner`.
     """
     from soothe_daemon.runtime.auto_resume import _loop_has_active_runner
 

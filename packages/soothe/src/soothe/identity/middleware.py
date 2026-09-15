@@ -27,6 +27,7 @@ class IdentityMiddleware(AgentMiddleware):
     """First middleware in stack for identity validation."""
 
     def __init__(self, runtime: IdentityRuntime) -> None:
+        """Initialize from an IdentityRuntime (service, config, thread context)."""
         self._runtime = runtime
         self._identity = runtime.service
         self._config = runtime.config

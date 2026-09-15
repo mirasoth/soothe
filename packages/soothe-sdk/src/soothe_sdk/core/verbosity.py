@@ -14,8 +14,6 @@ from __future__ import annotations
 
 from enum import IntEnum
 
-from soothe_sdk.core.types import VerbosityLevel
-
 
 class VerbosityTier(IntEnum):
     """Visibility class for catalog events.
@@ -33,18 +31,15 @@ class VerbosityTier(IntEnum):
     INTERNAL = 99
 
 
-def should_show(tier: VerbosityTier, verbosity: VerbosityLevel | None = None) -> bool:
+def should_show(tier: VerbosityTier) -> bool:
     """Return True if tier is client-visible.
 
     Args:
         tier: Visibility class of the content.
-        verbosity: Accepted for backward compatibility; ignored. Clients always
-            project NORMAL.
 
     Returns:
         True iff `tier` is `NORMAL`.
     """
-    del verbosity
     return tier == VerbosityTier.NORMAL
 
 

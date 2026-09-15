@@ -1,7 +1,4 @@
-"""Feishu/Lark channel implementation using lark-oapi SDK with WebSocket long connection.
-
-Migrated from nanoBot with adaptations for soothe-daemon Channel architecture.
-"""
+"""Feishu/Lark channel implementation using lark-oapi SDK with WebSocket long connection."""
 
 from __future__ import annotations
 
@@ -305,8 +302,8 @@ class FeishuChannel(Channel):
         """Initialize Feishu channel.
 
         Args:
-        config: Feishu configuration.
-        manager: ChannelManager for inbound routing.
+            config: Feishu configuration.
+            manager: ChannelManager for inbound routing.
         """
         super().__init__(config, manager)
         if isinstance(config, dict):
@@ -480,11 +477,11 @@ class FeishuChannel(Channel):
         """Replace @_user_n placeholders with actual user info from mentions.
 
         Args:
-        text: The message text containing @_user_n placeholders
-        mentions: List of mention objects from Feishu message
+            text: The message text containing @_user_n placeholders
+            mentions: List of mention objects from Feishu message
 
         Returns:
-        Text with placeholders replaced by @姓名 (open_id)
+            Text with placeholders replaced by @姓名 (open_id)
         """
         if not mentions or not text:
             return text
@@ -1084,7 +1081,7 @@ class FeishuChannel(Channel):
         """Download media from Feishu and save to local disk.
 
         Returns:
-        (file_path, content_text) - file_path is None if download failed
+            (file_path, content_text) - file_path is None if download failed
         """
         loop = asyncio.get_running_loop()
         media_dir = Path.home() / ".soothe" / "media" / "feishu"
@@ -1194,8 +1191,8 @@ class FeishuChannel(Channel):
         """Reply to an existing Feishu message using the Reply API (synchronous).
 
         Args:
-        reply_in_thread: If True, reply as a thread/topic message
-        in the Feishu client.
+            reply_in_thread: If True, reply as a thread/topic message
+            in the Feishu client.
         """
         from lark_oapi.api.im.v1 import ReplyMessageRequest, ReplyMessageRequestBody
 

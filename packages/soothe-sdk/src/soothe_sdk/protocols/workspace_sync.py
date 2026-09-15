@@ -372,7 +372,6 @@ class WorkspaceSyncBackend(Protocol):
         self,
         checkpoint_id: str,
         data: bytes,
-        manifest: Manifest | None = None,
     ) -> None:
         """Store a checkpoint payload.
 
@@ -385,9 +384,6 @@ class WorkspaceSyncBackend(Protocol):
         Args:
             checkpoint_id: Unique checkpoint identifier (e.g. ``c001``).
             data: Serialized :class:`CheckpointPayload`.
-            manifest: Optional manifest snapshot captured at the time
-                of the checkpoint (kept for backward compatibility;
-                the payload's ``manifest_snapshot`` field is preferred).
         """
         ...
 

@@ -71,6 +71,7 @@ class LoopPersistenceWriter:
         close_timeout_seconds: float = 30.0,
         durable_flush_timeout: float = 10.0,
     ) -> None:
+        """Initialize the shared pool, flush intervals, and pending-entry bookkeeping."""
         self._shared_pool = shared_pool
         self._flush_interval = flush_interval
         self._close_timeout_seconds = close_timeout_seconds
@@ -225,6 +226,7 @@ class LoopPersistenceWriter:
         )
 
     async def shutdown(self) -> None:
+        """Cancel the flush worker task and await its cleanup."""
         if self._worker_task is not None:
             self._worker_task.cancel()
             try:

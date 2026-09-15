@@ -56,6 +56,7 @@ class CASCache:
     """
 
     def __init__(self, cache_root: str | Path) -> None:
+        """Initialize the content-addressed blob cache and probe link strategy."""
         self._root = Path(cache_root)
         self._blobs_dir = self._root / "blobs" / "sha256"
         self._blobs_dir.mkdir(parents=True, exist_ok=True)

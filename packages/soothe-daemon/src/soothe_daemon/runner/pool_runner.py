@@ -429,15 +429,15 @@ def _pool_worker_body(
     - Exit on shutdown sentinel, idle timeout, or max requests
 
     Args:
-    config: Spawn-safe SootheConfig.
-    worker_id: Unique worker identifier for logging.
-    request_queue: Queue for receiving requests from main process.
-    response_queue: Queue for sending responses to main process.
-    cancel_event: multiprocessing.Event for cooperative cancellation signaling.
-    idle_timeout_seconds: Exit after this many seconds idle.
-    max_requests: Exit after this many requests completed.
-    default_timeout_seconds: Default per-request timeout if not specified.
-    heartbeat_interval_seconds: Interval for sending heartbeat messages.
+        config: Spawn-safe SootheConfig.
+        worker_id: Unique worker identifier for logging.
+        request_queue: Queue for receiving requests from main process.
+        response_queue: Queue for sending responses to main process.
+        cancel_event: multiprocessing.Event for cooperative cancellation signaling.
+        idle_timeout_seconds: Exit after this many seconds idle.
+        max_requests: Exit after this many requests completed.
+        default_timeout_seconds: Default per-request timeout if not specified.
+        heartbeat_interval_seconds: Interval for sending heartbeat messages.
     """
     import asyncio as _asyncio
 
@@ -1604,8 +1604,8 @@ class ProcessPool:
         Guarantees the worker is terminated by SIGTERM then SIGKILL if needed.
 
         Args:
-        worker_id: Worker to terminate.
-        timeout: Seconds to wait for process death after terminate.
+            worker_id: Worker to terminate.
+            timeout: Seconds to wait for process death after terminate.
         """
         worker = self._workers.get(worker_id)
         if worker is None:

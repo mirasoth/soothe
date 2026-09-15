@@ -77,27 +77,35 @@ def build_strange_loop_graph(ctx: LoopRuntimeContext):
     """
 
     async def intake(state: dict[str, Any], config: RunnableConfig) -> dict[str, Any]:
+        """Classify user input as task vs. social and route accordingly."""
         return await node_intent_classify(ctx, state, config)
 
     async def enter_loop(state: dict[str, Any]) -> dict[str, Any]:
+        """Initialize or resume the loop from persisted checkpoint state."""
         return await node_init_or_resume(ctx, state)
 
     async def delegate(state: dict[str, Any]) -> dict[str, Any]:
+        """Invoke a wired intake-only subagent for delegated work."""
         return await node_invoke_wired_subagent(ctx, state)
 
     async def finalize(state: dict[str, Any]) -> dict[str, Any]:
+        """Synthesize goal completion output and emit terminal events."""
         return await node_goal_completion(ctx, state)
 
     async def execute(state: dict[str, Any]) -> dict[str, Any]:
+        """Run the execute-step graph (reason → act → assess per step)."""
         return await node_execute(ctx, state)
 
     async def record_progress(state: dict[str, Any]) -> dict[str, Any]:
+        """Record iteration progress and emit rail events."""
         return await node_record_iteration(ctx, state)
 
     async def await_user(state: dict[str, Any]) -> dict[str, Any]:
+        """Park the loop awaiting out-of-band clarification answers."""
         return await node_await_clarification(ctx, state)
 
     async def plan_review(state: dict[str, Any]) -> dict[str, Any]:
+        """Review and refine a proposed plan in plan mode."""
         from soothe.sloop.plans.plan_mode_review import node_plan_review
 
         return await node_plan_review(ctx, state)

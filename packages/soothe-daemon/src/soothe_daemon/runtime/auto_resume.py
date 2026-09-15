@@ -160,8 +160,8 @@ async def peek_strange_loop_checkpoint(daemon: Any, loop_id: str) -> Any | None:
 async def peek_clarification_pending(daemon: Any, loop_id: str) -> bool | None:
     """Best-effort probe: does this loop's graph state have a pending clarification?
 
-    Reads the ``relay_state`` channel from the last LangGraph checkpoint:
-    inbox non-empty and answer slot ``None``.  Returns ``None`` when the
+    Reads the `relay_state` channel from the last LangGraph checkpoint:
+    inbox non-empty and answer slot `None`.  Returns `None` when the
     checkpointer or checkpoint tuple is unavailable.
     """
     runner = getattr(daemon, "_runner", None)

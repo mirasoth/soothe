@@ -17,8 +17,9 @@
 .PHONY: docker-dev-pull docker-dev-up docker-dev-down docker-dev-ps
 .PHONY: docker-prod-pull docker-prod-up docker-prod-down docker-prod-ps
 
-# Production stack only (deploy/docker-compose.yml needs API keys from deploy/.env)
-DOCKER_PROD_COMPOSE := docker compose -f deploy/docker-compose.yml --env-file deploy/.env
+# Production stack. --env-file feeds YAML ${VAR} interpolation (volume mounts);
+# container env vars auto-imported via env_file in docker-compose.yml.
+DOCKER_PROD_COMPOSE := docker compose -f config/production/docker-compose.yml --env-file config/production/example.env
 .PHONY: reset-the-world
 .PHONY: format format-check lint lint-src lint-fix autofix vulture vulture-whitelist
 .PHONY: test test-unit test-integration test-coverage build clean
@@ -66,7 +67,7 @@ help:
 	@echo ""
 	@echo "Docker (Production):"
 	@echo "  make docker-prod-pull  - Pull production images (pgvector + soothed)"
-	@echo "  make docker-prod-up    - Start production stack (deploy/)"
+	@echo "  make docker-prod-up    - Start production stack (config/production/)"
 	@echo "  make docker-prod-down  - Stop production stack"
 	@echo "  make docker-prod-ps    - Show production stack status"
 	@echo ""
@@ -139,7 +140,7 @@ sync-verify:
 #
 # Quick reference:
 #   Dev stack (deps + Langfuse): make docker-dev-up
-#   Production stack:           cp deploy/env-example deploy/.env && make docker-prod-up
+#   Production stack:           make docker-prod-up
 
 # --- Dev Dependencies (pgvector + MinIO + Langfuse by default) ----------------
 
@@ -165,7 +166,7 @@ docker-dev-down:
 docker-dev-ps:
 	docker compose --profile langfuse ps
 
-# --- Production Stack (deploy/docker-compose.yml) --------------------------
+# --- Production Stack -------------------------------------------------------
 
 docker-prod-pull:
 	@echo "Pulling production images..."
@@ -173,20 +174,13 @@ docker-prod-pull:
 	@echo "Pull complete"
 
 docker-prod-up:
-	@echo "Starting production stack (PostgreSQL + pgvector + soothed)..."
-	@# Pre-create host bind-mount sources. On Colima/Lima sshfs, Docker's
-	@# create+chown of missing sources fails with "permission denied".
-	@# ~/.soothe-prod is the prod workdir, isolated from dev's ~/.soothe.
+	@echo "Starting production stack..."
+	@# Pre-create bind-mount dirs (Colima/Lima sshfs rejects Docker's create+chown).
 	@mkdir -p "$${HOME}/.soothe-prod/data" "$${HOME}/.soothe-prod/logs" "$${HOME}/.soothe-prod/config"
 	$(DOCKER_PROD_COMPOSE) up -d
 	@echo ""
-	@echo "Stack running. Check status: make docker-prod-ps"
-	@echo ""
-	@echo "Services:"
-	@echo "  Daemon API:  http://localhost:18765"
-	@echo "  PostgreSQL:  internal (soothe-pgvector)"
-	@echo ""
-	@echo "Config: deploy/.env (copy from deploy/env-example if missing)"
+	@echo "Daemon API: http://localhost:18765"
+	@echo "Config: config/production/example.env"
 
 docker-prod-down:
 	@echo "Stopping production stack..."

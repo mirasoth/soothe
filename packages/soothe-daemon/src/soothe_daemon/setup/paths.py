@@ -56,7 +56,7 @@ def read_template_text(name: str) -> str:
     3. Monorepo `config/templates/<name>` (symlink to packaged template)
 
     Raises:
-    FileNotFoundError: If no template can be found.
+        FileNotFoundError: If no template can be found.
     """
     if name not in TEMPLATE_NAMES:
         raise FileNotFoundError(f"unknown template name: {name}")

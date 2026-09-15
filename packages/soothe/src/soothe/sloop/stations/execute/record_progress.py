@@ -19,7 +19,7 @@ async def _emit_step_rail_events(
 ) -> None:
     """Emit step_completed/step_failed RailEvents after CE step feedback.
 
-    Reads ``ctx.rail_interpreter``; no-op when absent or no CE goal bound.
+    Reads `ctx.rail_interpreter`; no-op when absent or no CE goal bound.
     Skips decomposing parent steps that stayed active (not marked
     complete/failed in CE). Handle failures are logged and swallowed so a
     rail rule error never blocks iteration persistence.
@@ -86,7 +86,7 @@ async def node_record_iteration(ctx: LoopRuntimeContext, _state: dict[str, Any])
 
     # RFC-624 Phase 4: async step feedback + CE persistence.
     # RFC-904: steps that queued a DecompositionProposal stay active until
-    # RECONCILE marks them ``decomposed`` — do not complete_step those ids.
+    # RECONCILE marks them `decomposed` — do not complete_step those ids.
     decompose_parent_ids = {
         getattr(p, "parent_step_id", None) for p in (ctx.scratch.decompose_proposals or [])
     }
@@ -139,7 +139,7 @@ async def node_record_iteration(ctx: LoopRuntimeContext, _state: dict[str, Any])
 
     # RFC-231 LoopRail: emit step_completed/step_failed RailEvents so rail
     # rules can react to per-step outcomes (e.g. complete_job, review/qa
-    # transitions). Reads ``ctx.rail_interpreter``; no-op when unbound.
+    # transitions). Reads `ctx.rail_interpreter`; no-op when unbound.
     await _emit_step_rail_events(ctx, step_results, decompose_parent_ids)
 
     iteration_completed = state.iteration

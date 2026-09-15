@@ -104,16 +104,16 @@ async def send_admin_request(
     """Send a protocol-1 request and return the `result` dict.
 
     Args:
-    ws_url: Daemon WebSocket URL (e.g. `ws://127.0.0.1:8765`).
-    method: RPC method name (e.g. `memory_stats`).
-    params: Structured parameters for the method.
-    timeout: Per-command timeout in seconds.
+        ws_url: Daemon WebSocket URL (e.g. `ws://127.0.0.1:8765`).
+        method: RPC method name (e.g. `memory_stats`).
+        params: Structured parameters for the method.
+        timeout: Per-command timeout in seconds.
 
     Returns:
-    The `result` payload from the matching `response` envelope.
+        The `result` payload from the matching `response` envelope.
 
     Raises:
-    RuntimeError: On handshake failure, error envelope, timeout, or disconnect.
+        RuntimeError: On handshake failure, error envelope, timeout, or disconnect.
     """
     import websockets
 

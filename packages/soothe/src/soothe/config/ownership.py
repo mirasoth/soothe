@@ -20,6 +20,7 @@ class OwnershipViolationError(ValueError):
     """Raised when a config file contains keys owned by another file."""
 
     def __init__(self, violations: list[OwnershipViolation]) -> None:
+        """Store violations and build a human-readable error message."""
         self.violations = list(violations)
         details = "; ".join(
             f"{v.key_path} in {v.source_file} (move to {v.target_file}: {v.reason})"

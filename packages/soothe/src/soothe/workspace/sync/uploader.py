@@ -55,6 +55,7 @@ class BackgroundUploader:
         poll_interval: float = 2.0,
         on_backpressure: Any = None,
     ) -> None:
+        """Initialize the uploader with backend, checkpoint store, and thresholds."""
         self._backend = backend
         self._store = store
         self._max_pending = max_pending
@@ -141,17 +142,16 @@ class BackgroundUploader:
 
         Args:
             item: Pending checkpoint dict with keys like `checkpoint_id`,
-                `data`, `manifest`.
+                `data`.
 
         Returns:
             `True` if the upload succeeded, `False` on failure.
         """
         checkpoint_id: str = item["checkpoint_id"]
         data: bytes = item["data"]
-        manifest = item.get("manifest")
 
         try:
-            await self._backend.put_checkpoint(checkpoint_id, data, manifest)
+            await self._backend.put_checkpoint(checkpoint_id, data)
             await self._store.update_checkpoint_status(checkpoint_id, "uploaded")
             logger.debug("Uploaded checkpoint %s", checkpoint_id)
             return True

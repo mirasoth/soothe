@@ -568,6 +568,7 @@ class PostgreSQLPersistenceBackend(StrangeLoopPersistenceBackend):
             "current_workspace",
             "resume_topic",
             "workspace_mapping",
+            "workspace_sync_source",
         }
         updates = {k: v for k, v in fields.items() if k in _allowed}
         if not updates:

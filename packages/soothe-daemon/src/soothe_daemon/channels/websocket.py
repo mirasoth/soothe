@@ -215,9 +215,9 @@ class WebSocketChannel(Channel):
         """Stream incremental text chunk to WebSocket client.
 
         Args:
-        chat_id: Loop ID identifying the client session.
-        delta: Text chunk to stream.
-        metadata: Stream metadata (_stream_id, _stream_end, etc.).
+            chat_id: Loop ID identifying the client session.
+            delta: Text chunk to stream.
+            metadata: Stream metadata (_stream_id, _stream_end, etc.).
         """
         wire_msg = {
             "type": "event",
@@ -249,7 +249,7 @@ class WebSocketChannel(Channel):
         """Broadcast message to all connected clients.
 
         Args:
-        message: Wire-format message dict to broadcast.
+            message: Wire-format message dict to broadcast.
         """
         text = encode_websocket_text(message)
 
@@ -280,12 +280,12 @@ class WebSocketChannel(Channel):
         """Send text frame with timeout.
 
         Args:
-        client: WebSocket connection.
-        text: JSON payload.
-        timeout: Send timeout in seconds.
+            client: WebSocket connection.
+            text: JSON payload.
+            timeout: Send timeout in seconds.
 
         Raises:
-        asyncio.TimeoutError: If send exceeds timeout.
+            asyncio.TimeoutError: If send exceeds timeout.
         """
         try:
             await asyncio.wait_for(client.send_text(text), timeout=timeout)
@@ -297,10 +297,10 @@ class WebSocketChannel(Channel):
         """Convert ChannelMessage to wire format.
 
         Args:
-        message: ChannelMessage to convert.
+            message: ChannelMessage to convert.
 
         Returns:
-        Wire-format dict for WebSocket transmission.
+            Wire-format dict for WebSocket transmission.
         """
         wire = {
             "type": "event",
@@ -323,10 +323,10 @@ class WebSocketChannel(Channel):
         """Validate CORS origin against allowed patterns.
 
         Args:
-        origin: Origin header value.
+            origin: Origin header value.
 
         Returns:
-        True if origin is allowed.
+            True if origin is allowed.
         """
         if not origin:
             return True
@@ -568,9 +568,9 @@ class WebSocketChannel(Channel):
         is considered dead and closed with code 1001.
 
         Args:
-        websocket: The WebSocket connection to ping.
-        client_id: Client identifier for logging.
-        client_info: Per-connection info dict tracking `last_pong_time`.
+            websocket: The WebSocket connection to ping.
+            client_id: Client identifier for logging.
+            client_info: Per-connection info dict tracking `last_pong_time`.
         """
         interval_s = self._ws_config.heartbeat_interval_ms / 1000.0
         timeout_s = self._ws_config.heartbeat_timeout_ms / 1000.0
@@ -625,7 +625,7 @@ class WebSocketChannel(Channel):
         """Mark that a pong was received from a client (heartbeat liveness).
 
         Args:
-        client_id: Client identifier to look up in `_clients`.
+            client_id: Client identifier to look up in `_clients`.
         """
         for ws, info in self._clients.items():
             if info.get("client_id") == client_id:
@@ -646,9 +646,9 @@ class WebSocketChannel(Channel):
         """Handle WebSocket command messages for cron and memory.
 
         Args:
-        websocket: WebSocket connection.
-        msg_dict: Command message dict.
-        client_id: Client identifier.
+            websocket: WebSocket connection.
+            msg_dict: Command message dict.
+            client_id: Client identifier.
         """
         command = msg_dict.get("command", "")
         request_id = msg_dict.get("request_id", "")
@@ -677,14 +677,14 @@ class WebSocketChannel(Channel):
         """Dispatch command to appropriate service.
 
         Args:
-        command: Command name.
-        payload: Command payload.
+            command: Command name.
+            payload: Command payload.
 
         Returns:
-        Command result dict.
+            Command result dict.
 
         Raises:
-        RuntimeError: If service unavailable or command fails.
+            RuntimeError: If service unavailable or command fails.
         """
         # Cron commands
         if command.startswith("cron_"):
@@ -708,11 +708,11 @@ class WebSocketChannel(Channel):
         """Handle cron command.
 
         Args:
-        action: Cron action name.
-        payload: Command payload.
+            action: Cron action name.
+            payload: Command payload.
 
         Returns:
-        Result dict.
+            Result dict.
         """
 
         from soothe_daemon.cron import ExtractionError
@@ -764,11 +764,11 @@ class WebSocketChannel(Channel):
         """Handle memory profiling command.
 
         Args:
-        action: Memory action name.
-        payload: Command payload.
+            action: Memory action name.
+            payload: Command payload.
 
         Returns:
-        Result dict.
+            Result dict.
         """
         loop = asyncio.get_running_loop()
         profiler = self._memory_profiler

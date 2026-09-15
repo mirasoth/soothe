@@ -1,13 +1,13 @@
 """PostgreSQL-backed workspace state store.
 
 Stores file, blob, checkpoint, and artifact state in the shared
-``soothe_metadata`` database, scoped by ``loop_id`` so that multiple
+`soothe_metadata` database, scoped by `loop_id` so that multiple
 loops coexist in the same database.  All operations are async
-(via ``asyncio.to_thread``) to match the ``WorkspaceStateStore`` protocol.
+(via `asyncio.to_thread`) to match the `WorkspaceStateStore` protocol.
 
-Uses a workspace-sync-specific sync ``ConnectionPool`` (not the shared
-``SharedMetadataPool``), mirroring ``PostgresCronJobStore`` and
-``PostgresDisplayCardStore`` — each store owns its own lazy pool.
+Uses a workspace-sync-specific sync `ConnectionPool` (not the shared
+`SharedMetadataPool`), mirroring `PostgresCronJobStore` and
+`PostgresDisplayCardStore` — each store owns its own lazy pool.
 """
 
 from __future__ import annotations
@@ -63,11 +63,11 @@ CREATE TABLE IF NOT EXISTS ws_artifacts (
 
 
 class PostgresWorkspaceStateStore:
-    """PostgreSQL implementation of ``WorkspaceStateStore``.
+    """PostgreSQL implementation of `WorkspaceStateStore`.
 
-    Uses a per-store sync ``ConnectionPool`` with ``asyncio.to_thread``
-    wrappers, mirroring ``PostgresCronJobStore``.  All tables are scoped
-    by ``loop_id`` for multi-tenant coexistence in ``soothe_metadata``.
+    Uses a per-store sync `ConnectionPool` with `asyncio.to_thread`
+    wrappers, mirroring `PostgresCronJobStore`.  All tables are scoped
+    by `loop_id` for multi-tenant coexistence in `soothe_metadata`.
 
     Args:
         dsn: Full PostgreSQL DSN (including database name).
@@ -75,6 +75,7 @@ class PostgresWorkspaceStateStore:
     """
 
     def __init__(self, *, dsn: str, loop_id: str) -> None:
+        """Initialize with DSN and loop_id; pool is opened lazily."""
         self._dsn = dsn
         self._loop_id = loop_id
         self._pool: Any | None = None
@@ -107,7 +108,7 @@ class PostgresWorkspaceStateStore:
             return self._pool
 
     def _open_pool_sync(self) -> None:
-        """Open the sync ``ConnectionPool`` and create tables."""
+        """Open the sync `ConnectionPool` and create tables."""
         from psycopg.rows import dict_row
         from psycopg_pool import ConnectionPool
 

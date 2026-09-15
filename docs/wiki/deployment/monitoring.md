@@ -315,7 +315,7 @@ grep "thread_id" soothed.log | \
 
 ### Docker Health Checks
 
-Built into `deploy/docker-compose.yml`:
+Built into `config/production/docker-compose.yml`:
 
 ```yaml
 services:

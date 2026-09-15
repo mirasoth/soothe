@@ -167,6 +167,7 @@ class ContextEngine:
         self,
         persistence: Any | None = None,
     ) -> None:
+        """Initialize the ContextEngine with an optional persistence backend."""
         if persistence is None:
             from soothe.context.store_sqlite import (
                 SqliteContextPersistence,
@@ -310,9 +311,11 @@ class ContextEngine:
         return goal
 
     async def get_goal(self, goal_id: str) -> GoalNode | None:
+        """Return a goal by ID, or `None` if not found."""
         return self._dag.get_goal(goal_id)
 
     async def list_goals(self, status: str | None = None) -> list[GoalNode]:
+        """List goals, optionally filtered by status."""
         if status:
             return [g for g in self._dag.goals.values() if g.status == status]
         return list(self._dag.goals.values())
@@ -1158,6 +1161,7 @@ class ContextEngine:
     # ── Step management ──────────────────────────────────────────
 
     async def add_step(self, goal_id: str, step: StepNode) -> None:
+        """Add a single step to a goal's StepDAG."""
         goal = self._dag.get_goal(goal_id)
         if goal is None:
             msg = f"Goal {goal_id} not found"
@@ -1195,6 +1199,7 @@ class ContextEngine:
         step_id: str,
         execution: StepExecution,
     ) -> None:
+        """Mark a step completed and accumulate its duration/tokens onto the goal."""
         goal = self._dag.get_goal(goal_id)
         if goal is None:
             return
@@ -1209,6 +1214,7 @@ class ContextEngine:
         step_id: str,
         execution: StepExecution,
     ) -> None:
+        """Mark a step failed and accumulate its duration/tokens onto the goal."""
         goal = self._dag.get_goal(goal_id)
         if goal is None:
             return
@@ -1229,9 +1235,11 @@ class ContextEngine:
     # ── Ledger management ────────────────────────────────────────
 
     async def record_message(self, message: BaseMessage, phase: str) -> None:
+        """Record a message into the ledger under the given phase."""
         self._ledger.record_message(message, phase)
 
     async def get_ledger(self, phases: list[str] | None = None) -> list[BaseMessage]:
+        """Return ledger messages, optionally filtered by phase."""
         return self._ledger.get_messages(phases)
 
     # ── Persistence ──────────────────────────────────────────────
