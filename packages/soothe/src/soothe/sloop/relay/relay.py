@@ -223,6 +223,7 @@ class LoopRelay:
             captured,
             resume_ticket=ticket,
             step_id=step_id,
+            goal_id=getattr(loop_state_view, "goal_id", None),
         )
         self._active_origin = captured.origin_node
         self._audit.append(self._audit_entry("captured", captured.origin_node, ticket))
@@ -514,14 +515,21 @@ class LoopRelay:
         self,
         relay_state: Mapping[str, Any] | None,
         scratch: LoopPhaseScratch | None = None,
+        *,
+        current_goal_id: str | None = None,
     ) -> None:
         """Rebuild the inbox + scratch from the `relay_state` channel on a fresh worker.
 
         Called at turn start (`node_execute` / `node_await_clarification`) so a
         fresh `ainvoke` reconstructs inbox and scratch from the checkpoint.
         Idempotent — skips entries already present.
+
+        When ``current_goal_id`` is provided, stale entries belonging to a
+        *different* (cancelled) goal are filtered out during inbox hydration,
+        preventing the cancelled goal's clarification interrupts from leaking
+        into the new goal.
         """
-        self._inbox = hydrate_inbox(relay_state)
+        self._inbox = hydrate_inbox(relay_state, current_goal_id=current_goal_id)
         if isinstance(relay_state, Mapping):
             parked = relay_state.get("parked_head_ticket_id")
             if parked:

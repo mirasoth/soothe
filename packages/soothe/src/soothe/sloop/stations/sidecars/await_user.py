@@ -33,10 +33,17 @@ async def node_await_clarification(
     )
     # Hydrate the relay from the relay_state channel so a fresh ainvoke
     # reconstructs the inbox + scratch from the checkpoint.
+    # Pass the current goal_id so stale entries from a cancelled prior goal
+    # are filtered out during hydration (cancel → resubmit bug fix).
     relay = getattr(ctx, "relay", None)
     relay_state = state.get("relay_state")
     if relay is not None and isinstance(relay_state, dict):
-        relay.hydrate_from_channels(relay_state, scratch=ctx.scratch)
+        _current_goal_id = getattr(getattr(ctx, "goal_record", None), "goal_id", None)
+        relay.hydrate_from_channels(
+            relay_state,
+            scratch=ctx.scratch,
+            current_goal_id=_current_goal_id,
+        )
     pending = _head_pending_request(state, relay)
     if pending is None:
         logger.warning("[await_clarification] entered without pending clarification; no-op")

@@ -345,10 +345,17 @@ async def node_execute(ctx: LoopRuntimeContext, state_dict: dict[str, Any]) -> d
     # Hydrate the relay from the relay_state channel so a fresh ainvoke
     # reconstructs the inbox + scratch (decision/plan_result/resume_ticket)
     # from the checkpoint before the resume path reads them.
+    # Pass the current goal_id so stale entries from a cancelled prior goal
+    # are filtered out during hydration (cancel → resubmit bug fix).
     relay = getattr(ctx, "relay", None)
     relay_state_in = state_dict.get("relay_state")
     if relay is not None and isinstance(relay_state_in, dict):
-        relay.hydrate_from_channels(relay_state_in, scratch=ctx.scratch)
+        _current_goal_id = getattr(goal_record, "goal_id", None)
+        relay.hydrate_from_channels(
+            relay_state_in,
+            scratch=ctx.scratch,
+            current_goal_id=_current_goal_id,
+        )
         if ctx.scratch.decision is not None and decision is None:
             decision = ctx.scratch.decision
         if ctx.scratch.plan_result is not None and plan_result is None:
@@ -783,7 +790,12 @@ async def node_execute(ctx: LoopRuntimeContext, state_dict: dict[str, Any]) -> d
             if relay is not None:
                 from soothe.sloop.relay.ticket import ResumeTicket
 
-                relay.inbox.enqueue(ask_request, resume_ticket=ResumeTicket(), step_id=ask_step.id)
+                relay.inbox.enqueue(
+                    ask_request,
+                    resume_ticket=ResumeTicket(),
+                    step_id=ask_step.id,
+                    goal_id=getattr(goal_record, "goal_id", None),
+                )
                 return relay.project_to_channels(scratch=ctx.scratch, mark_parked_head=True)
             return {}
 

@@ -2904,6 +2904,22 @@ class Executor:
                     loop_state.step_dispatch_counts.pop(step.id, None)
                     loop_state.step_failure_modes.pop(step.id, None)
                 elif captured_clarification:
+                    # Fix 4: A clarification pause with zero tools and minimal
+                    # output is a "clarification reroute" — the step was
+                    # re-dispatched and immediately hit a stale interrupt from
+                    # the relay inbox. This is not real progress and should NOT
+                    # count toward the circuit breaker. Reset the dispatch
+                    # count so rapid empty re-dispatches don't trip the breaker.
+                    if (
+                        main_tool_call_count == 0
+                        and len(output.strip()) < self._EMPTY_OUTPUT_MIN_CHARS
+                    ):
+                        loop_state.step_dispatch_counts.pop(step.id, None)
+                        logger.debug(
+                            "[Execute] step %s paused on clarification with 0 tools; "
+                            "reset dispatch count (not real progress)",
+                            step.id,
+                        )
                     pause_error = step_error or (
                         _first_tool_error_message(stream_outcomes) if stream_outcomes else None
                     )

@@ -188,7 +188,12 @@ def hydrate_scratch_from_pending(ctx: LoopRuntimeContext, state: dict[str, Any])
     relay = getattr(ctx, "relay", None)
     relay_state = state.get("relay_state")
     if relay is not None and isinstance(relay_state, dict):
-        relay.hydrate_from_channels(relay_state, scratch=ctx.scratch)
+        _current_goal_id = getattr(getattr(ctx, "goal_record", None), "goal_id", None)
+        relay.hydrate_from_channels(
+            relay_state,
+            scratch=ctx.scratch,
+            current_goal_id=_current_goal_id,
+        )
 
 
 def _record_plan_completion_ledger(

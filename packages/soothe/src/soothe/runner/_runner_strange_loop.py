@@ -188,6 +188,73 @@ async def _drain_workspace_shells_on_cancel(workspace: str | None) -> None:
         )
 
 
+async def _clear_relay_state_on_cancel(loop_agent: Any, config: Any, loop_id: str) -> None:
+    """Best-effort clear of the ``relay_state`` graph channel on goal cancel.
+
+    The relay inbox may hold stale clarification interrupts captured by the
+    cancelled goal. Without clearing, the next goal hydrates these stale
+    entries from the LangGraph checkpoint and the circuit breaker trips on
+    rapid empty re-dispatches. Writes an empty ``relay_state`` to the
+    checkpoint so the new goal starts with a clean inbox.
+    """
+    try:
+        from soothe.sloop.orchestrator.checkpoint import core_agent_checkpointer
+
+        checkpointer = core_agent_checkpointer(loop_agent)
+        if checkpointer is None:
+            logger.debug(
+                "[cancel] no checkpointer on loop_agent; skipping relay_state clear (loop=%s)",
+                loop_id,
+            )
+            return
+
+        thread_id = getattr(getattr(loop_agent, "core_agent", None), "thread_id", None)
+        if not thread_id:
+            logger.debug(
+                "[cancel] no thread_id on core_agent; skipping relay_state clear (loop=%s)",
+                loop_id,
+            )
+            return
+
+        # Read the current checkpoint, overwrite relay_state with empty, and save.
+        config_dict = {"configurable": {"thread_id": thread_id}}
+        snapshot = await checkpointer.aget(config_dict)
+        if snapshot is None:
+            logger.debug(
+                "[cancel] no checkpoint snapshot to clear relay_state (loop=%s thread=%s)",
+                loop_id,
+                thread_id[:16],
+            )
+            return
+
+        import copy
+
+        new_checkpoint = copy.deepcopy(snapshot)
+        channel_values = new_checkpoint.get("channel_values", {})
+        if "relay_state" in channel_values:
+            channel_values["relay_state"] = {}
+        else:
+            # Nothing to clear — no relay_state in the checkpoint.
+            logger.debug(
+                "[cancel] relay_state absent in checkpoint; nothing to clear (loop=%s)",
+                loop_id,
+            )
+            return
+
+        await checkpointer.aput(config_dict, new_checkpoint)
+        logger.info(
+            "[cancel] cleared relay_state in checkpoint (loop=%s thread=%s)",
+            loop_id,
+            thread_id[:16],
+        )
+    except Exception:
+        logger.debug(
+            "Failed to clear relay_state on cancel (loop=%s)",
+            loop_id,
+            exc_info=True,
+        )
+
+
 def _is_tool_stream_chunk(chunk: object) -> bool:
     """Return True if chunk is a `messages`-mode LangGraph chunk carrying a tool result.
 
@@ -1055,6 +1122,15 @@ class StrangeLoopMixin:
                 # this, but a hard client disconnect lands here too. Swallowed on
                 # failure.
                 await _mark_interrupted_goal_ledger(self._config, strange_loop_id)
+                # Clear the relay_state graph channel so stale clarification
+                # interrupts from the cancelled goal do not leak into the next
+                # goal submitted in this loop. Without this, the new goal
+                # hydrates the stale inbox, rapidly re-dispatches empty steps,
+                # and trips the circuit breaker (cancel → resubmit bug).
+                if self._live_loop_agent is not None:
+                    await _clear_relay_state_on_cancel(
+                        self._live_loop_agent, self._config, strange_loop_id
+                    )
                 # Kill in-flight run_command / run_background children for this
                 # workspace so cancel does not leave orphaned shells.
                 await _drain_workspace_shells_on_cancel(workspace)
