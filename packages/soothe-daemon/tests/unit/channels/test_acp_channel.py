@@ -13,6 +13,7 @@ from soothe_daemon.channels.acp import (
     ACPChannel,
     _iter_wire_frames,
     _make_text_block,
+    _PlanState,
     _session_update_from_block,
 )
 from soothe_daemon.channels.base import Channel
@@ -231,11 +232,13 @@ class TestACPChannelEventTranslation:
     """Tests for daemon wire event → ACP block translation."""
 
     def test_translate_engine_messages_frame(self):
-        """An engine `mode="messages"` frame yields the assistant text."""
+        """A loop-tagged `mode="messages"` frame yields the assistant text."""
         config = ACPConfig(enabled=True)
         channel = ACPChannel(config, MockManager())
 
-        blocks = channel._translate_event(messages_frame("Hello world"))
+        blocks = channel._translate_event(
+            messages_frame("Hello world", phase="goal_completion")
+        )
 
         assert len(blocks) == 1
         assert blocks[0]["type"] == "text"
@@ -246,10 +249,11 @@ class TestACPChannelEventTranslation:
         config = ACPConfig(enabled=True)
         channel = ACPChannel(config, MockManager())
 
-        frame = messages_frame("")
+        frame = messages_frame("", phase="goal_completion")
         frame["data"] = (
             {
                 "type": "ai",
+                "phase": "goal_completion",
                 "content_blocks": [
                     {"type": "reasoning", "text": "thinking"},
                     {"type": "text", "text": "the answer"},
@@ -260,6 +264,35 @@ class TestACPChannelEventTranslation:
 
         blocks = channel._translate_event(frame)
         assert [b["text"] for b in blocks] == ["the answer"]
+
+    def test_drops_untagged_execute_wave_narration(self):
+        """Only loop-tagged finals are user-facing.
+
+        Regression: a live run forwarded the step executor's own narration
+        (`phase=None`) alongside the goal-completion summary, so the answer read
+        as a step report followed by a goal report concatenated together.
+        Untagged prose outnumbered the real finals 265:157 in that run.
+        """
+        config = ACPConfig(enabled=True)
+        channel = ACPChannel(config, MockManager())
+
+        assert channel._translate_event(messages_frame("Step completed successfully")) == []
+
+    def test_keeps_other_loop_tagged_finals(self):
+        """Chitchat / plan-only turns are still answers, not narration."""
+        config = ACPConfig(enabled=True)
+        channel = ACPChannel(config, MockManager())
+
+        for phase in ("chitchat", "plan_direct", "goal_interrupted"):
+            blocks = channel._translate_event(messages_frame("an answer", phase=phase))
+            assert [b["text"] for b in blocks] == ["an answer"], phase
+
+    def test_drops_tagged_frames_without_text(self):
+        """A tagged frame carrying no text must not emit an empty chunk."""
+        config = ACPConfig(enabled=True)
+        channel = ACPChannel(config, MockManager())
+
+        assert channel._translate_event(messages_frame("", phase="goal_completion")) == []
 
     def test_ignores_plain_tool_message_frames(self):
         """Tool/system messages ride the same mode and must not render as prose."""
@@ -697,3 +730,466 @@ class TestACPPermissionBridge:
 
         assert fut.cancelled() or fut.done()
         assert len(channel._get_state().pending_permissions) == 0
+
+
+def _plan_frame(event_type: str, **payload: object) -> dict:
+    """Build the `mode="custom"` wire frame a cognition event arrives in."""
+    return {
+        "type": "event",
+        "namespace": [],
+        "mode": "custom",
+        "data": {"type": event_type, **payload},
+    }
+
+
+class TestPlanProjection:
+    """Soothe strange-loop steps -> ACP `plan` entries.
+
+    ACP accepts exactly `pending | in_progress | completed` and requires
+    `priority`; the client SDK silently DROPS an entry that falls outside
+    those enums. These tests pin the whitelist and the `_meta` fallbacks.
+    """
+
+    # ACP `PlanEntryStatus` / `PlanEntryPriority`, mirrored from the protocol.
+    ACP_STATUSES = frozenset({"pending", "in_progress", "completed"})
+    ACP_PRIORITIES = frozenset({"high", "medium", "low"})
+
+    def _assert_frame_is_legal(self, update: dict) -> None:
+        """Every emitted entry must survive ACP schema validation."""
+        assert update["sessionUpdate"] == "plan"
+        for entry in update["entries"]:
+            assert entry["status"] in self.ACP_STATUSES, entry
+            assert entry["priority"] in self.ACP_PRIORITIES, entry
+            assert isinstance(entry["content"], str) and entry["content"], entry
+            assert "soothe" in entry["_meta"]
+        assert "soothe" in update["_meta"]
+
+    def test_plan_decision_creates_entries(self):
+        state = _PlanState()
+        state.sync_plan(
+            [
+                {"id": "S1", "description": "Scope"},
+                {"id": "S2", "description": "Inspect", "dependencies": ["S1"]},
+            ],
+            0,
+        )
+
+        update = state.update()
+
+        assert update is not None
+        self._assert_frame_is_legal(update)
+        assert [e["content"] for e in update["entries"]] == ["Scope", "Inspect"]
+        assert [e["status"] for e in update["entries"]] == ["pending", "pending"]
+        assert update["entries"][1]["_meta"]["soothe"]["depends_on"] == ["S1"]
+
+    def test_settled_steps_survive_a_later_replan(self):
+        """The plan is cumulative across iterations (mirrors the TUI)."""
+        state = _PlanState()
+        state.sync_plan([{"id": "S1", "description": "One"}], 0)
+        state.settle("S1", True)
+        state.sync_plan([{"id": "S2", "description": "Two"}], 1)
+
+        update = state.update()
+
+        assert update is not None
+        assert [e["content"] for e in update["entries"]] == ["One", "Two"]
+
+    def test_replan_drops_a_never_started_pending_step(self):
+        state = _PlanState()
+        state.sync_plan(
+            [{"id": "S1", "description": "Keep"}, {"id": "S2", "description": "Drop"}],
+            0,
+        )
+        state.sync_plan([{"id": "S1", "description": "Keep"}], 1)
+
+        update = state.update()
+
+        assert update is not None
+        assert [e["content"] for e in update["entries"]] == ["Keep"]
+
+    def test_failed_step_keeps_its_entry_and_carries_outcome(self):
+        """ACP has no failed status, so the truth rides in `_meta`."""
+        state = _PlanState()
+        state.sync_plan([{"id": "S1", "description": "Boom"}], 0)
+        state.settle("S1", False, summary="kaboom", duration_ms=12, tool_call_count=2)
+
+        entry = state.update()["entries"][0]
+
+        assert entry["status"] == "completed"
+        assert entry["_meta"]["soothe"]["outcome"] == "error"
+        assert entry["_meta"]["soothe"]["summary"] == "kaboom"
+        assert entry["_meta"]["soothe"]["duration_ms"] == 12
+        assert entry["_meta"]["soothe"]["tool_call_count"] == 2
+
+    def test_successful_step_carries_ok_outcome(self):
+        state = _PlanState()
+        state.sync_plan([{"id": "S1", "description": "Fine"}], 0)
+        state.settle("S1", True, summary="done")
+
+        meta = state.update()["entries"][0]["_meta"]["soothe"]
+
+        assert meta["outcome"] == "ok"
+
+    def test_unknown_phase_still_emits_a_legal_status(self):
+        """An unmapped phase must never reach the wire verbatim."""
+        state = _PlanState()
+        state.sync_plan([{"id": "S1", "description": "Future"}], 0)
+        state.mark("S1", "some_future_phase")
+
+        update = state.update()
+
+        self._assert_frame_is_legal(update)
+        entry = update["entries"][0]
+        assert entry["status"] == "pending"
+        assert entry["_meta"]["soothe"]["phase"] == "some_future_phase"
+
+    def test_settled_step_does_not_regress(self):
+        state = _PlanState()
+        state.sync_plan([{"id": "S1", "description": "Done"}], 0)
+        state.settle("S1", True)
+        state.mark("S1", "running")
+
+        assert state.update()["entries"][0]["status"] == "completed"
+
+    def test_step_completed_preserves_the_description(self):
+        """`step.completed` carries no description, so it must not clobber it."""
+        state = _PlanState()
+        state.sync_plan([{"id": "S1", "description": "Original"}], 0)
+        state.settle("S1", True, summary="x")
+
+        assert state.update()["entries"][0]["content"] == "Original"
+
+    def test_empty_plan_sends_nothing(self):
+        """An empty `entries` list reads as "clear the plan" to clients."""
+        assert _PlanState().update() is None
+
+    def test_close_open_steps_settles_them_as_errors(self):
+        state = _PlanState()
+        state.sync_plan([{"id": "S1", "description": "Open"}], 0)
+        state.mark("S1", "running")
+        state.close_open_steps()
+
+        entry = state.update()["entries"][0]
+
+        assert entry["status"] == "completed"
+        assert entry["_meta"]["soothe"]["outcome"] == "error"
+
+    def test_summary_is_bounded(self):
+        state = _PlanState()
+        state.sync_plan([{"id": "S1", "description": "Long"}], 0)
+        state.settle("S1", False, summary="x" * 5000)
+
+        assert len(state.update()["entries"][0]["_meta"]["soothe"]["summary"]) <= 512
+
+
+class TestPlanProjectionFrames:
+    """The channel folds cognition frames and emits one full plan per change."""
+
+    def _make_channel(self) -> ACPChannel:
+        return ACPChannel(ACPConfig(enabled=True), MagicMock())
+
+    def test_non_plan_frames_are_not_consumed(self):
+        channel = self._make_channel()
+
+        assert channel._apply_plan_event(_STDIO_SENTINEL, "loop-1", _plan_frame("other")) is None
+        assert channel._apply_plan_event(_STDIO_SENTINEL, "loop-1", {"mode": "messages"}) is None
+
+    def test_frame_sequence_produces_full_plan_each_time(self):
+        channel = self._make_channel()
+        loop_id = "loop-1"
+
+        first = channel._apply_plan_event(
+            _STDIO_SENTINEL,
+            loop_id,
+            _plan_frame(
+                "soothe.cognition.strange_loop.plan.decision",
+                iteration=0,
+                steps=[
+                    {"id": "S1", "description": "One"},
+                    {"id": "S2", "description": "Two"},
+                ],
+                total_steps=2,
+                done_steps=0,
+            ),
+        )
+        assert first is not None
+        assert [e["status"] for e in first["entries"]] == ["pending", "pending"]
+        assert first["_meta"]["soothe"] == {"iteration": 0, "total_steps": 2, "done_steps": 0}
+
+        started = channel._apply_plan_event(
+            _STDIO_SENTINEL,
+            loop_id,
+            _plan_frame(
+                "soothe.cognition.strange_loop.step.started", step_id="S1", description="One"
+            ),
+        )
+        # Every update carries the COMPLETE list, never just the changed step.
+        assert len(started["entries"]) == 2
+        assert started["entries"][0]["status"] == "in_progress"
+        assert started["entries"][1]["status"] == "pending"
+
+        completed = channel._apply_plan_event(
+            _STDIO_SENTINEL,
+            loop_id,
+            _plan_frame(
+                "soothe.cognition.strange_loop.step.completed",
+                step_id="S1",
+                success=True,
+                summary="done",
+                duration_ms=5,
+                tool_call_count=1,
+                total_tokens_used=7,
+            ),
+        )
+        assert completed["entries"][0]["status"] == "completed"
+        assert completed["entries"][0]["_meta"]["soothe"]["outcome"] == "ok"
+        assert completed["entries"][0]["content"] == "One"
+        assert len(completed["entries"]) == 2
+
+    def test_queued_step_maps_to_pending_with_phase_kept(self):
+        channel = self._make_channel()
+        loop_id = "loop-2"
+        channel._apply_plan_event(
+            _STDIO_SENTINEL,
+            loop_id,
+            _plan_frame(
+                "soothe.cognition.strange_loop.plan.decision",
+                steps=[{"id": "S1", "description": "Wait"}],
+            ),
+        )
+
+        update = channel._apply_plan_event(
+            _STDIO_SENTINEL,
+            loop_id,
+            _plan_frame(
+                "soothe.cognition.strange_loop.step.queued", step_id="S1", description="Wait"
+            ),
+        )
+
+        assert update["entries"][0]["status"] == "pending"
+        assert update["entries"][0]["_meta"]["soothe"]["phase"] == "queued"
+
+    def test_loop_completed_converges_open_steps(self):
+        channel = self._make_channel()
+        loop_id = "loop-3"
+        channel._apply_plan_event(
+            _STDIO_SENTINEL,
+            loop_id,
+            _plan_frame(
+                "soothe.cognition.strange_loop.plan.decision",
+                steps=[{"id": "S1", "description": "Stuck"}],
+            ),
+        )
+
+        update = channel._apply_plan_event(
+            _STDIO_SENTINEL,
+            loop_id,
+            _plan_frame("soothe.cognition.strange_loop.completed", status="done"),
+        )
+
+        assert update["entries"][0]["status"] == "completed"
+        assert update["entries"][0]["_meta"]["soothe"]["outcome"] == "error"
+
+    def test_loop_completed_without_a_plan_sends_nothing(self):
+        channel = self._make_channel()
+
+        update = channel._apply_plan_event(
+            _STDIO_SENTINEL,
+            "loop-4",
+            _plan_frame("soothe.cognition.strange_loop.completed", status="done"),
+        )
+
+        assert update is None
+
+    def test_plan_state_is_isolated_per_loop(self):
+        channel = self._make_channel()
+        channel._apply_plan_event(
+            _STDIO_SENTINEL,
+            "loop-a",
+            _plan_frame(
+                "soothe.cognition.strange_loop.plan.decision",
+                steps=[{"id": "A", "description": "A"}],
+            ),
+        )
+        channel._apply_plan_event(
+            _STDIO_SENTINEL,
+            "loop-b",
+            _plan_frame(
+                "soothe.cognition.strange_loop.plan.decision",
+                steps=[{"id": "B", "description": "B"}],
+            ),
+        )
+
+        assert [e["content"] for e in channel._plan_state(_STDIO_SENTINEL, "loop-a").entries()] == [
+            "A"
+        ]
+        assert [e["content"] for e in channel._plan_state(_STDIO_SENTINEL, "loop-b").entries()] == [
+            "B"
+        ]
+
+    @pytest.mark.asyncio
+    async def test_send_plan_update_emits_one_notification(self):
+        channel = self._make_channel()
+        writes: list[dict] = []
+        update = {"sessionUpdate": "plan", "entries": [], "_meta": {"soothe": {}}}
+
+        with patch.object(channel, "_write_jsonrpc", AsyncMock(side_effect=writes.append)):
+            await channel._send_plan_update("sess-9", update)
+
+        assert writes == [
+            {
+                "jsonrpc": "2.0",
+                "method": "session/update",
+                "params": {"sessionId": "sess-9", "update": update},
+            }
+        ]
+
+
+class TestPlanProgressCounters:
+    """`total_steps`/`done_steps` are derived, not passed through.
+
+    A live run showed the source's `plan.decision` counters going stale the
+    moment a step settled (`done_steps` stayed 0 after the step finished), and
+    the counters describe a different population than the client-visible
+    `entries`. Both must therefore be computed from the plan being sent.
+    """
+
+    def test_done_steps_counts_settled_entries(self):
+        state = _PlanState()
+        state.sync_plan(
+            [
+                {"id": "S1", "description": "One"},
+                {"id": "S2", "description": "Two"},
+                {"id": "S3", "description": "Three"},
+            ],
+            0,
+        )
+        assert state.update()["_meta"]["soothe"]["done_steps"] == 0
+
+        state.settle("S1", True)
+
+        meta = state.update()["_meta"]["soothe"]
+        assert meta["done_steps"] == 1
+        assert meta["total_steps"] == 3
+
+    def test_failed_step_still_counts_as_done(self):
+        """`done` tracks "reached a result", matching the source's step_results."""
+        state = _PlanState()
+        state.sync_plan([{"id": "S1", "description": "One"}], 0)
+        state.settle("S1", False)
+
+        assert state.update()["_meta"]["soothe"]["done_steps"] == 1
+
+    def test_total_steps_matches_the_emitted_entries(self):
+        """A replan that drops a pending step must shrink the total too."""
+        state = _PlanState()
+        state.sync_plan(
+            [{"id": "S1", "description": "Keep"}, {"id": "S2", "description": "Drop"}],
+            0,
+        )
+        state.settle("S1", True)
+        state.sync_plan([{"id": "S1", "description": "Keep"}], 1)
+
+        update = state.update()
+        assert update["_meta"]["soothe"]["total_steps"] == len(update["entries"]) == 1
+        assert update["_meta"]["soothe"]["done_steps"] == 1
+
+
+class TestPlanFrameDeduplication:
+    """Distinct source events can serialize to the same plan.
+
+    Observed live: `step.completed` settled the last step, then
+    `strange_loop.completed` converged nothing and re-sent a byte-identical
+    frame. Unchanged full plans must not reach the wire.
+    """
+
+    def _channel_with_one_step(self) -> tuple[ACPChannel, str]:
+        channel = ACPChannel(ACPConfig(enabled=True), MagicMock())
+        loop_id = "loop-dedup"
+        channel._apply_plan_event(
+            _STDIO_SENTINEL,
+            loop_id,
+            _plan_frame(
+                "soothe.cognition.strange_loop.plan.decision",
+                steps=[{"id": "S1", "description": "Only"}],
+            ),
+        )
+        return channel, loop_id
+
+    def test_identical_followup_frame_is_suppressed(self):
+        channel, loop_id = self._channel_with_one_step()
+        settled = channel._apply_plan_event(
+            _STDIO_SENTINEL,
+            loop_id,
+            _plan_frame(
+                "soothe.cognition.strange_loop.step.completed",
+                step_id="S1",
+                success=True,
+                summary="done",
+            ),
+        )
+        assert settled is not None
+
+        # `strange_loop.completed` has nothing left to converge.
+        again = channel._apply_plan_event(
+            _STDIO_SENTINEL,
+            loop_id,
+            _plan_frame("soothe.cognition.strange_loop.completed", status="done"),
+        )
+
+        assert again is None
+
+    def test_a_real_change_still_emits(self):
+        channel, loop_id = self._channel_with_one_step()
+
+        started = channel._apply_plan_event(
+            _STDIO_SENTINEL,
+            loop_id,
+            _plan_frame(
+                "soothe.cognition.strange_loop.step.started",
+                step_id="S1",
+                description="Only",
+            ),
+        )
+
+        assert started is not None
+        assert started["entries"][0]["status"] == "in_progress"
+
+    def test_a_repeat_of_an_old_state_is_not_suppressed_after_a_change(self):
+        """Dedupe compares against the last SENT frame, not a history."""
+        channel, loop_id = self._channel_with_one_step()
+
+        first = channel._apply_plan_event(
+            _STDIO_SENTINEL,
+            loop_id,
+            _plan_frame(
+                "soothe.cognition.strange_loop.step.started",
+                step_id="S1",
+                description="Only",
+            ),
+        )
+        assert first is not None
+        # Same frame again -> suppressed.
+        duplicate = channel._apply_plan_event(
+            _STDIO_SENTINEL,
+            loop_id,
+            _plan_frame(
+                "soothe.cognition.strange_loop.step.started",
+                step_id="S1",
+                description="Only",
+            ),
+        )
+        assert duplicate is None
+        # A settled step changes the frame, so it must emit.
+        assert (
+            channel._apply_plan_event(
+                _STDIO_SENTINEL,
+                loop_id,
+                _plan_frame(
+                    "soothe.cognition.strange_loop.step.completed",
+                    step_id="S1",
+                    success=True,
+                ),
+            )
+            is not None
+        )

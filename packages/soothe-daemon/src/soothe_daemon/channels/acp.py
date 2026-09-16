@@ -8,9 +8,14 @@ cancel events, resume). Daemon EventBus output events are translated
 to ACP `session/update` notifications.
 
 Plan projection is lossy: Soothe DAG plans are flattened to ACP's
-`{content, priority, status}` list. The `agent-client-protocol` package
-is an optional `[acp]` extra; without it, JSON-RPC framing is built
-manually.
+`{content, priority, status}` list. ACP accepts only three plan statuses and
+requires `priority`, and the client SDK silently drops any entry outside those
+enums — so per-step statistics (duration, tool count, tokens, summary, DAG
+dependencies) and the true outcome of a failed step travel in
+`_meta.soothe.*`, which ACP reserves for exactly this. See
+`docs/soothe-acp-step-projection.md` in the Backchat repo for the contract.
+The `agent-client-protocol` package is an optional `[acp]` extra; without it,
+JSON-RPC framing is built manually.
 """
 
 from __future__ import annotations
@@ -25,6 +30,13 @@ from logging import getLogger
 from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI, WebSocket
+from soothe_sdk.core.events import (
+    STRANGE_LOOP_COMPLETED,
+    STRANGE_LOOP_PLAN_DECISION,
+    STRANGE_LOOP_STEP_COMPLETED,
+    STRANGE_LOOP_STEP_QUEUED,
+    STRANGE_LOOP_STEP_STARTED,
+)
 from soothe_sdk.display.text_extract import extract_text_from_ai_message
 from soothe_sdk.ux.loop_stream import assistant_output_phase
 from starlette.websockets import WebSocketDisconnect
@@ -58,6 +70,246 @@ except ImportError:
 # Message kinds that carry user-visible assistant prose. Tool/system messages
 # also ride ``mode="messages"`` frames and must not be rendered as answers.
 _ASSISTANT_MESSAGE_TYPES = frozenset({"ai", "AIMessage", "AIMessageChunk"})
+
+# ----------------------------------------------------------------------
+# Plan projection (Soothe strange-loop steps -> ACP `plan` updates)
+# ----------------------------------------------------------------------
+
+# Soothe step phase -> ACP `PlanEntryStatus`.
+#
+# ACP's `plan` variant accepts *exactly* `pending | in_progress | completed`.
+# This is not advisory: the pinned client SDK validates `plan` updates against
+# that union and **silently drops any entry whose status is outside it** — the
+# frame still succeeds, the step just disappears from the client's plan. So
+# every phase must map onto a whitelisted value, and unknown phases fall back
+# to `pending` (see ``_PLAN_PHASE_TO_ACP_STATUS.get(phase, "pending")``).
+#
+# A failed step therefore has to travel as `completed` with the truth carried
+# in `_meta.soothe.outcome`; `cancelled`/`failed` are not representable here.
+_PLAN_PHASE_TO_ACP_STATUS: dict[str, str] = {
+    "pending": "pending",
+    "queued": "pending",
+    "running": "in_progress",
+    "done": "completed",
+    "success": "completed",
+    "error": "completed",
+    "interrupted": "completed",
+}
+
+# ACP requires `priority` on every entry and Soothe has no priority concept.
+# Omitting it would drop the entry, so send a constant.
+_PLAN_ENTRY_PRIORITY = "medium"
+
+# `_meta.soothe.summary` is a display hint, not an assertion channel; keep it
+# bounded so one long step summary cannot bloat every subsequent plan update.
+_PLAN_SUMMARY_LIMIT = 512
+
+
+class _PlanStep:
+    """Accumulated Soothe step state for one ACP plan entry."""
+
+    __slots__ = (
+        "step_id",
+        "description",
+        "dependencies",
+        "phase",
+        "success",
+        "duration_ms",
+        "tool_call_count",
+        "tokens_used",
+        "summary",
+    )
+
+    def __init__(self, step_id: str, description: str = "") -> None:
+        self.step_id = step_id
+        self.description = description
+        self.dependencies: list[str] = []
+        self.phase = "pending"
+        self.success: bool | None = None
+        self.duration_ms = 0
+        self.tool_call_count = 0
+        self.tokens_used = 0
+        self.summary = ""
+
+    @property
+    def settled(self) -> bool:
+        """True once the step reached a terminal phase."""
+        return self.phase in ("done", "error", "interrupted")
+
+
+class _PlanState:
+    """Accumulated ACP plan for one loop.
+
+    ACP requires every `plan` update to carry the **complete** entry list and
+    the client to replace its plan wholesale, so this accumulates rather than
+    forwarding per-event deltas. Merging mirrors the TUI's `sync_plan_steps`:
+    settled steps survive later `plan.decision` frames (Soothe re-plans per
+    iteration), and only never-started `pending` steps can be dropped.
+    """
+
+    __slots__ = ("order", "steps", "iteration", "_last_emitted")
+
+    def __init__(self) -> None:
+        self.order: list[str] = []
+        self.steps: dict[str, _PlanStep] = {}
+        self.iteration = 0
+        self._last_emitted: str | None = None
+
+    def sync_plan(self, raw_steps: list[Any], iteration: int) -> None:
+        """Merge a `plan.decision` step list into the accumulated plan."""
+        self.iteration = iteration
+        planned: set[str] = set()
+        for raw in raw_steps:
+            if not isinstance(raw, dict):
+                continue
+            step_id = str(raw.get("id") or "").strip()
+            if not step_id:
+                continue
+            planned.add(step_id)
+            description = str(raw.get("description") or "").strip()
+            existing = self.steps.get(step_id)
+            if existing is None:
+                step = _PlanStep(step_id, description or "(step)")
+                step.dependencies = _plan_dependencies(raw.get("dependencies"))
+                self.order.append(step_id)
+                self.steps[step_id] = step
+                continue
+            # Refresh descriptive fields only while the step is not settled;
+            # a finished step's description is history, not a re-plan target.
+            if not existing.settled and description:
+                existing.description = description
+            deps = _plan_dependencies(raw.get("dependencies"))
+            if deps and not existing.settled:
+                existing.dependencies = deps
+
+        # Drop planned-but-never-started steps that this replan abandoned.
+        for step_id in list(self.order):
+            step = self.steps.get(step_id)
+            if step is not None and step.phase == "pending" and step_id not in planned:
+                self.order.remove(step_id)
+                del self.steps[step_id]
+
+    def mark(self, step_id: str, phase: str, description: str = "") -> None:
+        """Move a step to ``phase``, creating it if it was never planned."""
+        step = self.steps.get(step_id)
+        if step is None:
+            step = _PlanStep(step_id, description or "(step)")
+            self.order.append(step_id)
+            self.steps[step_id] = step
+        elif description and not step.settled:
+            step.description = description
+        if step.settled:
+            # A settled step never regresses; late/out-of-order frames for an
+            # already-finished step must not reopen it.
+            return
+        step.phase = phase
+
+    def settle(self, step_id: str, success: bool, **stats: Any) -> None:
+        """Record a terminal phase with its statistics."""
+        step = self.steps.get(step_id)
+        if step is None:
+            step = _PlanStep(step_id, "(step)")
+            self.order.append(step_id)
+            self.steps[step_id] = step
+        step.phase = "done" if success else "error"
+        step.success = success
+        step.duration_ms = int(stats.get("duration_ms") or 0)
+        step.tool_call_count = int(stats.get("tool_call_count") or 0)
+        step.tokens_used = int(stats.get("total_tokens_used") or 0)
+        summary = str(stats.get("summary") or "").strip()
+        step.summary = summary[:_PLAN_SUMMARY_LIMIT]
+
+    def close_open_steps(self) -> None:
+        """Converge still-open steps when the loop ends without settling them.
+
+        ACP has no cancelled plan status, so these land on `completed` with
+        ``_meta.soothe.outcome == "error"`` — the same encoding as a failed
+        step, which is what an abandoned step is from the plan's perspective.
+        """
+        for step in self.steps.values():
+            if not step.settled:
+                step.phase = "error"
+                step.success = False
+
+    def entries(self) -> list[dict[str, Any]]:
+        """Serialize the accumulated plan to ACP `plan` entries."""
+        entries: list[dict[str, Any]] = []
+        for step_id in self.order:
+            step = self.steps.get(step_id)
+            if step is None:
+                continue
+            meta: dict[str, Any] = {"step_id": step.step_id, "phase": step.phase}
+            if step.dependencies:
+                meta["depends_on"] = list(step.dependencies)
+            if step.settled:
+                meta["outcome"] = "ok" if step.success else "error"
+                meta["duration_ms"] = step.duration_ms
+                meta["tool_call_count"] = step.tool_call_count
+                meta["tokens_used"] = step.tokens_used
+                if step.summary:
+                    meta["summary"] = step.summary
+            entries.append(
+                {
+                    "content": step.description or "(step)",
+                    "priority": _PLAN_ENTRY_PRIORITY,
+                    "status": _PLAN_PHASE_TO_ACP_STATUS.get(step.phase, "pending"),
+                    "_meta": {"soothe": meta},
+                }
+            )
+        return entries
+
+    def update(self) -> dict[str, Any] | None:
+        """Build the `session/update` body, or None when there is no plan.
+
+        An empty `entries` list is a legal frame, but clients read it as
+        "clear the plan" — never send one just because nothing is planned.
+
+        ``total_steps``/``done_steps`` are **derived from the entries actually
+        being sent**, not passed through from the source event: the source's
+        `plan.decision` counts are cumulative-across-iterations while `entries`
+        is the client-visible list, so passing them through would let the two
+        disagree (and `done_steps` would go stale the moment a step settled).
+        """
+        entries = self.entries()
+        if not entries:
+            return None
+        settled = sum(1 for step in self.steps.values() if step.settled)
+        return {
+            "sessionUpdate": "plan",
+            "entries": entries,
+            "_meta": {
+                "soothe": {
+                    "iteration": self.iteration,
+                    "total_steps": len(entries),
+                    "done_steps": settled,
+                }
+            },
+        }
+
+    def emit_update(self) -> dict[str, Any] | None:
+        """`update()`, but suppressed when identical to the last frame emitted.
+
+        Distinct source events legitimately produce the same plan — e.g.
+        `step.completed` settles the last open step, then `strange_loop.completed`
+        converges nothing. Re-sending an unchanged full plan is pure wire cost,
+        so skip it rather than relying on a time-based debounce.
+        """
+        update = self.update()
+        if update is None:
+            return None
+        fingerprint = json.dumps(update, sort_keys=True)
+        if fingerprint == self._last_emitted:
+            return None
+        self._last_emitted = fingerprint
+        return update
+
+
+def _plan_dependencies(raw: Any) -> list[str]:
+    """Normalize a plan-decision `dependencies` field to a string list."""
+    if not isinstance(raw, (list, tuple)):
+        return []
+    return [str(item).strip() for item in raw if str(item).strip()]
+
 
 # Default timeout for permission responses from the ACP client (seconds).
 _PERMISSION_TIMEOUT_S = 120.0
@@ -127,6 +379,7 @@ class _ConnectionState:
         pending_permissions: request_id → future awaiting client response.
         event_queues: loop_id → EventBus event queue.
         consumer_tasks: loop_id → event consumer asyncio task.
+        plan_states: loop_id → _PlanState (accumulated ACP plan projection).
     """
 
     __slots__ = (
@@ -137,6 +390,7 @@ class _ConnectionState:
         "event_queues",
         "consumer_tasks",
         "pending_turns",
+        "plan_states",
     )
 
     def __init__(self) -> None:
@@ -150,6 +404,7 @@ class _ConnectionState:
         self.pending_turns: dict[str, list[asyncio.Future[str]]] = {}
         self.event_queues: dict[str, asyncio.Queue[dict[str, Any]]] = {}
         self.consumer_tasks: dict[str, asyncio.Task[None]] = {}
+        self.plan_states: dict[str, _PlanState] = {}
 
 
 def _make_text_block(content: str) -> dict[str, Any]:
@@ -1714,6 +1969,12 @@ class ACPChannel(Channel):
             for frame in _iter_wire_frames(event):
                 if _is_idle_status(frame):
                     self._resolve_pending_turn(conn_key, loop_id, "end_turn")
+                # Plan frames are whole `session/update` bodies, not content
+                # blocks, so they bypass the block fan-out below.
+                plan_update = self._apply_plan_event(conn_key, loop_id, frame)
+                if plan_update is not None:
+                    await self._send_plan_update(session_id, plan_update)
+                    continue
                 blocks = self._translate_event(frame)
                 if blocks:
                     await self._send_session_update(session_id, blocks)
@@ -1973,10 +2234,23 @@ class ACPChannel(Channel):
         if message.get("type") not in _ASSISTANT_MESSAGE_TYPES:
             return []
 
-        # Mirror the TUI: only root-graph prose is user-facing, except for
-        # goal_completion, which is emitted from any namespace.
+        # Only loop-tagged finals are user-facing.
+        #
+        # An untagged AI message is the execute wave's own narration — the step
+        # executor working through its task. Forwarding it makes that working
+        # output read as the answer: a live run showed the step's report and the
+        # goal-completion summary arriving as one concatenated message, because
+        # untagged prose outnumbered the real finals 265:157.
+        #
+        # This mirrors the headless CLI, whose `_suppress_main_assistant_body_*`
+        # keeps stdout to loop-tagged finals for the same reason.
+        phase = assistant_output_phase(message)
+        if phase is None:
+            return []
+
+        # Subgraph prose is user-facing only for the goal synthesis.
         namespace = event.get("namespace") or []
-        if namespace and assistant_output_phase(message) != "goal_completion":
+        if namespace and phase != "goal_completion":
             return []
 
         text = "".join(extract_text_from_ai_message(message))
@@ -2009,6 +2283,105 @@ class ACPChannel(Channel):
             return [_make_reasoning_block(content)] if content else []
 
         return []
+
+    # ------------------------------------------------------------------
+    # Plan projection
+    # ------------------------------------------------------------------
+
+    def _apply_plan_event(
+        self,
+        conn_key: Any,
+        loop_id: str,
+        frame: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Fold a cognition plan event into this loop's plan and serialize it.
+
+        Returns the full `session/update` body to send, or None when ``frame``
+        is not a plan event (the caller then falls through to the block path).
+
+        Every update is the complete entry list: ACP requires the client to
+        replace its plan wholesale, so partial lists would erase steps.
+        """
+        if str(frame.get("mode") or "") != "custom":
+            return None
+        data = frame.get("data")
+        if not isinstance(data, dict):
+            return None
+        event_type = str(data.get("type") or "")
+
+        if event_type == STRANGE_LOOP_PLAN_DECISION:
+            state = self._plan_state(conn_key, loop_id)
+            raw_steps = data.get("steps")
+            state.sync_plan(
+                raw_steps if isinstance(raw_steps, list) else [],
+                int(data.get("iteration") or 0),
+            )
+            return state.emit_update()
+
+        if event_type in (STRANGE_LOOP_STEP_STARTED, STRANGE_LOOP_STEP_QUEUED):
+            step_id = str(data.get("step_id") or "").strip()
+            if not step_id:
+                return None
+            # `queued` means "ready but not yet dispatched" -> ACP `pending`.
+            phase = "running" if event_type == STRANGE_LOOP_STEP_STARTED else "queued"
+            state = self._plan_state(conn_key, loop_id)
+            state.mark(step_id, phase, str(data.get("description") or ""))
+            return state.emit_update()
+
+        if event_type == STRANGE_LOOP_STEP_COMPLETED:
+            step_id = str(data.get("step_id") or "").strip()
+            if not step_id:
+                return None
+            state = self._plan_state(conn_key, loop_id)
+            # `step.completed` carries no description, so `settle` must not
+            # clobber the one already recorded from the plan/started frame.
+            state.settle(
+                step_id,
+                bool(data.get("success", True)),
+                summary=data.get("summary") or data.get("output_preview") or "",
+                duration_ms=data.get("duration_ms"),
+                tool_call_count=data.get("tool_call_count"),
+                total_tokens_used=data.get("total_tokens_used"),
+            )
+            return state.emit_update()
+
+        if event_type == STRANGE_LOOP_COMPLETED:
+            state = self._plan_state(conn_key, loop_id)
+            if not state.steps:
+                return None
+            state.close_open_steps()
+            return state.emit_update()
+
+        return None
+
+    def _plan_state(self, conn_key: Any, loop_id: str) -> _PlanState:
+        """Return (creating if needed) the plan state for this connection+loop."""
+        state = self._get_state(conn_key)
+        plan = state.plan_states.get(loop_id)
+        if plan is None:
+            plan = _PlanState()
+            state.plan_states[loop_id] = plan
+        return plan
+
+    async def _send_plan_update(
+        self,
+        session_id: str,
+        update: dict[str, Any],
+    ) -> None:
+        """Write a `session/update` whose `update` is a whole plan body.
+
+        Deliberately separate from `_send_session_update`, which takes content
+        blocks and fans out one notification per block. A plan is one
+        notification carrying an `entries` array, so routing it through the
+        block path would not fit.
+        """
+        await self._write_jsonrpc(
+            {
+                "jsonrpc": "2.0",
+                "method": "session/update",
+                "params": {"sessionId": session_id, "update": update},
+            }
+        )
 
     # ------------------------------------------------------------------
     # Output helpers
