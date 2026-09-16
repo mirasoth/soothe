@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -39,7 +40,6 @@ websockets = pytest.importorskip("websockets")
 from soothe_daemon.channels.acp import ACPChannel  # noqa: E402
 from soothe_daemon.config.models import ACPConfig  # noqa: E402
 from soothe_daemon.event import EventBus, loop_event_topic  # noqa: E402
-from soothe_daemon.events.constants import OUTPUT_TEXT_DELTA  # noqa: E402
 from tests.integration.daemon_fixtures import alloc_ephemeral_port  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -66,12 +66,7 @@ def _find_loop_id(channel: ACPChannel, session_id: str) -> str:
 
 
 class _MockManager:
-    """Mock ChannelManager for ACP WS E2E tests.
-
-    Provides a real EventBus and a mock ``handle_inbound`` that returns a
-    deterministic loop_id. This lets the ACP channel create sessions and
-    subscribe to EventBus topics without needing a full daemon.
-    """
+    """Mock ChannelManager with a real EventBus and loop-native submission surface."""
 
     def __init__(self) -> None:
         self._event_bus = EventBus()
@@ -79,11 +74,30 @@ class _MockManager:
         self.handle_inbound = AsyncMock(side_effect=self._handle_inbound)
         self._message_handler = None
         self._handshake_callback = None
+        # Loop-native submission (what actually runs a turn).
+        self.submitted: list[dict[str, Any]] = []
+        self.submit_loop_input = AsyncMock(side_effect=self._submit_loop_input)
+        self.ensure_loop_registered = AsyncMock(return_value=True)
+        self._loop_input_dispatcher = SimpleNamespace(enqueue=AsyncMock(), cleanup_loop=AsyncMock())
+        self._persistence_manager = SimpleNamespace(
+            get_loop_metadata=AsyncMock(return_value=None),
+            register_loop=AsyncMock(),
+            update_loop_metadata=AsyncMock(),
+            increment_loop_message_count=AsyncMock(),
+        )
+
+    def ensure_loop_id(self, channel: str, chat_id: str) -> str:
+        """Deterministic loop_id per session."""
+        self._inbound_counter += 1
+        return f"acp:ws-test-loop-{self._inbound_counter}"
 
     async def _handle_inbound(self, **kwargs: Any) -> str:
         """Return a deterministic loop_id based on call count."""
         self._inbound_counter += 1
         return f"acp:ws-test-loop-{self._inbound_counter}"
+
+    async def _submit_loop_input(self, loop_id: str, text: str, **kwargs: Any) -> None:
+        self.submitted.append({"loop_id": loop_id, "text": text, **kwargs})
 
 
 async def _send_jsonrpc(ws: Any, msg: dict[str, Any]) -> None:
@@ -289,9 +303,9 @@ class TestACPWebSocketE2E:
     async def test_session_prompt_with_update_notification(self, acp_ws_server) -> None:
         """Test session/prompt and session/update notification flow over WS.
 
-        After session/prompt, we publish an ``OUTPUT_TEXT_DELTA`` event on the
-        EventBus for the loop. The ACP consumer translates it to a
-        ``session/update`` notification and sends it over the WebSocket.
+        Publishes a real engine ``mode="messages"`` frame the consumer translates
+        to a conformant ``session/update``, then a ``status: idle`` frame ends
+        the turn and releases the prompt response.
         """
         base_url, channel, manager = acp_ws_server
 
@@ -342,18 +356,31 @@ class TestACPWebSocketE2E:
                 },
             )
 
-            # Publish an OUTPUT_TEXT_DELTA event on the EventBus for this loop.
-            # The consumer task will translate it to a session/update notification.
-            delta_event = {
-                "type": "event",
-                "loop_id": loop_id,
-                "data": {
-                    "type": OUTPUT_TEXT_DELTA,
-                    "content": "Processing your request...",
-                },
-            }
+            # The prompt must have been submitted as a real turn.
+            await asyncio.sleep(0.05)
+            assert manager.submitted
+            assert manager.submitted[-1]["text"] == "Hello, agent!"
+            assert manager.submitted[-1]["loop_id"] == loop_id
+
+            # Publish a real engine messages frame. The consumer task translates
+            # it to a conformant session/update notification.
             topic = loop_event_topic(loop_id)
-            await manager._event_bus.publish(topic, delta_event)
+            await manager._event_bus.publish(
+                topic,
+                {
+                    "type": "event",
+                    "namespace": [],
+                    "mode": "messages",
+                    "data": (
+                        {
+                            "type": "AIMessageChunk",
+                            "content": "Processing your request...",
+                            "phase": "goal_completion",
+                        },
+                        {},
+                    ),
+                },
+            )
 
             # We should receive the session/update notification
             update_msg = await _recv_jsonrpc_matching(
@@ -363,16 +390,22 @@ class TestACPWebSocketE2E:
             assert update_msg["method"] == "session/update"
             params = update_msg["params"]
             assert params["sessionId"] == session_id
-            blocks = params["update"]["blocks"]
-            assert len(blocks) >= 1
-            assert blocks[0]["type"] == "text"
-            assert "Processing" in blocks[0]["text"]
+            update = params["update"]
+            # Conformant SessionUpdate, not the old non-standard `blocks` list.
+            assert update["sessionUpdate"] == "agent_message_chunk"
+            assert update["content"]["type"] == "text"
+            assert "Processing" in update["content"]["text"]
 
-            # Also expect the session/prompt response (id=3)
+            # The turn is over once the loop reports idle — that releases the
+            # prompt response (ACP answers when the turn ends, not before).
+            await manager._event_bus.publish(
+                topic, {"type": "status", "state": "idle", "loop_id": loop_id}
+            )
+
             prompt_resp = await _recv_jsonrpc_matching(ws, match_id=3, timeout=5.0)
             assert prompt_resp["jsonrpc"] == "2.0"
             assert prompt_resp["id"] == 3
-            assert "result" in prompt_resp
+            assert prompt_resp["result"]["stopReason"] == "end_turn"
 
             # Clean up consumer tasks
             for state in channel._connections.values():

@@ -25,6 +25,8 @@ from logging import getLogger
 from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI, WebSocket
+from soothe_sdk.display.text_extract import extract_text_from_ai_message
+from soothe_sdk.ux.loop_stream import assistant_output_phase
 from starlette.websockets import WebSocketDisconnect
 
 from soothe_daemon.channels.base import Channel
@@ -47,11 +49,15 @@ logger = getLogger(__name__)
 # Try to import ACP helpers for block construction (optional).
 # Falls back to manual dict construction when the SDK is not installed.
 try:
+    from acp import helpers as _acp_helpers  # type: ignore[import-not-found]
     from acp.meta import PROTOCOL_VERSION as _ACP_PROTOCOL_VERSION  # type: ignore[import-not-found]
-    from agent_client_protocol import helpers as _acp_helpers  # type: ignore[import-not-found]
 except ImportError:
     _acp_helpers = None  # type: ignore[assignment]
     _ACP_PROTOCOL_VERSION = 1
+
+# Message kinds that carry user-visible assistant prose. Tool/system messages
+# also ride ``mode="messages"`` frames and must not be rendered as answers.
+_ASSISTANT_MESSAGE_TYPES = frozenset({"ai", "AIMessage", "AIMessageChunk"})
 
 # Default timeout for permission responses from the ACP client (seconds).
 _PERMISSION_TIMEOUT_S = 120.0
@@ -130,6 +136,7 @@ class _ConnectionState:
         "pending_permissions",
         "event_queues",
         "consumer_tasks",
+        "pending_turns",
     )
 
     def __init__(self) -> None:
@@ -137,22 +144,21 @@ class _ConnectionState:
         self.session_states: dict[str, _SessionState] = {}
         self.nes_sessions: dict[str, dict[str, Any]] = {}
         self.pending_permissions: dict[int, asyncio.Future[dict[str, Any]]] = {}
+        # loop_id → FIFO of futures awaiting turn end. ACP answers
+        # `session/prompt` when the loop reports idle; dispatcher-serialized
+        # turns report idle in submission order.
+        self.pending_turns: dict[str, list[asyncio.Future[str]]] = {}
         self.event_queues: dict[str, asyncio.Queue[dict[str, Any]]] = {}
         self.consumer_tasks: dict[str, asyncio.Task[None]] = {}
 
 
 def _make_text_block(content: str) -> dict[str, Any]:
-    """Build an ACP text block, using SDK helper if available."""
-    if _acp_helpers is not None and hasattr(_acp_helpers, "text_block"):
-        return _acp_helpers.text_block(content)  # type: ignore[no-any-return]
+    """Build an internal text block (a plain dict, not an ACP model)."""
     return {"type": "text", "text": content}
 
 
 def _make_reasoning_block(content: str) -> dict[str, Any]:
-    """Build an ACP reasoning block."""
-    # ACP spec uses "reasoning" block type; SDK helper may not exist yet.
-    if _acp_helpers is not None and hasattr(_acp_helpers, "reasoning_block"):
-        return _acp_helpers.reasoning_block(content)  # type: ignore[no-any-return]
+    """Build an internal reasoning block."""
     return {"type": "reasoning", "text": content}
 
 
@@ -161,6 +167,50 @@ def _make_progress_block(message: str) -> dict[str, Any]:
     # ACP doesn't have a dedicated progress block; use text with marker.
     # This is a best-effort projection for editor UX.
     return {"type": "progress", "text": message}
+
+
+def _iter_wire_frames(event: dict[str, Any]) -> list[dict[str, Any]]:
+    """Expand a broadcast message into its individual stream frames.
+
+    A coalesced batch arrives as ``{"type": "event_batch", "events": [...]}``;
+    anything else is already a single frame.
+    """
+    if event.get("type") != "event_batch":
+        return [event]
+    events = event.get("events")
+    if not isinstance(events, list):
+        return []
+    return [frame for frame in events if isinstance(frame, dict)]
+
+
+def _is_idle_status(frame: dict[str, Any]) -> bool:
+    """True for the loop-scoped frame that marks a turn as finished."""
+    return frame.get("type") == "status" and frame.get("state") == "idle"
+
+
+def _session_update_from_block(block: dict[str, Any]) -> dict[str, Any] | None:
+    """Map one internal content block to a conformant ACP ``SessionUpdate``.
+
+    ``progress`` has no ACP equivalent and rides the thought channel.
+    """
+    text = block.get("text")
+    if not isinstance(text, str) or not text:
+        return None
+
+    block_type = block.get("type")
+    if block_type == "text":
+        if _acp_helpers is not None:
+            update = _acp_helpers.update_agent_message_text(text)
+            return update.model_dump(by_alias=True, exclude_none=True)
+        return {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": text}}
+
+    if block_type in ("reasoning", "progress"):
+        if _acp_helpers is not None:
+            update = _acp_helpers.update_agent_thought_text(text)
+            return update.model_dump(by_alias=True, exclude_none=True)
+        return {"sessionUpdate": "agent_thought_chunk", "content": {"type": "text", "text": text}}
+
+    return None
 
 
 class ACPChannel(Channel):
@@ -348,9 +398,23 @@ class ACPChannel(Channel):
                 topic = loop_event_topic(loop_id)
                 with contextlib.suppress(Exception):
                     await event_bus.unsubscribe(topic, queue)
+            # Release the loop's dispatcher queue/worker. Without this every
+            # session we ever opened leaks one worker for the daemon's lifetime.
+            dispatcher = getattr(self._manager, "_loop_input_dispatcher", None)
+            if dispatcher is not None:
+                with contextlib.suppress(Exception):
+                    await dispatcher.cleanup_loop(loop_id)
 
         state.consumer_tasks.clear()
         state.session_map.clear()
+
+        # Release anything still waiting on a turn, so a `session/prompt` cannot
+        # outlive the connection that asked for it.
+        for waiters in state.pending_turns.values():
+            for waiter in waiters:
+                with contextlib.suppress(asyncio.InvalidStateError):
+                    waiter.set_result("cancelled")
+        state.pending_turns.clear()
 
         # Resolve any pending permission futures with a cancellation error
         for fut in list(state.pending_permissions.values()):
@@ -727,26 +791,21 @@ class ACPChannel(Channel):
         session_id = str(uuid.uuid4())
         cwd = params.get("cwd", "/tmp")
 
-        # Pre-create the loop_id so we can subscribe BEFORE publishing.
-        # This avoids the publish-before-subscribe race where the first
-        # ChannelMessageReceived event is dropped by the EventBus.
+        # Pre-create the loop_id so we can subscribe to its topic before anything
+        # can publish to it.
         loop_id = self._manager.ensure_loop_id("acp", session_id)
 
         state = self._get_state(_current_connection.get())
         state.session_map[session_id] = loop_id
         state.session_states[session_id] = _SessionState(cwd=cwd)
 
-        # Subscribe to the loop's EventBus topic BEFORE handle_inbound publishes.
+        # Subscribe to the loop's EventBus topic before anything publishes.
         await self._subscribe_loop_events(loop_id)
 
-        # Now publish the ChannelMessageReceived event (subscribers are ready).
-        await self._manager.handle_inbound(
-            channel="acp",
-            chat_id=session_id,
-            sender_id="acp-client",
-            content="",
-            metadata={"cwd": cwd},
-        )
+        # Register the loop and persist the ACP cwd as its workspace (the
+        # runner's cwd). Nothing consumes a ChannelMessageReceived event, and an
+        # unregistered loop makes `bind_execution_thread_for_loop` fail silently.
+        await self._manager.ensure_loop_registered(loop_id, workspace=cwd)
 
         logger.info("[ACP] session/new: session=%s → loop=%s, cwd=%s", session_id, loop_id, cwd)
 
@@ -808,17 +867,48 @@ class ACPChannel(Channel):
                 elif isinstance(part, str):
                     prompt_text += part
 
-        await self._manager.handle_inbound(
-            channel="acp",
-            chat_id=session_id,
-            sender_id="acp-client",
-            content=prompt_text,
-            metadata={},
-        )
+        # ACP requires the prompt response to be sent when the turn *ends*, so
+        # register interest before submitting — the loop can go idle before we
+        # get back here.
+        state = self._get_state(_current_connection.get())
+        waiters = state.pending_turns.setdefault(loop_id, [])
+        completion: asyncio.Future[str] = asyncio.get_running_loop().create_future()
+        waiters.append(completion)
 
-        logger.debug("[ACP] session/prompt: session=%s, loop=%s", session_id, loop_id)
+        try:
+            # The loop-native path runs the turn; handle_inbound only publishes
+            # an event nothing consumes.
+            await self._manager.submit_loop_input(
+                loop_id,
+                prompt_text,
+                channel="acp",
+                chat_id=session_id,
+            )
+            stop_reason = await asyncio.wait_for(
+                completion,
+                timeout=max(1.0, float(self.config.session_timeout_seconds)),
+            )
+        except TimeoutError:
+            logger.warning(
+                "[ACP] session/prompt gave up after %ss waiting for loop %s to go idle",
+                self.config.session_timeout_seconds,
+                loop_id,
+            )
+            stop_reason = "end_turn"
+        finally:
+            with contextlib.suppress(ValueError):
+                waiters.remove(completion)
+            if not waiters:
+                state.pending_turns.pop(loop_id, None)
+
+        logger.debug(
+            "[ACP] session/prompt: session=%s, loop=%s, stopReason=%s",
+            session_id,
+            loop_id,
+            stop_reason,
+        )
         return {
-            "stopReason": "end_turn",
+            "stopReason": stop_reason,
             "usage": {
                 "totalTokens": 0,
                 "inputTokens": 0,
@@ -827,22 +917,31 @@ class ACPChannel(Channel):
         }
 
     async def _handle_session_cancel(self, params: dict[str, Any]) -> dict[str, Any]:
-        """Handle `session/cancel` — publish a cancel event on the loop topic.
+        """Handle `session/cancel` — abort the running turn on this loop.
+
+        Releases the waiting `session/prompt` with the `cancelled` stop reason
+        and enqueues a `/cancel` command through the dispatcher.
 
         Args:
             params: ACP session/cancel params with `sessionId`.
         """
         session_id, loop_id = self._require_session(params)
+        state = self._get_state(_current_connection.get())
 
-        event_bus = getattr(self._manager, "_event_bus", None)
-        if event_bus is not None:
-            cancel_msg = {
-                "type": "command",
-                "command": "cancel",
-                "loop_id": loop_id,
-            }
-            topic = loop_event_topic(loop_id)
-            await event_bus.publish(topic, cancel_msg)
+        # The oldest waiter owns the turn that is actually running.
+        waiters = state.pending_turns.get(loop_id)
+        if waiters:
+            with contextlib.suppress(asyncio.InvalidStateError):
+                waiters[0].set_result("cancelled")
+
+        # The loop's cancel entry point is a `/cancel` command through the
+        # dispatcher; a `command: cancel` EventBus event reaches nothing.
+        dispatcher = getattr(self._manager, "_loop_input_dispatcher", None)
+        if dispatcher is not None:
+            await dispatcher.enqueue(
+                loop_id,
+                {"type": "command", "cmd": "/cancel", "client_id": None},
+            )
 
         logger.info("[ACP] session/cancel: session=%s, loop=%s", session_id, loop_id)
         return {}
@@ -1610,9 +1709,28 @@ class ACPChannel(Channel):
                 await self._bridge_permission_request(session_id, loop_id, event)
                 continue
 
-            blocks = self._translate_event(event)
-            if blocks:
-                await self._send_session_update(session_id, blocks)
+            # A coalescer step that yields several frames arrives wrapped;
+            # translate each member so batched text is not dropped.
+            for frame in _iter_wire_frames(event):
+                if _is_idle_status(frame):
+                    self._resolve_pending_turn(conn_key, loop_id, "end_turn")
+                blocks = self._translate_event(frame)
+                if blocks:
+                    await self._send_session_update(session_id, blocks)
+
+    def _resolve_pending_turn(self, conn_key: Any, loop_id: str, stop_reason: str) -> None:
+        """Release the oldest `session/prompt` waiting on ``loop_id``."""
+        state = self._connections.get(conn_key)
+        if state is None:
+            return
+        waiters = state.pending_turns.get(loop_id)
+        if not waiters:
+            return
+        oldest = waiters.pop(0)
+        if not waiters:
+            state.pending_turns.pop(loop_id, None)
+        with contextlib.suppress(asyncio.InvalidStateError):
+            oldest.set_result(stop_reason)
 
     def _is_tool_approval_event(self, event: dict[str, Any]) -> bool:
         """Check if an EventBus wire event contains a tool-approval interrupt.
@@ -1819,44 +1937,76 @@ class ACPChannel(Channel):
     def _translate_event(self, event: dict[str, Any]) -> list[dict[str, Any]]:
         """Translate a daemon wire event to ACP content blocks.
 
+        Dispatches on ``mode``: ``messages`` frames carry assistant prose;
+        ``custom`` frames carry control/UI events.
+
         Args:
             event: Wire-format event dict from EventBus.
 
         Returns:
             List of ACP content blocks (may be empty if event is not translatable).
         """
-        # Wire events have structure: {"type": "event", "loop_id": ..., "data": {...}}
-        data = event.get("data", {})
-        if not isinstance(data, dict):
+        mode = str(event.get("mode") or "")
+        data = event.get("data")
+
+        if mode == "messages":
+            return self._translate_messages_frame(event, data)
+        if mode == "custom" and isinstance(data, dict):
+            return self._translate_custom_frame(data)
+        return []
+
+    def _translate_messages_frame(
+        self,
+        event: dict[str, Any],
+        data: Any,
+    ) -> list[dict[str, Any]]:
+        """Translate one ``mode="messages"`` frame.
+
+        ``data`` is the ``(message, metadata)`` pair the runner stream produced;
+        the message is a flat LangChain wire dict the SDK text extractor reads.
+        """
+        if not isinstance(data, (tuple, list)) or not data:
+            return []
+        message = data[0]
+        if not isinstance(message, dict):
+            return []
+        if message.get("type") not in _ASSISTANT_MESSAGE_TYPES:
             return []
 
+        # Mirror the TUI: only root-graph prose is user-facing, except for
+        # goal_completion, which is emitted from any namespace.
+        namespace = event.get("namespace") or []
+        if namespace and assistant_output_phase(message) != "goal_completion":
+            return []
+
+        text = "".join(extract_text_from_ai_message(message))
+        if not text:
+            return []
+        return [_make_text_block(text)]
+
+    def _translate_custom_frame(self, data: dict[str, Any]) -> list[dict[str, Any]]:
+        """Translate one ``mode="custom"`` control/UI frame."""
         event_type = data.get("type", "")
 
-        if event_type == OUTPUT_TEXT_DELTA:
+        if event_type in (OUTPUT_TEXT_DELTA, OUTPUT_TEXT_COMPLETE):
             content = data.get("content", "")
-            if content:
-                return [_make_text_block(content)]
+            return [_make_text_block(content)] if content else []
 
-        elif event_type == OUTPUT_TEXT_COMPLETE:
-            content = data.get("content", "")
-            if content:
-                return [_make_text_block(content)]
-
-        elif event_type == OUTPUT_TEXT_END:
+        if event_type == OUTPUT_TEXT_END:
             # Stream end marker — no content block needed
             return []
 
-        elif event_type == OUTPUT_PROGRESS:
-            if self.send_progress:
-                message = data.get("message", "")
-                if message:
-                    return [_make_progress_block(message)]
+        if event_type == OUTPUT_PROGRESS:
+            if not self.send_progress:
+                return []
+            message = data.get("message", "")
+            return [_make_progress_block(message)] if message else []
 
-        elif event_type == OUTPUT_REASONING:
-            if self.show_reasoning:
-                content = data.get("content", "")
-                if content:
-                    return [_make_reasoning_block(content)]
+        if event_type == OUTPUT_REASONING:
+            if not self.show_reasoning:
+                return []
+            content = data.get("content", "")
+            return [_make_reasoning_block(content)] if content else []
 
         return []
 
@@ -1879,22 +2029,30 @@ class ACPChannel(Channel):
 
         Args:
             session_id: ACP session identifier.
-            blocks: List of ACP content blocks.
-            metadata: Optional stream metadata to include in the update params.
+            blocks: List of internal content blocks.
+            metadata: Optional stream metadata, attached as ACP `_meta`.
         """
-        update: dict[str, Any] = {"blocks": blocks}
-        if metadata:
-            # Filter internal metadata keys — only pass ACP-visible fields.
-            update["metadata"] = {k: v for k, v in metadata.items() if not k.startswith("_")}
-        notification = {
-            "jsonrpc": "2.0",
-            "method": "session/update",
-            "params": {
-                "sessionId": session_id,
-                "update": update,
-            },
-        }
-        await self._write_jsonrpc(notification)
+        visible_metadata = (
+            {k: v for k, v in metadata.items() if not k.startswith("_")} if metadata else None
+        )
+        # `session/update` carries exactly one SessionUpdate, so a frame holding
+        # several blocks becomes several notifications.
+        for block in blocks:
+            update = _session_update_from_block(block)
+            if update is None:
+                continue
+            if visible_metadata:
+                update["_meta"] = visible_metadata
+            await self._write_jsonrpc(
+                {
+                    "jsonrpc": "2.0",
+                    "method": "session/update",
+                    "params": {
+                        "sessionId": session_id,
+                        "update": update,
+                    },
+                }
+            )
 
     async def _write_jsonrpc(
         self,

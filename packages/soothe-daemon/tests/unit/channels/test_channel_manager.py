@@ -549,3 +549,118 @@ class TestSetMessageHandler:
         manager.set_handshake_callback(callback)
 
         assert manager._handshake_callback == callback
+
+
+class TestLoopNativeSubmission:
+    """Channels submit turns through the loop dispatcher."""
+
+    @staticmethod
+    def build(dispatcher=None, persistence=None) -> ChannelManager:
+        return ChannelManager(
+            MockDaemonConfig(),
+            MockEventBus(),
+            loop_input_dispatcher=dispatcher,
+            persistence_manager=persistence,
+        )
+
+    @staticmethod
+    def persistence(metadata=None) -> MagicMock:
+        manager = MagicMock()
+        manager.get_loop_metadata = AsyncMock(return_value=metadata)
+        manager.register_loop = AsyncMock()
+        manager.update_loop_metadata = AsyncMock()
+        manager.increment_loop_message_count = AsyncMock()
+        return manager
+
+    @pytest.mark.asyncio
+    async def test_submit_enqueues_an_input_payload(self):
+        """The payload must match what the loop worker accepts."""
+        dispatcher = MagicMock()
+        dispatcher.enqueue = AsyncMock()
+        persistence = self.persistence(metadata={"loop_id": "acp:1"})
+
+        manager = self.build(dispatcher, persistence)
+        await manager.submit_loop_input("acp:1", "Hello", channel="acp", chat_id="sess-1")
+
+        dispatcher.enqueue.assert_awaited_once_with(
+            "acp:1",
+            {"type": "input", "text": "Hello", "client_id": None},
+        )
+        persistence.increment_loop_message_count.assert_awaited_once_with("acp:1", human=1)
+
+    @pytest.mark.asyncio
+    async def test_submit_registers_a_missing_loop_first(self):
+        """An unregistered loop makes the turn fail silently, so register it."""
+        order: list[str] = []
+        dispatcher = MagicMock()
+        dispatcher.enqueue = AsyncMock(side_effect=lambda *_: order.append("enqueue"))
+
+        persistence = self.persistence(metadata=None)
+        persistence.register_loop = AsyncMock(side_effect=lambda **_: order.append("register"))
+        persistence.update_loop_metadata = AsyncMock(
+            side_effect=lambda *_, **__: order.append("metadata")
+        )
+
+        manager = self.build(dispatcher, persistence)
+        with (
+            patch(
+                "soothe.sloop.checkpoints.directory_manager.PersistenceDirectoryManager"
+                ".get_loop_directory",
+                return_value=MagicMock(mkdir=MagicMock()),
+            ),
+            patch.object(ChannelManager, "_resolve_loop_workspace", return_value="/tmp/ws"),
+        ):
+            await manager.submit_loop_input("acp:2", "Hello", channel="acp", chat_id="sess-2")
+
+        assert order == ["register", "metadata", "enqueue"]
+        persistence.update_loop_metadata.assert_awaited_once_with(
+            "acp:2", current_workspace="/tmp/ws"
+        )
+
+    @pytest.mark.asyncio
+    async def test_ensure_loop_registered_persists_the_workspace(self):
+        """The workspace is what the runner resolves the agent cwd from."""
+        persistence = self.persistence(metadata=None)
+        manager = self.build(MagicMock(), persistence)
+
+        with (
+            patch(
+                "soothe.sloop.checkpoints.directory_manager.PersistenceDirectoryManager"
+                ".get_loop_directory",
+                return_value=MagicMock(mkdir=MagicMock()),
+            ),
+            patch.object(ChannelManager, "_resolve_loop_workspace", return_value="/tmp/acp-cwd"),
+        ):
+            registered = await manager.ensure_loop_registered("acp:3", workspace="/tmp/acp-cwd")
+
+        assert registered is True
+        persistence.update_loop_metadata.assert_awaited_once_with(
+            "acp:3", current_workspace="/tmp/acp-cwd"
+        )
+
+    @pytest.mark.asyncio
+    async def test_ensure_loop_registered_leaves_an_existing_loop_alone(self):
+        """Idempotent: session setup must not clobber an established workspace."""
+        persistence = self.persistence(metadata={"loop_id": "acp:4"})
+        manager = self.build(MagicMock(), persistence)
+
+        registered = await manager.ensure_loop_registered("acp:4", workspace="/tmp/other")
+
+        assert registered is False
+        persistence.register_loop.assert_not_awaited()
+        persistence.update_loop_metadata.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_missing_dispatcher_is_a_loud_error(self):
+        """Misconfiguration must not silently drop user turns."""
+        manager = self.build(None, self.persistence())
+
+        with pytest.raises(RuntimeError, match="loop_input_dispatcher"):
+            await manager.submit_loop_input("acp:5", "Hello", channel="acp", chat_id="sess-5")
+
+    @pytest.mark.asyncio
+    async def test_missing_persistence_is_a_loud_error(self):
+        manager = self.build(MagicMock(), None)
+
+        with pytest.raises(RuntimeError, match="persistence_manager"):
+            await manager.ensure_loop_registered("acp:6")
