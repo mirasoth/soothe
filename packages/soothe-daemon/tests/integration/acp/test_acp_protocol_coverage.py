@@ -34,7 +34,37 @@ from acp.meta import AGENT_METHODS, CLIENT_METHODS  # noqa: E402
 
 from soothe_daemon.channels.acp import ACPChannel  # noqa: E402
 from soothe_daemon.config.models import ACPConfig  # noqa: E402
+from soothe_daemon.event import loop_event_topic  # noqa: E402
 from tests.integration.daemon_fixtures import alloc_ephemeral_port  # noqa: E402
+
+
+def _loop_id_for(channel: ACPChannel, session_id: str) -> str | None:
+    """Find the loop_id backing a session across all connection states."""
+    for state in channel._connections.values():
+        if session_id in state.session_map:
+            return state.session_map[session_id]
+    return None
+
+
+async def _wait_for_submission(manager: Any, *, timeout: float = 5.0) -> None:
+    """Wait until the channel has submitted a turn before ending it."""
+    deadline = asyncio.get_running_loop().time() + timeout
+    while not manager.submitted:
+        if asyncio.get_running_loop().time() > deadline:
+            msg = "session/prompt was never submitted"
+            raise TimeoutError(msg)
+        await asyncio.sleep(0.01)
+
+
+async def _end_turn(manager: Any, channel: ACPChannel, session_id: str) -> None:
+    """Publish the loop's idle status, which ends the turn and releases the prompt."""
+    loop_id = _loop_id_for(channel, session_id)
+    if loop_id:
+        await manager._event_bus.publish(
+            loop_event_topic(loop_id),
+            {"type": "status", "state": "idle", "loop_id": loop_id},
+        )
+
 
 # ---------------------------------------------------------------------------
 # Helpers (mirrors test_acp_ws_e2e.py patterns)
@@ -47,9 +77,10 @@ def _alloc_port() -> int:
 
 
 class _MockManager:
-    """Mock ChannelManager with a real EventBus and deterministic loop IDs."""
+    """Mock ChannelManager with a real EventBus and loop-native submission surface."""
 
     def __init__(self) -> None:
+        from types import SimpleNamespace
         from unittest.mock import AsyncMock
 
         from soothe_daemon.event import EventBus
@@ -57,10 +88,27 @@ class _MockManager:
         self._event_bus = EventBus()
         self._inbound_counter = 0
         self.handle_inbound = AsyncMock(side_effect=self._handle_inbound)
+        self.submitted: list[dict[str, Any]] = []
+        self.submit_loop_input = AsyncMock(side_effect=self._submit_loop_input)
+        self.ensure_loop_registered = AsyncMock(return_value=True)
+        self._loop_input_dispatcher = SimpleNamespace(enqueue=AsyncMock(), cleanup_loop=AsyncMock())
+        self._persistence_manager = SimpleNamespace(
+            get_loop_metadata=AsyncMock(return_value=None),
+            register_loop=AsyncMock(),
+            update_loop_metadata=AsyncMock(),
+            increment_loop_message_count=AsyncMock(),
+        )
+
+    def ensure_loop_id(self, channel: str, chat_id: str) -> str:
+        self._inbound_counter += 1
+        return f"acp:coverage-loop-{self._inbound_counter}"
 
     async def _handle_inbound(self, **kwargs: Any) -> str:
         self._inbound_counter += 1
         return f"acp:coverage-loop-{self._inbound_counter}"
+
+    async def _submit_loop_input(self, loop_id: str, text: str, **kwargs: Any) -> None:
+        self.submitted.append({"loop_id": loop_id, "text": text, **kwargs})
 
 
 async def _send_jsonrpc(ws: Any, msg: dict[str, Any]) -> None:
@@ -358,6 +406,9 @@ class TestACPProtocolCoverage:
                 # Read messages until we get the response with matching id.
                 # Some methods (e.g. session/prompt) may produce notifications
                 # before the response.
+                if method == "session/prompt":
+                    await _wait_for_submission(manager)
+                    await _end_turn(manager, channel, session_id)
                 resp = await _recv_jsonrpc_matching(ws, match_id=req_id, timeout=10.0)
                 results[method] = _classify(resp)
 
@@ -585,7 +636,7 @@ class TestACPFullProtocolBehaviour:
     @pytest.mark.asyncio
     async def test_session_prompt_returns_stop_reason(self, acp_ws_server) -> None:
         """session/prompt must return stopReason and usage."""
-        base_url, _channel, _manager = acp_ws_server
+        base_url, channel, manager = acp_ws_server
 
         async with websockets.asyncio.client.connect(f"{base_url}/acp") as ws:
             await _send_jsonrpc(
@@ -620,6 +671,9 @@ class TestACPFullProtocolBehaviour:
                     "params": _params_for("session/prompt", session_id=session_id),
                 },
             )
+            # The response is held until the turn ends.
+            await _wait_for_submission(manager)
+            await _end_turn(manager, channel, session_id)
             resp = await _recv_jsonrpc_matching(ws, match_id=3, timeout=10.0)
             result = resp["result"]
             assert result["stopReason"] == "end_turn"

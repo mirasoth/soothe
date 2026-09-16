@@ -34,6 +34,8 @@ class ChannelManager:
         session_manager: Any | None = None,
         cron_service: Any | None = None,
         memory_profiler: Any | None = None,
+        loop_input_dispatcher: Any | None = None,
+        persistence_manager: Any | None = None,
     ) -> None:
         """Initialize channel manager."""
         self._config = config
@@ -43,6 +45,10 @@ class ChannelManager:
         self._session_manager = session_manager
         self._cron_service = cron_service
         self._memory_profiler = memory_profiler
+        # Loop-native submission (RFC-229): channels submit user turns here,
+        # since publishing a ChannelMessageReceived event runs nothing.
+        self._loop_input_dispatcher = loop_input_dispatcher
+        self._persistence_manager = persistence_manager
 
         # Channel instances
         self._channels: dict[str, Any] = {}  # name → Channel instance
@@ -158,6 +164,103 @@ class ChannelManager:
             loop_id for this conversation.
         """
         return self._get_or_create_loop_id(channel, chat_id)
+
+    async def ensure_loop_registered(
+        self,
+        loop_id: str,
+        *,
+        workspace: str | Path | None = None,
+    ) -> bool:
+        """Register ``loop_id`` in persistence so turns can be submitted to it.
+
+        ``workspace`` is persisted as ``current_workspace`` (the runner's cwd);
+        omitted means the daemon workspace. Idempotent — an existing loop is
+        left untouched.
+
+        Returns:
+            True when a new registration was written, False when it already existed.
+        """
+        if self._persistence_manager is None:
+            msg = "ChannelManager.ensure_loop_registered requires persistence_manager"
+            raise RuntimeError(msg)
+
+        existing = await self._persistence_manager.get_loop_metadata(loop_id)
+        if existing is not None:
+            return False
+
+        from soothe.sloop.checkpoints.directory_manager import PersistenceDirectoryManager
+
+        loop_dir = PersistenceDirectoryManager.get_loop_directory(loop_id)
+        loop_dir.mkdir(parents=True, exist_ok=True)
+
+        await self._persistence_manager.register_loop(
+            loop_id=loop_id,
+            current_thread_id="",
+            status="created",
+        )
+        await self._persistence_manager.update_loop_metadata(
+            loop_id,
+            current_workspace=str(self._resolve_loop_workspace(loop_id, workspace)),
+        )
+        logger.debug("Registered channel loop %s (workspace=%s)", loop_id, workspace)
+        return True
+
+    async def submit_loop_input(
+        self,
+        loop_id: str,
+        text: str,
+        *,
+        channel: str,
+        chat_id: str,
+    ) -> None:
+        """Submit a user turn for ``loop_id`` through the loop-native path.
+
+        Registers the loop first if needed. The payload mirrors the RPC path
+        (``protocol/router.py``); ``autopilot_rail_id`` is omitted so this is a
+        normal chat turn, not a rail-governed goal.
+        """
+        if self._loop_input_dispatcher is None:
+            msg = "ChannelManager.submit_loop_input requires loop_input_dispatcher"
+            raise RuntimeError(msg)
+
+        await self.ensure_loop_registered(loop_id)
+
+        await self._loop_input_dispatcher.enqueue(
+            loop_id,
+            {
+                "type": "input",
+                "text": text,
+                "client_id": None,
+            },
+        )
+        logger.debug(
+            "Submitted turn from %s:%s to loop %s",
+            channel,
+            chat_id,
+            loop_id,
+        )
+
+        if self._persistence_manager is not None:
+            # Best-effort bookkeeping, exactly as the RPC path does it: a failure
+            # here must not fail the turn.
+            with contextlib.suppress(Exception):
+                await self._persistence_manager.increment_loop_message_count(loop_id, human=1)
+
+    def _resolve_loop_workspace(self, loop_id: str, workspace: str | Path | None) -> Path:
+        """Resolve the workspace a channel loop should run in."""
+        from soothe.workspace import resolve_loop_workspace
+
+        try:
+            return Path(
+                resolve_loop_workspace(
+                    loop_id=loop_id,
+                    client_workspace=str(workspace) if workspace else None,
+                )
+            )
+        except ValueError:
+            from soothe.workspace import resolve_daemon_workspace
+
+            return Path(resolve_daemon_workspace())
 
     def _get_or_create_loop_id(self, channel: str, chat_id: str) -> str:
         """Get existing loop_id or create new one for (channel, chat_id).

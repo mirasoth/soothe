@@ -8,10 +8,50 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from soothe_daemon.channels.acp import ACPChannel, _make_text_block
+from soothe_daemon.channels.acp import (
+    _STDIO_SENTINEL,
+    ACPChannel,
+    _iter_wire_frames,
+    _make_text_block,
+    _session_update_from_block,
+)
 from soothe_daemon.channels.base import Channel
 from soothe_daemon.config.models import ACPConfig
 from soothe_daemon.events.constants import OUTPUT_TEXT_DELTA
+
+
+def make_manager(loop_id: str = "acp:test-session") -> MagicMock:
+    """Manager stub carrying the loop-native submission deps the channel needs."""
+    manager = MagicMock()
+    manager.ensure_loop_id = MagicMock(return_value=loop_id)
+    manager.ensure_loop_registered = AsyncMock(return_value=True)
+    manager.submit_loop_input = AsyncMock()
+    manager._event_bus = MagicMock()
+    manager._event_bus.subscribe = AsyncMock()
+    dispatcher = MagicMock()
+    dispatcher.enqueue = AsyncMock()
+    dispatcher.cleanup_loop = AsyncMock()
+    manager._loop_input_dispatcher = dispatcher
+    return manager
+
+
+def messages_frame(
+    text: str,
+    *,
+    namespace: list[str] | None = None,
+    phase: str | None = None,
+    message_type: str = "AIMessageChunk",
+) -> dict:
+    """A frame shaped as the engine broadcasts assistant text (``mode="messages"``)."""
+    message: dict = {"type": message_type, "content": text}
+    if phase is not None:
+        message["phase"] = phase
+    return {
+        "type": "event",
+        "namespace": namespace or [],
+        "mode": "messages",
+        "data": (message, {"lc_source": "agent"}),
+    }
 
 
 class TestACPChannelAttributes:
@@ -97,17 +137,13 @@ class TestACPChannelSession:
     """Tests for ACPChannel session management."""
 
     @pytest.mark.asyncio
-    async def test_session_new_creates_loop(self):
-        """Test session/new creates a loop and populates the session map."""
+    async def test_session_new_registers_loop_with_cwd(self):
+        """session/new registers the loop so a later turn can run on it."""
         config = ACPConfig(enabled=True)
-        manager = MagicMock()
-        manager.ensure_loop_id = MagicMock(return_value="acp:test-session-id")
-        manager.handle_inbound = AsyncMock(return_value="acp:test-session-id")
-        manager._event_bus = MagicMock()
-        manager._event_bus.subscribe = AsyncMock()
+        manager = make_manager(loop_id="acp:test-session-id")
 
         channel = ACPChannel(config, manager)
-        result = await channel._handle_session_new({})
+        result = await channel._handle_session_new({"cwd": "/tmp/workspace"})
 
         assert "sessionId" in result
         session_id = result["sessionId"]
@@ -115,87 +151,153 @@ class TestACPChannelSession:
         assert channel._get_state().session_map[session_id] == "acp:test-session-id"
         assert channel.client_count == 1
 
-        # Clean up consumer task
-        for task in channel._get_state().consumer_tasks.values():
-            task.cancel()
-
-    @pytest.mark.asyncio
-    async def test_session_prompt_routes_to_manager(self):
-        """Test session/prompt enqueues a user turn via handle_inbound."""
-        config = ACPConfig(enabled=True)
-        manager = MagicMock()
-        manager.ensure_loop_id = MagicMock(return_value="acp:test-session")
-        manager.handle_inbound = AsyncMock(return_value="acp:test-session")
-        manager._event_bus = MagicMock()
-        manager._event_bus.subscribe = AsyncMock()
-
-        channel = ACPChannel(config, manager)
-
-        # Create session first
-        new_result = await channel._handle_session_new({})
-        session_id = new_result["sessionId"]
-
-        manager.handle_inbound.reset_mock()
-        await channel._handle_session_prompt(
-            {"sessionId": session_id, "prompt": [{"type": "text", "text": "Hello"}]}
+        # The cwd must be persisted as the loop workspace — that is what the
+        # runner resolves the agent's working directory from.
+        manager.ensure_loop_registered.assert_awaited_once_with(
+            "acp:test-session-id", workspace="/tmp/workspace"
         )
 
-        manager.handle_inbound.assert_called_once()
-        call_kwargs = manager.handle_inbound.call_args
-        assert call_kwargs.kwargs["content"] == "Hello"
-
         # Clean up consumer task
         for task in channel._get_state().consumer_tasks.values():
             task.cancel()
 
     @pytest.mark.asyncio
-    async def test_session_cancel_publishes_event(self):
-        """Test session/cancel publishes a cancel event on the loop topic."""
+    async def test_session_prompt_submits_a_turn_and_waits_for_it(self):
+        """session/prompt submits a real turn and answers when the loop goes idle."""
         config = ACPConfig(enabled=True)
-        manager = MagicMock()
-        manager.ensure_loop_id = MagicMock(return_value="acp:cancel-test")
-        manager.handle_inbound = AsyncMock(return_value="acp:cancel-test")
-        manager._event_bus = MagicMock()
-        manager._event_bus.subscribe = AsyncMock()
-        manager._event_bus.publish = AsyncMock()
-
+        manager = make_manager()
         channel = ACPChannel(config, manager)
 
-        new_result = await channel._handle_session_new({})
-        session_id = new_result["sessionId"]
+        session_id = (await channel._handle_session_new({}))["sessionId"]
 
-        await channel._handle_session_cancel({"sessionId": session_id})
+        pending = asyncio.create_task(
+            channel._handle_session_prompt(
+                {"sessionId": session_id, "prompt": [{"type": "text", "text": "Hello"}]}
+            )
+        )
+        try:
+            await asyncio.sleep(0)
+            # Held open until the turn finishes.
+            assert not pending.done()
 
-        manager._event_bus.publish.assert_called_once()
-        published_msg = manager._event_bus.publish.call_args.args[1]
-        assert published_msg["type"] == "command"
-        assert published_msg["command"] == "cancel"
+            manager.submit_loop_input.assert_awaited_once_with(
+                "acp:test-session", "Hello", channel="acp", chat_id=session_id
+            )
+            # Nothing consumes a ChannelMessageReceived event, so the channel
+            # must not fall back to publishing one.
+            manager.handle_inbound.assert_not_called()
 
-        # Clean up consumer task
-        for task in channel._get_state().consumer_tasks.values():
-            task.cancel()
+            channel._resolve_pending_turn(_STDIO_SENTINEL, "acp:test-session", "end_turn")
+            assert (await pending)["stopReason"] == "end_turn"
+        finally:
+            pending.cancel()
+            for task in channel._get_state().consumer_tasks.values():
+                task.cancel()
+
+    @pytest.mark.asyncio
+    async def test_session_cancel_stops_the_loop_and_reports_cancelled(self):
+        """session/cancel aborts through the dispatcher and releases the prompt."""
+        config = ACPConfig(enabled=True)
+        manager = make_manager(loop_id="acp:cancel-test")
+        channel = ACPChannel(config, manager)
+
+        session_id = (await channel._handle_session_new({}))["sessionId"]
+
+        pending = asyncio.create_task(
+            channel._handle_session_prompt(
+                {"sessionId": session_id, "prompt": [{"type": "text", "text": "Hello"}]}
+            )
+        )
+        try:
+            await asyncio.sleep(0)
+            await channel._handle_session_cancel({"sessionId": session_id})
+
+            # The running turn is released as `cancelled`, per the spec.
+            assert (await pending)["stopReason"] == "cancelled"
+
+            # And the loop gets the cancel command it actually understands;
+            # publishing a `command: cancel` event reached nothing.
+            manager._loop_input_dispatcher.enqueue.assert_awaited_once_with(
+                "acp:cancel-test",
+                {"type": "command", "cmd": "/cancel", "client_id": None},
+            )
+        finally:
+            pending.cancel()
+            for task in channel._get_state().consumer_tasks.values():
+                task.cancel()
 
 
 class TestACPChannelEventTranslation:
     """Tests for daemon wire event → ACP block translation."""
 
-    def test_translate_text_delta(self):
-        """Test OUTPUT_TEXT_DELTA event translation."""
+    def test_translate_engine_messages_frame(self):
+        """An engine `mode="messages"` frame yields the assistant text."""
+        config = ACPConfig(enabled=True)
+        channel = ACPChannel(config, MockManager())
+
+        blocks = channel._translate_event(messages_frame("Hello world"))
+
+        assert len(blocks) == 1
+        assert blocks[0]["type"] == "text"
+        assert blocks[0]["text"] == "Hello world"
+
+    def test_translate_messages_frame_with_content_blocks(self):
+        """Text is read from `content_blocks` too, and non-text blocks skipped."""
+        config = ACPConfig(enabled=True)
+        channel = ACPChannel(config, MockManager())
+
+        frame = messages_frame("")
+        frame["data"] = (
+            {
+                "type": "ai",
+                "content_blocks": [
+                    {"type": "reasoning", "text": "thinking"},
+                    {"type": "text", "text": "the answer"},
+                ],
+            },
+            {},
+        )
+
+        blocks = channel._translate_event(frame)
+        assert [b["text"] for b in blocks] == ["the answer"]
+
+    def test_ignores_plain_tool_message_frames(self):
+        """Tool/system messages ride the same mode and must not render as prose."""
+        config = ACPConfig(enabled=True)
+        channel = ACPChannel(config, MockManager())
+
+        assert channel._translate_event(messages_frame("ls -la", message_type="tool")) == []
+
+    def test_ignores_subgraph_prose_unless_goal_completion(self):
+        """Mirrors the TUI: only root-graph prose is user-facing."""
+        config = ACPConfig(enabled=True)
+        channel = ACPChannel(config, MockManager())
+
+        assert (
+            channel._translate_event(messages_frame("subagent chatter", namespace=["execute:abc"]))
+            == []
+        )
+        assert (
+            channel._translate_event(
+                messages_frame("final answer", namespace=["execute:abc"], phase="goal_completion")
+            )
+            != []
+        )
+
+    def test_translate_custom_text_delta(self):
+        """`mode="custom"` frames are still translated by their inner type."""
         config = ACPConfig(enabled=True)
         channel = ACPChannel(config, MockManager())
 
         event = {
             "type": "event",
-            "loop_id": "test-loop",
-            "data": {
-                "type": OUTPUT_TEXT_DELTA,
-                "content": "Hello world",
-            },
+            "namespace": [],
+            "mode": "custom",
+            "data": {"type": OUTPUT_TEXT_DELTA, "content": "Hello world"},
         }
 
         blocks = channel._translate_event(event)
         assert len(blocks) == 1
-        assert blocks[0]["type"] == "text"
         assert blocks[0]["text"] == "Hello world"
 
     def test_translate_unknown_event_returns_empty(self):
@@ -212,6 +314,66 @@ class TestACPChannelEventTranslation:
         block = _make_text_block("test content")
         assert block["type"] == "text"
         assert block["text"] == "test content"
+
+
+class TestACPChannelSessionUpdateShape:
+    """The update payload must be a conformant ACP `SessionUpdate`."""
+
+    def test_text_block_becomes_agent_message_chunk(self):
+        update = _session_update_from_block({"type": "text", "text": "hi"})
+
+        assert update is not None
+        assert update["sessionUpdate"] == "agent_message_chunk"
+        assert update["content"] == {"type": "text", "text": "hi"}
+
+    def test_reasoning_and_progress_become_thought_chunks(self):
+        for block_type in ("reasoning", "progress"):
+            update = _session_update_from_block({"type": block_type, "text": "hmm"})
+            assert update is not None
+            assert update["sessionUpdate"] == "agent_thought_chunk"
+            assert update["content"] == {"type": "text", "text": "hmm"}
+
+    def test_empty_or_unknown_blocks_are_dropped(self):
+        assert _session_update_from_block({"type": "text", "text": ""}) is None
+        assert _session_update_from_block({"type": "mystery", "text": "x"}) is None
+
+    @pytest.mark.asyncio
+    async def test_sends_one_notification_per_block(self):
+        """`session/update` carries exactly one SessionUpdate, so blocks fan out."""
+        config = ACPConfig(enabled=True)
+        channel = ACPChannel(config, MockManager())
+        writes: list[dict] = []
+
+        with patch.object(channel, "_write_jsonrpc", AsyncMock(side_effect=writes.append)):
+            await channel._send_session_update(
+                "sess-1",
+                [
+                    {"type": "text", "text": "one"},
+                    {"type": "reasoning", "text": "two"},
+                ],
+            )
+
+        assert [w["params"]["update"]["sessionUpdate"] for w in writes] == [
+            "agent_message_chunk",
+            "agent_thought_chunk",
+        ]
+        assert all(w["method"] == "session/update" for w in writes)
+        assert all(w["params"]["sessionId"] == "sess-1" for w in writes)
+
+
+class TestWireFrameIteration:
+    """Batched broadcast frames must not be dropped."""
+
+    def test_single_frame_passes_through(self):
+        frame = {"type": "event", "mode": "custom", "data": {}}
+        assert _iter_wire_frames(frame) == [frame]
+
+    def test_event_batch_is_expanded(self):
+        inner = [{"type": "event", "mode": "custom", "data": {}}, {"type": "event"}]
+        assert _iter_wire_frames({"type": "event_batch", "events": inner}) == inner
+
+    def test_malformed_batch_yields_nothing(self):
+        assert _iter_wire_frames({"type": "event_batch", "events": "nope"}) == []
 
 
 class TestACPChannelOutput:

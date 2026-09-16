@@ -773,6 +773,10 @@ class SootheDaemon(DaemonHandlersMixin):
                 session_manager=self._session_manager,
                 cron_service=self._cron_service,
                 memory_profiler=self._memory_profiler,
+                # Channels submit user turns through the loop-native path; without
+                # these a channel can only publish an event nobody consumes.
+                loop_input_dispatcher=self._loop_input_dispatcher,
+                persistence_manager=self._persistence_manager,
             )
             self._channel_manager.set_message_handler(self._handle_transport_message)
             self._channel_manager.set_handshake_callback(self._get_handshake_messages)
