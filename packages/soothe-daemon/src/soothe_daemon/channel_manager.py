@@ -141,6 +141,24 @@ class ChannelManager:
 
         return loop_id
 
+    def ensure_loop_id(self, channel: str, chat_id: str) -> str:
+        """Get existing or create new loop_id for (channel, chat_id) WITHOUT publishing.
+
+        This is the public counterpart of ``_get_or_create_loop_id``.  It allows
+        channels (e.g. ACP) to obtain the loop_id *before* calling
+        ``handle_inbound`` so they can subscribe to the EventBus topic first,
+        avoiding the publish-before-subscribe race where the first
+        ``ChannelMessageReceived`` event is dropped.
+
+        Args:
+            channel: Channel name.
+            chat_id: Conversation identifier.
+
+        Returns:
+            loop_id for this conversation.
+        """
+        return self._get_or_create_loop_id(channel, chat_id)
+
     def _get_or_create_loop_id(self, channel: str, chat_id: str) -> str:
         """Get existing loop_id or create new one for (channel, chat_id).
 
