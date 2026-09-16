@@ -1190,6 +1190,17 @@ class LoopState(BaseModel):
         self.last_wave_output_length = 0
         self.last_wave_error_count = 0
 
+        # Clear circuit-breaker counters so a cancelled goal's dispatch counts
+        # do not leak into the next goal. Although LoopState is freshly
+        # constructed per goal, clearing here is defense-in-depth: any code
+        # path that reuses the LoopState object across goals (e.g. interrupt
+        # resume) gets a clean slate.
+        self.step_dispatch_counts.clear()
+        self.step_consecutive_empty.clear()
+        self.step_failure_modes.clear()
+        self.step_guided_retry_done.clear()
+        self.step_guided_retry_messages.clear()
+
         # Clear prior progress digest
         self.prior_progress = None
 

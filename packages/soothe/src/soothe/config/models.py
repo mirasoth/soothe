@@ -476,15 +476,23 @@ class WorkspaceReservationConfig(BaseModel):
 class WorkspaceSyncConfig(BaseModel):
     """Durable object-store backend for agent workspace materialization.
 
-    When `source_uri` is set, the daemon constructs an
+    **Disabled by default.**  Both `enabled` must be `True` *and*
+    `source_uri` must be set for sync to activate.  This ensures local
+    workspace sync is opt-in and never silently active from defaults alone.
+
+    When enabled, the daemon constructs an
     :class:`~soothe.workspace.sync.FsspecSyncBackend` via
     :func:`~soothe.workspace.sync.construct_sync_backend` to materialize
     resources, checkpoint dirty files, and publish artifacts to the
     configured S3/GCS/Azure bucket.
 
     Args:
+        enabled: Master switch for workspace sync. Defaults to `False`
+            (disabled).  Set to `True` and provide a `source_uri` to enable
+            remote object-store sync.
         source_uri: Object-store URI (e.g. `s3://bucket/prefix`).
             Only `s3`, `gs`, and `az` schemes are permitted.
+            Has no effect when `enabled` is `False`.
         storage_options: Backend-specific options forwarded to fsspec
             (endpoint_url, credentials, etc.). Prefer environment variables
             or IAM roles over explicit credential dicts for production.
@@ -492,6 +500,13 @@ class WorkspaceSyncConfig(BaseModel):
             `<source_uri>/artifacts/` when unset.
     """
 
+    enabled: bool = Field(
+        default=False,
+        description=(
+            "Master switch for workspace sync. Disabled by default; "
+            "set True and provide source_uri to enable remote sync."
+        ),
+    )
     source_uri: str | None = Field(
         default=None,
         description="Object-store URI for workspace sync (s3://, gs://, az://).",
@@ -507,8 +522,8 @@ class WorkspaceSyncConfig(BaseModel):
 
     @property
     def is_enabled(self) -> bool:
-        """True when `source_uri` is set."""
-        return bool(self.source_uri)
+        """True only when ``enabled`` is True and ``source_uri`` is set."""
+        return self.enabled and bool(self.source_uri)
 
 
 class LoopWorkingMemoryConfig(BaseModel):

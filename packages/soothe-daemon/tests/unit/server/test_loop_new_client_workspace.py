@@ -623,7 +623,7 @@ async def test_loop_new_s3_uri_triggers_sync_path(
 async def test_loop_new_config_default_enables_sync(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Config ``workspace_sync.source_uri`` enables sync even without explicit field."""
+    """Config ``workspace_sync`` with enabled+source_uri activates sync."""
     monkeypatch.setattr("soothe.config.SOOTHE_HOME", str(tmp_path / "soothe-home"))
 
     sync_root = tmp_path / "sync-ws"
@@ -634,6 +634,7 @@ async def test_loop_new_config_default_enables_sync(
     from soothe.config import SootheConfig
 
     config = SootheConfig()
+    config.workspace_sync.enabled = True
     config.workspace_sync.source_uri = "s3://soothe/"
     assert config.workspace_sync.is_enabled
 
@@ -678,6 +679,7 @@ async def test_loop_new_sync_source_field_overrides_config(
     from soothe.config import SootheConfig
 
     config = SootheConfig()
+    config.workspace_sync.enabled = True
     config.workspace_sync.source_uri = "s3://config-default/"
 
     class _FakeManager:

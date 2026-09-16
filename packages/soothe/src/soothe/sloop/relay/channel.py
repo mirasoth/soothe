@@ -157,16 +157,27 @@ def project_inbox(inbox: RelayInbox) -> list[dict[str, Any]]:
                 "request": request_to_state(entry.request),
                 "resume_ticket": ticket_to_state(entry.resume_ticket),
                 "step_id": entry.step_id,
+                "goal_id": entry.goal_id,
             }
         )
     return entries
 
 
-def hydrate_inbox(relay_state: Mapping[str, Any] | None) -> RelayInbox:
+def hydrate_inbox(
+    relay_state: Mapping[str, Any] | None,
+    *,
+    current_goal_id: str | None = None,
+) -> RelayInbox:
     """Rebuild a `RelayInbox` from the `relay_state` channel.
 
     Returns an empty inbox when the channel is absent or malformed (defensive
     against a partial checkpoint).
+
+    When ``current_goal_id`` is provided, entries belonging to a *different*
+    goal are silently dropped. This prevents stale clarification interrupts
+    from a cancelled prior goal from leaking into the newly submitted goal.
+    Entries without a ``goal_id`` (legacy / pre-fix) are kept for backward
+    compatibility.
     """
     from soothe.sloop.relay.inbox import RelayInbox
 
@@ -190,10 +201,26 @@ def hydrate_inbox(relay_state: Mapping[str, Any] | None) -> RelayInbox:
         ticket = ticket_from_state(raw.get("resume_ticket"))
         if ticket is None:
             continue
+        entry_goal_id = raw.get("goal_id")
+        # Filter stale entries from a different (cancelled) goal.
+        if (
+            current_goal_id is not None
+            and entry_goal_id is not None
+            and entry_goal_id != current_goal_id
+        ):
+            logger.info(
+                "[channel] dropping stale inbox entry on hydrate: "
+                "entry_goal=%s current_goal=%s interrupt_id=%s",
+                str(entry_goal_id)[:16],
+                current_goal_id[:16],
+                str(getattr(request, "origin_interrupt_id", ""))[:16],
+            )
+            continue
         inbox.enqueue(
             request,
             resume_ticket=ticket,
             step_id=raw.get("step_id"),
+            goal_id=entry_goal_id if entry_goal_id is not None else None,
         )
     return inbox
 

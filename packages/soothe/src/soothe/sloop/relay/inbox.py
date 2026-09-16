@@ -27,6 +27,9 @@ class RelayInboxEntry:
     request: ClarificationRequest
     resume_ticket: ResumeTicket
     step_id: str | None = None
+    goal_id: str | None = None
+    """Goal that captured this entry. Used to filter stale entries from a
+    cancelled prior goal when a new goal hydrates the inbox."""
 
 
 @dataclass
@@ -41,15 +44,22 @@ class RelayInbox:
         *,
         resume_ticket: ResumeTicket,
         step_id: str | None = None,
+        goal_id: str | None = None,
     ) -> None:
         """Add a clarification request to the back of the queue."""
         self._entries.append(
-            RelayInboxEntry(request=request, resume_ticket=resume_ticket, step_id=step_id)
+            RelayInboxEntry(
+                request=request,
+                resume_ticket=resume_ticket,
+                step_id=step_id,
+                goal_id=goal_id,
+            )
         )
         logger.info(
-            "[RelayInbox] enqueued interrupt_id=%s step_id=%s queue_len=%d",
+            "[RelayInbox] enqueued interrupt_id=%s step_id=%s goal_id=%s queue_len=%d",
             request.origin_interrupt_id[:16],
             step_id,
+            (goal_id or "")[:16],
             len(self._entries),
         )
 
@@ -68,6 +78,38 @@ class RelayInbox:
             len(self._entries),
         )
         return entry
+
+    def clear(self) -> None:
+        """Drop all entries. Called on goal cancellation so stale interrupts
+        from the cancelled goal do not leak into a newly submitted goal."""
+        dropped = len(self._entries)
+        self._entries.clear()
+        if dropped:
+            logger.info(
+                "[RelayInbox] cleared %d stale entries on goal boundary",
+                dropped,
+            )
+
+    def drop_for_goal(self, goal_id: str | None) -> int:
+        """Remove entries whose `goal_id` matches (or all when `goal_id` is None).
+
+        Returns the number of entries dropped. Used during hydration to filter
+        stale interrupts from a cancelled prior goal before the new goal sees them.
+        """
+        if goal_id is None:
+            n = len(self._entries)
+            self.clear()
+            return n
+        before = len(self._entries)
+        self._entries = [e for e in self._entries if e.goal_id != goal_id]
+        dropped = before - len(self._entries)
+        if dropped:
+            logger.info(
+                "[RelayInbox] dropped %d stale entries for goal_id=%s",
+                dropped,
+                goal_id[:16],
+            )
+        return dropped
 
     @property
     def head(self) -> ClarificationRequest | None:
