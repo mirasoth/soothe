@@ -688,6 +688,33 @@ class ACPChannel(Channel):
             },
         }
 
+    async def _subscribe_loop_events(self, loop_id: str) -> None:
+        """Subscribe to the loop's EventBus topic and start consumer task.
+
+        This must be called **before** ``handle_inbound`` to avoid the
+        publish-before-subscribe race where the first ``ChannelMessageReceived``
+        event is dropped (see daemon log ``No subscribers for topic …``).
+
+        Args:
+            loop_id: Daemon loop identifier to subscribe to.
+        """
+        state = self._get_state(_current_connection.get())
+        # Skip if already subscribed (e.g. session/load on existing session)
+        if loop_id in state.event_queues:
+            return
+
+        event_bus = getattr(self._manager, "_event_bus", None)
+        if event_bus is None:
+            return
+
+        queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=1000)
+        state.event_queues[loop_id] = queue
+        topic = loop_event_topic(loop_id)
+        await event_bus.subscribe(topic, queue)
+
+        consumer = asyncio.create_task(self._consume_loop_events(loop_id, queue))
+        state.consumer_tasks[loop_id] = consumer
+
     async def _handle_session_new(self, params: dict[str, Any]) -> dict[str, Any]:
         """Handle `session/new` — create a daemon loop and subscribe to events.
 
@@ -700,30 +727,26 @@ class ACPChannel(Channel):
         session_id = str(uuid.uuid4())
         cwd = params.get("cwd", "/tmp")
 
-        # Create a daemon loop via ChannelManager.handle_inbound
-        loop_id = await self._manager.handle_inbound(
+        # Pre-create the loop_id so we can subscribe BEFORE publishing.
+        # This avoids the publish-before-subscribe race where the first
+        # ChannelMessageReceived event is dropped by the EventBus.
+        loop_id = self._manager.ensure_loop_id("acp", session_id)
+
+        state = self._get_state(_current_connection.get())
+        state.session_map[session_id] = loop_id
+        state.session_states[session_id] = _SessionState(cwd=cwd)
+
+        # Subscribe to the loop's EventBus topic BEFORE handle_inbound publishes.
+        await self._subscribe_loop_events(loop_id)
+
+        # Now publish the ChannelMessageReceived event (subscribers are ready).
+        await self._manager.handle_inbound(
             channel="acp",
             chat_id=session_id,
             sender_id="acp-client",
             content="",
             metadata={"cwd": cwd},
         )
-
-        state = self._get_state(_current_connection.get())
-        state.session_map[session_id] = loop_id
-        state.session_states[session_id] = _SessionState(cwd=cwd)
-
-        # Subscribe to the loop's EventBus topic
-        event_bus = getattr(self._manager, "_event_bus", None)
-        if event_bus is not None:
-            queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=1000)
-            state.event_queues[loop_id] = queue
-            topic = loop_event_topic(loop_id)
-            await event_bus.subscribe(topic, queue)
-
-            # Start consumer task to drain events and translate to ACP
-            consumer = asyncio.create_task(self._consume_loop_events(loop_id, queue))
-            state.consumer_tasks[loop_id] = consumer
 
         logger.info("[ACP] session/new: session=%s → loop=%s, cwd=%s", session_id, loop_id, cwd)
 
@@ -845,30 +868,26 @@ class ACPChannel(Channel):
         # If the session already exists in this connection, re-subscribe.
         loop_id = state.session_map.get(session_id)
         if loop_id is None:
-            # Session not in current connection — create a new loop for it.
-            loop_id = await self._manager.handle_inbound(
-                channel="acp",
-                chat_id=session_id,
-                sender_id="acp-client",
-                content="",
-                metadata={"resume": True, "cwd": cwd},
-            )
+            # Session not in current connection — pre-create loop_id,
+            # subscribe, THEN publish via handle_inbound (race-safe).
+            loop_id = self._manager.ensure_loop_id("acp", session_id)
             state.session_map[session_id] = loop_id
 
             # Track session state
             if session_id not in state.session_states:
                 state.session_states[session_id] = _SessionState(cwd=cwd)
 
-            # Subscribe to the loop's EventBus topic
-            event_bus = getattr(self._manager, "_event_bus", None)
-            if event_bus is not None:
-                queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=1000)
-                state.event_queues[loop_id] = queue
-                topic = loop_event_topic(loop_id)
-                await event_bus.subscribe(topic, queue)
+            # Subscribe to the loop's EventBus topic BEFORE handle_inbound publishes.
+            await self._subscribe_loop_events(loop_id)
 
-                consumer = asyncio.create_task(self._consume_loop_events(loop_id, queue))
-                state.consumer_tasks[loop_id] = consumer
+            # Now publish the ChannelMessageReceived event (subscribers are ready).
+            await self._manager.handle_inbound(
+                channel="acp",
+                chat_id=session_id,
+                sender_id="acp-client",
+                content="",
+                metadata={"resume": True, "cwd": cwd},
+            )
 
         logger.info("[ACP] session/load: session=%s → loop=%s", session_id, loop_id)
         return {
@@ -977,27 +996,22 @@ class ACPChannel(Channel):
         if parent_ss is not None and cwd == "/tmp":
             cwd = parent_ss.cwd
 
-        loop_id = await self._manager.handle_inbound(
+        # Pre-create loop_id, subscribe, THEN publish (race-safe).
+        loop_id = self._manager.ensure_loop_id("acp", new_session_id)
+        state.session_map[new_session_id] = loop_id
+        state.session_states[new_session_id] = _SessionState(cwd=cwd)
+
+        # Subscribe to the loop's EventBus topic BEFORE handle_inbound publishes.
+        await self._subscribe_loop_events(loop_id)
+
+        # Now publish the ChannelMessageReceived event (subscribers are ready).
+        await self._manager.handle_inbound(
             channel="acp",
             chat_id=new_session_id,
             sender_id="acp-client",
             content="",
             metadata={"fork_from": parent_session_id, "cwd": cwd},
         )
-
-        state.session_map[new_session_id] = loop_id
-        state.session_states[new_session_id] = _SessionState(cwd=cwd)
-
-        # Subscribe to the loop's EventBus topic
-        event_bus = getattr(self._manager, "_event_bus", None)
-        if event_bus is not None:
-            queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=1000)
-            state.event_queues[loop_id] = queue
-            topic = loop_event_topic(loop_id)
-            await event_bus.subscribe(topic, queue)
-
-            consumer = asyncio.create_task(self._consume_loop_events(loop_id, queue))
-            state.consumer_tasks[loop_id] = consumer
 
         logger.info(
             "[ACP] session/fork: parent=%s → new=%s, loop=%s",
@@ -1038,29 +1052,25 @@ class ACPChannel(Channel):
         if session_id not in state.session_map:
             raise ValueError(f"Unknown session: {session_id}")
 
-        loop_id = await self._manager.handle_inbound(
-            channel="acp",
-            chat_id=session_id,
-            sender_id="acp-client",
-            content="",
-            metadata={"resume": True, "cwd": cwd},
-        )
+        # Pre-create loop_id, subscribe, THEN publish (race-safe).
+        loop_id = self._manager.ensure_loop_id("acp", session_id)
         state.session_map[session_id] = loop_id
 
         # Preserve or create session state
         if session_id not in state.session_states:
             state.session_states[session_id] = _SessionState(cwd=cwd)
 
-        # Subscribe to the loop's EventBus topic
-        event_bus = getattr(self._manager, "_event_bus", None)
-        if event_bus is not None:
-            queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=1000)
-            state.event_queues[loop_id] = queue
-            topic = loop_event_topic(loop_id)
-            await event_bus.subscribe(topic, queue)
+        # Subscribe to the loop's EventBus topic BEFORE handle_inbound publishes.
+        await self._subscribe_loop_events(loop_id)
 
-            consumer = asyncio.create_task(self._consume_loop_events(loop_id, queue))
-            state.consumer_tasks[loop_id] = consumer
+        # Now publish the ChannelMessageReceived event (subscribers are ready).
+        await self._manager.handle_inbound(
+            channel="acp",
+            chat_id=session_id,
+            sender_id="acp-client",
+            content="",
+            metadata={"resume": True, "cwd": cwd},
+        )
 
         logger.info("[ACP] session/resume: session=%s → loop=%s", session_id, loop_id)
         return {

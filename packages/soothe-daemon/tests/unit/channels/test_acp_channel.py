@@ -101,6 +101,7 @@ class TestACPChannelSession:
         """Test session/new creates a loop and populates the session map."""
         config = ACPConfig(enabled=True)
         manager = MagicMock()
+        manager.ensure_loop_id = MagicMock(return_value="acp:test-session-id")
         manager.handle_inbound = AsyncMock(return_value="acp:test-session-id")
         manager._event_bus = MagicMock()
         manager._event_bus.subscribe = AsyncMock()
@@ -123,6 +124,7 @@ class TestACPChannelSession:
         """Test session/prompt enqueues a user turn via handle_inbound."""
         config = ACPConfig(enabled=True)
         manager = MagicMock()
+        manager.ensure_loop_id = MagicMock(return_value="acp:test-session")
         manager.handle_inbound = AsyncMock(return_value="acp:test-session")
         manager._event_bus = MagicMock()
         manager._event_bus.subscribe = AsyncMock()
@@ -151,6 +153,7 @@ class TestACPChannelSession:
         """Test session/cancel publishes a cancel event on the loop topic."""
         config = ACPConfig(enabled=True)
         manager = MagicMock()
+        manager.ensure_loop_id = MagicMock(return_value="acp:cancel-test")
         manager.handle_inbound = AsyncMock(return_value="acp:cancel-test")
         manager._event_bus = MagicMock()
         manager._event_bus.subscribe = AsyncMock()
