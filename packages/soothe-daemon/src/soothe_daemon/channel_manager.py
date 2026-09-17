@@ -213,6 +213,8 @@ class ChannelManager:
         channel: str,
         chat_id: str,
         interaction_mode: str | None = None,
+        clarification_answers: list[str] | None = None,
+        approved_plan_path: str | None = None,
     ) -> None:
         """Submit a user turn for ``loop_id`` through the loop-native path.
 
@@ -228,12 +230,23 @@ class ChannelManager:
         runner resolves the mode from config exactly as it did before channels
         could choose one.
 
+        ``clarification_answers`` submits an answer to a suspended
+        clarification rather than a new goal. The flag matters as much as the
+        answers: a bare action string without ``clarification_answer`` is
+        classified as a fresh task, which is why the caller also sends a
+        prefixed human-readable ``text``.
+
         Args:
             loop_id: Daemon loop the turn belongs to.
-            text: The user's prompt text.
+            text: The user's prompt text (or a clarification summary).
             channel: Channel the turn arrived on (e.g. ``"acp"``).
             chat_id: Platform-side conversation id.
             interaction_mode: Optional Soothe mode override for this turn.
+            clarification_answers: Answers to a suspended clarification, in
+                question order. For action selectors this is
+                ``[action, comment]``.
+            approved_plan_path: Plan artifact to execute, when the clarification
+                was a plan review that was approved.
         """
         if self._loop_input_dispatcher is None:
             msg = "ChannelManager.submit_loop_input requires loop_input_dispatcher"
@@ -248,6 +261,11 @@ class ChannelManager:
         }
         if interaction_mode:
             payload["interaction_mode"] = interaction_mode
+        if clarification_answers:
+            payload["clarification_answer"] = True
+            payload["clarification_answers"] = [str(answer) for answer in clarification_answers]
+        if approved_plan_path:
+            payload["approved_plan_path"] = approved_plan_path
 
         await self._loop_input_dispatcher.enqueue(loop_id, payload)
         logger.debug(
