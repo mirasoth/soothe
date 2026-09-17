@@ -1243,6 +1243,13 @@ class ACPChannel(Channel):
                 metadata={"resume": True, "cwd": cwd},
             )
 
+        # Persist the client cwd as the loop workspace, exactly as session/new
+        # does. A loop that was never registered is otherwise created by the
+        # first prompt with the daemon workspace, silently dropping the
+        # directory the client asked for. An established registration is left
+        # alone (see ChannelManager.ensure_loop_registered).
+        await self._manager.ensure_loop_registered(loop_id, workspace=cwd)
+
         logger.info("[ACP] session/load: session=%s → loop=%s", session_id, loop_id)
         return {
             "modes": {
@@ -1367,6 +1374,11 @@ class ACPChannel(Channel):
             metadata={"fork_from": parent_session_id, "cwd": cwd},
         )
 
+        # The forked loop is brand new, so this is the only chance to attach the
+        # inherited cwd — without it the first prompt registers the loop with
+        # the daemon workspace instead.
+        await self._manager.ensure_loop_registered(loop_id, workspace=cwd)
+
         logger.info(
             "[ACP] session/fork: parent=%s → new=%s, loop=%s",
             parent_session_id,
@@ -1425,6 +1437,10 @@ class ACPChannel(Channel):
             content="",
             metadata={"resume": True, "cwd": cwd},
         )
+
+        # Same as session/load: attach the client cwd when the loop has no
+        # registration yet, leaving an established workspace untouched.
+        await self._manager.ensure_loop_registered(loop_id, workspace=cwd)
 
         logger.info("[ACP] session/resume: session=%s → loop=%s", session_id, loop_id)
         return {

@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Persist client `cwd` as the loop workspace in ACP `session/load`, `session/resume`, and `session/fork`: reopening or forking a session now calls `ensure_loop_registered` with the client-supplied directory instead of letting the first prompt silently register the loop against the daemon workspace.
+
 ## [v1.0.12] - 2026-09-15
 
 ### Fixed
