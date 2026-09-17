@@ -17,6 +17,7 @@ from soothe_daemon.channels.acp import (
     _acp_mode_state,
     _clarification_answers_from_response,
     _clarification_elicitation_params,
+    _clarification_turn_text,
     _client_supports_form_elicitation,
     _interaction_mode_for_turn,
     _iter_wire_frames,
@@ -2097,19 +2098,19 @@ _PLAN_REVIEW_QUESTION = [
 ]
 
 
-def _clarification_interrupt() -> dict:
-    """The `__interrupt__` payload Soothe suspends a plan review on."""
-    return {
-        "type": "clarification",
-        "interrupt_id": "plan-review-1",
-        "questions": _PLAN_REVIEW_QUESTION,
-    }
+async def _cancel_clarification_tasks(channel: ACPChannel) -> None:
+    """Cancel the answer-waiters a test spawned so nothing outlives the test."""
+    for task in list(channel._clarification_tasks):
+        task.cancel()
+    await asyncio.sleep(0)
 
 
 def _make_clarification_channel(*, form_elicitation: bool = False) -> tuple[ACPChannel, str, str]:
     """Channel with a registered session and a chosen elicitation capability."""
     manager = MagicMock()
     manager.handle_inbound = AsyncMock(return_value="acp:clar")
+    # The answer comes back as a turn, so this has to be awaitable.
+    manager.submit_loop_input = AsyncMock()
     manager._event_bus = MagicMock()
     manager._event_bus.subscribe = AsyncMock()
     manager._event_bus.publish = AsyncMock()
@@ -2123,13 +2124,97 @@ def _make_clarification_channel(*, form_elicitation: bool = False) -> tuple[ACPC
     return channel, session_id, loop_id
 
 
-class TestClarificationInterruptClassification:
-    """A clarification interrupt must be recognised, not silently dropped.
+class TestClarificationEventTrigger:
+    """Plan mode's question arrives as a custom event, not as an interrupt.
 
-    The bridge used to match only `action_requests` (tool approval), so Soothe's
-    `interrupt({"type": "clarification", ...})` — which plan-mode review always
-    raises — fell through, the loop went idle, and the client was told the turn
-    had ended. The plan appeared with no way to approve, reject or refine it.
+    `await_user` raises a LangGraph interrupt to *suspend* the graph, but the
+    runner translates the internal emit into `ClarificationRequestedEvent`
+    before it reaches a channel. Matching the raw interrupt instead — the first
+    attempt at this — left the event with no consumer, so it fell through the
+    block translator and was dropped: the plan appeared with no way to approve,
+    reject or refine it, and the turn reported `end_turn`.
+    """
+
+    def _channel(self) -> ACPChannel:
+        return ACPChannel(ACPConfig(enabled=True), MagicMock())
+
+    @staticmethod
+    def _frame(**payload: object) -> dict:
+        return {
+            "type": "event",
+            "mode": "custom",
+            "data": {
+                "type": "soothe.loop.clarification.requested",
+                "questions": _PLAN_REVIEW_QUESTION,
+                "origin_node": "plan_mode_review",
+                "plan_path": "/tmp/plan.md",
+                **payload,
+            },
+        }
+
+    @pytest.mark.asyncio
+    async def test_a_clarification_frame_is_claimed_and_asked(self):
+        channel, session_id, loop_id = _make_clarification_channel(form_elicitation=True)
+        written: list[dict] = []
+
+        async def _capture(msg):
+            written.append(msg)
+
+        try:
+            with patch.object(channel, "_write_jsonrpc", _capture):
+                handled = await channel._apply_clarification_event(
+                    session_id, loop_id, self._frame()
+                )
+
+            assert handled is True
+            assert len(written) == 1
+            assert written[0]["method"] == "elicitation/create"
+            assert written[0]["params"]["mode"] == "form"
+        finally:
+            await _cancel_clarification_tasks(channel)
+
+    @pytest.mark.asyncio
+    async def test_unrelated_frames_are_not_claimed(self):
+        channel, session_id, loop_id = _make_clarification_channel(form_elicitation=True)
+        frames = [
+            {"mode": "custom", "data": {"type": "soothe.cognition.plan.created"}},
+            {"mode": "messages", "data": ({}, {})},
+            {"mode": "custom", "data": {"type": "soothe.loop.clarification.requested"}},
+            {
+                "mode": "custom",
+                "data": {
+                    "type": "soothe.loop.clarification.requested",
+                    "questions": [],
+                },
+            },
+        ]
+
+        for frame in frames:
+            assert await channel._apply_clarification_event(session_id, loop_id, frame) is False
+
+    @pytest.mark.asyncio
+    async def test_a_tool_approval_clarification_is_left_to_the_permission_bridge(self):
+        """Answering it here too would ask the user the same approval twice."""
+        channel, session_id, loop_id = _make_clarification_channel(form_elicitation=True)
+        written: list[dict] = []
+
+        async def _capture(msg):
+            written.append(msg)
+
+        with patch.object(channel, "_write_jsonrpc", _capture):
+            handled = await channel._apply_clarification_event(
+                session_id, loop_id, self._frame(origin_node="tool_approval")
+            )
+
+        assert handled is True
+        assert written == []
+
+
+class TestInterruptClassification:
+    """Only tool approval is answered from an interrupt.
+
+    Clarifications take the custom-event path, so claiming the raw
+    `interrupt({"type": "clarification"})` as well would double-answer them.
     """
 
     def _channel(self) -> ACPChannel:
@@ -2139,16 +2224,7 @@ class TestClarificationInterruptClassification:
     def _interrupt_event(payload: dict) -> dict:
         return {"type": "event", "loop_id": "acp:x", "data": {"__interrupt__": payload}}
 
-    def test_clarification_interrupt_is_classified(self):
-        channel = self._channel()
-        event = self._interrupt_event(_clarification_interrupt())
-
-        payload = channel._interrupt_payload(event)
-
-        assert payload is not None
-        assert channel._interrupt_kind(payload) == "clarification"
-
-    def test_tool_approval_interrupt_is_still_classified(self):
+    def test_tool_approval_interrupt_is_classified(self):
         channel = self._channel()
         event = self._interrupt_event(
             {"interrupt_id": "int-2", "action_requests": [{"tool_name": "write_file"}]}
@@ -2157,25 +2233,30 @@ class TestClarificationInterruptClassification:
         assert channel._interrupt_kind(channel._interrupt_payload(event)) == "tool_approval"
         assert channel._is_tool_approval_event(event) is True
 
-    def test_a_clarification_is_not_a_tool_approval(self):
-        """Both matching would let the wrong bridge answer the interrupt."""
+    def test_a_clarification_interrupt_is_not_claimed(self):
+        """It is answered via the custom event, never from the raw interrupt."""
         channel = self._channel()
-        event = self._interrupt_event(_clarification_interrupt())
-
-        assert channel._is_tool_approval_event(event) is False
-
-    def test_unrelated_interrupt_is_claimed_by_neither(self):
-        channel = self._channel()
-        event = self._interrupt_event({"interrupt_id": "int-3", "something_else": 1})
+        event = self._interrupt_event(
+            {"type": "clarification", "interrupt_id": "int-1", "questions": ["q"]}
+        )
 
         assert channel._interrupt_kind(channel._interrupt_payload(event)) is None
         assert channel._is_tool_approval_event(event) is False
 
     def test_a_nested_envelope_is_unwrapped(self):
         channel = self._channel()
-        event = {"data": {"data": {"__interrupt__": _clarification_interrupt()}}}
+        nested = {
+            "data": {
+                "data": {
+                    "__interrupt__": {
+                        "interrupt_id": "int-3",
+                        "action_requests": [{"tool_name": "t"}],
+                    }
+                }
+            }
+        }
 
-        assert channel._interrupt_kind(channel._interrupt_payload(event)) == "clarification"
+        assert channel._is_tool_approval_event(nested) is True
 
     def test_an_event_without_an_interrupt_yields_nothing(self):
         channel = self._channel()
@@ -2279,85 +2360,140 @@ class TestClarificationCapabilityGate:
             written.append(msg)
 
         with patch.object(channel, "_write_jsonrpc", _capture):
-            await channel._bridge_clarification_request(
-                session_id, loop_id, _clarification_interrupt()
+            handled = await channel._apply_clarification_event(
+                session_id,
+                loop_id,
+                {
+                    "mode": "custom",
+                    "data": {
+                        "type": "soothe.loop.clarification.requested",
+                        "questions": _PLAN_REVIEW_QUESTION,
+                        "origin_node": "plan_mode_review",
+                    },
+                },
             )
 
+        # Claimed (so it does not reach the block translator) but never asked,
+        # and no answer-turn is queued: there is nobody to answer it.
+        assert handled is True
         assert written == [], "an unsupported client must not be asked"
-        channel._manager._event_bus.publish.assert_not_called()
+        channel._manager.submit_loop_input.assert_not_called()
 
 
-class TestClarificationBridgeRoundTrip:
-    """The answer must return as the interrupt's resume value."""
+class TestClarificationAnswerTurn:
+    """The answer returns as an ordinary turn, not an interrupt resume.
 
-    @pytest.mark.asyncio
-    async def test_approve_publishes_the_resume_payload(self):
-        channel, session_id, loop_id = _make_clarification_channel(form_elicitation=True)
+    Soothe reads `clarification_answers` from a normal turn — which is how its
+    own CLI answers — and the `clarification_answer` flag is what routes that
+    turn into the suspended graph instead of starting a new goal.
+    """
+
+    @staticmethod
+    def _frame(**payload: object) -> dict:
+        return {
+            "type": "event",
+            "mode": "custom",
+            "data": {
+                "type": "soothe.loop.clarification.requested",
+                "questions": _PLAN_REVIEW_QUESTION,
+                "origin_node": "plan_mode_review",
+                "plan_path": "/tmp/plan.md",
+                **payload,
+            },
+        }
+
+    async def _ask_then_answer(self, answer: dict | None) -> ACPChannel:
+        channel, _, _ = _make_clarification_channel(form_elicitation=True)
         written: list[dict] = []
 
         async def _capture(msg):
             written.append(msg)
 
+        # Answer the elicitation as soon as it is asked; the handler awaits it
+        # on a detached task so the running turn is not blocked.
         with patch.object(channel, "_write_jsonrpc", _capture):
-            task = asyncio.create_task(
-                channel._bridge_clarification_request(
-                    session_id, loop_id, _clarification_interrupt()
-                )
+            spawner = asyncio.create_task(
+                channel._apply_clarification_event("clar-session", "acp:clar", self._frame())
             )
-            await asyncio.sleep(0.05)
-
-            assert len(written) == 1
-            request = written[0]
-            assert request["method"] == "elicitation/create"
-            assert request["params"]["mode"] == "form"
-            assert request["params"]["sessionId"] == session_id
-
-            channel._get_state().pending_permissions[request["id"]].set_result(
-                {"action": "accept", "content": {"answer_0": "Approve"}}
-            )
-            await asyncio.wait_for(task, timeout=5.0)
-
-        resume = channel._manager._event_bus.publish.call_args.args[1]
-        assert resume["type"] == "command"
-        assert resume["command"] == "resume"
-        assert resume["loop_id"] == loop_id
-        # The clarification's answer is the interrupt's resume value — not the
-        # permission bridge's {"decisions": [...]} shape.
-        assert resume["resume_payload"] == {"plan-review-1": {"answers": ["Approve", ""]}}
+            for _ in range(50):
+                await asyncio.sleep(0.01)
+                if written:
+                    break
+            assert written, "the elicitation was never sent"
+            if answer is not None:
+                channel._get_state().pending_permissions[written[0]["id"]].set_result(answer)
+            await asyncio.wait_for(spawner, timeout=5.0)
+            for task in list(channel._clarification_tasks):
+                await asyncio.wait_for(task, timeout=5.0)
+        return channel
 
     @pytest.mark.asyncio
-    async def test_a_dismissal_publishes_nothing(self):
-        channel, session_id, loop_id = _make_clarification_channel(form_elicitation=True)
-        written: list[dict] = []
+    async def test_approve_submits_a_clarification_turn(self):
+        channel = await self._ask_then_answer(
+            {"action": "accept", "content": {"answer_0": "Approve"}}
+        )
 
-        async def _capture(msg):
-            written.append(msg)
-
-        with patch.object(channel, "_write_jsonrpc", _capture):
-            task = asyncio.create_task(
-                channel._bridge_clarification_request(
-                    session_id, loop_id, _clarification_interrupt()
-                )
-            )
-            await asyncio.sleep(0.05)
-            channel._get_state().pending_permissions[written[0]["id"]].set_result(
-                {"action": "decline"}
-            )
-            await asyncio.wait_for(task, timeout=5.0)
-
-        channel._manager._event_bus.publish.assert_not_called()
+        channel._manager.submit_loop_input.assert_awaited_once_with(
+            "acp:clar",
+            "Plan review: Approve",
+            channel="acp",
+            chat_id="clar-session",
+            clarification_answers=["Approve", ""],
+            # An approval must carry the artifact it was shown, or the runner has
+            # nothing to execute.
+            approved_plan_path="/tmp/plan.md",
+        )
 
     @pytest.mark.asyncio
-    async def test_an_interrupt_without_an_id_is_ignored(self):
-        channel, session_id, loop_id = _make_clarification_channel(form_elicitation=True)
-        written: list[dict] = []
+    async def test_refinement_carries_its_comment(self):
+        channel = await self._ask_then_answer(
+            {"action": "accept", "content": {"answer_0": "Refine", "comment": "use postgres"}}
+        )
 
-        async def _capture(msg):
-            written.append(msg)
+        call = channel._manager.submit_loop_input.await_args
+        assert call.args[1] == "Plan review: Refine — use postgres"
+        assert call.kwargs["clarification_answers"] == ["Refine", "use postgres"]
 
-        with patch.object(channel, "_write_jsonrpc", _capture):
-            await channel._bridge_clarification_request(
-                session_id, loop_id, {"type": "clarification", "questions": ["q"]}
-            )
+    @pytest.mark.asyncio
+    async def test_a_rejection_still_answers_without_a_plan_path(self):
+        channel = await self._ask_then_answer(
+            {"action": "accept", "content": {"answer_0": "Reject"}}
+        )
 
-        assert written == []
+        call = channel._manager.submit_loop_input.await_args
+        assert call.kwargs["clarification_answers"] == ["Reject", ""]
+        # Nothing to execute, so the runner must not be pointed at the artifact.
+        assert call.kwargs["approved_plan_path"] is None
+
+    @pytest.mark.asyncio
+    async def test_a_dismissal_submits_nothing(self):
+        channel = await self._ask_then_answer({"action": "decline"})
+
+        channel._manager.submit_loop_input.assert_not_called()
+
+
+class TestClarificationTurnText:
+    """The turn text leads with a stable `<origin>: <action>` header.
+
+    A bare action string would be classified as a fresh task if the
+    `clarification_answer` flag were ever dropped in transit.
+    """
+
+    def test_selector_actions_are_prefixed(self):
+        assert _clarification_turn_text(["Approve", ""], "plan_mode_review") == (
+            "Plan review: Approve"
+        )
+
+    def test_refinement_is_appended_to_the_header(self):
+        assert _clarification_turn_text(["Refine", "use postgres"], "plan_mode_review") == (
+            "Plan review: Refine — use postgres"
+        )
+
+    def test_a_single_free_form_answer_passes_through(self):
+        assert _clarification_turn_text(["postgres"], "execute") == "postgres"
+
+    def test_multiple_answers_are_numbered(self):
+        assert _clarification_turn_text(["a", "b"], "execute") == "A1: a | A2: b"
+
+    def test_no_answers_yields_no_text(self):
+        assert _clarification_turn_text([], "plan_mode_review") == ""

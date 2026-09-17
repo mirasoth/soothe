@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Persist client `cwd` as the loop workspace in ACP `session/load`, `session/resume`, and `session/fork`: reopening or forking a session now calls `ensure_loop_registered` with the client-supplied directory instead of letting the first prompt silently register the loop against the daemon workspace.
 
+### Changed
+- Trim the DashScope multi-instance provider pool in `config/develop/nano.yml` and `config/production/nano.yml` from 16 endpoints to the 7 with valid credentials (`ds2`, `ds4`, `ds5`, `ds6`, `ds7`, `ds9`, `ds10`) and update the `glm-mm` router profile and `example.env` to match; blocked or invalid keys previously stalled failover ~3s per dead endpoint before reaching a working one.
+
 ## [v1.0.12] - 2026-09-15
 
 ### Fixed

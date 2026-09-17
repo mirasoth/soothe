@@ -626,6 +626,53 @@ class TestLoopNativeSubmission:
         assert "interaction_mode" not in payload
 
     @pytest.mark.asyncio
+    async def test_submit_marks_a_clarification_answer_as_such(self):
+        """The flag is what routes the turn into the suspended graph.
+
+        Without it a bare action string is classified as a fresh goal — which is
+        why the caller also sends a prefixed human-readable text.
+        """
+        dispatcher = MagicMock()
+        dispatcher.enqueue = AsyncMock()
+        persistence = self.persistence(metadata={"loop_id": "acp:1"})
+
+        manager = self.build(dispatcher, persistence)
+        await manager.submit_loop_input(
+            "acp:1",
+            "Plan review: Approve",
+            channel="acp",
+            chat_id="sess-1",
+            clarification_answers=["Approve", ""],
+            approved_plan_path="/tmp/plan.md",
+        )
+
+        dispatcher.enqueue.assert_awaited_once_with(
+            "acp:1",
+            {
+                "type": "input",
+                "text": "Plan review: Approve",
+                "client_id": None,
+                "clarification_answer": True,
+                "clarification_answers": ["Approve", ""],
+                "approved_plan_path": "/tmp/plan.md",
+            },
+        )
+
+    @pytest.mark.asyncio
+    async def test_submit_omits_the_clarification_fields_for_a_normal_turn(self):
+        dispatcher = MagicMock()
+        dispatcher.enqueue = AsyncMock()
+        persistence = self.persistence(metadata={"loop_id": "acp:1"})
+
+        manager = self.build(dispatcher, persistence)
+        await manager.submit_loop_input("acp:1", "Hello", channel="acp", chat_id="sess-1")
+
+        payload = dispatcher.enqueue.await_args.args[1]
+        assert "clarification_answer" not in payload
+        assert "clarification_answers" not in payload
+        assert "approved_plan_path" not in payload
+
+    @pytest.mark.asyncio
     async def test_submit_registers_a_missing_loop_first(self):
         """An unregistered loop makes the turn fail silently, so register it."""
         order: list[str] = []

@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI, WebSocket
 from soothe_sdk.core.events import (
+    LOOP_CLARIFICATION_REQUESTED,
     PLAN_CREATED,
     STRANGE_LOOP_COMPLETED,
     STRANGE_LOOP_PLAN_DECISION,
@@ -908,6 +909,44 @@ def _interaction_mode_for_turn(current_mode: Any) -> str | None:
 # `answers[1]` — so the form needs somewhere to put it.
 _CLARIFICATION_COMMENT_KEY = "comment"
 
+# The origin whose answers must be paired with the plan artifact to execute.
+_ORIGIN_PLAN_MODE_REVIEW = "plan_mode_review"
+
+# Action-selector labels. A clarification turn whose first answer is one of
+# these is routed by its `<origin>: <action>` prefix rather than as free text.
+_CLARIFICATION_ACTION_LABELS = frozenset({"Approve", "Reject", "Refine"})
+
+# The one action that means "run the plan I was just shown".
+_CLARIFICATION_APPROVE = "Approve"
+
+
+def _clarification_turn_text(answers: list[str], origin_node: str) -> str:
+    """Human-readable turn text for a clarification answer.
+
+    The authoritative payload is `clarification_answers`; this text mirrors the
+    CLI's `clarification_wire_content` (which lives outside the daemon's import
+    envelope). It still leads with a stable `<origin>: <action>` header on
+    purpose — a bare action would be classified as a fresh task if the
+    `clarification_answer` flag were ever dropped in transit.
+    """
+    non_empty = [answer for answer in answers if str(answer).strip()]
+    if not non_empty:
+        return ""
+    first = str(answers[0]).strip() if answers else ""
+    if first in _CLARIFICATION_ACTION_LABELS:
+        prefix = (
+            "Plan review"
+            if origin_node == _ORIGIN_PLAN_MODE_REVIEW
+            else (origin_node or "Clarification")
+        )
+        refinement = str(answers[1]).strip() if len(answers) > 1 else ""
+        return f"{prefix}: {first} — {refinement}" if refinement else f"{prefix}: {first}"
+    if len(non_empty) == 1:
+        return non_empty[0]
+    return " | ".join(
+        f"A{index + 1}: {answer}" for index, answer in enumerate(answers) if str(answer).strip()
+    )
+
 
 def _client_supports_form_elicitation(client_capabilities: Any) -> bool:
     """True when the client advertised that it can render a form elicitation.
@@ -1238,6 +1277,11 @@ class ACPChannel(Channel):
 
         # Monotonic request ID counter for outbound JSON-RPC requests.
         self._next_request_id = 1
+
+        # Answers to clarification elicitations are awaited off the consumer
+        # loop (the turn that raised the question is still running on it), so the
+        # tasks are held here to keep them referenced until they finish.
+        self._clarification_tasks: set[asyncio.Task[Any]] = set()
 
         # Whether the WS route has been registered on the unified app.
         self._ws_route_registered = False
@@ -2739,19 +2783,14 @@ class ACPChannel(Channel):
             if not session_id:
                 continue
 
-            # Interrupts suspend the graph and need a client round-trip: tool
-            # approvals become `session/request_permission`, clarifications
-            # (Soothe's plan-mode review among them) become an elicitation. An
-            # unrecognised interrupt has no bridge and is dropped as before.
+            # Interrupts suspend the graph and need a client round-trip. Only
+            # tool approvals are answered from here; clarifications arrive as a
+            # custom event instead (see `_apply_clarification_event`), so
+            # answering the raw interrupt too would double-answer.
             interrupt = self._interrupt_payload(event)
-            if interrupt is not None:
-                kind = self._interrupt_kind(interrupt)
-                if kind == "tool_approval":
-                    await self._bridge_permission_request(session_id, loop_id, event)
-                    continue
-                if kind == "clarification":
-                    await self._bridge_clarification_request(session_id, loop_id, interrupt)
-                    continue
+            if interrupt is not None and self._interrupt_kind(interrupt) == "tool_approval":
+                await self._bridge_permission_request(session_id, loop_id, event)
+                continue
 
             # A coalescer step that yields several frames arrives wrapped;
             # translate each member so batched text is not dropped.
@@ -2767,6 +2806,12 @@ class ACPChannel(Channel):
                 # blocks, so they bypass the block fan-out below.
                 for tool_update in self._apply_tool_event(conn_key, loop_id, frame):
                     await self._send_update(session_id, tool_update)
+                # A clarification is a whole `session/update`-less interaction of
+                # its own (an elicitation round-trip), so it is handled before
+                # the block translator, which has no case for it and would drop
+                # it — which is exactly how plan-mode review used to end silently.
+                if await self._apply_clarification_event(session_id, loop_id, frame):
+                    continue
                 # Plan frames are whole `session/update` bodies, not content
                 # blocks, so they bypass the block fan-out below.
                 plan_update = self._apply_plan_event(conn_key, loop_id, frame)
@@ -2814,22 +2859,18 @@ class ACPChannel(Channel):
     def _interrupt_kind(payload: dict[str, Any]) -> str | None:
         """Classify an interrupt payload into the bridge that answers it.
 
-        Two shapes reach this channel:
+        Only **tool approval** is answered from an interrupt: deepagents' HITL
+        middleware emits `action_requests`, and a permission response resumes it.
 
-        * **tool approval** — deepagents' HITL middleware, carrying
-          `action_requests`; answered with `session/request_permission`.
-        * **clarification** — Soothe's own
-          `interrupt({"type": "clarification", "interrupt_id", "questions"})`,
-          used by plan-mode review and other operator questions; answered with an
-          ACP elicitation.
-
-        Anything else is not ours to bridge. Recognising only the first shape is
-        why plan mode used to end with an unanswered question.
+        Soothe's own clarifications (plan-mode review among them) do **not**
+        arrive here. `await_user` raises a LangGraph `interrupt()` to suspend the
+        graph, but what reaches a channel is the runner's translated
+        `soothe.loop.clarification.requested` custom event — see
+        `_apply_clarification_event`. Treating the raw interrupt as well would
+        answer the same question twice.
         """
         if "action_requests" in payload:
             return "tool_approval"
-        if payload.get("type") == "clarification":
-            return "clarification"
         return None
 
     def _is_tool_approval_event(self, event: dict[str, Any]) -> bool:
@@ -3012,49 +3053,65 @@ class ACPChannel(Channel):
             topic = loop_event_topic(loop_id)
             await event_bus.publish(topic, resume_msg)
 
-    async def _bridge_clarification_request(
+    async def _apply_clarification_event(
         self,
         session_id: str,
         loop_id: str,
-        interrupt: dict[str, Any],
-    ) -> None:
-        """Bridge a clarification interrupt to an ACP elicitation.
+        frame: dict[str, Any],
+    ) -> bool:
+        """Ask the client a clarification question via an ACP elicitation.
 
-        Soothe suspends the loop with
-        `interrupt({"type": "clarification", "interrupt_id", "questions"})`
-        whenever it needs an operator decision. Plan-mode review is the one that
-        fires on every Plan turn: it writes the plan artifact, asks
-        Approve/Reject/Refine, and only proceeds once that is answered.
+        Soothe suspends the loop whenever it needs an operator decision —
+        plan-mode review is the one that fires on every Plan turn: it writes the
+        plan artifact, asks Approve/Reject/Refine, and only proceeds once
+        answered.
 
-        This is a different round-trip from tool approval. A permission response
-        carries a decision payload; a clarification's answer *is* the interrupt's
-        resume value — an ordered list of strings, `[action, comment]` for
-        action-selector origins. So the answer is published back as
-        `{interrupt_id: {"answers": [...]}}`, which is the shape
-        `InteractiveClarificationPolicy._normalize_payload` accepts.
+        The question reaches a channel as the runner's *translated* event
+        (`soothe.loop.clarification.requested`), **not** as the raw LangGraph
+        interrupt that `await_user` raises to suspend the graph. Picking it up
+        here is the whole point: the event has no other consumer, so before this
+        it fell through the block translator and was dropped, the turn reported
+        `end_turn`, and the client was shown a plan it could not act on.
 
-        Args:
-            session_id: ACP session identifier.
-            loop_id: Daemon loop identifier.
-            interrupt: The `__interrupt__` payload from the wire event.
+        Returns True when the frame was a clarification (handled or deliberately
+        left unanswered) so the caller does not also feed it to the translator.
         """
+        if str(frame.get("mode") or "") != "custom":
+            return False
+        data = frame.get("data")
+        if not isinstance(data, dict):
+            return False
+        if str(data.get("type") or "") != LOOP_CLARIFICATION_REQUESTED:
+            return False
+
+        origin_node = str(data.get("origin_node") or "")
+        if origin_node == "tool_approval":
+            # Tool approval is answered by the interrupt/permission bridge
+            # (`session/request_permission`), which is a different round-trip.
+            # Claiming it here as well would ask the user the same question twice.
+            logger.debug(
+                "[ACP] Ignoring tool_approval clarification event; the permission "
+                "bridge owns that round-trip",
+            )
+            return True
+
+        questions = data.get("questions")
+        if not isinstance(questions, list) or not questions:
+            return False
+
         state = self._get_state(_current_connection.get())
         if not state.client_supports_form_elicitation:
             # ACP says to treat an omitted capability as unsupported, so an
-            # elicitation would be dropped on the floor. Leaving the interrupt
-            # unbridged keeps the previous behaviour (the question is lost)
-            # rather than suspending the turn on a reply that cannot arrive.
+            # elicitation would be dropped on the floor. Leave the question
+            # unasked (the previous behaviour) rather than park the turn on a
+            # reply that cannot arrive.
             logger.warning(
-                "[ACP] Clarification interrupt for session=%s, but the client did not "
+                "[ACP] Clarification for session=%s (origin=%s) but the client did not "
                 "advertise form elicitation; leaving it unanswered",
                 session_id,
+                origin_node,
             )
-            return
-
-        interrupt_id = str(interrupt.get("interrupt_id") or "").strip()
-        questions = interrupt.get("questions")
-        if not interrupt_id or not isinstance(questions, list) or not questions:
-            return
+            return True
 
         request_id = self._next_request_id
         self._next_request_id += 1
@@ -3065,9 +3122,9 @@ class ACPChannel(Channel):
         state.pending_permissions[request_id] = fut
 
         logger.info(
-            "[ACP] Clarification request: session=%s, interrupt=%s, questions=%d",
+            "[ACP] Clarification request: session=%s, origin=%s, questions=%d",
             session_id,
-            interrupt_id,
+            origin_node,
             len(questions),
         )
         await self._write_jsonrpc(
@@ -3079,14 +3136,44 @@ class ACPChannel(Channel):
             }
         )
 
+        # Deliberately not awaited inline: the turn that raised the question is
+        # still running on this consumer, and blocking here would withhold its
+        # `end_turn` until the user had answered their own question.
+        task = asyncio.ensure_future(
+            self._submit_clarification_answer(
+                fut=fut,
+                session_id=session_id,
+                loop_id=loop_id,
+                questions=questions,
+                origin_node=origin_node,
+                plan_path=str(data.get("plan_path") or ""),
+            )
+        )
+        self._clarification_tasks.add(task)
+        task.add_done_callback(self._clarification_tasks.discard)
+        return True
+
+    async def _submit_clarification_answer(
+        self,
+        *,
+        fut: asyncio.Future[dict[str, Any]],
+        session_id: str,
+        loop_id: str,
+        questions: list[Any],
+        origin_node: str,
+        plan_path: str,
+    ) -> None:
+        """Await the client's answer and submit it as a clarification turn.
+
+        The answer is **not** an interrupt resume. Soothe reads it from an
+        ordinary turn carrying `clarification_answers` — the same way its own CLI
+        answers — and the `clarification_answer` flag is what routes that turn
+        into the suspended graph instead of starting a new goal.
+        """
         try:
             response = await asyncio.wait_for(fut, timeout=_PERMISSION_TIMEOUT_S)
         except TimeoutError:
-            logger.warning(
-                "[ACP] Clarification timed out for session=%s, interrupt=%s",
-                session_id,
-                interrupt_id,
-            )
+            logger.warning("[ACP] Clarification timed out for session=%s", session_id)
             return
         except asyncio.CancelledError:
             logger.info("[ACP] Clarification cancelled for session=%s", session_id)
@@ -3097,39 +3184,41 @@ class ACPChannel(Channel):
             # Dismissed: Soothe raises `ClarificationDeferredError` for "no
             # answer", which is the honest outcome. Never invent one — for plan
             # review an invented "Approve" would authorise editing the workspace.
+            #
+            # The raw reply is logged because a dismissal has several causes that
+            # look identical from here: a deliberate decline, a JSON-RPC error
+            # (which `_handle_response` turns into `{"outcome": "cancelled"}`),
+            # or a permission-shaped answer from a client that routed the
+            # question through its permission UI instead of its form UI.
             logger.info(
-                "[ACP] Clarification dismissed for session=%s, interrupt=%s",
+                "[ACP] Clarification dismissed for session=%s (raw reply: %s)",
                 session_id,
-                interrupt_id,
+                json.dumps(response, default=str)[:300],
             )
             return
 
-        await self._route_clarification_response(loop_id, interrupt_id, answers)
-
-    async def _route_clarification_response(
-        self,
-        loop_id: str,
-        interrupt_id: str,
-        answers: list[str],
-    ) -> None:
-        """Publish a clarification answer so the suspended graph resumes."""
         logger.info(
-            "[ACP] Clarification answered for loop=%s, interrupt=%s",
-            loop_id,
-            interrupt_id,
+            "[ACP] Clarification answered: session=%s, origin=%s, action=%s",
+            session_id,
+            origin_node,
+            answers[0] if answers else "",
         )
-        event_bus = getattr(self._manager, "_event_bus", None)
-        if event_bus is None:
-            return
-        topic = loop_event_topic(loop_id)
-        await event_bus.publish(
-            topic,
-            {
-                "type": "command",
-                "command": "resume",
-                "loop_id": loop_id,
-                "resume_payload": {interrupt_id: {"answers": list(answers)}},
-            },
+        # Only an *approved* plan review has an artifact to execute. Attaching
+        # the path to a Reject would enqueue execution of the very plan the user
+        # just refused.
+        action = str(answers[0]).strip() if answers else ""
+        approved_plan_path = (
+            plan_path
+            if origin_node == _ORIGIN_PLAN_MODE_REVIEW and action == _CLARIFICATION_APPROVE
+            else None
+        )
+        await self._manager.submit_loop_input(
+            loop_id,
+            _clarification_turn_text(answers, origin_node),
+            channel="acp",
+            chat_id=session_id,
+            clarification_answers=answers,
+            approved_plan_path=approved_plan_path,
         )
 
     def _translate_event(self, event: dict[str, Any]) -> list[dict[str, Any]]:
