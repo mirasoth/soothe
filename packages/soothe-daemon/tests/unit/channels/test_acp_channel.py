@@ -9,12 +9,22 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from soothe_daemon.channels.acp import (
+    _ACP_DEFAULT_MODE,
+    _ACP_MODE_ORDER,
     _STDIO_SENTINEL,
     ACPChannel,
+    _acp_mode_config_option,
+    _acp_mode_state,
+    _clarification_answers_from_response,
+    _clarification_elicitation_params,
+    _client_supports_form_elicitation,
+    _interaction_mode_for_turn,
     _iter_wire_frames,
     _make_text_block,
     _PlanState,
     _session_update_from_block,
+    _tool_kind,
+    _ToolProjection,
 )
 from soothe_daemon.channels.base import Channel
 from soothe_daemon.config.models import ACPConfig
@@ -249,7 +259,13 @@ class TestACPChannelSession:
             assert not pending.done()
 
             manager.submit_loop_input.assert_awaited_once_with(
-                "acp:test-session", "Hello", channel="acp", chat_id=session_id
+                "acp:test-session",
+                "Hello",
+                channel="acp",
+                chat_id=session_id,
+                # No mode was chosen, so the default travels as None and the
+                # turn payload is unchanged from before modes were exposed.
+                interaction_mode=None,
             )
             # Nothing consumes a ChannelMessageReceived event, so the channel
             # must not fall back to publishing one.
@@ -1258,3 +1274,1090 @@ class TestPlanFrameDeduplication:
             )
             is not None
         )
+
+
+def _tool_batch_frame(rows: list[dict]) -> dict:
+    """The `mode="custom"` frame the coalescer batches tool invocations into."""
+    return {
+        "type": "event",
+        "namespace": [],
+        "mode": "custom",
+        "data": {"type": "tool_call_updates_batch", "updates": rows, "count": len(rows)},
+    }
+
+
+def _tool_row(tool_call_id: str, name: str, args: dict) -> dict:
+    """One row inside a tool batch, as `tool_call_update_event` builds it."""
+    return {
+        "type": "soothe.stream.tool_call.update",
+        "tool_call_id": tool_call_id,
+        "name": name,
+        "args": args,
+    }
+
+
+def _tool_result_frame(tool_call_id: str, content: str, status: str = "success") -> dict:
+    """The `mode="messages"` frame a tool *result* arrives in.
+
+    This is the only daemon-local signal that a call finished — the invocation
+    frame carries no status — so it is what closes a row.
+    """
+    return {
+        "type": "event",
+        "namespace": [],
+        "mode": "messages",
+        "data": (
+            {"type": "tool", "content": content, "tool_call_id": tool_call_id, "status": status},
+            {},
+        ),
+    }
+
+
+def _subagent_frame(event_type: str, **payload: object) -> dict:
+    return _plan_frame(event_type, **payload)
+
+
+class TestToolKindMapping:
+    """`kind` is derived from the shape of the args, never the tool's name.
+
+    Inferring semantics from a command name is forbidden by the turn-lifecycle
+    contract (invariant I10), and it breaks the moment a tool is renamed or
+    supplied by a plugin.
+    """
+
+    CASES = [
+        ({"command": "ls -la"}, "execute"),
+        ({"path": "/a.py", "old_string": "x", "new_string": "y"}, "edit"),
+        ({"path": "/a.py", "new_content": "z"}, "edit"),
+        ({"query": "needle"}, "search"),
+        ({"pattern": "re"}, "search"),
+        ({"path": "/a.py"}, "read"),
+        ({"url": "https://example.com"}, "fetch"),
+        ({"todos": [{"content": "a"}]}, "think"),
+        ({}, "other"),
+        ({"unrecognised": 1}, "other"),
+    ]
+
+    def test_argument_shape_selects_the_kind(self):
+        for args, expected in self.CASES:
+            assert _tool_kind(args) == expected, args
+
+    def test_kind_ignores_the_tool_name(self):
+        """Two tools with different names but the same args classify alike."""
+        args = {"command": "echo hi"}
+        assert _tool_kind(dict(args)) == _tool_kind(dict(args)) == "execute"
+
+    def test_empty_values_do_not_select_a_kind(self):
+        # A streamed-in arg can be present but blank; that is not evidence.
+        assert _tool_kind({"command": "", "path": None}) == "other"
+
+
+class TestToolCallProjection:
+    """Invocation frames open a row exactly once; later facts patch it."""
+
+    def test_first_invocation_opens_the_row(self):
+        projection = _ToolProjection()
+        frames = projection.note_invocation("c1", "run_command", {"command": "pwd"})
+
+        assert len(frames) == 1
+        update = frames[0]
+        assert update["sessionUpdate"] == "tool_call"
+        assert update["toolCallId"] == "c1"
+        assert update["title"] == "run_command: pwd"
+        assert update["kind"] == "execute"
+        assert update["status"] == "in_progress"
+        assert update["rawInput"] == {"command": "pwd"}
+
+    def test_repeated_identical_invocation_is_deduped(self):
+        projection = _ToolProjection()
+        projection.note_invocation("c1", "run_command", {"command": "pwd"})
+
+        assert projection.note_invocation("c1", "run_command", {"command": "pwd"}) == []
+
+    def test_refined_args_emit_a_patch_not_a_second_row(self):
+        """`tool_call_update` is the only legal way to amend an open row."""
+        projection = _ToolProjection()
+        projection.note_invocation("c1", "run_command", {"command": "pwd"})
+
+        frames = projection.note_invocation("c1", "run_command", {"command": "pwd -P"})
+
+        assert len(frames) == 1
+        assert frames[0]["sessionUpdate"] == "tool_call_update"
+        assert frames[0]["rawInput"] == {"command": "pwd -P"}
+        assert frames[0]["title"] == "run_command: pwd -P"
+
+    def test_blank_id_is_ignored(self):
+        projection = _ToolProjection()
+        assert projection.note_invocation("", "run_command", {"command": "pwd"}) == []
+
+    def test_args_after_completion_do_not_reopen_the_row(self):
+        projection = _ToolProjection()
+        projection.note_invocation("c1", "run_command", {"command": "pwd"})
+        projection.note_completion("c1", "out")
+
+        assert projection.note_invocation("c1", "run_command", {"command": "other"}) == []
+
+    def test_locations_are_attached_for_file_tools(self):
+        projection = _ToolProjection()
+        frames = projection.note_invocation("c1", "read_file", {"path": "/a.py"})
+
+        assert frames[0]["locations"] == [{"path": "/a.py"}]
+        assert frames[0]["kind"] == "read"
+
+
+class TestToolCallCompletion:
+    """A completion closes the row with the result, or a diff for edits."""
+
+    def test_result_becomes_content_and_raw_output(self):
+        projection = _ToolProjection()
+        projection.note_invocation("c1", "run_command", {"command": "pwd"})
+
+        frames = projection.note_completion("c1", "  /tmp  ")
+
+        assert len(frames) == 1
+        update = frames[0]
+        assert update["sessionUpdate"] == "tool_call_update"
+        assert update["status"] == "completed"
+        assert update["content"] == [
+            {"type": "content", "content": {"type": "text", "text": "/tmp"}}
+        ]
+        assert update["rawOutput"] == "/tmp"
+
+    def test_error_status_marks_the_row_failed(self):
+        projection = _ToolProjection()
+        projection.note_invocation("c1", "run_command", {"command": "false"})
+
+        update = projection.note_completion("c1", "boom", error=True)[0]
+
+        assert update["status"] == "failed"
+        assert update["_meta"]["soothe"]["outcome"] == "error"
+
+    def test_edit_produces_a_diff_block(self):
+        projection = _ToolProjection()
+        projection.note_invocation(
+            "c1", "edit_file", {"path": "/a.py", "old_string": "old", "new_string": "new"}
+        )
+
+        update = projection.note_completion("c1", "updated")[0]
+
+        diff = update["content"][0]
+        assert diff == {"type": "diff", "path": "/a.py", "oldText": "old", "newText": "new"}
+        # The tool's own message rides along after the diff.
+        assert update["content"][1]["type"] == "content"
+
+    def test_write_has_a_null_old_text(self):
+        """`oldText: null` is the protocol's "new file", not "unchanged"."""
+        projection = _ToolProjection()
+        projection.note_invocation("c1", "write_file", {"path": "/b.py", "new_content": "hi"})
+
+        diff = projection.note_completion("c1", "wrote")[0]["content"][0]
+
+        assert diff["oldText"] is None
+        assert diff["newText"] == "hi"
+
+    def test_completion_for_an_unannounced_call_is_dropped(self):
+        """A client cannot patch a row it never received."""
+        projection = _ToolProjection()
+
+        assert projection.note_completion("never-seen", "out") == []
+
+    def test_second_completion_is_ignored(self):
+        projection = _ToolProjection()
+        projection.note_invocation("c1", "run_command", {"command": "pwd"})
+        projection.note_completion("c1", "first")
+
+        assert projection.note_completion("c1", "second") == []
+
+    def test_empty_output_still_closes_the_row(self):
+        projection = _ToolProjection()
+        projection.note_invocation("c1", "write_file", {"path": "/b.py", "new_content": "hi"})
+
+        update = projection.note_completion("c1", "")[0]
+
+        assert update["status"] == "completed"
+        assert "rawOutput" not in update
+
+
+class TestToolSweep:
+    """End of turn: no row may be left spinning.
+
+    The coalescer drops a tool result that carries no text, so some calls never
+    receive a completion frame at all — the sweep is what stops those rows from
+    hanging forever.
+    """
+
+    def test_turn_end_closes_open_rows_as_completed(self):
+        projection = _ToolProjection()
+        projection.note_invocation("c1", "run_command", {"command": "pwd"})
+
+        frames = projection.sweep()
+
+        assert len(frames) == 1
+        assert frames[0]["status"] == "completed"
+
+    def test_cancelled_turn_closes_rows_as_failed_with_an_outcome(self):
+        """ACP has no cancelled tool status, so the truth rides in `_meta`."""
+        projection = _ToolProjection()
+        projection.note_invocation("c1", "run_command", {"command": "sleep 100"})
+
+        frames = projection.sweep(cancelled=True)
+
+        assert frames[0]["status"] == "failed"
+        assert frames[0]["_meta"]["soothe"]["outcome"] == "cancelled"
+
+    def test_settled_rows_are_not_swept_again(self):
+        projection = _ToolProjection()
+        projection.note_invocation("c1", "run_command", {"command": "pwd"})
+        projection.note_completion("c1", "out")
+
+        assert projection.sweep() == []
+
+    def test_sweep_never_invents_a_row(self):
+        projection = _ToolProjection()
+
+        assert projection.sweep() == []
+
+
+class TestSubagentProjection:
+    """Subagent lifecycle rides the tool-call channel.
+
+    ACP has no subagent construct, and a client cannot patch a row it never
+    received, so a terminal-only frame must still be preceded by `tool_call`.
+    """
+
+    STARTED = "soothe.cognition.wired_subagent.started"
+    COMPLETED = "soothe.cognition.wired_subagent.completed"
+    FAILED = "soothe.cognition.wired_subagent.failed"
+    CANCELLED = "soothe.cognition.wired_subagent.cancelled"
+
+    def test_started_opens_a_row_carrying_identity(self):
+        projection = _ToolProjection()
+
+        frames = projection.note_subagent(
+            self.STARTED,
+            {
+                "subagent": "researcher",
+                "invocation_id": "inv1",
+                "step_id": "S1",
+                "description": "dig",
+            },
+        )
+
+        assert len(frames) == 1
+        update = frames[0]
+        assert update["sessionUpdate"] == "tool_call"
+        assert update["toolCallId"] == "inv1"
+        assert update["kind"] == "other"
+        assert update["title"] == "dig"
+        assert update["_meta"]["soothe"]["subagent"] == {
+            "id": "inv1",
+            "name": "researcher",
+            "step_id": "S1",
+        }
+
+    def test_terminal_frame_keeps_the_identity_from_the_start(self):
+        """The terminal event carries no name; rebuilding it would lose it."""
+        projection = _ToolProjection()
+        projection.note_subagent(
+            self.STARTED, {"subagent": "researcher", "invocation_id": "inv1", "step_id": "S1"}
+        )
+
+        update = projection.note_subagent(
+            self.COMPLETED, {"invocation_id": "inv1", "summary": "found it", "duration_ms": 1234}
+        )[0]
+
+        assert update["status"] == "completed"
+        subagent = update["_meta"]["soothe"]["subagent"]
+        assert subagent["name"] == "researcher", "identity must survive the terminal frame"
+        assert subagent["step_id"] == "S1"
+        assert update["_meta"]["soothe"]["outcome"] == "ok"
+        assert update["_meta"]["soothe"]["duration_ms"] == 1234
+
+    def test_terminal_only_frame_opens_then_closes(self):
+        projection = _ToolProjection()
+
+        frames = projection.note_subagent(
+            self.FAILED,
+            {"subagent": "coder", "invocation_id": "inv2", "step_id": "S2", "description": "write"},
+        )
+
+        assert [f["sessionUpdate"] for f in frames] == ["tool_call", "tool_call_update"]
+        assert frames[1]["status"] == "failed"
+
+    def test_cancelled_lands_on_failed_with_the_truth_in_meta(self):
+        projection = _ToolProjection()
+        projection.note_subagent(
+            self.STARTED, {"subagent": "researcher", "invocation_id": "inv1", "step_id": "S1"}
+        )
+
+        update = projection.note_subagent(self.CANCELLED, {"invocation_id": "inv1"})[0]
+
+        assert update["status"] == "failed"
+        assert update["_meta"]["soothe"]["outcome"] == "cancelled"
+
+    def test_unnamed_terminal_frame_is_ignored(self):
+        projection = _ToolProjection()
+
+        assert projection.note_subagent(self.FAILED, {"invocation_id": "inv3"}) == []
+
+    def test_missing_invocation_id_is_ignored(self):
+        projection = _ToolProjection()
+
+        assert projection.note_subagent(self.STARTED, {"subagent": "researcher"}) == []
+
+    def test_replayed_start_after_settle_is_ignored(self):
+        projection = _ToolProjection()
+        projection.note_subagent(
+            self.STARTED, {"subagent": "researcher", "invocation_id": "inv1", "step_id": "S1"}
+        )
+        projection.note_subagent(self.COMPLETED, {"invocation_id": "inv1"})
+
+        assert (
+            projection.note_subagent(
+                self.STARTED, {"subagent": "researcher", "invocation_id": "inv1"}
+            )
+            == []
+        )
+
+
+class TestToolEventFrames:
+    """The channel routes tool/subagent frames and ignores everything else."""
+
+    def _make_channel(self) -> ACPChannel:
+        return ACPChannel(ACPConfig(enabled=True), MagicMock())
+
+    def test_batch_frame_opens_one_row_per_member(self):
+        channel = self._make_channel()
+
+        frames = channel._apply_tool_event(
+            _STDIO_SENTINEL,
+            "loop-1",
+            _tool_batch_frame(
+                [
+                    _tool_row("c1", "run_command", {"command": "pwd"}),
+                    _tool_row("c2", "read_file", {"path": "/a.py"}),
+                ]
+            ),
+        )
+
+        assert [f["toolCallId"] for f in frames] == ["c1", "c2"]
+        assert all(f["sessionUpdate"] == "tool_call" for f in frames)
+
+    def test_single_stream_update_frame_is_treated_as_one_row(self):
+        channel = self._make_channel()
+
+        frames = channel._apply_tool_event(
+            _STDIO_SENTINEL,
+            "loop-1",
+            _plan_frame(
+                "soothe.stream.tool_call.update",
+                tool_call_id="c1",
+                name="run_command",
+                args={"command": "pwd"},
+            ),
+        )
+
+        assert len(frames) == 1
+        assert frames[0]["sessionUpdate"] == "tool_call"
+
+    def test_tool_result_frame_closes_the_row(self):
+        channel = self._make_channel()
+        channel._apply_tool_event(
+            _STDIO_SENTINEL,
+            "loop-1",
+            _tool_batch_frame([_tool_row("c1", "run_command", {"command": "pwd"})]),
+        )
+
+        frames = channel._apply_tool_event(
+            _STDIO_SENTINEL, "loop-1", _tool_result_frame("c1", "/tmp")
+        )
+
+        assert len(frames) == 1
+        assert frames[0]["status"] == "completed"
+
+    def test_error_result_marks_the_row_failed(self):
+        channel = self._make_channel()
+        channel._apply_tool_event(
+            _STDIO_SENTINEL,
+            "loop-1",
+            _tool_batch_frame([_tool_row("c1", "run_command", {"command": "x"})]),
+        )
+
+        frames = channel._apply_tool_event(
+            _STDIO_SENTINEL, "loop-1", _tool_result_frame("c1", "boom", status="error")
+        )
+
+        assert frames[0]["status"] == "failed"
+
+    def test_assistant_message_frame_is_not_a_tool_result(self):
+        """An AI frame carries `tool_calls`; only a result carries the id."""
+        channel = self._make_channel()
+        frame = {
+            "type": "event",
+            "namespace": [],
+            "mode": "messages",
+            "data": ({"type": "ai", "content": "hello", "tool_calls": [{"id": "c1"}]}, {}),
+        }
+
+        assert channel._apply_tool_event(_STDIO_SENTINEL, "loop-1", frame) == []
+
+    def test_subagent_frame_is_routed(self):
+        channel = self._make_channel()
+
+        frames = channel._apply_tool_event(
+            _STDIO_SENTINEL,
+            "loop-1",
+            _subagent_frame(
+                "soothe.cognition.wired_subagent.started",
+                subagent="researcher",
+                invocation_id="inv1",
+                step_id="S1",
+            ),
+        )
+
+        assert len(frames) == 1
+        assert frames[0]["_meta"]["soothe"]["subagent"]["name"] == "researcher"
+
+    def test_unrelated_frames_are_not_consumed(self):
+        channel = self._make_channel()
+
+        assert channel._apply_tool_event(_STDIO_SENTINEL, "loop-1", _plan_frame("other")) == []
+        assert (
+            channel._apply_tool_event(
+                _STDIO_SENTINEL, "loop-1", {"mode": "messages", "data": "not-a-pair"}
+            )
+            == []
+        )
+
+    def test_projection_is_scoped_per_loop(self):
+        """Two loops on one connection must not share tool rows."""
+        channel = self._make_channel()
+        channel._apply_tool_event(
+            _STDIO_SENTINEL,
+            "loop-a",
+            _tool_batch_frame([_tool_row("c1", "run_command", {"command": "pwd"})]),
+        )
+
+        # loop-b never saw c1, so it cannot patch it.
+        assert (
+            channel._apply_tool_event(_STDIO_SENTINEL, "loop-b", _tool_result_frame("c1", "out"))
+            == []
+        )
+
+
+class TestPlanCreatedProjection:
+    """`plan.created` is the plan's first appearance and uses `step_id`."""
+
+    def _make_channel(self) -> ACPChannel:
+        return ACPChannel(ACPConfig(enabled=True), MagicMock())
+
+    def test_plan_created_emits_entries(self):
+        channel = self._make_channel()
+
+        update = channel._apply_plan_event(
+            _STDIO_SENTINEL,
+            "loop-1",
+            _plan_frame(
+                "soothe.cognition.plan.created",
+                plan_id="p1",
+                goal="ship it",
+                steps=[
+                    {"step_id": "S1", "description": "Scope"},
+                    {"step_id": "S2", "description": "Build"},
+                ],
+            ),
+        )
+
+        assert update is not None
+        assert [e["content"] for e in update["entries"]] == ["Scope", "Build"]
+        assert [e["_meta"]["soothe"]["step_id"] for e in update["entries"]] == ["S1", "S2"]
+
+    def test_step_id_key_is_accepted_like_id(self):
+        """`plan.decision` spells the field `id`; `plan.created` spells it `step_id`."""
+        channel = self._make_channel()
+
+        update = channel._apply_plan_event(
+            _STDIO_SENTINEL,
+            "loop-1",
+            _plan_frame(
+                "soothe.cognition.plan.created",
+                steps=[{"id": "A", "description": "From id"}],
+            ),
+        )
+
+        assert [e["_meta"]["soothe"]["step_id"] for e in update["entries"]] == ["A"]
+
+    def test_plan_created_without_steps_emits_nothing(self):
+        """An empty entry list would clear the client's plan."""
+        channel = self._make_channel()
+
+        assert (
+            channel._apply_plan_event(
+                _STDIO_SENTINEL, "loop-1", _plan_frame("soothe.cognition.plan.created", steps=[])
+            )
+            is None
+        )
+
+
+class TestAcpModeTable:
+    """One table drives both the legacy `modes` field and the config option.
+
+    ACP is retiring `modes` in favour of a `category: "mode"` config option, and
+    asks agents to publish both while the old field goes away. They must not
+    drift, so both shapes are generated from `_ACP_MODE_ORDER`.
+    """
+
+    def test_both_shapes_advertise_the_same_ids_in_the_same_order(self):
+        for mode in _ACP_MODE_ORDER:
+            legacy = [m["id"] for m in _acp_mode_state(mode)["availableModes"]]
+            modern = [o["value"] for o in _acp_mode_config_option(mode)["options"]]
+            assert legacy == modern == list(_ACP_MODE_ORDER)
+
+    def test_the_four_soothe_modes_are_exposed(self):
+        assert set(_ACP_MODE_ORDER) == {"agent", "bypass", "plan", "ask"}
+
+    def test_every_mode_carries_a_label_and_a_description(self):
+        for mode in _ACP_MODE_ORDER:
+            entry = next(m for m in _acp_mode_state(mode)["availableModes"] if m["id"] == mode)
+            assert entry["name"]
+            assert entry["description"]
+
+    def test_config_option_matches_the_client_lookup_contract(self):
+        """Backchat finds a mode picker by `category: "mode"` (id `mode` also works)."""
+        option = _acp_mode_config_option(_ACP_DEFAULT_MODE)
+
+        assert option["id"] == "mode"
+        assert option["category"] == "mode"
+        assert option["type"] == "select"
+        assert option["currentValue"] == _ACP_DEFAULT_MODE
+
+    def test_both_shapes_report_the_requested_current_mode(self):
+        assert _acp_mode_state("plan")["currentModeId"] == "plan"
+        assert _acp_mode_config_option("ask")["currentValue"] == "ask"
+
+    def test_unknown_current_mode_falls_back_to_the_default(self):
+        """A corrupt id must not be echoed back as if it were selectable."""
+        assert _acp_mode_state("nope")["currentModeId"] == _ACP_DEFAULT_MODE
+        assert _acp_mode_config_option(None)["currentValue"] == _ACP_DEFAULT_MODE
+
+
+class TestAcpModeToRunnerMapping:
+    """How an ACP mode id becomes the runner's `interaction_mode`."""
+
+    def test_default_mode_sends_no_interaction_mode(self):
+        """Auto is spelled as *absent*, so untouched sessions keep old behaviour."""
+        assert _interaction_mode_for_turn(_ACP_DEFAULT_MODE) is None
+
+    def test_other_modes_are_forwarded_verbatim(self):
+        for mode in ("bypass", "plan", "ask"):
+            assert _interaction_mode_for_turn(mode) == mode
+
+    def test_unknown_and_empty_map_to_the_default(self):
+        for value in ("", None, "nope"):
+            assert _interaction_mode_for_turn(value) is None
+
+
+class TestAcpModeLifecycle:
+    """Every session-lifecycle response advertises the real mode set."""
+
+    def _make_channel(self) -> ACPChannel:
+        return ACPChannel(ACPConfig(enabled=True), make_manager())
+
+    def _cancel_consumers(self, channel: ACPChannel) -> None:
+        for task in channel._get_state().consumer_tasks.values():
+            task.cancel()
+
+    def _assert_advertises_modes(self, result: dict, expected_mode: str) -> None:
+        assert [m["id"] for m in result["modes"]["availableModes"]] == list(_ACP_MODE_ORDER)
+        assert result["modes"]["currentModeId"] == expected_mode
+        option = result["configOptions"][0]
+        assert option["category"] == "mode"
+        assert option["currentValue"] == expected_mode
+
+    @pytest.mark.asyncio
+    async def test_session_new_advertises_the_modes(self):
+        channel = self._make_channel()
+        try:
+            result = await channel._handle_session_new({})
+            self._assert_advertises_modes(result, _ACP_DEFAULT_MODE)
+        finally:
+            self._cancel_consumers(channel)
+
+    @pytest.mark.asyncio
+    async def test_session_load_reports_the_mode_already_chosen(self):
+        """Reopening must not silently reset the picker to Auto."""
+        channel = self._make_channel()
+        try:
+            session_id = (await channel._handle_session_new({}))["sessionId"]
+            await channel._handle_session_set_mode({"sessionId": session_id, "modeId": "plan"})
+
+            result = await channel._handle_session_load({"sessionId": session_id, "cwd": "/tmp"})
+
+            self._assert_advertises_modes(result, "plan")
+        finally:
+            self._cancel_consumers(channel)
+
+    @pytest.mark.asyncio
+    async def test_session_resume_reports_the_mode_already_chosen(self):
+        channel = self._make_channel()
+        try:
+            session_id = (await channel._handle_session_new({}))["sessionId"]
+            await channel._handle_session_set_mode({"sessionId": session_id, "modeId": "ask"})
+
+            result = await channel._handle_session_resume({"sessionId": session_id, "cwd": "/tmp"})
+
+            self._assert_advertises_modes(result, "ask")
+        finally:
+            self._cancel_consumers(channel)
+
+    @pytest.mark.asyncio
+    async def test_session_fork_inherits_the_parent_mode(self):
+        """A fork continues the parent, so it inherits its mode as well as its cwd."""
+        channel = self._make_channel()
+        try:
+            parent = (await channel._handle_session_new({"cwd": "/tmp/parent"}))["sessionId"]
+            await channel._handle_session_set_mode({"sessionId": parent, "modeId": "bypass"})
+
+            result = await channel._handle_session_fork({"sessionId": parent, "cwd": "/tmp/fork"})
+
+            assert "sessionId" in result
+            self._assert_advertises_modes(result, "bypass")
+        finally:
+            self._cancel_consumers(channel)
+
+
+class TestAcpModeSwitching:
+    """set_mode and set_config_option write the same state and validate input."""
+
+    def _make_channel(self) -> ACPChannel:
+        return ACPChannel(ACPConfig(enabled=True), make_manager())
+
+    def _cancel_consumers(self, channel: ACPChannel) -> None:
+        for task in channel._get_state().consumer_tasks.values():
+            task.cancel()
+
+    @pytest.mark.asyncio
+    async def test_set_mode_stores_the_mode(self):
+        channel = self._make_channel()
+        try:
+            session_id = (await channel._handle_session_new({}))["sessionId"]
+
+            assert (
+                await channel._handle_session_set_mode({"sessionId": session_id, "modeId": "plan"})
+                == {}
+            )
+
+            assert channel._session_mode(session_id) == "plan"
+        finally:
+            self._cancel_consumers(channel)
+
+    @pytest.mark.asyncio
+    async def test_set_mode_rejects_an_unknown_mode(self):
+        """Silently accepting it would show the user a mode the runner never applies."""
+        channel = self._make_channel()
+        try:
+            session_id = (await channel._handle_session_new({}))["sessionId"]
+
+            with pytest.raises(ValueError, match="unknown modeId"):
+                await channel._handle_session_set_mode({"sessionId": session_id, "modeId": "turbo"})
+
+            # The rejected value must not have been stored.
+            assert channel._session_mode(session_id) == _ACP_DEFAULT_MODE
+        finally:
+            self._cancel_consumers(channel)
+
+    @pytest.mark.asyncio
+    async def test_set_config_option_is_equivalent_to_set_mode(self):
+        channel = self._make_channel()
+        try:
+            session_id = (await channel._handle_session_new({}))["sessionId"]
+
+            result = await channel._handle_session_set_config_option(
+                {"sessionId": session_id, "configId": "mode", "value": "ask"}
+            )
+
+            assert channel._session_mode(session_id) == "ask"
+            # ACP requires the response to carry the COMPLETE option list.
+            assert [m["value"] for m in result["configOptions"][0]["options"]] == list(
+                _ACP_MODE_ORDER
+            )
+            assert result["configOptions"][0]["currentValue"] == "ask"
+        finally:
+            self._cancel_consumers(channel)
+
+    @pytest.mark.asyncio
+    async def test_set_config_option_rejects_an_unknown_value(self):
+        channel = self._make_channel()
+        try:
+            session_id = (await channel._handle_session_new({}))["sessionId"]
+
+            with pytest.raises(ValueError, match="unknown value"):
+                await channel._handle_session_set_config_option(
+                    {"sessionId": session_id, "configId": "mode", "value": "turbo"}
+                )
+        finally:
+            self._cancel_consumers(channel)
+
+    @pytest.mark.asyncio
+    async def test_unknown_config_id_is_ignored_and_not_stored(self):
+        """The old handler accumulated junk into a shape no client can render."""
+        channel = self._make_channel()
+        try:
+            session_id = (await channel._handle_session_new({}))["sessionId"]
+
+            result = await channel._handle_session_set_config_option(
+                {"sessionId": session_id, "configId": "model", "value": "gpt-9"}
+            )
+
+            state = channel._get_state().session_states[session_id]
+            assert "model" not in state.config_options
+            # The real option list comes back untouched.
+            assert [o["id"] for o in result["configOptions"]] == ["mode"]
+        finally:
+            self._cancel_consumers(channel)
+
+
+class TestAcpModeReachesTheTurn:
+    """The mode must reach the runner, not merely the picker."""
+
+    def _make_channel(self) -> ACPChannel:
+        return ACPChannel(ACPConfig(enabled=True), make_manager())
+
+    def _cancel_consumers(self, channel: ACPChannel) -> None:
+        for task in channel._get_state().consumer_tasks.values():
+            task.cancel()
+
+    async def _run_one_turn(self, channel: ACPChannel, manager: MagicMock, session_id: str):
+        """Submit a prompt and immediately release it, returning the call kwargs."""
+        pending = asyncio.create_task(
+            channel._handle_session_prompt(
+                {"sessionId": session_id, "prompt": [{"type": "text", "text": "Hello"}]}
+            )
+        )
+        try:
+            await asyncio.sleep(0)
+            call = manager.submit_loop_input.await_args
+            channel._resolve_pending_turn(_STDIO_SENTINEL, "acp:test-session", "end_turn")
+            await pending
+            return call
+        finally:
+            pending.cancel()
+
+    @pytest.mark.asyncio
+    async def test_chosen_mode_is_sent_with_the_turn(self):
+        manager = make_manager()
+        channel = ACPChannel(ACPConfig(enabled=True), manager)
+        try:
+            session_id = (await channel._handle_session_new({}))["sessionId"]
+            await channel._handle_session_set_mode({"sessionId": session_id, "modeId": "plan"})
+
+            call = await self._run_one_turn(channel, manager, session_id)
+
+            assert call.kwargs["interaction_mode"] == "plan"
+        finally:
+            self._cancel_consumers(channel)
+
+    @pytest.mark.asyncio
+    async def test_default_mode_sends_none_so_old_behaviour_is_preserved(self):
+        manager = make_manager()
+        channel = ACPChannel(ACPConfig(enabled=True), manager)
+        try:
+            session_id = (await channel._handle_session_new({}))["sessionId"]
+
+            call = await self._run_one_turn(channel, manager, session_id)
+
+            assert call.kwargs["interaction_mode"] is None
+        finally:
+            self._cancel_consumers(channel)
+
+    @pytest.mark.asyncio
+    async def test_switching_back_to_auto_clears_the_mode(self):
+        manager = make_manager()
+        channel = ACPChannel(ACPConfig(enabled=True), manager)
+        try:
+            session_id = (await channel._handle_session_new({}))["sessionId"]
+            await channel._handle_session_set_mode({"sessionId": session_id, "modeId": "bypass"})
+
+            call = await self._run_one_turn(channel, manager, session_id)
+            assert call.kwargs["interaction_mode"] == "bypass"
+
+            await channel._handle_session_set_mode({"sessionId": session_id, "modeId": "agent"})
+            call = await self._run_one_turn(channel, manager, session_id)
+            assert call.kwargs["interaction_mode"] is None
+        finally:
+            self._cancel_consumers(channel)
+
+
+_PLAN_REVIEW_QUESTION = [
+    {
+        "question": "Action for this plan: Approve, Reject, or Refine?",
+        "header": "Plan review",
+        "options": [{"label": "Approve"}, {"label": "Reject"}, {"label": "Refine"}],
+    }
+]
+
+
+def _clarification_interrupt() -> dict:
+    """The `__interrupt__` payload Soothe suspends a plan review on."""
+    return {
+        "type": "clarification",
+        "interrupt_id": "plan-review-1",
+        "questions": _PLAN_REVIEW_QUESTION,
+    }
+
+
+def _make_clarification_channel(*, form_elicitation: bool = False) -> tuple[ACPChannel, str, str]:
+    """Channel with a registered session and a chosen elicitation capability."""
+    manager = MagicMock()
+    manager.handle_inbound = AsyncMock(return_value="acp:clar")
+    manager._event_bus = MagicMock()
+    manager._event_bus.subscribe = AsyncMock()
+    manager._event_bus.publish = AsyncMock()
+
+    channel = ACPChannel(ACPConfig(enabled=True), manager)
+    session_id = "clar-session"
+    loop_id = "acp:clar"
+    state = channel._get_state()
+    state.session_map[session_id] = loop_id
+    state.client_supports_form_elicitation = form_elicitation
+    return channel, session_id, loop_id
+
+
+class TestClarificationInterruptClassification:
+    """A clarification interrupt must be recognised, not silently dropped.
+
+    The bridge used to match only `action_requests` (tool approval), so Soothe's
+    `interrupt({"type": "clarification", ...})` — which plan-mode review always
+    raises — fell through, the loop went idle, and the client was told the turn
+    had ended. The plan appeared with no way to approve, reject or refine it.
+    """
+
+    def _channel(self) -> ACPChannel:
+        return ACPChannel(ACPConfig(enabled=True), MagicMock())
+
+    @staticmethod
+    def _interrupt_event(payload: dict) -> dict:
+        return {"type": "event", "loop_id": "acp:x", "data": {"__interrupt__": payload}}
+
+    def test_clarification_interrupt_is_classified(self):
+        channel = self._channel()
+        event = self._interrupt_event(_clarification_interrupt())
+
+        payload = channel._interrupt_payload(event)
+
+        assert payload is not None
+        assert channel._interrupt_kind(payload) == "clarification"
+
+    def test_tool_approval_interrupt_is_still_classified(self):
+        channel = self._channel()
+        event = self._interrupt_event(
+            {"interrupt_id": "int-2", "action_requests": [{"tool_name": "write_file"}]}
+        )
+
+        assert channel._interrupt_kind(channel._interrupt_payload(event)) == "tool_approval"
+        assert channel._is_tool_approval_event(event) is True
+
+    def test_a_clarification_is_not_a_tool_approval(self):
+        """Both matching would let the wrong bridge answer the interrupt."""
+        channel = self._channel()
+        event = self._interrupt_event(_clarification_interrupt())
+
+        assert channel._is_tool_approval_event(event) is False
+
+    def test_unrelated_interrupt_is_claimed_by_neither(self):
+        channel = self._channel()
+        event = self._interrupt_event({"interrupt_id": "int-3", "something_else": 1})
+
+        assert channel._interrupt_kind(channel._interrupt_payload(event)) is None
+        assert channel._is_tool_approval_event(event) is False
+
+    def test_a_nested_envelope_is_unwrapped(self):
+        channel = self._channel()
+        event = {"data": {"data": {"__interrupt__": _clarification_interrupt()}}}
+
+        assert channel._interrupt_kind(channel._interrupt_payload(event)) == "clarification"
+
+    def test_an_event_without_an_interrupt_yields_nothing(self):
+        channel = self._channel()
+
+        assert channel._interrupt_payload({"mode": "custom", "data": {"type": "other"}}) is None
+
+
+class TestClarificationElicitationShape:
+    """What the client receives must be schema-valid and answerable."""
+
+    def test_an_action_question_becomes_an_enum_plus_a_comment_slot(self):
+        """Clients render an enum as a choice, not free text."""
+        params = _clarification_elicitation_params("s1", _PLAN_REVIEW_QUESTION)
+        schema = params["requestedSchema"]
+
+        assert params["mode"] == "form"
+        assert params["sessionId"] == "s1"
+        assert schema["properties"]["answer_0"]["enum"] == ["Approve", "Reject", "Refine"]
+        # The decoder reads the comment from answers[1], so the form must offer it.
+        assert "comment" in schema["properties"]
+        assert schema["required"] == ["answer_0"]
+
+    def test_a_plain_question_becomes_free_text(self):
+        params = _clarification_elicitation_params("s1", ["What database should I use?"])
+        schema = params["requestedSchema"]
+
+        assert "enum" not in schema["properties"]["answer_0"]
+        assert schema["properties"]["answer_0"]["title"] == "What database should I use?"
+        assert "comment" not in schema["properties"]
+
+    def test_several_questions_each_get_a_field(self):
+        params = _clarification_elicitation_params("s1", ["first?", "second?"])
+        schema = params["requestedSchema"]
+
+        assert sorted(schema["properties"]) == ["answer_0", "answer_1"]
+        assert schema["required"] == ["answer_0", "answer_1"]
+
+
+class TestClarificationAnswerEncoding:
+    """The interrupt's resume value is `[action, comment]`, or one per question."""
+
+    def test_the_action_is_paired_with_a_comment_slot(self):
+        """The decoder reads index 1 even when only the action is meaningful."""
+        assert _clarification_answers_from_response(
+            {"action": "accept", "content": {"answer_0": "Approve"}}, _PLAN_REVIEW_QUESTION
+        ) == ["Approve", ""]
+
+    def test_refinement_carries_its_comment(self):
+        assert _clarification_answers_from_response(
+            {"action": "accept", "content": {"answer_0": "Refine", "comment": "use postgres"}},
+            _PLAN_REVIEW_QUESTION,
+        ) == ["Refine", "use postgres"]
+
+    def test_decline_cancel_and_other_are_not_answers(self):
+        for action in ("decline", "cancel", "other"):
+            assert (
+                _clarification_answers_from_response({"action": action}, _PLAN_REVIEW_QUESTION)
+                is None
+            )
+
+    def test_accept_without_the_required_action_is_not_an_answer(self):
+        """Never invent an "Approve" — it authorises editing the workspace."""
+        assert (
+            _clarification_answers_from_response(
+                {"action": "accept", "content": {}}, _PLAN_REVIEW_QUESTION
+            )
+            is None
+        )
+
+    def test_plain_questions_answer_in_order(self):
+        assert _clarification_answers_from_response(
+            {"action": "accept", "content": {"answer_0": "a", "answer_1": "b"}},
+            ["first?", "second?"],
+        ) == ["a", "b"]
+
+    def test_a_partial_plain_answer_is_not_an_answer(self):
+        assert (
+            _clarification_answers_from_response(
+                {"action": "accept", "content": {"answer_0": "a"}}, ["first?", "second?"]
+            )
+            is None
+        )
+
+
+class TestClarificationCapabilityGate:
+    """A client that cannot render a form must not be sent one."""
+
+    def test_the_backchat_shaped_capability_is_accepted(self):
+        assert _client_supports_form_elicitation({"elicitation": {"form": {}}}) is True
+
+    def test_missing_and_url_only_capabilities_are_rejected(self):
+        for caps in ({}, {"elicitation": {}}, {"elicitation": {"url": {}}}, None, "nope"):
+            assert _client_supports_form_elicitation(caps) is False, caps
+
+    @pytest.mark.asyncio
+    async def test_nothing_is_sent_without_the_capability(self):
+        channel, session_id, loop_id = _make_clarification_channel()
+        written: list[dict] = []
+
+        async def _capture(msg):
+            written.append(msg)
+
+        with patch.object(channel, "_write_jsonrpc", _capture):
+            await channel._bridge_clarification_request(
+                session_id, loop_id, _clarification_interrupt()
+            )
+
+        assert written == [], "an unsupported client must not be asked"
+        channel._manager._event_bus.publish.assert_not_called()
+
+
+class TestClarificationBridgeRoundTrip:
+    """The answer must return as the interrupt's resume value."""
+
+    @pytest.mark.asyncio
+    async def test_approve_publishes_the_resume_payload(self):
+        channel, session_id, loop_id = _make_clarification_channel(form_elicitation=True)
+        written: list[dict] = []
+
+        async def _capture(msg):
+            written.append(msg)
+
+        with patch.object(channel, "_write_jsonrpc", _capture):
+            task = asyncio.create_task(
+                channel._bridge_clarification_request(
+                    session_id, loop_id, _clarification_interrupt()
+                )
+            )
+            await asyncio.sleep(0.05)
+
+            assert len(written) == 1
+            request = written[0]
+            assert request["method"] == "elicitation/create"
+            assert request["params"]["mode"] == "form"
+            assert request["params"]["sessionId"] == session_id
+
+            channel._get_state().pending_permissions[request["id"]].set_result(
+                {"action": "accept", "content": {"answer_0": "Approve"}}
+            )
+            await asyncio.wait_for(task, timeout=5.0)
+
+        resume = channel._manager._event_bus.publish.call_args.args[1]
+        assert resume["type"] == "command"
+        assert resume["command"] == "resume"
+        assert resume["loop_id"] == loop_id
+        # The clarification's answer is the interrupt's resume value — not the
+        # permission bridge's {"decisions": [...]} shape.
+        assert resume["resume_payload"] == {"plan-review-1": {"answers": ["Approve", ""]}}
+
+    @pytest.mark.asyncio
+    async def test_a_dismissal_publishes_nothing(self):
+        channel, session_id, loop_id = _make_clarification_channel(form_elicitation=True)
+        written: list[dict] = []
+
+        async def _capture(msg):
+            written.append(msg)
+
+        with patch.object(channel, "_write_jsonrpc", _capture):
+            task = asyncio.create_task(
+                channel._bridge_clarification_request(
+                    session_id, loop_id, _clarification_interrupt()
+                )
+            )
+            await asyncio.sleep(0.05)
+            channel._get_state().pending_permissions[written[0]["id"]].set_result(
+                {"action": "decline"}
+            )
+            await asyncio.wait_for(task, timeout=5.0)
+
+        channel._manager._event_bus.publish.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_an_interrupt_without_an_id_is_ignored(self):
+        channel, session_id, loop_id = _make_clarification_channel(form_elicitation=True)
+        written: list[dict] = []
+
+        async def _capture(msg):
+            written.append(msg)
+
+        with patch.object(channel, "_write_jsonrpc", _capture):
+            await channel._bridge_clarification_request(
+                session_id, loop_id, {"type": "clarification", "questions": ["q"]}
+            )
+
+        assert written == []

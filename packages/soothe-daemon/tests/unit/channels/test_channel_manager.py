@@ -589,6 +589,43 @@ class TestLoopNativeSubmission:
         persistence.increment_loop_message_count.assert_awaited_once_with("acp:1", human=1)
 
     @pytest.mark.asyncio
+    async def test_submit_carries_the_interaction_mode_when_one_is_chosen(self):
+        """The mode has to reach the loop worker — that is what applies it."""
+        dispatcher = MagicMock()
+        dispatcher.enqueue = AsyncMock()
+        persistence = self.persistence(metadata={"loop_id": "acp:1"})
+
+        manager = self.build(dispatcher, persistence)
+        await manager.submit_loop_input(
+            "acp:1", "Hello", channel="acp", chat_id="sess-1", interaction_mode="plan"
+        )
+
+        dispatcher.enqueue.assert_awaited_once_with(
+            "acp:1",
+            {
+                "type": "input",
+                "text": "Hello",
+                "client_id": None,
+                "interaction_mode": "plan",
+            },
+        )
+
+    @pytest.mark.asyncio
+    async def test_submit_omits_the_mode_field_for_the_default(self):
+        """Omitted, not null: the runner must resolve the mode from config as before."""
+        dispatcher = MagicMock()
+        dispatcher.enqueue = AsyncMock()
+        persistence = self.persistence(metadata={"loop_id": "acp:1"})
+
+        manager = self.build(dispatcher, persistence)
+        await manager.submit_loop_input(
+            "acp:1", "Hello", channel="acp", chat_id="sess-1", interaction_mode=None
+        )
+
+        payload = dispatcher.enqueue.await_args.args[1]
+        assert "interaction_mode" not in payload
+
+    @pytest.mark.asyncio
     async def test_submit_registers_a_missing_loop_first(self):
         """An unregistered loop makes the turn fail silently, so register it."""
         order: list[str] = []

@@ -212,12 +212,28 @@ class ChannelManager:
         *,
         channel: str,
         chat_id: str,
+        interaction_mode: str | None = None,
     ) -> None:
         """Submit a user turn for ``loop_id`` through the loop-native path.
 
         Registers the loop first if needed. The payload mirrors the RPC path
         (``protocol/router.py``); ``autopilot_rail_id`` is omitted so this is a
         normal chat turn, not a rail-governed goal.
+
+        ``interaction_mode`` carries the caller's chosen Soothe mode
+        (``ask`` / ``plan`` / ``bypass``), which the daemon's
+        ``_queue_options_from_daemon_message`` validator accepts as-is and the
+        runner turns into a per-mode agent graph. It is omitted when ``None``:
+        that is how the default mode travels, and leaving the field out means the
+        runner resolves the mode from config exactly as it did before channels
+        could choose one.
+
+        Args:
+            loop_id: Daemon loop the turn belongs to.
+            text: The user's prompt text.
+            channel: Channel the turn arrived on (e.g. ``"acp"``).
+            chat_id: Platform-side conversation id.
+            interaction_mode: Optional Soothe mode override for this turn.
         """
         if self._loop_input_dispatcher is None:
             msg = "ChannelManager.submit_loop_input requires loop_input_dispatcher"
@@ -225,14 +241,15 @@ class ChannelManager:
 
         await self.ensure_loop_registered(loop_id)
 
-        await self._loop_input_dispatcher.enqueue(
-            loop_id,
-            {
-                "type": "input",
-                "text": text,
-                "client_id": None,
-            },
-        )
+        payload: dict[str, Any] = {
+            "type": "input",
+            "text": text,
+            "client_id": None,
+        }
+        if interaction_mode:
+            payload["interaction_mode"] = interaction_mode
+
+        await self._loop_input_dispatcher.enqueue(loop_id, payload)
         logger.debug(
             "Submitted turn from %s:%s to loop %s",
             channel,

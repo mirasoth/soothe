@@ -31,14 +31,23 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI, WebSocket
 from soothe_sdk.core.events import (
+    PLAN_CREATED,
     STRANGE_LOOP_COMPLETED,
     STRANGE_LOOP_PLAN_DECISION,
     STRANGE_LOOP_STEP_COMPLETED,
     STRANGE_LOOP_STEP_QUEUED,
     STRANGE_LOOP_STEP_STARTED,
+    WIRED_SUBAGENT_CANCELLED,
+    WIRED_SUBAGENT_COMPLETED,
+    WIRED_SUBAGENT_FAILED,
+    WIRED_SUBAGENT_STARTED,
 )
 from soothe_sdk.display.text_extract import extract_text_from_ai_message
 from soothe_sdk.ux.loop_stream import assistant_output_phase
+from soothe_sdk.ux.stream_tool_wire import (
+    STREAM_TOOL_CALL_UPDATE,
+    TOOL_CALL_UPDATES_BATCH,
+)
 from starlette.websockets import WebSocketDisconnect
 
 from soothe_daemon.channels.base import Channel
@@ -162,7 +171,10 @@ class _PlanState:
         for raw in raw_steps:
             if not isinstance(raw, dict):
                 continue
-            step_id = str(raw.get("id") or "").strip()
+            # `id` is what `plan.decision` uses; `plan.created` spells the same
+            # field `step_id`. Accept both rather than dropping every step of a
+            # frame whose keys we guessed wrong.
+            step_id = str(raw.get("id") or raw.get("step_id") or "").strip()
             if not step_id:
                 continue
             planned.add(step_id)
@@ -311,12 +323,708 @@ def _plan_dependencies(raw: Any) -> list[str]:
     return [str(item).strip() for item in raw if str(item).strip()]
 
 
+# ----------------------------------------------------------------------
+# Tool-call projection
+# ----------------------------------------------------------------------
+
+# ACP `ToolKind` is a closed enum and an out-of-range value is dropped at the
+# *field* level only: the frame still validates, the field silently vanishes.
+# Every value emitted below must therefore come from this set.
+_ACP_TOOL_KINDS = frozenset(
+    {
+        "read",
+        "edit",
+        "delete",
+        "move",
+        "search",
+        "execute",
+        "think",
+        "fetch",
+        "switch_mode",
+        "other",
+    }
+)
+
+# Argument keys that name a file the call will touch. ACP `locations` powers the
+# client's "which files did this run touch" chips, so extracting them from the
+# args is worth more than it looks.
+_FILE_PATH_ARG_KEYS = ("path", "file_path", "filepath", "target_file", "notebook_path")
+_EDIT_ARG_KEYS = ("old_string", "old_str", "new_string", "new_str")
+_WRITE_ARG_KEYS = ("new_content", "file_text", "content")
+_COMMAND_ARG_KEYS = ("command", "cmd", "shell_command")
+_SEARCH_ARG_KEYS = ("query", "pattern", "regex", "search_query", "glob")
+_FETCH_ARG_KEYS = ("url", "uri", "endpoint")
+_TODO_ARG_KEYS = ("todos", "todo_list")
+
+# Tool output is echoed into the client's tool row. Bound it: one runaway
+# result must not bloat every later frame on a long-lived socket.
+_TOOL_TEXT_LIMIT = 8000
+
+# Soothe subagent lifecycle → (ACP `ToolCallStatus`, `_meta.soothe.outcome`).
+#
+# ACP has no cancelled tool status, so a cancelled subagent lands on `failed`
+# with the truth in `_meta` — the same encoding the plan projection already uses
+# for a step outcome the protocol cannot express.
+_SUBAGENT_EVENT_STATUS: dict[str, tuple[str, str]] = {
+    WIRED_SUBAGENT_STARTED: ("in_progress", ""),
+    WIRED_SUBAGENT_COMPLETED: ("completed", "ok"),
+    WIRED_SUBAGENT_FAILED: ("failed", "error"),
+    WIRED_SUBAGENT_CANCELLED: ("failed", "cancelled"),
+}
+
+
+def _arg_value(args: dict[str, Any], keys: tuple[str, ...]) -> Any:
+    """Return the first meaningful value in ``args`` among ``keys``."""
+    for key in keys:
+        if key not in args:
+            continue
+        value = args[key]
+        if value is None or value == "" or value == [] or value == {}:
+            continue
+        return value
+    return None
+
+
+def _as_text(value: Any) -> str:
+    """Flatten a tool result that may be a string, list, or block dict."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (list, tuple)):
+        parts: list[str] = []
+        for item in value:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict) and isinstance(item.get("text"), str):
+                parts.append(item["text"])
+        return "".join(parts)
+    if isinstance(value, dict) and isinstance(value.get("text"), str):
+        return value["text"]
+    return ""
+
+
+def _tool_kind(args: dict[str, Any]) -> str:
+    """Classify a tool call from the *shape* of its arguments.
+
+    Deliberately not name-based. Adapter knowledge must be read from data and
+    never inferred from a command's name (see the turn-lifecycle contract in the
+    Backchat repo, invariant I10); that rule is what keeps this working when a
+    tool is renamed or supplied by a plugin.
+
+    Order matters: a write carries both a path and content, an edit carries a
+    path plus before/after text.
+    """
+    has_path = _arg_value(args, _FILE_PATH_ARG_KEYS) is not None
+    if has_path and _arg_value(args, _EDIT_ARG_KEYS) is not None:
+        return "edit"
+    if has_path and _arg_value(args, _WRITE_ARG_KEYS) is not None:
+        return "edit"
+    if _arg_value(args, _COMMAND_ARG_KEYS) is not None:
+        return "execute"
+    if _arg_value(args, _SEARCH_ARG_KEYS) is not None:
+        return "search"
+    if _arg_value(args, _TODO_ARG_KEYS) is not None:
+        return "think"
+    if _arg_value(args, _FETCH_ARG_KEYS) is not None:
+        return "fetch"
+    if has_path:
+        return "read"
+    return "other"
+
+
+def _tool_title(name: str, kind: str, args: dict[str, Any]) -> str:
+    """Human-readable row label.
+
+    ``title`` is the one field ACP *requires*, and clients show it verbatim, so
+    a bare tool id is a poor label. Prefer the name with the most identifying
+    argument appended once the args have streamed in.
+    """
+    label = str(name or "").strip() or "tool"
+    detail = ""
+    if kind == "execute":
+        command = _arg_value(args, _COMMAND_ARG_KEYS)
+        if isinstance(command, str):
+            detail = command.strip().splitlines()[0] if command.strip() else ""
+    elif kind in ("edit", "read"):
+        path = _arg_value(args, _FILE_PATH_ARG_KEYS)
+        if isinstance(path, str):
+            detail = path.strip()
+    if not detail:
+        return label
+    return f"{label}: {detail[:120]}"
+
+
+def _tool_locations(args: dict[str, Any]) -> list[dict[str, Any]] | None:
+    """ACP `locations` for a file-touching call, or None."""
+    path = _arg_value(args, _FILE_PATH_ARG_KEYS)
+    if not isinstance(path, str) or not path.strip():
+        return None
+    return [{"path": path.strip()}]
+
+
+def _tool_diff_content(kind: str, args: dict[str, Any]) -> list[dict[str, Any]] | None:
+    """Build an ACP `diff` content block for an edit, when we have before/after.
+
+    ACP renders ``{type: "diff", path, oldText, newText}`` natively as a diff
+    view, which is strictly more useful than the raw JSON args. The daemon
+    cannot reuse the CLI's differ (``soothe_cli`` is outside its dependency
+    envelope), and it does not need to: an edit tool already ships the exact
+    before/after strings, so the diff *is* the arguments.
+    """
+    if kind != "edit":
+        return None
+    path = _arg_value(args, _FILE_PATH_ARG_KEYS)
+    if not isinstance(path, str) or not path.strip():
+        return None
+    new_text = _arg_value(args, ("new_string", "new_str", "new_content", "file_text", "content"))
+    if not isinstance(new_text, str):
+        return None
+    old_text = _arg_value(args, ("old_string", "old_str"))
+    return [
+        {
+            "type": "diff",
+            "path": path.strip(),
+            # `null` is the protocol's "this file is new", which is not the
+            # same as "unchanged" — pass it through rather than sending "".
+            "oldText": old_text if isinstance(old_text, str) else None,
+            "newText": new_text,
+        }
+    ]
+
+
+def _tool_text_content(output: str) -> list[dict[str, Any]] | None:
+    """Wrap tool output as an ACP `content` block, or None when empty."""
+    text = str(output or "").strip()
+    if not text:
+        return None
+    return [{"type": "content", "content": {"type": "text", "text": text[:_TOOL_TEXT_LIMIT]}}]
+
+
+class _ToolCall:
+    """Accumulated state for one ACP tool-call row."""
+
+    __slots__ = ("tool_call_id", "name", "title", "kind", "args", "status", "subagent")
+
+    def __init__(
+        self,
+        tool_call_id: str,
+        name: str,
+        title: str,
+        kind: str,
+        args: dict[str, Any],
+    ) -> None:
+        self.tool_call_id = tool_call_id
+        self.name = str(name or "").strip() or "tool"
+        self.title = title
+        self.kind = kind if kind in _ACP_TOOL_KINDS else "other"
+        self.args = dict(args)
+        self.status = "in_progress"
+        # Subagent identity, when this row represents one. Kept on the row
+        # because the terminal subagent events carry only an invocation id —
+        # rebuilding the identity from them would report a nameless subagent.
+        self.subagent: dict[str, str] | None = None
+
+    @property
+    def settled(self) -> bool:
+        return self.status in ("completed", "failed")
+
+    def absorb_args(self, args: dict[str, Any]) -> bool:
+        """Merge newly-streamed args. True when the visible row changed."""
+        if not args:
+            return False
+        merged = {**self.args, **args}
+        if merged == self.args:
+            return False
+        self.args = merged
+        # The title embeds an arg-derived detail, so it sharpens as args land.
+        self.kind = _tool_kind(self.args)
+        self.title = _tool_title(self.name, self.kind, self.args)
+        return True
+
+    def start_update(self) -> dict[str, Any]:
+        """The ``tool_call`` frame that *creates* this row."""
+        update: dict[str, Any] = {
+            "sessionUpdate": "tool_call",
+            "toolCallId": self.tool_call_id,
+            "title": self.title,
+            "name": self.name,
+            "kind": self.kind,
+            "status": "in_progress",
+        }
+        if self.args:
+            update["rawInput"] = self.args
+        locations = _tool_locations(self.args)
+        if locations:
+            update["locations"] = locations
+        return update
+
+    def patch_update(self) -> dict[str, Any]:
+        """A ``tool_call_update`` carrying only what changed.
+
+        `content` and `locations` are *replacements* in the protocol, so they
+        are only included when we actually have a new value.
+        """
+        update: dict[str, Any] = {
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": self.tool_call_id,
+            "title": self.title,
+            "kind": self.kind,
+        }
+        if self.args:
+            update["rawInput"] = self.args
+        locations = _tool_locations(self.args)
+        if locations:
+            update["locations"] = locations
+        return update
+
+    def completion_update(self, output: str) -> dict[str, Any]:
+        """The terminal ``tool_call_update``."""
+        update: dict[str, Any] = {
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": self.tool_call_id,
+            "status": self.status,
+        }
+        blocks: list[dict[str, Any]] = []
+        diff = _tool_diff_content(self.kind, self.args)
+        if diff:
+            blocks.extend(diff)
+        text = _tool_text_content(output)
+        if text:
+            blocks.extend(text)
+        if blocks:
+            update["content"] = blocks
+        text_output = str(output or "").strip()
+        if text_output:
+            update["rawOutput"] = text_output[:_TOOL_TEXT_LIMIT]
+        if self.status == "failed":
+            update["_meta"] = {"soothe": {"outcome": "error"}}
+        return update
+
+
+class _ToolProjection:
+    """Accumulated ACP tool-call rows for one loop.
+
+    ACP splits tool reporting across two shapes that are *not* interchangeable:
+    ``tool_call`` creates a row and ``tool_call_update`` only patches one — an
+    update for an id the client never saw is dropped. So each row is opened
+    exactly once, on first sight of its id, and every later fact (refined args,
+    completion) goes out as a patch.
+    """
+
+    __slots__ = ("order", "calls", "_last_emitted")
+
+    def __init__(self) -> None:
+        self.order: list[str] = []
+        self.calls: dict[str, _ToolCall] = {}
+        # tool_call_id → fingerprint of that row's last emitted frame, so a
+        # streamed-in-args call is not re-sent identically on every batch.
+        self._last_emitted: dict[str, str] = {}
+
+    def _emit(self, tool_call_id: str, update: dict[str, Any]) -> list[dict[str, Any]]:
+        fingerprint = json.dumps(update, sort_keys=True)
+        if self._last_emitted.get(tool_call_id) == fingerprint:
+            return []
+        self._last_emitted[tool_call_id] = fingerprint
+        return [update]
+
+    def note_invocation(
+        self,
+        tool_call_id: str,
+        name: str,
+        args: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        """Record a tool invocation; open the row on first sight."""
+        tcid = str(tool_call_id or "").strip()
+        if not tcid:
+            return []
+        prepared = dict(args) if isinstance(args, dict) else {}
+        existing = self.calls.get(tcid)
+        if existing is None:
+            kind = _tool_kind(prepared)
+            call = _ToolCall(tcid, name, _tool_title(name, kind, prepared), kind, prepared)
+            self.order.append(tcid)
+            self.calls[tcid] = call
+            return self._emit(tcid, call.start_update())
+        if existing.settled:
+            # A late args frame for a finished call must not reopen the row.
+            return []
+        if existing.absorb_args(prepared):
+            return self._emit(tcid, existing.patch_update())
+        return []
+
+    def note_completion(
+        self,
+        tool_call_id: str,
+        output: Any,
+        error: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Close a row with its result."""
+        tcid = str(tool_call_id or "").strip()
+        call = self.calls.get(tcid)
+        if call is None or call.settled:
+            # A result for a call we never announced cannot be shown: the client
+            # has no `tool_call` to patch, and opening a row from the tail end
+            # would display a tool that never visibly started.
+            return []
+        call.status = "failed" if error else "completed"
+        return self._emit(tcid, call.completion_update(_as_text(output)))
+
+    def note_subagent(self, event_type: str, data: dict[str, Any]) -> list[dict[str, Any]]:
+        """Project a wired-subagent lifecycle event as a tool-call row.
+
+        ACP has no subagent construct, and a tool call is the protocol's
+        "unit of work with a lifecycle" — so a subagent rides that rather than
+        inventing a variant. Identity travels in `_meta.soothe.subagent` so a
+        client that later wants a native subagent surface has the evidence.
+        """
+        status, outcome = _SUBAGENT_EVENT_STATUS.get(event_type, ("", ""))
+        if not status:
+            return []
+        invocation_id = str(data.get("invocation_id") or "").strip()
+        if not invocation_id:
+            return []
+        raw_name = str(data.get("subagent") or "").strip()
+        existing = self.calls.get(invocation_id)
+        frames: list[dict[str, Any]] = []
+
+        if existing is None:
+            if not raw_name:
+                # No start frame and no name on this one: a row that appears
+                # already finished, unlabelled, is noise rather than progress.
+                return []
+            # The engine emits `started` first, but a terminal-only frame still
+            # carries identity — so open the row here rather than losing the
+            # subagent entirely. The `tool_call` frame must go out before any
+            # patch, because a client cannot patch a row it never received.
+            existing = _ToolCall(
+                invocation_id,
+                raw_name,
+                str(data.get("description") or raw_name).strip()[:120] or raw_name,
+                "other",
+                {"subagent": raw_name},
+            )
+            existing.subagent = {
+                "id": invocation_id,
+                "name": raw_name,
+                "step_id": str(data.get("step_id") or ""),
+            }
+            self.order.append(invocation_id)
+            self.calls[invocation_id] = existing
+            start = existing.start_update()
+            start["_meta"] = {"soothe": {"subagent": dict(existing.subagent)}}
+            frames.extend(self._emit(invocation_id, start))
+            if status == "in_progress":
+                return frames
+        elif existing.settled:
+            return []
+
+        existing.status = status
+        update = existing.completion_update(str(data.get("summary") or ""))
+        # Merge *inside* `_meta.soothe`: a top-level merge would let the
+        # terminal frame's `outcome` overwrite the subagent identity, leaving a
+        # client unable to correlate the finish with the start.
+        update["_meta"] = {
+            "soothe": {
+                "subagent": dict(
+                    existing.subagent or {"id": invocation_id, "name": raw_name or "subagent"}
+                ),
+                **({"outcome": outcome} if outcome else {}),
+                **(
+                    {"duration_ms": int(data.get("duration_ms") or 0)}
+                    if data.get("duration_ms")
+                    else {}
+                ),
+            }
+        }
+        frames.extend(self._emit(invocation_id, update))
+        return frames
+
+    def sweep(self, *, cancelled: bool = False) -> list[dict[str, Any]]:
+        """Close rows still open when the turn ends.
+
+        Not defensive: the coalescer drops a tool result that carries no text
+        (``should_skip_tool_message_wire``), so some calls never get a
+        completion frame at all and would otherwise leave the client spinning
+        forever.
+
+        The two reasons a row is still open need different answers. When the
+        turn was *cancelled*, the call genuinely did not finish, so it lands on
+        ``failed`` with ``_meta.soothe.outcome == "cancelled"`` — ACP has no
+        cancelled status. When the turn ended normally, a missing result frame
+        almost always means a silent success (a real failure would have carried
+        an error message, which is never dropped), so claiming `failed` would
+        report an error that did not happen.
+        """
+        updates: list[dict[str, Any]] = []
+        for tcid in self.order:
+            call = self.calls.get(tcid)
+            if call is None or call.settled:
+                continue
+            call.status = "failed" if cancelled else "completed"
+            update = call.completion_update("")
+            if cancelled:
+                update["_meta"] = {"soothe": {"outcome": "cancelled"}}
+            updates.extend(self._emit(tcid, update))
+        return updates
+
+
 # Default timeout for permission responses from the ACP client (seconds).
 _PERMISSION_TIMEOUT_S = 120.0
 
 # JSON-RPC error codes.
 _ERR_INVALID_PARAMS = -32602
 _ERR_INTERNAL = -32603
+
+# ----------------------------------------------------------------------
+# Interaction modes
+# ----------------------------------------------------------------------
+
+# Soothe's interaction modes, as exposed over ACP.
+#
+# The `id` values are the *canonical runner* strings — the same ones
+# `InteractionMode` (soothe_nano.agent.interaction_mode) and the daemon's own
+# `_queue_options_from_daemon_message` validator accept — so nothing has to be
+# translated between the wire and the runner. Only the label is friendlier than
+# the id: the default full-capability mode is spelled `agent` on the wire, and
+# Soothe's CLI displays that same value as "agent · auto".
+#
+# ACP is retiring the `modes` field in favour of a config option carrying
+# `category: "mode"` (see the session-config-options spec). Agents are asked to
+# publish *both* shapes during the transition and to keep them in sync — so both
+# are generated from this one table by `_acp_mode_state` /
+# `_acp_mode_config_option` instead of being written out twice and drifting.
+_ACP_MODE_ORDER: tuple[str, ...] = ("agent", "bypass", "plan", "ask")
+
+_ACP_MODE_LABELS: dict[str, str] = {
+    "agent": "Auto",
+    "bypass": "Bypass",
+    "plan": "Plan",
+    "ask": "Ask",
+}
+
+_ACP_MODE_DESCRIPTIONS: dict[str, str] = {
+    "agent": "Full agent: reads and writes files and runs tools.",
+    "bypass": (
+        "Full agent with workspace and command security disabled. Any command "
+        "runs, including outside the workspace — use with care."
+    ),
+    "plan": "Read-only research and planning; proposes a plan before acting.",
+    "ask": "Read-only: answers questions without modifying files.",
+}
+
+# The mode a fresh session starts in. `agent` is Soothe's own default, and it is
+# also the value that maps to *no* `interaction_mode` on the wire (see
+# `_interaction_mode_for_turn`), so a session that never touches the picker
+# behaves exactly as it did before modes were exposed here.
+_ACP_DEFAULT_MODE = "agent"
+
+# Config-option id for the mode selector. ACP clients key on the option id plus
+# `category: "mode"` to find it; both are emitted by `_acp_mode_config_option`.
+_ACP_MODE_CONFIG_ID = "mode"
+
+
+def _normalized_mode(current_mode: Any) -> str:
+    """Coerce an incoming mode id to a known one, falling back to the default."""
+    mode = str(current_mode or "").strip()
+    return mode if mode in _ACP_MODE_LABELS else _ACP_DEFAULT_MODE
+
+
+def _acp_mode_state(current_mode: Any) -> dict[str, Any]:
+    """Legacy `SessionModeState` payload for the given mode."""
+    mode = _normalized_mode(current_mode)
+    return {
+        "currentModeId": mode,
+        "availableModes": [
+            {
+                "id": mode_id,
+                "name": _ACP_MODE_LABELS[mode_id],
+                "description": _ACP_MODE_DESCRIPTIONS[mode_id],
+            }
+            for mode_id in _ACP_MODE_ORDER
+        ],
+    }
+
+
+def _acp_mode_config_option(current_mode: Any) -> dict[str, Any]:
+    """The `category: "mode"` config option that supersedes the `modes` field.
+
+    Clients that understand config options use this and ignore `modes`; the two
+    carry identical data by construction, which is what the spec asks for while
+    the older shape is being retired.
+    """
+    mode = _normalized_mode(current_mode)
+    return {
+        "id": _ACP_MODE_CONFIG_ID,
+        "name": "Mode",
+        "description": "How much the agent may do without asking.",
+        "category": "mode",
+        "type": "select",
+        "currentValue": mode,
+        "options": [
+            {
+                "value": mode_id,
+                "name": _ACP_MODE_LABELS[mode_id],
+                "description": _ACP_MODE_DESCRIPTIONS[mode_id],
+            }
+            for mode_id in _ACP_MODE_ORDER
+        ],
+    }
+
+
+def _acp_mode_options(current_mode: Any) -> list[dict[str, Any]]:
+    """The complete `configOptions` list for a session.
+
+    ACP requires `session/set_config_option` to answer with the *complete* list
+    of options and current values, so the lifecycle responses and the setter all
+    go through here rather than each assembling their own.
+    """
+    return [_acp_mode_config_option(current_mode)]
+
+
+def _interaction_mode_for_turn(current_mode: Any) -> str | None:
+    """Map an ACP mode id to the runner's `interaction_mode`, or None.
+
+    `agent` is Soothe's default and is spelled as *absent* on the wire — the CLI
+    does the same for its `auto`. Sending None for the default keeps a session
+    that never picks a mode byte-for-byte identical to the pre-mode behaviour,
+    which is what makes exposing modes a low-risk change.
+
+    An unrecognised value also maps to None rather than being forwarded: the
+    setter already rejects unknown ids, so this only guards against a corrupted
+    session state injecting a bogus mode into the runner.
+    """
+    mode = str(current_mode or "").strip()
+    if mode in _ACP_MODE_ORDER and mode != _ACP_DEFAULT_MODE:
+        return mode
+    return None
+
+
+# ----------------------------------------------------------------------
+# Clarification bridge
+# ----------------------------------------------------------------------
+
+# Name of the optional property appended when a clarification question offers
+# choices. Soothe's action-selector origins (plan review, tool approval) answer
+# with `[action, comment]` — the host decoder reads the comment from
+# `answers[1]` — so the form needs somewhere to put it.
+_CLARIFICATION_COMMENT_KEY = "comment"
+
+
+def _client_supports_form_elicitation(client_capabilities: Any) -> bool:
+    """True when the client advertised that it can render a form elicitation.
+
+    ACP says to treat an omitted capability as unsupported, so only an explicit
+    `elicitation.form` object counts. Sending an elicitation to a client that
+    cannot render one would strand the interrupt with nothing to answer it.
+    """
+    if not isinstance(client_capabilities, dict):
+        return False
+    elicitation = client_capabilities.get("elicitation")
+    if not isinstance(elicitation, dict):
+        return False
+    return isinstance(elicitation.get("form"), dict)
+
+
+def _clarification_question_view(question: Any, index: int) -> tuple[str, str, list[str]]:
+    """Normalize one question into `(property_name, title, options)`.
+
+    Soothe emits two shapes: a structured dict (`question`/`header`/`options`)
+    for action selectors, and a plain string for degraded fallbacks.
+    """
+    name = f"answer_{index}"
+    if not isinstance(question, dict):
+        return name, str(question)[:120] or name, []
+    title = str(question.get("question") or question.get("header") or name)
+    raw_options = question.get("options")
+    options: list[str] = []
+    if isinstance(raw_options, list):
+        for option in raw_options:
+            if isinstance(option, dict):
+                label = str(option.get("label") or option.get("value") or "").strip()
+            else:
+                label = str(option).strip()
+            if label:
+                options.append(label)
+    return name, title[:120] or name, options
+
+
+def _clarification_elicitation_params(
+    session_id: str,
+    questions: list[Any],
+) -> dict[str, Any]:
+    """Build the ACP form elicitation that asks a clarification's questions.
+
+    One required string property per question. A question that carries `options`
+    becomes an `enum`, which clients render as a choice rather than free text —
+    that is how plan review's Approve/Reject/Refine reaches the user as buttons.
+    """
+    properties: dict[str, Any] = {}
+    required: list[str] = []
+    has_action_selector = False
+
+    for index, question in enumerate(questions):
+        name, title, options = _clarification_question_view(question, index)
+        prop: dict[str, Any] = {"type": "string", "title": title}
+        if options:
+            prop["enum"] = options
+            has_action_selector = True
+        properties[name] = prop
+        required.append(name)
+
+    if has_action_selector:
+        properties[_CLARIFICATION_COMMENT_KEY] = {
+            "type": "string",
+            "title": "Comment (optional)",
+            "description": "Refinement notes. Only used when refining a plan.",
+        }
+
+    return {
+        "sessionId": session_id,
+        "message": "Soothe needs a decision before it can continue.",
+        "mode": "form",
+        "requestedSchema": {
+            "type": "object",
+            "properties": properties,
+            "required": required,
+        },
+    }
+
+
+def _clarification_answers_from_response(
+    response: dict[str, Any],
+    questions: list[Any],
+) -> list[str] | None:
+    """Turn an elicitation response into the interrupt's resume answers.
+
+    Returns the ordered answer list, or None when the operator dismissed the
+    question. Soothe raises `ClarificationDeferredError` on a missing answer, so
+    a dismissal must not be turned into an invented one — plan review in
+    particular treats "Approve" as permission to start editing.
+    """
+    if not isinstance(response, dict):
+        return None
+    if str(response.get("action") or "").lower() != "accept":
+        # decline / cancel / other are all "no answer", not "empty answer".
+        return None
+    content = response.get("content")
+    if not isinstance(content, dict):
+        return None
+
+    has_action_selector = any(
+        _clarification_question_view(q, i)[2] for i, q in enumerate(questions)
+    )
+    if has_action_selector:
+        action = str(content.get("answer_0") or "").strip()
+        if not action:
+            return None
+        # The decoder reads the comment from index 1 even when only the action
+        # is meaningful, so both slots are always sent.
+        return [action, str(content.get(_CLARIFICATION_COMMENT_KEY) or "")]
+
+    answers = [str(content.get(f"answer_{index}") or "").strip() for index in range(len(questions))]
+    if any(not answer for answer in answers):
+        return None
+    return answers
+
 
 # Sentinel key used for the single stdio connection in the _connections dict.
 # In stdio mode there is exactly one connection (the stdin/stdout pipe); in
@@ -342,7 +1050,8 @@ class _SessionState:
 
     Attributes:
         cwd: Working directory the session was created with.
-        current_mode: Active mode ID (default "default").
+        current_mode: Active interaction-mode id (see `_ACP_MODE_ORDER`). Read
+            when a turn is submitted, so the mode actually reaches the runner.
         config_options: Config option values set via session/set_config_option.
         documents: Open documents keyed by URI (uri → text/version dict).
         focused_uri: Set of URIs currently focused in the editor.
@@ -358,7 +1067,7 @@ class _SessionState:
 
     def __init__(self, cwd: str = "/tmp") -> None:
         self.cwd: str = cwd
-        self.current_mode: str = "default"
+        self.current_mode: str = _ACP_DEFAULT_MODE
         self.config_options: dict[str, Any] = {}
         self.documents: dict[str, dict[str, Any]] = {}
         self.focused_uri: set[str] = set()
@@ -380,6 +1089,9 @@ class _ConnectionState:
         event_queues: loop_id → EventBus event queue.
         consumer_tasks: loop_id → event consumer asyncio task.
         plan_states: loop_id → _PlanState (accumulated ACP plan projection).
+        tool_projections: loop_id → _ToolProjection (accumulated tool-call rows).
+        client_supports_form_elicitation: Whether this client advertised that it
+            can render a form elicitation, which gates the clarification bridge.
     """
 
     __slots__ = (
@@ -391,6 +1103,8 @@ class _ConnectionState:
         "consumer_tasks",
         "pending_turns",
         "plan_states",
+        "tool_projections",
+        "client_supports_form_elicitation",
     )
 
     def __init__(self) -> None:
@@ -405,6 +1119,8 @@ class _ConnectionState:
         self.event_queues: dict[str, asyncio.Queue[dict[str, Any]]] = {}
         self.consumer_tasks: dict[str, asyncio.Task[None]] = {}
         self.plan_states: dict[str, _PlanState] = {}
+        self.tool_projections: dict[str, _ToolProjection] = {}
+        self.client_supports_form_elicitation = False
 
 
 def _make_text_block(content: str) -> dict[str, Any]:
@@ -972,6 +1688,14 @@ class ACPChannel(Channel):
         nes, and MCP. Soothe uses its own workspace tools — client fs/terminal
         capabilities are NOT advertised (editors handle those locally).
         """
+        # Remember whether this client can answer a form elicitation. The
+        # clarification bridge depends on it: Soothe's plan-mode review suspends
+        # on a clarification interrupt, and without this the question cannot be
+        # asked at all.
+        state = self._get_state(_current_connection.get())
+        state.client_supports_form_elicitation = _client_supports_form_elicitation(
+            params.get("clientCapabilities")
+        )
         return {
             "protocolVersion": _ACP_PROTOCOL_VERSION,
             "agentCapabilities": {
@@ -1066,16 +1790,8 @@ class ACPChannel(Channel):
 
         return {
             "sessionId": session_id,
-            "modes": {
-                "currentModeId": "default",
-                "availableModes": [
-                    {
-                        "id": "default",
-                        "name": "Default",
-                    },
-                ],
-            },
-            "configOptions": [],
+            "modes": _acp_mode_state(_ACP_DEFAULT_MODE),
+            "configOptions": _acp_mode_options(_ACP_DEFAULT_MODE),
         }
 
     def _require_session(self, params: dict[str, Any]) -> tuple[str, str]:
@@ -1133,11 +1849,18 @@ class ACPChannel(Channel):
         try:
             # The loop-native path runs the turn; handle_inbound only publishes
             # an event nothing consumes.
+            #
+            # The session's interaction mode rides along here — this is the only
+            # point where an ACP turn can carry it, since `session/new` and
+            # `session/set_mode` happen outside a turn. Soothe's default mode
+            # maps to None, so a session that never picked a mode sends exactly
+            # the payload it sent before modes were exposed.
             await self._manager.submit_loop_input(
                 loop_id,
                 prompt_text,
                 channel="acp",
                 chat_id=session_id,
+                interaction_mode=_interaction_mode_for_turn(self._session_mode(session_id)),
             )
             stop_reason = await asyncio.wait_for(
                 completion,
@@ -1181,13 +1904,19 @@ class ACPChannel(Channel):
             params: ACP session/cancel params with `sessionId`.
         """
         session_id, loop_id = self._require_session(params)
-        state = self._get_state(_current_connection.get())
+        conn_key = _current_connection.get()
+        state = self._get_state(conn_key)
 
         # The oldest waiter owns the turn that is actually running.
         waiters = state.pending_turns.get(loop_id)
         if waiters:
             with contextlib.suppress(asyncio.InvalidStateError):
                 waiters[0].set_result("cancelled")
+
+        # Anything in flight really did not finish, so close those rows now
+        # rather than leaving them to the end-of-turn sweep, which would report
+        # them as completed.
+        await self._flush_tool_rows(conn_key, loop_id, session_id, cancelled=True)
 
         # The loop's cancel entry point is a `/cancel` command through the
         # dispatcher; a `command: cancel` EventBus event reaches nothing.
@@ -1251,17 +1980,11 @@ class ACPChannel(Channel):
         await self._manager.ensure_loop_registered(loop_id, workspace=cwd)
 
         logger.info("[ACP] session/load: session=%s → loop=%s", session_id, loop_id)
+        session_state = state.session_states.get(session_id)
+        mode = session_state.current_mode if session_state is not None else _ACP_DEFAULT_MODE
         return {
-            "modes": {
-                "currentModeId": "default",
-                "availableModes": [
-                    {
-                        "id": "default",
-                        "name": "Default",
-                    },
-                ],
-            },
-            "configOptions": [],
+            "modes": _acp_mode_state(mode),
+            "configOptions": _acp_mode_options(mode),
         }
 
     # ------------------------------------------------------------------
@@ -1360,7 +2083,13 @@ class ACPChannel(Channel):
         # Pre-create loop_id, subscribe, THEN publish (race-safe).
         loop_id = self._manager.ensure_loop_id("acp", new_session_id)
         state.session_map[new_session_id] = loop_id
-        state.session_states[new_session_id] = _SessionState(cwd=cwd)
+        forked_ss = _SessionState(cwd=cwd)
+        # A fork is a continuation of the parent, so it inherits the parent's
+        # mode as well as its cwd — the parent session state is the only place
+        # the mode lives (it is deliberately not persisted per loop).
+        if parent_ss is not None:
+            forked_ss.current_mode = parent_ss.current_mode
+        state.session_states[new_session_id] = forked_ss
 
         # Subscribe to the loop's EventBus topic BEFORE handle_inbound publishes.
         await self._subscribe_loop_events(loop_id)
@@ -1387,11 +2116,8 @@ class ACPChannel(Channel):
         )
         return {
             "sessionId": new_session_id,
-            "modes": {
-                "currentModeId": "default",
-                "availableModes": [{"id": "default", "name": "Default"}],
-            },
-            "configOptions": [],
+            "modes": _acp_mode_state(forked_ss.current_mode),
+            "configOptions": _acp_mode_options(forked_ss.current_mode),
         }
 
     async def _handle_session_resume(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -1443,12 +2169,11 @@ class ACPChannel(Channel):
         await self._manager.ensure_loop_registered(loop_id, workspace=cwd)
 
         logger.info("[ACP] session/resume: session=%s → loop=%s", session_id, loop_id)
+        session_state = state.session_states.get(session_id)
+        mode = session_state.current_mode if session_state is not None else _ACP_DEFAULT_MODE
         return {
-            "modes": {
-                "currentModeId": "default",
-                "availableModes": [{"id": "default", "name": "Default"}],
-            },
-            "configOptions": [],
+            "modes": _acp_mode_state(mode),
+            "configOptions": _acp_mode_options(mode),
         }
 
     async def _handle_session_close(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -1488,68 +2213,107 @@ class ACPChannel(Channel):
         logger.info("[ACP] session/close: session=%s", session_id)
         return {}
 
-    async def _handle_session_set_mode(self, params: dict[str, Any]) -> dict[str, Any]:
-        """Handle `session/set_mode` — set the active mode for a session.
+    def _validated_mode_id(self, raw: Any, *, param: str = "modeId") -> str:
+        """Validate an incoming mode id, rejecting unknown values.
 
-        Soothe currently supports a single "default" mode. The mode change
-        is tracked in the session state and logged.
+        Silently accepting an unknown id would leave the client displaying a
+        mode the runner never applies — the same class of failure as a silently
+        dropped plan entry, so it is a params error instead of a no-op.
+
+        Raises:
+            ValueError: Mapped to `-32602` invalid params by the dispatcher.
+        """
+        mode = str(raw or "").strip()
+        if mode not in _ACP_MODE_LABELS:
+            raise ValueError(
+                f"unknown {param} {mode!r}; expected one of {', '.join(_ACP_MODE_ORDER)}"
+            )
+        return mode
+
+    def _store_session_mode(self, session_id: str, mode: str) -> None:
+        """Record the session's mode where `session/prompt` will read it."""
+        state = self._get_state(_current_connection.get())
+        ss = state.session_states.get(session_id)
+        if ss is not None:
+            ss.current_mode = mode
+
+    def _session_mode(self, session_id: str) -> str:
+        """The mode currently recorded for a session, or the default."""
+        state = self._get_state(_current_connection.get())
+        ss = state.session_states.get(session_id)
+        return ss.current_mode if ss is not None else _ACP_DEFAULT_MODE
+
+    async def _handle_session_set_mode(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Handle `session/set_mode` — set the session's interaction mode.
+
+        Legacy counterpart to the `mode` config option. ACP is retiring this
+        field in favour of config options; both are served from one table here,
+        so they cannot disagree.
+
+        The mode takes effect on the **next** turn. Soothe compiles a separate
+        agent graph per mode and only `agent`/`bypass` can be hot-swapped into a
+        goal that is already running, so pinning the change to a turn boundary is
+        both simpler and consistent with the CLI, where `plan`/`ask` are
+        next-turn only.
 
         Args:
             params: ACP session/set_mode params with `sessionId` and `modeId`.
 
         Returns:
-            Empty response on success.
+            Empty response on success (the ACP schema defines none).
+
+        Raises:
+            ValueError: If `modeId` is not one of Soothe's modes (→ -32602).
         """
         session_id, _loop_id = self._require_session(params)
-        mode_id = params.get("modeId", "default")
-        state = self._get_state(_current_connection.get())
-        ss = state.session_states.get(session_id)
-        if ss is not None:
-            ss.current_mode = mode_id
+        mode_id = self._validated_mode_id(params.get("modeId"))
+        self._store_session_mode(session_id, mode_id)
         logger.info("[ACP] session/set_mode: session=%s, mode=%s", session_id, mode_id)
         return {}
 
     async def _handle_session_set_config_option(self, params: dict[str, Any]) -> dict[str, Any]:
-        """Handle `session/set_config_option` — set a config option for a session.
+        """Handle `session/set_config_option` — set a session config option.
 
-        Soothe does not expose configurable session options via ACP yet.
-        The request is accepted, the config option value is tracked in
-        session state, and the current config options list is returned.
+        Soothe exposes exactly one session option: `mode`, a `select` carrying
+        `category: "mode"`. ACP requires the response to return the **complete**
+        option list, so that is what `_acp_mode_options` builds.
+
+        An unknown `configId` is ignored rather than stored. The previous
+        implementation accumulated every id it was handed into a
+        `{configId, value, type}` shape that no client can render (it matches no
+        `SessionConfigOption` variant), so a client probing an option we do not
+        have now simply gets the real list back.
 
         Args:
             params: ACP session/set_config_option params with `sessionId`,
                 `configId`, and `value`.
 
         Returns:
-            Response with current config options list.
+            Response with the complete config options list.
+
+        Raises:
+            ValueError: If `configId` is `mode` but `value` is not a known mode
+                (→ -32602).
         """
         session_id, _loop_id = self._require_session(params)
-        config_id = params.get("configId", "")
-        value = params.get("value")
-        state = self._get_state(_current_connection.get())
-        ss = state.session_states.get(session_id)
-        if ss is not None and config_id:
-            ss.config_options[config_id] = value
-        logger.info(
-            "[ACP] session/set_config_option: session=%s, config=%s, value=%s",
-            session_id,
-            config_id,
-            value,
-        )
-        # Return the tracked config options as ACP schema expects
-        config_options_list = []
-        if ss is not None:
-            for cid, val in ss.config_options.items():
-                config_options_list.append(
-                    {
-                        "configId": cid,
-                        "value": val,
-                        "type": "select",
-                    }
-                )
-        return {
-            "configOptions": config_options_list,
-        }
+        config_id = str(params.get("configId") or "").strip()
+
+        if config_id == _ACP_MODE_CONFIG_ID:
+            mode_id = self._validated_mode_id(params.get("value"), param="value")
+            self._store_session_mode(session_id, mode_id)
+            logger.info(
+                "[ACP] session/set_config_option: session=%s, mode=%s",
+                session_id,
+                mode_id,
+            )
+        else:
+            logger.info(
+                "[ACP] session/set_config_option: session=%s, ignoring unknown config=%s",
+                session_id,
+                config_id,
+            )
+
+        return {"configOptions": _acp_mode_options(self._session_mode(session_id))}
 
     # ------------------------------------------------------------------
     # Authentication and providers
@@ -1975,16 +2739,34 @@ class ACPChannel(Channel):
             if not session_id:
                 continue
 
-            # Check for tool-approval interrupt (permission bridge)
-            if self._is_tool_approval_event(event):
-                await self._bridge_permission_request(session_id, loop_id, event)
-                continue
+            # Interrupts suspend the graph and need a client round-trip: tool
+            # approvals become `session/request_permission`, clarifications
+            # (Soothe's plan-mode review among them) become an elicitation. An
+            # unrecognised interrupt has no bridge and is dropped as before.
+            interrupt = self._interrupt_payload(event)
+            if interrupt is not None:
+                kind = self._interrupt_kind(interrupt)
+                if kind == "tool_approval":
+                    await self._bridge_permission_request(session_id, loop_id, event)
+                    continue
+                if kind == "clarification":
+                    await self._bridge_clarification_request(session_id, loop_id, interrupt)
+                    continue
 
             # A coalescer step that yields several frames arrives wrapped;
             # translate each member so batched text is not dropped.
             for frame in _iter_wire_frames(event):
                 if _is_idle_status(frame):
+                    # The turn is over. Settle tool rows before releasing the
+                    # waiting `session/prompt`, so the transcript reaches the
+                    # client already consistent rather than spinning until the
+                    # client gives up on it.
+                    await self._flush_tool_rows(conn_key, loop_id, session_id)
                     self._resolve_pending_turn(conn_key, loop_id, "end_turn")
+                # Tool frames are whole `session/update` bodies, not content
+                # blocks, so they bypass the block fan-out below.
+                for tool_update in self._apply_tool_event(conn_key, loop_id, frame):
+                    await self._send_update(session_id, tool_update)
                 # Plan frames are whole `session/update` bodies, not content
                 # blocks, so they bypass the block fan-out below.
                 plan_update = self._apply_plan_event(conn_key, loop_id, frame)
@@ -2009,11 +2791,49 @@ class ACPChannel(Channel):
         with contextlib.suppress(asyncio.InvalidStateError):
             oldest.set_result(stop_reason)
 
+    @staticmethod
+    def _interrupt_payload(event: dict[str, Any]) -> dict[str, Any] | None:
+        """Return the `__interrupt__` payload carried by a wire event, if any.
+
+        Interrupts arrive as `updates`-mode stream tuples, either bare or wrapped
+        in a broadcast envelope, so both levels are checked.
+        """
+        data = event.get("data", event)
+        if not isinstance(data, dict):
+            return None
+        if "__interrupt__" not in data:
+            inner = data.get("data", {})
+            if isinstance(inner, dict) and "__interrupt__" in inner:
+                data = inner
+            else:
+                return None
+        payload = data.get("__interrupt__")
+        return payload if isinstance(payload, dict) else None
+
+    @staticmethod
+    def _interrupt_kind(payload: dict[str, Any]) -> str | None:
+        """Classify an interrupt payload into the bridge that answers it.
+
+        Two shapes reach this channel:
+
+        * **tool approval** — deepagents' HITL middleware, carrying
+          `action_requests`; answered with `session/request_permission`.
+        * **clarification** — Soothe's own
+          `interrupt({"type": "clarification", "interrupt_id", "questions"})`,
+          used by plan-mode review and other operator questions; answered with an
+          ACP elicitation.
+
+        Anything else is not ours to bridge. Recognising only the first shape is
+        why plan mode used to end with an unanswered question.
+        """
+        if "action_requests" in payload:
+            return "tool_approval"
+        if payload.get("type") == "clarification":
+            return "clarification"
+        return None
+
     def _is_tool_approval_event(self, event: dict[str, Any]) -> bool:
         """Check if an EventBus wire event contains a tool-approval interrupt.
-
-        Tool-approval interrupts arrive as `updates` mode stream tuples with
-        `__interrupt__` key containing `action_requests`.
 
         Args:
             event: Wire-format event dict from EventBus.
@@ -2021,27 +2841,8 @@ class ACPChannel(Channel):
         Returns:
             True if the event contains a tool-approval interrupt.
         """
-        # The wire event may be a broadcast message with type "event" and data
-        # containing the stream tuple, or it may be the raw stream tuple itself.
-        data = event.get("data", event)
-        if not isinstance(data, dict):
-            return False
-
-        # Check for __interrupt__ key in updates data
-        if "__interrupt__" not in data:
-            # Also check nested data structures
-            inner = data.get("data", {})
-            if isinstance(inner, dict) and "__interrupt__" in inner:
-                data = inner
-            else:
-                return False
-
-        interrupt_data = data.get("__interrupt__")
-        if not isinstance(interrupt_data, dict):
-            return False
-
-        # Check for action_requests (deepagents tool-approval interrupt shape)
-        return "action_requests" in interrupt_data
+        payload = self._interrupt_payload(event)
+        return payload is not None and self._interrupt_kind(payload) == "tool_approval"
 
     async def _bridge_permission_request(
         self,
@@ -2211,6 +3012,126 @@ class ACPChannel(Channel):
             topic = loop_event_topic(loop_id)
             await event_bus.publish(topic, resume_msg)
 
+    async def _bridge_clarification_request(
+        self,
+        session_id: str,
+        loop_id: str,
+        interrupt: dict[str, Any],
+    ) -> None:
+        """Bridge a clarification interrupt to an ACP elicitation.
+
+        Soothe suspends the loop with
+        `interrupt({"type": "clarification", "interrupt_id", "questions"})`
+        whenever it needs an operator decision. Plan-mode review is the one that
+        fires on every Plan turn: it writes the plan artifact, asks
+        Approve/Reject/Refine, and only proceeds once that is answered.
+
+        This is a different round-trip from tool approval. A permission response
+        carries a decision payload; a clarification's answer *is* the interrupt's
+        resume value — an ordered list of strings, `[action, comment]` for
+        action-selector origins. So the answer is published back as
+        `{interrupt_id: {"answers": [...]}}`, which is the shape
+        `InteractiveClarificationPolicy._normalize_payload` accepts.
+
+        Args:
+            session_id: ACP session identifier.
+            loop_id: Daemon loop identifier.
+            interrupt: The `__interrupt__` payload from the wire event.
+        """
+        state = self._get_state(_current_connection.get())
+        if not state.client_supports_form_elicitation:
+            # ACP says to treat an omitted capability as unsupported, so an
+            # elicitation would be dropped on the floor. Leaving the interrupt
+            # unbridged keeps the previous behaviour (the question is lost)
+            # rather than suspending the turn on a reply that cannot arrive.
+            logger.warning(
+                "[ACP] Clarification interrupt for session=%s, but the client did not "
+                "advertise form elicitation; leaving it unanswered",
+                session_id,
+            )
+            return
+
+        interrupt_id = str(interrupt.get("interrupt_id") or "").strip()
+        questions = interrupt.get("questions")
+        if not interrupt_id or not isinstance(questions, list) or not questions:
+            return
+
+        request_id = self._next_request_id
+        self._next_request_id += 1
+        fut: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
+        # `pending_permissions` is really "outbound client requests awaiting a
+        # reply" — `_handle_response` routes purely by request id — so an
+        # elicitation shares it rather than duplicating the plumbing.
+        state.pending_permissions[request_id] = fut
+
+        logger.info(
+            "[ACP] Clarification request: session=%s, interrupt=%s, questions=%d",
+            session_id,
+            interrupt_id,
+            len(questions),
+        )
+        await self._write_jsonrpc(
+            {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "method": "elicitation/create",
+                "params": _clarification_elicitation_params(session_id, questions),
+            }
+        )
+
+        try:
+            response = await asyncio.wait_for(fut, timeout=_PERMISSION_TIMEOUT_S)
+        except TimeoutError:
+            logger.warning(
+                "[ACP] Clarification timed out for session=%s, interrupt=%s",
+                session_id,
+                interrupt_id,
+            )
+            return
+        except asyncio.CancelledError:
+            logger.info("[ACP] Clarification cancelled for session=%s", session_id)
+            return
+
+        answers = _clarification_answers_from_response(response, questions)
+        if answers is None:
+            # Dismissed: Soothe raises `ClarificationDeferredError` for "no
+            # answer", which is the honest outcome. Never invent one — for plan
+            # review an invented "Approve" would authorise editing the workspace.
+            logger.info(
+                "[ACP] Clarification dismissed for session=%s, interrupt=%s",
+                session_id,
+                interrupt_id,
+            )
+            return
+
+        await self._route_clarification_response(loop_id, interrupt_id, answers)
+
+    async def _route_clarification_response(
+        self,
+        loop_id: str,
+        interrupt_id: str,
+        answers: list[str],
+    ) -> None:
+        """Publish a clarification answer so the suspended graph resumes."""
+        logger.info(
+            "[ACP] Clarification answered for loop=%s, interrupt=%s",
+            loop_id,
+            interrupt_id,
+        )
+        event_bus = getattr(self._manager, "_event_bus", None)
+        if event_bus is None:
+            return
+        topic = loop_event_topic(loop_id)
+        await event_bus.publish(
+            topic,
+            {
+                "type": "command",
+                "command": "resume",
+                "loop_id": loop_id,
+                "resume_payload": {interrupt_id: {"answers": list(answers)}},
+            },
+        )
+
     def _translate_event(self, event: dict[str, Any]) -> list[dict[str, Any]]:
         """Translate a daemon wire event to ACP content blocks.
 
@@ -2334,6 +3255,19 @@ class ACPChannel(Channel):
             )
             return state.emit_update()
 
+        if event_type == PLAN_CREATED:
+            # The plan's first appearance. `plan.decision` supersedes it on the
+            # next iteration, but without this a client sees nothing until the
+            # first decision frame — which on a slow first iteration is the
+            # whole planning phase with no sign that a plan exists.
+            state = self._plan_state(conn_key, loop_id)
+            raw_steps = data.get("steps")
+            state.sync_plan(
+                raw_steps if isinstance(raw_steps, list) else [],
+                int(data.get("iteration") or state.iteration),
+            )
+            return state.emit_update()
+
         if event_type in (STRANGE_LOOP_STEP_STARTED, STRANGE_LOOP_STEP_QUEUED):
             step_id = str(data.get("step_id") or "").strip()
             if not step_id:
@@ -2379,6 +3313,96 @@ class ACPChannel(Channel):
             state.plan_states[loop_id] = plan
         return plan
 
+    # ------------------------------------------------------------------
+    # Tool-call projection
+    # ------------------------------------------------------------------
+
+    def _tool_projection(self, conn_key: Any, loop_id: str) -> _ToolProjection:
+        """Return (creating if needed) the tool projection for this connection+loop."""
+        state = self._get_state(conn_key)
+        projection = state.tool_projections.get(loop_id)
+        if projection is None:
+            projection = _ToolProjection()
+            state.tool_projections[loop_id] = projection
+        return projection
+
+    def _apply_tool_event(
+        self,
+        conn_key: Any,
+        loop_id: str,
+        frame: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        """Fold one tool/subagent frame into this loop's tool rows.
+
+        Returns the `session/update` bodies to send, possibly empty. An empty
+        result means "no tool fact in this frame" — the caller still falls
+        through to the block translator, so unrelated frames must return [].
+        """
+        mode = str(frame.get("mode") or "")
+        data = frame.get("data")
+
+        if mode == "custom" and isinstance(data, dict):
+            event_type = str(data.get("type") or "")
+
+            if event_type in (TOOL_CALL_UPDATES_BATCH, STREAM_TOOL_CALL_UPDATE):
+                # A batch wraps many rows under `updates`; a lone stream update
+                # is itself the row. The coalescer batches adjacent invocations,
+                # so both shapes reach this branch.
+                rows: Any = [data] if event_type == STREAM_TOOL_CALL_UPDATE else data.get("updates")
+                if not isinstance(rows, list):
+                    return []
+                projection = self._tool_projection(conn_key, loop_id)
+                updates: list[dict[str, Any]] = []
+                for row in rows:
+                    if not isinstance(row, dict):
+                        continue
+                    args = row.get("args")
+                    updates.extend(
+                        projection.note_invocation(
+                            str(row.get("tool_call_id") or ""),
+                            str(row.get("name") or ""),
+                            args if isinstance(args, dict) else {},
+                        )
+                    )
+                return updates
+
+            if event_type in _SUBAGENT_EVENT_STATUS:
+                return self._tool_projection(conn_key, loop_id).note_subagent(event_type, data)
+
+            return []
+
+        if mode == "messages":
+            # A tool *result* is the only daemon-local signal that a call
+            # finished: the invocation frame carries no status, and nothing
+            # else closes the row. `tool_call_id` is what identifies it — an
+            # assistant frame carries `tool_calls` (plural), never this.
+            message = data[0] if isinstance(data, (tuple, list)) and data else None
+            if not isinstance(message, dict):
+                return []
+            tool_call_id = str(message.get("tool_call_id") or "").strip()
+            if not tool_call_id:
+                return []
+            return self._tool_projection(conn_key, loop_id).note_completion(
+                tool_call_id,
+                message.get("content"),
+                error=str(message.get("status") or "").strip().lower() == "error",
+            )
+
+        return []
+
+    async def _flush_tool_rows(
+        self,
+        conn_key: Any,
+        loop_id: str,
+        session_id: str,
+        *,
+        cancelled: bool = False,
+    ) -> None:
+        """Close any tool rows still open, so no client row is left spinning."""
+        projection = self._tool_projection(conn_key, loop_id)
+        for update in projection.sweep(cancelled=cancelled):
+            await self._send_update(session_id, update)
+
     async def _send_plan_update(
         self,
         session_id: str,
@@ -2386,22 +3410,56 @@ class ACPChannel(Channel):
     ) -> None:
         """Write a `session/update` whose `update` is a whole plan body.
 
-        Deliberately separate from `_send_session_update`, which takes content
-        blocks and fans out one notification per block. A plan is one
-        notification carrying an `entries` array, so routing it through the
-        block path would not fit.
+        Deliberately not routed through `_send_session_update`, which takes
+        content blocks and fans out one notification per block. A plan is one
+        notification carrying an `entries` array, so it goes straight to
+        `_send_update` instead.
         """
-        await self._write_jsonrpc(
-            {
-                "jsonrpc": "2.0",
-                "method": "session/update",
-                "params": {"sessionId": session_id, "update": update},
-            }
-        )
+        await self._send_update(session_id, update)
 
     # ------------------------------------------------------------------
     # Output helpers
     # ------------------------------------------------------------------
+
+    async def _send_update(
+        self,
+        session_id: str,
+        update: dict[str, Any],
+        *,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        """Write one ACP `session/update` notification carrying ``update``.
+
+        The single place `session/update` is written, so transport routing and
+        envelope shape cannot drift between the block, plan, and tool
+        projections.
+
+        In stdio mode the notification is written to stdout; in WebSocket mode
+        it is sent via `websocket.send_text` to the connection that owns the
+        session (determined via the `_current_connection` context var).
+
+        Args:
+            session_id: ACP session identifier.
+            update: The `SessionUpdate` body for this notification.
+            metadata: Optional stream metadata, attached as ACP `_meta`.
+        """
+        visible_metadata = (
+            {k: v for k, v in metadata.items() if not k.startswith("_")} if metadata else None
+        )
+        if visible_metadata:
+            # Merge rather than replace: plan and tool frames carry their own
+            # `_meta.soothe` payload that stream metadata must not clobber.
+            update = {**update, "_meta": {**(update.get("_meta") or {}), **visible_metadata}}
+        await self._write_jsonrpc(
+            {
+                "jsonrpc": "2.0",
+                "method": "session/update",
+                "params": {
+                    "sessionId": session_id,
+                    "update": update,
+                },
+            }
+        )
 
     async def _send_session_update(
         self,
@@ -2410,38 +3468,21 @@ class ACPChannel(Channel):
         *,
         metadata: dict[str, Any] | None = None,
     ) -> None:
-        """Write an ACP `session/update` notification to the active transport.
+        """Fan internal content blocks out into `session/update` frames.
 
-        In stdio mode the notification is written to stdout; in WebSocket
-        mode it is sent via `websocket.send_text` to the connection that
-        owns the session (determined via `_current_connection` context var).
+        `session/update` carries exactly one SessionUpdate, so a frame holding
+        several blocks becomes several notifications.
 
         Args:
             session_id: ACP session identifier.
             blocks: List of internal content blocks.
             metadata: Optional stream metadata, attached as ACP `_meta`.
         """
-        visible_metadata = (
-            {k: v for k, v in metadata.items() if not k.startswith("_")} if metadata else None
-        )
-        # `session/update` carries exactly one SessionUpdate, so a frame holding
-        # several blocks becomes several notifications.
         for block in blocks:
             update = _session_update_from_block(block)
             if update is None:
                 continue
-            if visible_metadata:
-                update["_meta"] = visible_metadata
-            await self._write_jsonrpc(
-                {
-                    "jsonrpc": "2.0",
-                    "method": "session/update",
-                    "params": {
-                        "sessionId": session_id,
-                        "update": update,
-                    },
-                }
-            )
+            await self._send_update(session_id, update, metadata=metadata)
 
     async def _write_jsonrpc(
         self,

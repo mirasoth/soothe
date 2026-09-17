@@ -165,11 +165,11 @@ _METHOD_PARAMS: dict[str, dict[str, Any]] = {
     },
     "session/cancel": {"sessionId": "__placeholder__"},
     "session/load": {"sessionId": "__placeholder__", "cwd": "/tmp"},
-    "session/set_mode": {"sessionId": "__placeholder__", "modeId": "default"},
+    "session/set_mode": {"sessionId": "__placeholder__", "modeId": "agent"},
     "session/set_config_option": {
         "sessionId": "__placeholder__",
-        "configId": "model",
-        "value": "test",
+        "configId": "mode",
+        "value": "agent",
         "type": "select",
     },
     "session/list": {"cwd": "/tmp"},
@@ -628,7 +628,7 @@ class TestACPFullProtocolBehaviour:
             result = resp["result"]
             assert "sessionId" in result
             assert "modes" in result
-            assert result["modes"]["currentModeId"] == "default"
+            assert result["modes"]["currentModeId"] == "agent"
             assert len(result["modes"]["availableModes"]) >= 1
             assert "configOptions" in result
 
@@ -710,7 +710,7 @@ class TestACPFullProtocolBehaviour:
             resp = await _recv_jsonrpc_matching(ws, match_id=2)
             result = resp["result"]
             assert "modes" in result
-            assert result["modes"]["currentModeId"] == "default"
+            assert result["modes"]["currentModeId"] == "agent"
             assert "configOptions" in result
 
     @pytest.mark.integration
@@ -2015,8 +2015,8 @@ class TestACPProductionReadiness:
                     "method": "session/set_config_option",
                     "params": {
                         "sessionId": session_id,
-                        "configId": "model",
-                        "value": "gpt-4",
+                        "configId": "mode",
+                        "value": "plan",
                         "type": "select",
                     },
                 },
@@ -2024,11 +2024,19 @@ class TestACPProductionReadiness:
             resp = await _recv_jsonrpc_matching(ws, match_id=3)
             result = resp["result"]
             assert "configOptions" in result
-            # The tracked config option must be in the response
-            config_ids = [c["configId"] for c in result["configOptions"]]
-            assert "model" in config_ids
-            model_opt = [c for c in result["configOptions"] if c["configId"] == "model"][0]
-            assert model_opt["value"] == "gpt-4"
+            # The complete, conformant option list must come back: ACP drops an
+            # option whose shape does not match the schema, so asserting the
+            # values survived is the only way to prove the client can render it.
+            mode_opt = result["configOptions"][0]
+            assert mode_opt["id"] == "mode"
+            assert mode_opt["category"] == "mode"
+            assert mode_opt["currentValue"] == "plan"
+            assert [o["value"] for o in mode_opt["options"]] == [
+                "agent",
+                "bypass",
+                "plan",
+                "ask",
+            ]
 
     @pytest.mark.integration
     @pytest.mark.asyncio
