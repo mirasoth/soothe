@@ -27,6 +27,9 @@ def make_manager(loop_id: str = "acp:test-session") -> MagicMock:
     manager.ensure_loop_id = MagicMock(return_value=loop_id)
     manager.ensure_loop_registered = AsyncMock(return_value=True)
     manager.submit_loop_input = AsyncMock()
+    # session/load and session/resume publish through handle_inbound, so the
+    # stub has to be awaitable like the real method.
+    manager.handle_inbound = AsyncMock(return_value=loop_id)
     manager._event_bus = MagicMock()
     manager._event_bus.subscribe = AsyncMock()
     dispatcher = MagicMock()
@@ -163,6 +166,70 @@ class TestACPChannelSession:
             task.cancel()
 
     @pytest.mark.asyncio
+    async def test_session_load_registers_loop_with_cwd(self):
+        """Reopening a session must restore its workspace, not lose it.
+
+        session/load creates the loop when the session is not in this
+        connection's map; if the cwd is not attached here the first prompt
+        registers the loop with the daemon workspace instead.
+        """
+        config = ACPConfig(enabled=True)
+        manager = make_manager(loop_id="acp:loaded")
+
+        channel = ACPChannel(config, manager)
+        result = await channel._handle_session_load(
+            {"sessionId": "sess-loaded", "cwd": "/tmp/loaded"}
+        )
+
+        assert "configOptions" in result
+        manager.ensure_loop_registered.assert_awaited_once_with(
+            "acp:loaded", workspace="/tmp/loaded"
+        )
+
+        for task in channel._get_state().consumer_tasks.values():
+            task.cancel()
+
+    @pytest.mark.asyncio
+    async def test_session_resume_registers_loop_with_cwd(self):
+        """A resumed session carries the cwd the client reopened it with."""
+        config = ACPConfig(enabled=True)
+        manager = make_manager(loop_id="acp:resumed")
+
+        channel = ACPChannel(config, manager)
+        # session/resume requires the session to already be known here.
+        channel._get_state().session_map["sess-resumed"] = "acp:resumed"
+
+        await channel._handle_session_resume({"sessionId": "sess-resumed", "cwd": "/tmp/resumed"})
+
+        manager.ensure_loop_registered.assert_awaited_once_with(
+            "acp:resumed", workspace="/tmp/resumed"
+        )
+
+        for task in channel._get_state().consumer_tasks.values():
+            task.cancel()
+
+    @pytest.mark.asyncio
+    async def test_session_fork_registers_the_new_loop_with_cwd(self):
+        """The forked loop is new, so the inherited cwd is attached here."""
+        config = ACPConfig(enabled=True)
+        manager = make_manager(loop_id="acp:forked")
+
+        channel = ACPChannel(config, manager)
+        channel._get_state().session_map["sess-parent"] = "acp:parent"
+
+        result = await channel._handle_session_fork(
+            {"sessionId": "sess-parent", "cwd": "/tmp/forked"}
+        )
+
+        assert "sessionId" in result
+        manager.ensure_loop_registered.assert_awaited_once_with(
+            "acp:forked", workspace="/tmp/forked"
+        )
+
+        for task in channel._get_state().consumer_tasks.values():
+            task.cancel()
+
+    @pytest.mark.asyncio
     async def test_session_prompt_submits_a_turn_and_waits_for_it(self):
         """session/prompt submits a real turn and answers when the loop goes idle."""
         config = ACPConfig(enabled=True)
@@ -236,9 +303,7 @@ class TestACPChannelEventTranslation:
         config = ACPConfig(enabled=True)
         channel = ACPChannel(config, MockManager())
 
-        blocks = channel._translate_event(
-            messages_frame("Hello world", phase="goal_completion")
-        )
+        blocks = channel._translate_event(messages_frame("Hello world", phase="goal_completion"))
 
         assert len(blocks) == 1
         assert blocks[0]["type"] == "text"
