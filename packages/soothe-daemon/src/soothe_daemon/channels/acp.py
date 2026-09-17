@@ -1131,6 +1131,8 @@ class _ConnectionState:
         tool_projections: loop_id → _ToolProjection (accumulated tool-call rows).
         client_supports_form_elicitation: Whether this client advertised that it
             can render a form elicitation, which gates the clarification bridge.
+        dispatch_tasks: In-flight inbound handlers for this connection, held so
+            they are neither collected mid-await nor leaked past teardown.
     """
 
     __slots__ = (
@@ -1144,6 +1146,7 @@ class _ConnectionState:
         "plan_states",
         "tool_projections",
         "client_supports_form_elicitation",
+        "dispatch_tasks",
     )
 
     def __init__(self) -> None:
@@ -1160,6 +1163,20 @@ class _ConnectionState:
         self.plan_states: dict[str, _PlanState] = {}
         self.tool_projections: dict[str, _ToolProjection] = {}
         self.client_supports_form_elicitation = False
+        self.dispatch_tasks: set[asyncio.Task[None]] = set()
+
+
+def _log_dispatch_error(task: asyncio.Task[None]) -> None:
+    """Report an error from a detached dispatch instead of dropping it.
+
+    Nothing awaits these tasks, so an escaping exception would otherwise only
+    resurface as "Task exception was never retrieved" when it is collected.
+    """
+    if task.cancelled():
+        return
+    error = task.exception()
+    if error is not None:
+        logger.error("[ACP] Dispatch failed", exc_info=error)
 
 
 def _make_text_block(content: str) -> dict[str, Any]:
@@ -1404,6 +1421,15 @@ class ACPChannel(Channel):
             state: The `_ConnectionState` to clean up.
             event_bus: Daemon EventBus (for unsubscribing event queues).
         """
+        # Stop this connection's inbound handlers before clearing the state they
+        # read. A `session/prompt` handler is parked on its turn future, so it
+        # would otherwise wake up against a half-torn-down connection.
+        for task in list(state.dispatch_tasks):
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        state.dispatch_tasks.clear()
+
         for loop_id, task in list(state.consumer_tasks.items()):
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -1507,6 +1533,7 @@ class ACPChannel(Channel):
         stdout via `_write_jsonrpc`.
         """
         token = _current_connection.set(_STDIO_SENTINEL)
+        state = self._get_state(_STDIO_SENTINEL)
         try:
             while self._running:
                 try:
@@ -1521,7 +1548,7 @@ class ACPChannel(Channel):
                         continue
 
                     request = json.loads(line)
-                    await self._dispatch_request(request)
+                    self._dispatch_detached(request, state)
                 except asyncio.CancelledError:
                     raise
                 except json.JSONDecodeError as e:
@@ -1561,7 +1588,7 @@ class ACPChannel(Channel):
         """
         await websocket.accept()
         # Ensure a _ConnectionState exists for this connection.
-        self._get_state(websocket)
+        conn_state = self._get_state(websocket)
 
         token = _current_connection.set(websocket)
         try:
@@ -1578,7 +1605,7 @@ class ACPChannel(Channel):
 
                 try:
                     request = json.loads(line)
-                    await self._dispatch_request(request)
+                    self._dispatch_detached(request, conn_state)
                 except json.JSONDecodeError as e:
                     await self._write_jsonrpc(
                         {
@@ -1600,6 +1627,40 @@ class ACPChannel(Channel):
             state = self._connections.pop(websocket, None)
             if state is not None:
                 await self._cleanup_connection(websocket, state, event_bus)
+
+    def _dispatch_detached(self, request: dict[str, Any], state: _ConnectionState) -> None:
+        """Handle one inbound message without parking the transport loop.
+
+        Handlers are never awaited inline. `_handle_session_prompt` does not
+        return until its turn ends, so awaiting it from the read loop would
+        leave every frame that arrives mid-turn unread in the transport buffer:
+
+        - `session/cancel` could only be applied once the turn it was meant to
+          stop had already finished on its own, making a client's Stop a no-op.
+        - the client's answer to an agent-originated request
+          (`session/request_permission`, `elicitation/create`) could not be read
+          at all, because the turn that raised the question is what is holding
+          the loop — a deadlock by construction.
+
+        The ACP SDK's own connection has the same shape: its read loop calls
+        `receiveMessage` without awaiting it, and tracks an abort controller per
+        inbound request so a notification can preempt a pending one.
+
+        Ordering is unaffected for the normal case, because an ACP client awaits
+        each response before sending its next request. Only notifications and
+        responses are sent unprompted, and those are precisely the frames that
+        have to be able to overtake a running turn.
+
+        Args:
+            request: Parsed JSON-RPC request dict.
+            state: Connection state that owns the task, so teardown can cancel it.
+        """
+        # `create_task` copies the current context, so this handler's outbound
+        # frames still resolve `_current_connection` to the right transport.
+        task = asyncio.create_task(self._dispatch_request(request))
+        state.dispatch_tasks.add(task)
+        task.add_done_callback(state.dispatch_tasks.discard)
+        task.add_done_callback(_log_dispatch_error)
 
     async def _dispatch_request(self, request: dict[str, Any]) -> None:
         """Dispatch a JSON-RPC 2.0 request to the appropriate handler.

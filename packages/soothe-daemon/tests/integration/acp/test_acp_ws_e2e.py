@@ -414,6 +414,78 @@ class TestACPWebSocketE2E:
 
     @pytest.mark.integration
     @pytest.mark.asyncio
+    async def test_cancel_preempts_inflight_prompt(self, acp_ws_server) -> None:
+        """``session/cancel`` must land while ``session/prompt`` is still open.
+
+        ``_handle_session_prompt`` does not return until its turn ends, so if
+        the transport loop awaited handlers the cancel frame would sit unread in
+        the socket buffer until the turn finished on its own — the turn would
+        then report ``end_turn``, and a client's Stop button would look dead.
+        Nothing here ever reports the loop idle, so only the cancel can release
+        the prompt.
+        """
+        base_url, channel, manager = acp_ws_server
+
+        async with websockets.asyncio.client.connect(f"{base_url}/acp") as ws:
+            await _send_jsonrpc(
+                ws,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": {
+                        "protocolVersion": 1,
+                        "clientCapabilities": {},
+                        "clientInfo": {"name": "ws-test", "version": "1.0"},
+                    },
+                },
+            )
+            await _recv_jsonrpc_matching(ws, match_id=1)
+
+            await _send_jsonrpc(
+                ws,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "session/new",
+                    "params": {"cwd": "/tmp"},
+                },
+            )
+            new_resp = await _recv_jsonrpc_matching(ws, match_id=2)
+            session_id = new_resp["result"]["sessionId"]
+
+            await _send_jsonrpc(
+                ws,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 3,
+                    "method": "session/prompt",
+                    "params": {
+                        "sessionId": session_id,
+                        "prompt": [{"type": "text", "text": "Start a long turn"}],
+                    },
+                },
+            )
+            # Let the prompt dispatch register its waiter before we cancel.
+            await asyncio.sleep(0.05)
+            assert manager.submitted
+
+            await _send_jsonrpc(
+                ws,
+                {
+                    "jsonrpc": "2.0",
+                    "method": "session/cancel",
+                    "params": {"sessionId": session_id},
+                },
+            )
+
+            prompt_resp = await _recv_jsonrpc_matching(ws, match_id=3, timeout=5.0)
+            assert prompt_resp["jsonrpc"] == "2.0"
+            assert prompt_resp["id"] == 3
+            assert prompt_resp["result"]["stopReason"] == "cancelled"
+
+    @pytest.mark.integration
+    @pytest.mark.asyncio
     async def test_permission_bridge_flow(self, acp_ws_server) -> None:
         """Test the permission bridge over WebSocket.
 
