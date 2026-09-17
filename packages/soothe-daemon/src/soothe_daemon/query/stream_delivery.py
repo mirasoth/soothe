@@ -113,7 +113,15 @@ def _msg_to_wire_dict(msg: Any) -> dict[str, Any] | None:
         from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 
         if isinstance(msg, ToolMessage):
-            return {"type": "tool", "content": msg.content, "tool_call_id": msg.tool_call_id}
+            # ``status`` distinguishes a successful tool result from an error
+            # result, which the ACP projection needs to close a tool call as
+            # ``completed`` vs ``failed``. It is not carried by ``content``.
+            return {
+                "type": "tool",
+                "content": msg.content,
+                "tool_call_id": msg.tool_call_id,
+                "status": str(getattr(msg, "status", "") or ""),
+            }
         if isinstance(msg, (AIMessage, AIMessageChunk)):
             out: dict[str, Any] = {
                 "type": "ai",
