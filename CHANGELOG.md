@@ -7,8 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Add config-gated static breakpoints on the loop graph: `agent.loop.debug.interrupt_before` / `interrupt_after` pause the StrangeLoop before/after named stations (e.g. `execute`, `finalize`); the turn emits `soothe.cognition.strange_loop.breakpoint.paused` with the pending nodes and the next turn resumes the paused node.
+
+### Changed
+- Resume all pending same-thread clarification interrupts with one `Command(resume=...)`: statically resolvable tool-approval followers (allow/deny rules) join the head's answer batch instead of each costing a full park → answer → resume round trip.
+- Reconcile the clarification inbox against CoreAgent checkpoint state on each execute turn: entries whose interrupt no longer exists on their fork thread are dropped, and interrupts pending on a thread but missing from the inbox are alerted via `soothe.cognition.relay.reconciled`.
+
 ### Fixed
 - Persist client `cwd` as the loop workspace in ACP `session/load`, `session/resume`, and `session/fork`: reopening or forking a session now calls `ensure_loop_registered` with the client-supplied directory instead of letting the first prompt silently register the loop against the daemon workspace.
+- Propagate a `GraphInterrupt` escaping the parallel step driver to the graph runtime instead of recording the step as failed.
 
 ### Changed
 - Trim the DashScope multi-instance provider pool in `config/develop/nano.yml` and `config/production/nano.yml` from 16 endpoints to the 7 with valid credentials (`ds2`, `ds4`, `ds5`, `ds6`, `ds7`, `ds9`, `ds10`) and update the `glm-mm` router profile and `example.env` to match; blocked or invalid keys previously stalled failover ~3s per dead endpoint before reaching a working one.

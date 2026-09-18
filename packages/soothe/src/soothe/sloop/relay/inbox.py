@@ -111,6 +111,23 @@ class RelayInbox:
             )
         return dropped
 
+    def drop(self, entry: RelayInboxEntry) -> bool:
+        """Remove a specific entry (identity match). Returns True when removed.
+
+        Used by checkpoint reconciliation to evict entries whose interrupt no
+        longer exists on the CoreAgent thread.
+        """
+        for idx, candidate in enumerate(self._entries):
+            if candidate is entry:
+                del self._entries[idx]
+                logger.info(
+                    "[RelayInbox] dropped stale entry interrupt_id=%s queue_len=%d",
+                    entry.request.origin_interrupt_id[:16],
+                    len(self._entries),
+                )
+                return True
+        return False
+
     @property
     def head(self) -> ClarificationRequest | None:
         """The head clarification request, or `None` if empty."""

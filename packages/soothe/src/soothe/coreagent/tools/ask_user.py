@@ -9,6 +9,8 @@ from typing import Any
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from soothe.sloop.clarification.interrupt_kinds import INTERRUPT_TYPE_ASK_USER
+
 logger = logging.getLogger(__name__)
 
 # Old field names → new field names (for backward-compat coercion of in-flight loops).
@@ -239,7 +241,9 @@ def _run_ask_user(questions: list[QuestionSpec] | None = None) -> str:
         len(cleaned),
         cleaned[0].question[:120],
     )
-    payload = interrupt({"type": "ask_user", "questions": [q.model_dump() for q in cleaned]})
+    payload = interrupt(
+        {"type": INTERRUPT_TYPE_ASK_USER, "questions": [q.model_dump() for q in cleaned]}
+    )
     return _format_answers(cleaned, payload)
 
 

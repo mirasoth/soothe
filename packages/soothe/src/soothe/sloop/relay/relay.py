@@ -232,7 +232,7 @@ class LoopRelay:
             inbox=self._inbox,
             scratch=scratch,
             active_origin=self._active_origin,
-            answer=None,
+            answers=None,
             audit=self._audit,
         )
         await self._emit(
@@ -410,75 +410,110 @@ class LoopRelay:
     # Answer lifecycle (await_user + origin node)
     # ------------------------------------------------------------------
 
-    def record_answer(
+    def record_answers(
         self,
+        pairs: list[tuple[ClarificationRequest, ClarificationAnswer]],
         *,
-        answer: ClarificationAnswer,
         scratch: LoopPhaseScratch | None = None,
     ) -> dict[str, Any]:
-        """Record a policy answer onto the relay state (called by `await_user`).
+        """Record answered requests onto the relay state (called by `await_user`).
 
-        Returns `{"relay_state": {..., "answer": answer_state}}` for the node
-        to return. The origin node consumes the answer via `consume_answer`
-        and dequeues the head after the CoreAgent resume succeeds.
+        `pairs` is the head request plus any consecutive same-thread followers
+        resolved statically in the same visit (batch resume). Returns
+        `{"relay_state": {..., "answers": [...]}}` for the node to return. The
+        origin node consumes the answers via `consume_answer_batch` and
+        dequeues the entries after the CoreAgent resume succeeds.
         """
         from soothe.sloop.clarification.protocol import answer_to_state
 
-        answer_state = answer_to_state(answer)
-        self._audit.append(
-            self._audit_entry(
-                "answered",
-                self.active_origin,
-                self._inbox.head_ticket,
+        ticket_by_iid = {
+            entry.request.origin_interrupt_id: entry.resume_ticket for entry in self._inbox
+        }
+        answers = [
+            {
+                "interrupt_id": request.origin_interrupt_id,
+                "answer": answer_to_state(answer),
+            }
+            for request, answer in pairs
+        ]
+        for request, _answer in pairs:
+            self._audit.append(
+                self._audit_entry(
+                    "answered",
+                    request.origin_node,
+                    ticket_by_iid.get(request.origin_interrupt_id),
+                )
             )
-        )
         return build_relay_state_update(
             inbox=self._inbox,
             scratch=scratch,
             active_origin=self.active_origin,
-            answer=answer_state,
+            answers=answers,
             audit=self._audit,
         )
 
-    def consume_answer(
+    def consume_answer_batch(
         self,
         relay_state: Mapping[str, Any] | None,
-    ) -> tuple[ClarificationRequest, ClarificationAnswer, ResumeTicket] | None:
-        """Pop the head + answer for the origin node to build a CoreAgent resume.
+    ) -> list[tuple[ClarificationRequest, ClarificationAnswer, ResumeTicket]] | None:
+        """Pop the head plus its answered same-thread prefix for a batch resume.
 
         Called by the origin node (`execute` / `plan_review`) after the policy
-        answered. Returns `(request, answer, ticket)` or `None` when the
-        inbox/answer is empty. Dequeues the head; the next `project_to_channels`
-        call reflects the dequeue.
+        answered. Dequeues the maximal consecutive prefix of entries that
+        share the head's `resume_ticket.thread_id` and have a recorded answer;
+        a same-thread entry without an answer stops the batch (it stays queued
+        for its own turn — FIFO fairness). Returns the `(request, answer,
+        ticket)` triples, or `None` when the inbox/answers are empty.
         """
         from soothe.sloop.clarification.protocol import answer_from_state
+        from soothe.sloop.relay.channel import recorded_answers
 
-        if not isinstance(relay_state, Mapping):
-            return None
-        answer_state = relay_state.get("answer")
-        if not isinstance(answer_state, Mapping):
-            return None
         head_entry = self._inbox.peek()
         if head_entry is None:
             return None
-        try:
-            answer = answer_from_state(answer_state)
-        except ValueError:
-            logger.exception("[relay] malformed answer state on consume")
+        head_iid = head_entry.request.origin_interrupt_id
+        answer_by_iid: dict[str, Any] = {}
+        for record in recorded_answers(relay_state):
+            # The orphan-goto recovery writes an empty interrupt id — it
+            # answers the head entry.
+            iid = str(record.get("interrupt_id") or "") or head_iid
+            answer_by_iid[iid] = record.get("answer")
+        if not answer_by_iid:
             return None
-        request = head_entry.request
-        ticket = head_entry.resume_ticket
-        self._inbox.dequeue()
-        self._audit.append(self._audit_entry("consumed", request.origin_node, ticket))
-        return request, answer, ticket
+        head_thread = head_entry.resume_ticket.thread_id
+        if not head_thread:
+            # Threadless entries (planner-ask) never batch — no CoreAgent
+            # fork to resume.
+            entries = [head_entry]
+        else:
+            entries = list(self._inbox)
 
-    def clear_answer(self, *, scratch: LoopPhaseScratch | None = None) -> dict[str, Any]:
-        """Clear the answer slot and project the dequeued inbox (origin node, post-resume)."""
+        consumed: list[tuple[ClarificationRequest, ClarificationAnswer, ResumeTicket]] = []
+        for entry in entries:
+            if entry.resume_ticket.thread_id != head_thread:
+                break
+            answer_state = answer_by_iid.get(entry.request.origin_interrupt_id)
+            if not isinstance(answer_state, Mapping):
+                break
+            try:
+                answer = answer_from_state(answer_state)
+            except ValueError:
+                logger.exception("[relay] malformed answer state on consume")
+                break
+            request = entry.request
+            ticket = entry.resume_ticket
+            self._inbox.dequeue()
+            self._audit.append(self._audit_entry("consumed", request.origin_node, ticket))
+            consumed.append((request, answer, ticket))
+        return consumed or None
+
+    def clear_answers(self, *, scratch: LoopPhaseScratch | None = None) -> dict[str, Any]:
+        """Clear the answer records and project the dequeued inbox (origin node, post-resume)."""
         return build_relay_state_update(
             inbox=self._inbox,
             scratch=scratch,
             active_origin=self.active_origin,
-            answer=None,
+            answers=None,
             audit=self._audit,
         )
 
@@ -502,7 +537,7 @@ class LoopRelay:
             inbox=self._inbox,
             scratch=scratch,
             active_origin=self.active_origin,
-            answer=None,
+            answers=None,
             audit=self._audit,
         )
         if mark_parked_head:

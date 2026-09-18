@@ -65,11 +65,16 @@ def _refine_answer_state(comments: str) -> dict:
     }
 
 
+def _answers_slot(comments: str) -> list[dict]:
+    """relay_state answer records carrying one refine answer (head-keyed)."""
+    return [{"interrupt_id": "", "answer": _refine_answer_state(comments)}]
+
+
 def _answer_state_dict(comments: str) -> dict:
     """relay_state with a refine answer slot set."""
     return {
         "relay_state": {
-            "answer": _refine_answer_state(comments),
+            "answers": _answers_slot(comments),
             "inbox": [],
             "active_origin": "plan_mode_review",
         }
@@ -82,7 +87,7 @@ def _pending_with_plan(ctx) -> dict:
         "relay_state": {
             "inbox": [],
             "active_origin": "plan_mode_review",
-            "answer": _refine_answer_state(""),
+            "answers": _answers_slot(""),
             "scratch": {
                 "plan_draft_path": ctx.scratch.plan_draft_path,
                 "plan_draft_markdown": ctx.scratch.plan_draft_markdown,
@@ -96,7 +101,7 @@ def test_refine_with_comments_sets_refinement_flag() -> None:
     ctx = _build_ctx()
     state = {
         "relay_state": {
-            "answer": _refine_answer_state("reuse deepagents tokens"),
+            "answers": _answers_slot("reuse deepagents tokens"),
             "inbox": [],
             "active_origin": "plan_mode_review",
             "scratch": {
@@ -116,7 +121,7 @@ def test_refine_without_comments_does_not_flag_refinement() -> None:
     ctx = _build_ctx()
     state = {
         "relay_state": {
-            "answer": _refine_answer_state(""),
+            "answers": _answers_slot(""),
             "inbox": [],
             "active_origin": "plan_mode_review",
             "scratch": {
@@ -142,7 +147,7 @@ def test_node_plan_review_refines_on_refine_resume() -> None:
     ctx.scratch.plan_review_comments = "reuse deepagents tokens"
     state = {
         "relay_state": {
-            "answer": _refine_answer_state("reuse deepagents tokens"),
+            "answers": _answers_slot("reuse deepagents tokens"),
             "inbox": [],
             "active_origin": "plan_mode_review",
             "scratch": {
@@ -209,7 +214,7 @@ def test_node_plan_review_keeps_old_draft_when_refinement_fails() -> None:
     ctx.scratch.plan_review_comments = "reuse deepagents tokens"
     state = {
         "relay_state": {
-            "answer": _refine_answer_state("reuse deepagents tokens"),
+            "answers": _answers_slot("reuse deepagents tokens"),
             "inbox": [],
             "active_origin": "plan_mode_review",
             "scratch": {
@@ -281,7 +286,7 @@ def test_hydrate_scratch_restores_comments_from_pending() -> None:
     state = {
         "relay_state": {
             "inbox": [],
-            "answer": None,
+            "answers": [],
             "scratch": {
                 "plan_draft_path": "/ws/.soothe/plans/p.md",
                 "plan_draft_markdown": "# Plan\n\nDraft.",
@@ -300,7 +305,7 @@ def test_hydrate_scratch_does_not_overwrite_existing_comments() -> None:
     state = {
         "relay_state": {
             "inbox": [],
-            "answer": None,
+            "answers": [],
             "scratch": {
                 "plan_review_comments": "from channel",
             },

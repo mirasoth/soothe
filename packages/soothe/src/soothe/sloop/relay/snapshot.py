@@ -2,13 +2,14 @@
 
 `snapshot_has_resumable_interrupt` checks LangGraph's own interrupt mechanism
 (the `interrupt()` call in `InteractiveClarificationPolicy`).
-`snapshot_has_unanswered_pending` checks the relay inbox for an unanswered
-head.
+`snapshot_has_unanswered_pending` checks the relay inbox for recorded answers.
 """
 
 from __future__ import annotations
 
 from typing import Any
+
+from soothe.sloop.relay.channel import recorded_answers
 
 
 def snapshot_has_resumable_interrupt(snapshot: Any) -> bool:
@@ -32,8 +33,8 @@ def snapshot_has_resumable_interrupt(snapshot: Any) -> bool:
 def snapshot_has_unanswered_pending(snapshot: Any) -> bool:
     """True when the relay inbox has a head entry with no answer built yet.
 
-    Reads the `relay_state` graph channel: inbox non-empty and answer slot
-    `None`.
+    Reads the `relay_state` graph channel: inbox non-empty and no recorded
+    answer records.
     """
     values = getattr(snapshot, "values", {}) or {}
     relay_state = values.get("relay_state")
@@ -42,7 +43,7 @@ def snapshot_has_unanswered_pending(snapshot: Any) -> bool:
     inbox = relay_state.get("inbox")
     if not isinstance(inbox, list) or not inbox:
         return False
-    return relay_state.get("answer") is None
+    return not recorded_answers(relay_state)
 
 
 __all__ = [

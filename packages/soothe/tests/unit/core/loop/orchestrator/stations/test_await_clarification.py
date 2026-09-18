@@ -112,7 +112,7 @@ def _pending_state(
         "relay_state": {
             "inbox": [entry],
             "active_origin": origin,
-            "answer": None,
+            "answers": [],
         }
     }
 
@@ -148,8 +148,8 @@ async def test_success_writes_answer_and_clears_pending() -> None:
     # ``pending_clarification`` survives the answer write so the
     # originating node can pair the request (carrying ``origin_interrupt_id``)
     # with the answer on re-entry. The originating node clears both channels.
-    assert result["relay_state"]["answer"]["answers"] == ["auth flows"]
-    assert result["relay_state"]["answer"]["source"] == "human"
+    assert result["relay_state"]["answers"][0]["answer"]["answers"] == ["auth flows"]
+    assert result["relay_state"]["answers"][0]["answer"]["source"] == "human"
     names = [n for n, _ in ctx.emitted]
     # Short names — the runner dispatch wraps them into the
     # ``soothe.loop.clarification.*`` wire events before yielding.
@@ -200,8 +200,8 @@ async def test_deferred_parks_and_keeps_pending() -> None:
     result = await node_await_clarification(ctx, _pending_state())
 
     assert result["last_outcome"] == "deferred"
-    # Keep graph pending (do not clear); only clear the answer channel.
-    assert result["relay_state"].get("answer") is None
+    # Keep graph pending (do not clear); only clear the answer records.
+    assert result["relay_state"].get("answers") == []
     assert len(ctx.parks) == 1
     assert ctx.parks[0][1] == "low confidence"
     deferred_payloads = [p for n, p in ctx.emitted if n == "clarification_deferred"]
@@ -215,7 +215,7 @@ async def test_answer_defer_true_parks() -> None:
     ctx = _StubCtx(policy=policy)
     result = await node_await_clarification(ctx, _pending_state())
     assert result["last_outcome"] == "deferred"
-    assert result["relay_state"].get("answer") is None
+    assert result["relay_state"].get("answers") == []
     assert len(ctx.parks) == 1
     assert any(n == "clarification_deferred" for n, _ in ctx.emitted)
 
@@ -261,7 +261,7 @@ async def test_interactive_pause_persists_ce_before_interrupt() -> None:
     result = await node_await_clarification(ctx, _pending_state())
 
     assert ce.saves == 1
-    assert result["relay_state"]["answer"] is not None
+    assert result["relay_state"]["answers"]
 
 
 async def test_resume_turn_skips_pre_pause_ce_save() -> None:
@@ -288,7 +288,7 @@ async def test_resume_turn_skips_pre_pause_ce_save() -> None:
     result = await node_await_clarification(ctx, _pending_state())
 
     assert ce.saves == 0
-    assert result["relay_state"]["answer"] is not None
+    assert result["relay_state"]["answers"]
 
 
 @pytest.mark.parametrize(
@@ -337,7 +337,7 @@ async def test_missing_policy_defers() -> None:
     assert result["last_outcome"] == "deferred"
     assert len(ctx.parks) == 1
     assert ctx.parks[0][1] == "no clarification policy configured"
-    assert result["relay_state"].get("answer") is None
+    assert result["relay_state"].get("answers") == []
 
 
 async def test_malformed_pending_returns_fatal() -> None:
@@ -351,7 +351,7 @@ async def test_malformed_pending_returns_fatal() -> None:
                 "inbox": [
                     {"request": {"origin_node": "garbage", "questions": []}, "resume_ticket": {}}
                 ],
-                "answer": None,
+                "answers": [],
             }
         },
     )
@@ -374,6 +374,91 @@ async def test_mode_derived_from_policy_class(policy_factory: Any, expected_mode
     requested = [p for n, p in ctx.emitted if n == "clarification_requested"]
     assert len(requested) == 1
     assert requested[0]["mode"] == expected_mode
+
+
+def _two_entry_state(*, follower_thread: str = "t1") -> dict[str, Any]:
+    """relay_state with two inbox entries; head `i1` and follower `i2`."""
+    head_req = ClarificationRequest(
+        questions=("Head question?",),
+        origin_node="execute",
+        origin_interrupt_id="i1",
+        loop_state=_loop_view(),
+    )
+    follower_req = ClarificationRequest(
+        questions=("Follower question?",),
+        origin_node="execute",
+        origin_interrupt_id="i2",
+        loop_state=_loop_view(),
+    )
+    return {
+        "relay_state": {
+            "inbox": [
+                {
+                    "request": request_to_state(head_req),
+                    "resume_ticket": ticket_to_state(ResumeTicket(thread_id="t1", step_id="s1")),
+                    "step_id": "s1",
+                },
+                {
+                    "request": request_to_state(follower_req),
+                    "resume_ticket": ticket_to_state(
+                        ResumeTicket(thread_id=follower_thread, step_id="s1")
+                    ),
+                    "step_id": "s1",
+                },
+            ],
+            "active_origin": "execute",
+            "answers": [],
+        }
+    }
+
+
+class _BatchingPolicyStub:
+    """Answers the head like any policy; statically resolves the follower."""
+
+    def __init__(self, static_answer: ClarificationAnswer | None) -> None:
+        self._static = static_answer
+
+    async def answer(self, _request: ClarificationRequest) -> ClarificationAnswer:
+        return ClarificationAnswer(answers=("head answered",), source="human")
+
+    def try_static_answer(self, _request: ClarificationRequest) -> ClarificationAnswer | None:
+        return self._static
+
+
+async def test_same_thread_follower_joins_the_answer_batch() -> None:
+    policy = _BatchingPolicyStub(ClarificationAnswer(answers=("allow",), source="static"))
+    ctx = _StubCtx(policy=policy)
+
+    result = await node_await_clarification(ctx, _two_entry_state())
+
+    records = result["relay_state"]["answers"]
+    assert [r["interrupt_id"] for r in records] == ["i1", "i2"]
+    assert records[0]["answer"]["answers"] == ["head answered"]
+    assert records[1]["answer"]["source"] == "static"
+
+
+async def test_follower_without_static_answer_stays_queued() -> None:
+    policy = _BatchingPolicyStub(None)
+    ctx = _StubCtx(policy=policy)
+
+    result = await node_await_clarification(ctx, _two_entry_state())
+
+    records = result["relay_state"]["answers"]
+    assert [r["interrupt_id"] for r in records] == ["i1"]
+    # Both entries remain in the inbox — the follower gets its own turn.
+    assert len(result["relay_state"]["inbox"]) == 2
+
+
+async def test_follower_on_other_thread_stays_queued() -> None:
+    """Only same-thread followers batch — a different thread's resume is its
+    own Command on its own fork."""
+    policy = _BatchingPolicyStub(ClarificationAnswer(answers=("allow",), source="static"))
+    ctx = _StubCtx(policy=policy)
+
+    result = await node_await_clarification(ctx, _two_entry_state(follower_thread="t2"))
+
+    records = result["relay_state"]["answers"]
+    assert [r["interrupt_id"] for r in records] == ["i1"]
 
 
 async def test_plan_mode_review_emit_includes_plan_payload() -> None:
@@ -540,7 +625,7 @@ async def test_first_turn_mark_failure_does_not_break_park() -> None:
     )
 
     result = await node_await_clarification(ctx, _pending_state())  # must not raise
-    assert result["relay_state"]["answer"] is not None
+    assert result["relay_state"]["answers"]
 
 
 async def test_resume_turn_does_not_remark_goal_parked() -> None:
@@ -564,5 +649,5 @@ async def test_first_turn_without_goal_record_skips_mark_safely() -> None:
     ctx = _StubCtx(policy=policy)  # goal_record defaults to None
 
     result = await node_await_clarification(ctx, _pending_state())
-    assert result["relay_state"]["answer"] is not None
+    assert result["relay_state"]["answers"]
     assert ctx.state_manager.mark_calls == []

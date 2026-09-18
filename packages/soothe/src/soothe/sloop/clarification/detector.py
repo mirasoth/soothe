@@ -5,6 +5,11 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from soothe.sloop.clarification.interrupt_kinds import (
+    INTERRUPT_TYPE_ASK_USER,
+    InterruptKind,
+    classify_interrupt_payload,
+)
 from soothe.sloop.clarification.origins import ORIGIN_TOOL_APPROVAL
 from soothe.sloop.clarification.protocol import (
     ClarificationOrigin,
@@ -40,7 +45,7 @@ class ClarificationDetector:
         """Return a request if `value` is a structured `ask_user` interrupt."""
         if not isinstance(value, Mapping):
             return None
-        if value.get("type") != "ask_user":
+        if value.get("type") != INTERRUPT_TYPE_ASK_USER:
             return None
         questions = self._extract_questions(value)
         if not questions:
@@ -97,26 +102,25 @@ class ClarificationDetector:
     ) -> ClarificationRequest | None:
         """Route an interrupt payload to the right request constructor.
 
-        Single entry point replacing the per-shape `is_*` + `from_*`
-        branching in the executor. Selection is by payload key:
+        Single entry point replacing the per-shape `from_*` branching in the
+        executor. Selection is by `classify_interrupt_payload`:
 
-        - `"action_requests"` → tool-approval (origin forced to
+        - `TOOL_APPROVAL` → tool-approval (origin forced to
           `ORIGIN_TOOL_APPROVAL`).
-        - `type == "ask_user"` → execute-origin question (origin from caller).
+        - `ASK_USER` → execute-origin question (origin from caller).
         - anything else → `None` (not a structured clarification).
 
         `from_interrupt` / `from_tool_approval_interrupt` remain as public
         delegating constructors; this method just picks between them.
         """
-        if not isinstance(value, Mapping):
-            return None
-        if "action_requests" in value:
+        kind = classify_interrupt_payload(value)
+        if kind is InterruptKind.TOOL_APPROVAL:
             return self.from_tool_approval_interrupt(
                 value,
                 interrupt_id=interrupt_id,
                 loop_state=loop_state,
             )
-        if value.get("type") == "ask_user":
+        if kind is InterruptKind.ASK_USER:
             return self.from_interrupt(
                 value,
                 interrupt_id=interrupt_id,

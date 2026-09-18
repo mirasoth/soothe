@@ -24,6 +24,7 @@ from soothe.sloop.plans.artifact import (
     write_plan_artifact,
 )
 from soothe.sloop.plans.plan_synthesizer import synthesize_plan
+from soothe.sloop.relay.channel import recorded_answers
 from soothe.sloop.state.schemas import PlanResult
 from soothe.sloop.utils.goal_text import resolve_user_request
 from soothe.sloop.utils.messages import last_ledger_ai_content
@@ -275,6 +276,13 @@ def _record_plan_action_ledger(
     )
 
 
+def _relay_state_answers_cleared(relay_state: dict[str, Any]) -> dict[str, Any]:
+    """Return `relay_state` with the recorded answers cleared."""
+    cleared = dict(relay_state)
+    cleared["answers"] = []
+    return cleared
+
+
 def handle_plan_mode_review_answer(
     ctx: LoopRuntimeContext,
     state: dict[str, Any],
@@ -299,13 +307,14 @@ def handle_plan_mode_review_answer(
 
     hydrate_scratch_from_pending(ctx, state)
     relay_state = state.get("relay_state") or {}
-    raw_answer = relay_state.get("answer") if isinstance(relay_state, dict) else None
+    answer_records = recorded_answers(relay_state) if isinstance(relay_state, dict) else []
+    raw_answer = answer_records[0].get("answer") if answer_records else None
     try:
         answer = answer_from_state(raw_answer or {})
     except ValueError:
         logger.exception("[PlanModeReview] malformed plan-mode review answer")
         return {
-            "relay_state": {**relay_state, "answer": None},
+            "relay_state": _relay_state_answers_cleared(relay_state),
             "last_outcome": "fatal",
         }
 
@@ -362,7 +371,7 @@ def handle_plan_mode_review_answer(
         _record_plan_action_ledger(ctx, "Plan approved by operator.")
         logger.info("[PlanModeReview] Plan approved; follow-on exec goal enqueues on finalize")
         return {
-            "relay_state": {**relay_state, "answer": None, "inbox": []},
+            "relay_state": {**_relay_state_answers_cleared(relay_state), "inbox": []},
             "intent_route": None,
             "plan_approved_follow_on": True,
         }
@@ -377,7 +386,7 @@ def handle_plan_mode_review_answer(
         ctx.scratch.plan_rejected = True
         logger.info("[PlanModeReview] Plan rejected; terminating current goal without report")
         return {
-            "relay_state": {**relay_state, "answer": None, "inbox": []},
+            "relay_state": {**_relay_state_answers_cleared(relay_state), "inbox": []},
             "intent_route": None,
             "plan_rejected_terminal": True,
         }
@@ -441,7 +450,7 @@ async def node_plan_review(ctx: LoopRuntimeContext, state: dict[str, Any]) -> di
     """
     # If this is a clarification-resume turn, handle the answer first.
     _relay_state = state.get("relay_state") or {}
-    if isinstance(_relay_state, dict) and _relay_state.get("answer"):
+    if isinstance(_relay_state, dict) and recorded_answers(_relay_state):
         out = handle_plan_mode_review_answer(ctx, state)
         # Refine with comments: re-synthesize the plan with the user's
         # feedback before re-emitting the review. ``handle_plan_mode_review_answer``

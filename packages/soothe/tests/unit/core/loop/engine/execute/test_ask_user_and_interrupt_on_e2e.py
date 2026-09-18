@@ -24,6 +24,10 @@ import pytest
 from langgraph.types import Command, Interrupt
 
 from soothe.sloop.clarification.detector import ClarificationDetector
+from soothe.sloop.clarification.interrupt_kinds import (
+    InterruptKind,
+    classify_interrupt_payload,
+)
 from soothe.sloop.clarification.origins import ORIGIN_EXECUTE, ORIGIN_TOOL_APPROVAL
 from soothe.sloop.clarification.protocol import LoopStateView
 from soothe.sloop.engine.execute.executor import Executor
@@ -31,8 +35,6 @@ from soothe.sloop.relay.inbox import RelayInbox
 from soothe.sloop.relay.outbox import (
     build_auto_resume_payload,
     build_tool_approval_resume_payload,
-    is_ask_user_interrupt,
-    is_tool_approval_interrupt,
 )
 from soothe.sloop.relay.ticket import ResumeTicket
 
@@ -134,10 +136,13 @@ class TestAskUserInterruptCase:
     """Case: agent calls ask_user tool → interrupt → capture → AWAIT_USER → resume."""
 
     def test_ask_user_interrupt_detected(self) -> None:
-        """is_ask_user_interrupt recognizes the ask_user payload shape."""
-        assert is_ask_user_interrupt({"type": "ask_user", "questions": ["q"]})
-        assert not is_ask_user_interrupt({"action_requests": []})
-        assert not is_ask_user_interrupt("not a mapping")
+        """classify_interrupt_payload recognizes the ask_user payload type."""
+        assert (
+            classify_interrupt_payload({"type": "ask_user", "questions": ["q"]})
+            is InterruptKind.ASK_USER
+        )
+        assert classify_interrupt_payload({"action_requests": []}) is InterruptKind.TOOL_APPROVAL
+        assert classify_interrupt_payload("not a mapping") is None
 
     def test_detector_captures_ask_user(self) -> None:
         """ClarificationDetector.from_interrupt builds a request with ORIGIN_EXECUTE."""
@@ -227,10 +232,16 @@ class TestInterruptOnCase:
     """Case: HumanInTheLoopMiddleware emits action_requests → capture → AWAIT_USER → resume with decisions."""
 
     def test_action_requests_interrupt_detected(self) -> None:
-        """is_tool_approval_interrupt recognizes the action_requests payload."""
-        assert is_tool_approval_interrupt({"action_requests": [{"name": "edit_file"}]})
-        assert not is_tool_approval_interrupt({"type": "ask_user", "questions": ["q"]})
-        assert not is_tool_approval_interrupt({"foo": "bar"})
+        """classify_interrupt_payload recognizes the action_requests wire contract."""
+        assert (
+            classify_interrupt_payload({"action_requests": [{"name": "edit_file"}]})
+            is InterruptKind.TOOL_APPROVAL
+        )
+        assert (
+            classify_interrupt_payload({"type": "ask_user", "questions": ["q"]})
+            is InterruptKind.ASK_USER
+        )
+        assert classify_interrupt_payload({"foo": "bar"}) is InterruptKind.OTHER
 
     def test_detector_captures_tool_approval(self) -> None:
         """from_tool_approval_interrupt builds a request with ORIGIN_TOOL_APPROVAL."""
@@ -891,7 +902,7 @@ class TestStructuredAskUserWireRoundTrip:
         interrupt_value = {"type": "ask_user", "questions": [q.model_dump()]}
 
         # Detector should recognize this as an ask_user interrupt.
-        assert is_ask_user_interrupt(interrupt_value)
+        assert classify_interrupt_payload(interrupt_value) is InterruptKind.ASK_USER
 
         # Detect via the detector.
         detector = ClarificationDetector()

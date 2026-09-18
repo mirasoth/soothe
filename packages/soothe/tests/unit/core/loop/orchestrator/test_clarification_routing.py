@@ -29,7 +29,7 @@ def test_await_clarification_node_present_in_graph() -> None:
 
 def _relay_pending(origin: str = "execute") -> dict:
     """relay_state with an unanswered head entry."""
-    return {"relay_state": {"inbox": [{"request": {"origin_node": origin}}], "answer": None}}
+    return {"relay_state": {"inbox": [{"request": {"origin_node": origin}}], "answers": []}}
 
 
 def _relay_active(origin: str) -> dict:
@@ -40,14 +40,19 @@ def _relay_answered(origin: str, answer: dict | None = None) -> dict:
     """relay_state with a resume-turn answer populated (inbox head consumed).
 
     Models the real plan-mode approve/reject/refine resume: ``await_user``
-    sets ``resume_turn`` so the policy moves the inbox head into the ``answer``
-    slot. ``_pending_clarification`` returns False here (its ``answer is None``
-    guard fails), so routing must detect the answer via ``_has_relay_answer``.
+    records the inbox head's answer into the ``answers`` records.
+    ``_pending_clarification`` returns False here, so routing must detect the
+    answer via ``_has_relay_answer``.
     """
     return {
         "relay_state": {
             "inbox": [{"request": {"origin_node": origin}}],
-            "answer": answer if answer is not None else {"answers": ["approve"]},
+            "answers": [
+                {
+                    "interrupt_id": "",
+                    "answer": answer if answer is not None else {"answers": ["approve"]},
+                }
+            ],
             "active_origin": origin,
         }
     }
@@ -186,19 +191,24 @@ def test_route_after_clarification_refine_re_emits_to_await_user() -> None:
 
 def test_route_after_execute_short_circuits_on_relay_state_pending() -> None:
     """relay_state inbox with no answer routes to AWAIT_USER."""
-    state = {"relay_state": {"inbox": [{"request": {}}], "answer": None}}
+    state = {"relay_state": {"inbox": [{"request": {}}], "answers": []}}
     assert route_after_execute(state) == "await_user"
 
 
 def test_route_after_execute_preserved_when_relay_state_answered() -> None:
     """relay_state inbox with an answer does NOT short-circuit."""
-    state = {"relay_state": {"inbox": [{"request": {}}], "answer": {"answers": ["y"]}}}
+    state = {
+        "relay_state": {
+            "inbox": [{"request": {}}],
+            "answers": [{"interrupt_id": "", "answer": {"answers": ["y"]}}],
+        }
+    }
     assert route_after_execute(state) == "record_progress"
 
 
 def test_route_after_execute_preserved_when_relay_state_empty_inbox() -> None:
     """Empty relay_state inbox falls through to record_progress."""
-    assert route_after_execute({"relay_state": {"inbox": [], "answer": None}}) == "record_progress"
+    assert route_after_execute({"relay_state": {"inbox": [], "answers": []}}) == "record_progress"
 
 
 def test_route_after_clarification_reads_active_origin_from_relay_state() -> None:
@@ -228,7 +238,7 @@ def test_route_after_clarification_reads_active_origin_from_relay_state() -> Non
                 "relay_state": {
                     "active_origin": ORIGIN_PLAN_MODE_REVIEW,
                     "inbox": [{"request": {}}],
-                    "answer": None,
+                    "answers": [],
                 }
             }
         )
@@ -238,6 +248,6 @@ def test_route_after_clarification_reads_active_origin_from_relay_state() -> Non
 
 def test_route_after_plan_review_reads_relay_state_pending() -> None:
     assert (
-        route_after_plan_review({"relay_state": {"inbox": [{"request": {}}], "answer": None}})
+        route_after_plan_review({"relay_state": {"inbox": [{"request": {}}], "answers": []}})
         == "await_user"
     )

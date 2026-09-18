@@ -103,6 +103,7 @@ STRANGE_LOOP_PLAN_DECISION = "soothe.cognition.strange_loop.plan.decision"
 STRANGE_LOOP_PLAN_PHASE = "soothe.cognition.strange_loop.plan.phase"
 STRANGE_LOOP_REASONED = "soothe.cognition.strange_loop.reasoned"
 STRANGE_LOOP_CONTEXT_COMPACTED = "soothe.cognition.strange_loop.context.compacted"  # RFC-224
+STRANGE_LOOP_BREAKPOINT_PAUSED = "soothe.cognition.strange_loop.breakpoint.paused"
 
 # LoopRelay (IG-775) — interrupt/relay/resume bridge between StrangeLoop and
 # CoreAgent graphs. Replaces the informal raw-string ctx.emit calls at the
@@ -111,6 +112,7 @@ RELAY_CAPTURED = "soothe.cognition.relay.captured"
 RELAY_RESUME_COMMAND_BUILT = "soothe.cognition.relay.resume_command_built"
 RELAY_RECOVERED = "soothe.cognition.relay.recovered"
 RELAY_STALE_INTERRUPT_SKIPPED = "soothe.cognition.relay.stale_interrupt_skipped"
+RELAY_RECONCILED = "soothe.cognition.relay.reconciled"
 
 # Intake-only wired specialist lifecycle (RFC-630 §6.3.3)
 WIRED_SUBAGENT_STARTED = "soothe.cognition.wired_subagent.started"
@@ -443,6 +445,17 @@ class StrangeLoopContextCompactionEvent(LifecycleEvent):
     summary_preview: str | None = None
 
 
+class StrangeLoopBreakpointPausedEvent(LifecycleEvent):
+    """The loop graph paused at a configured static breakpoint."""
+
+    type: Literal["soothe.cognition.strange_loop.breakpoint.paused"] = (
+        "soothe.cognition.strange_loop.breakpoint.paused"
+    )
+    loop_id: str
+    pending_nodes: list[str] = []
+    resume_hint: str = "next turn resumes the paused node"
+
+
 # ---------------------------------------------------------------------------
 # LoopRelay events (IG-775) — interrupt/relay/resume bridge lifecycle
 # ---------------------------------------------------------------------------
@@ -490,6 +503,15 @@ class RelayStaleInterruptSkippedEvent(LifecycleEvent):
     )
     loop_id: str
     ticket_id: str
+
+
+class RelayReconciledEvent(LifecycleEvent):
+    """The relay inbox was reconciled against LangGraph checkpoint state."""
+
+    type: Literal["soothe.cognition.relay.reconciled"] = "soothe.cognition.relay.reconciled"
+    loop_id: str
+    dropped: int = 0
+    alerts: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -790,6 +812,13 @@ _reg(
     summary_template="Context compacted: {tokens_before} → {tokens_after} tokens",
     priority=EventPriority.NORMAL,
 )
+_reg(
+    STRANGE_LOOP_BREAKPOINT_PAUSED,
+    StrangeLoopBreakpointPausedEvent,
+    verbosity=VerbosityTier.NORMAL,
+    summary_template="Paused at breakpoint: {pending_nodes}",
+    priority=EventPriority.HIGH,
+)
 
 # -- LoopRelay (IG-775) ------------------------------------------------------
 _reg(
@@ -816,6 +845,12 @@ _reg(
     RelayStaleInterruptSkippedEvent,
     verbosity=VerbosityTier.INTERNAL,
     summary_template="Stale resume skipped: {ticket_id}",
+)
+_reg(
+    RELAY_RECONCILED,
+    RelayReconciledEvent,
+    verbosity=VerbosityTier.INTERNAL,
+    summary_template="Reconciled inbox: dropped={dropped} alerts={alerts}",
 )
 
 # -- Protocol: plan ----------------------------------------------------------

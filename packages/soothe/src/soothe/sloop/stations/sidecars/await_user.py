@@ -8,7 +8,9 @@ from typing import Any
 
 from soothe.sloop.clarification.origins import ORIGIN_PLAN_MODE_REVIEW
 from soothe.sloop.clarification.protocol import (
+    ClarificationAnswer,
     ClarificationDeferredError,
+    ClarificationRequest,
     request_from_state,
     request_to_state,
 )
@@ -220,11 +222,33 @@ async def node_await_clarification(
         if len(history) > 20:
             history = history[-20:]
 
-    # Project the answer into relay_state so the relay owns the write path.
-    # The origin node (execute / plan_review) consumes via relay.consume_answer.
+    # Project the answers into relay_state so the relay owns the write path.
+    # The origin node (execute / plan_review) consumes via
+    # relay.consume_answer_batch. Same-thread followers that the policy can
+    # resolve statically (tool-approval allow/deny rules) join the head's
+    # answer batch so one Command(resume=...) carries every resolved
+    # interrupt of the thread (batch resume).
     result: dict[str, Any] = {}
     if relay is not None:
-        result.update(relay.record_answer(answer=answer, scratch=ctx.scratch))
+        pairs: list[tuple[ClarificationRequest, ClarificationAnswer]] = [(request, answer)]
+        try_static = getattr(policy, "try_static_answer", None)
+        head_ticket = relay.inbox.head_ticket
+        head_thread = head_ticket.thread_id if head_ticket else None
+        if callable(try_static) and head_thread:
+            for entry in list(relay.inbox)[1:]:
+                if entry.resume_ticket.thread_id != head_thread:
+                    break
+                static = try_static(entry.request)
+                if static is None:
+                    break
+                pairs.append((entry.request, static))
+        if len(pairs) > 1:
+            logger.info(
+                "[await_clarification] batch-resolved %d same-thread clarification(s) (origin=%s)",
+                len(pairs),
+                request.origin_node,
+            )
+        result.update(relay.record_answers(pairs, scratch=ctx.scratch))
     if loop_state is not None:
         result["clarification_history"] = history
     return result

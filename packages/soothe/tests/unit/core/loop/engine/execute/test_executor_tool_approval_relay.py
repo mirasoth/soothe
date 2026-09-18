@@ -15,6 +15,10 @@ import pytest
 from langgraph.types import Interrupt
 
 from soothe.sloop.clarification.detector import ClarificationDetector
+from soothe.sloop.clarification.interrupt_kinds import (
+    InterruptKind,
+    classify_interrupt_payload,
+)
 from soothe.sloop.clarification.origins import ORIGIN_TOOL_APPROVAL
 from soothe.sloop.clarification.protocol import LoopStateView
 from soothe.sloop.engine.execute.executor import Executor
@@ -22,7 +26,6 @@ from soothe.sloop.relay.inbox import RelayInbox
 from soothe.sloop.relay.outbox import (
     build_auto_resume_payload,
     build_tool_approval_resume_payload,
-    is_tool_approval_interrupt,
 )
 
 
@@ -94,15 +97,21 @@ def _make_executor(core: _StubCoreAgent, **overrides: Any) -> Executor:
 
 
 # ---------------------------------------------------------------------------
-# is_tool_approval_interrupt
+# classify_interrupt_payload (tool_approval wire contract)
 # ---------------------------------------------------------------------------
 
 
-def test_is_tool_approval_interrupt_recognizes_action_requests() -> None:
-    assert is_tool_approval_interrupt({"action_requests": [{"name": "edit_file"}]})
-    assert not is_tool_approval_interrupt({"type": "ask_user", "questions": ["q"]})
-    assert not is_tool_approval_interrupt({"foo": "bar"})
-    assert not is_tool_approval_interrupt("not a mapping")
+def test_classify_payload_recognizes_action_requests() -> None:
+    assert (
+        classify_interrupt_payload({"action_requests": [{"name": "edit_file"}]})
+        is InterruptKind.TOOL_APPROVAL
+    )
+    assert (
+        classify_interrupt_payload({"type": "ask_user", "questions": ["q"]})
+        is InterruptKind.ASK_USER
+    )
+    assert classify_interrupt_payload({"foo": "bar"}) is InterruptKind.OTHER
+    assert classify_interrupt_payload("not a mapping") is None
 
 
 # ---------------------------------------------------------------------------

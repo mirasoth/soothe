@@ -33,6 +33,9 @@ from soothe.config.constants import (
     DEFAULT_TOOL_OUTPUT_CHARS,
 )
 from soothe.sloop.clarification.detector import ClarificationDetector
+from soothe.sloop.clarification.interrupt_kinds import (
+    is_clarification_interrupt_payload,
+)
 from soothe.sloop.clarification.origins import ORIGIN_EXECUTE, ORIGIN_TOOL_APPROVAL
 from soothe.sloop.clarification.protocol import ClarificationOrigin, LoopStateView
 from soothe.sloop.engine.completion.continuation_context import (
@@ -109,11 +112,7 @@ from soothe.sloop.engine.execute.tool_call_id import (
     _SubgraphNamespaceTaskBinder,
 )
 from soothe.sloop.relay.inbox import RelayInbox
-from soothe.sloop.relay.outbox import (
-    build_auto_resume_payload,
-    is_ask_user_interrupt,
-    is_tool_approval_interrupt,
-)
+from soothe.sloop.relay.outbox import build_auto_resume_payload
 from soothe.sloop.relay.ticket import ResumeTicket
 from soothe.sloop.state.schemas import (
     AgentDecision,
@@ -259,7 +258,7 @@ def _capture_interrupts(
             ticket = resume_ticket or ResumeTicket()
             capture.enqueue(request, resume_ticket=ticket, step_id=step_id)
             captured = True
-        elif is_ask_user_interrupt(value) or is_tool_approval_interrupt(value):
+        elif is_clarification_interrupt_payload(value):
             # A recognized shape that failed to parse (e.g. empty questions) —
             # surface it the same way the prior per-shape branching did.
             logger.warning("[executor] uncapturable interrupt id=%s; stopping", iid)
@@ -858,9 +857,7 @@ class Executor:
 
         for interrupt_obj in interrupts:
             value = interrupt_obj.value
-            if clarification_enabled and (
-                is_ask_user_interrupt(value) or is_tool_approval_interrupt(value)
-            ):
+            if clarification_enabled and is_clarification_interrupt_payload(value):
                 # Build the resume ticket before enqueuing so the queue
                 # entry carries the thread_id + step identity the resume
                 # path needs to re-enter the CoreAgent on the same thread.
@@ -1980,6 +1977,10 @@ class Executor:
                 live_queue.put_nowait(_ParallelStepDone(sid, payload))
             except asyncio.CancelledError:
                 raise
+            except GraphInterrupt:
+                # A pause escaping the step stream must reach the graph
+                # runtime, not become a failed step.
+                raise
             except Exception as exc:
                 live_queue.put_nowait(_ParallelStepDone(sid, exc))
 
@@ -2973,6 +2974,10 @@ class Executor:
                 step.id,
                 duration_ms,
             )
+            raise
+        except GraphInterrupt:
+            # A pause escaping the resume wrapper must reach the graph
+            # runtime, not be recorded as a failed step.
             raise
         except Exception as e:
             duration_ms = int((time.perf_counter() - start) * 1000) + prior_duration_ms

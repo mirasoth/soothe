@@ -33,17 +33,22 @@ class TestSnapshotHasResumableInterrupt:
 
 class TestSnapshotHasUnansweredPending:
     def test_relay_state_inbox_with_no_answer(self) -> None:
-        snap = SimpleNamespace(values={"relay_state": {"inbox": [{"request": {}}], "answer": None}})
+        snap = SimpleNamespace(values={"relay_state": {"inbox": [{"request": {}}], "answers": []}})
         assert snapshot_has_unanswered_pending(snap) is True
 
     def test_relay_state_inbox_with_answer(self) -> None:
         snap = SimpleNamespace(
-            values={"relay_state": {"inbox": [{"request": {}}], "answer": {"answers": ["y"]}}}
+            values={
+                "relay_state": {
+                    "inbox": [{"request": {}}],
+                    "answers": [{"interrupt_id": "", "answer": {"answers": ["y"]}}],
+                }
+            }
         )
         assert snapshot_has_unanswered_pending(snap) is False
 
     def test_relay_state_empty_inbox(self) -> None:
-        snap = SimpleNamespace(values={"relay_state": {"inbox": [], "answer": None}})
+        snap = SimpleNamespace(values={"relay_state": {"inbox": [], "answers": []}})
         assert snapshot_has_unanswered_pending(snap) is False
 
     def test_no_pending(self) -> None:
@@ -51,5 +56,5 @@ class TestSnapshotHasUnansweredPending:
         assert snapshot_has_unanswered_pending(snap) is False
 
     def test_relay_state_present_but_empty_inbox_is_false(self) -> None:
-        snap = SimpleNamespace(values={"relay_state": {"inbox": [], "answer": None}})
+        snap = SimpleNamespace(values={"relay_state": {"inbox": [], "answers": []}})
         assert snapshot_has_unanswered_pending(snap) is False

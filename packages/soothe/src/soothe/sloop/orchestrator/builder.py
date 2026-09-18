@@ -65,6 +65,30 @@ def _is_real_checkpointer(obj: Any) -> bool:
     return isinstance(obj, BaseCheckpointSaver)
 
 
+def _validated_breakpoints(names: list[str], graph_nodes: set[str]) -> list[str]:
+    """Filter configured breakpoint station names to known graph nodes."""
+    valid = [name for name in names if name in graph_nodes]
+    dropped = [name for name in names if name not in graph_nodes]
+    if dropped:
+        logger.warning(
+            "[orchestrator] Dropping unknown static breakpoint stations: %s (known: %s)",
+            sorted(dropped),
+            sorted(graph_nodes),
+        )
+    return valid
+
+
+def _static_breakpoint_flags(ctx: LoopRuntimeContext, graph_nodes: set[str]) -> dict[str, Any]:
+    """Read `agent.loop.debug` breakpoint config, validated against graph nodes."""
+    debug_cfg = getattr(getattr(ctx.strange_loop.config.agent, "loop", None), "debug", None)
+    if debug_cfg is None or not debug_cfg.is_active():
+        return {}
+    return {
+        "interrupt_before": _validated_breakpoints(debug_cfg.interrupt_before, graph_nodes),
+        "interrupt_after": _validated_breakpoints(debug_cfg.interrupt_after, graph_nodes),
+    }
+
+
 def build_strange_loop_graph(ctx: LoopRuntimeContext):
     """Build and compile the Loop orchestrator graph.
 
@@ -213,7 +237,8 @@ def build_strange_loop_graph(ctx: LoopRuntimeContext):
 
     checkpointer = core_agent_checkpointer(ctx.strange_loop)
     if _is_real_checkpointer(checkpointer):
-        return graph.compile(checkpointer=checkpointer)
+        bp_flags = _static_breakpoint_flags(ctx, set(graph.nodes))
+        return graph.compile(checkpointer=checkpointer, **bp_flags)
     logger.warning(
         "[orchestrator] Compiling StrangeLoop graph without checkpointer; "
         "clarification interrupts will not resume across turns"

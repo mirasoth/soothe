@@ -83,7 +83,7 @@ class TestGoalIdSerializationRoundTrip:
             inbox=inbox,
             scratch=None,
             active_origin=None,
-            answer=None,
+            answers=None,
             audit=[],
         )["relay_state"]
 
@@ -114,7 +114,7 @@ class TestStaleEntryFiltering:
             inbox=inbox,
             scratch=None,
             active_origin=None,
-            answer=None,
+            answers=None,
             audit=[],
         )["relay_state"]
 
@@ -128,7 +128,7 @@ class TestStaleEntryFiltering:
             inbox=inbox,
             scratch=None,
             active_origin=None,
-            answer=None,
+            answers=None,
             audit=[],
         )["relay_state"]
 
@@ -157,7 +157,7 @@ class TestStaleEntryFiltering:
             inbox=inbox,
             scratch=None,
             active_origin=None,
-            answer=None,
+            answers=None,
             audit=[],
         )["relay_state"]
 
@@ -177,7 +177,7 @@ class TestStaleEntryFiltering:
             inbox=inbox,
             scratch=None,
             active_origin=None,
-            answer=None,
+            answers=None,
             audit=[],
         )["relay_state"]
 
@@ -191,7 +191,7 @@ class TestStaleEntryFiltering:
             inbox=inbox,
             scratch=None,
             active_origin=None,
-            answer=None,
+            answers=None,
             audit=[],
         )["relay_state"]
 
@@ -432,7 +432,7 @@ class TestCancelResubmitEndToEnd:
             inbox=inbox,
             scratch=None,
             active_origin=None,
-            answer=None,
+            answers=None,
             audit=[],
         )["relay_state"]
 
@@ -479,7 +479,7 @@ class TestCancelResubmitEndToEnd:
             inbox=inbox,
             scratch=None,
             active_origin=None,
-            answer=None,
+            answers=None,
             audit=[],
         )["relay_state"]
 

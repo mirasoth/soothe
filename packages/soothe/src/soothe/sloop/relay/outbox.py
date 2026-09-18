@@ -11,6 +11,10 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
+from soothe.sloop.clarification.interrupt_kinds import (
+    InterruptKind,
+    classify_interrupt_payload,
+)
 from soothe.sloop.clarification.origins import ORIGIN_TOOL_APPROVAL
 
 if TYPE_CHECKING:
@@ -22,22 +26,6 @@ if TYPE_CHECKING:
 _APPROVE_TOKENS = frozenset({"approve", "yes", "ok", "allow", "accept", "proceed", "y"})
 _REJECT_TOKENS = frozenset({"reject", "no", "deny", "block", "cancel", "n"})
 _EDIT_TOKENS = frozenset({"edit", "modify", "change", "revise"})
-
-
-def is_ask_user_interrupt(value: Any) -> bool:
-    """Return True if `value` is a structured `ask_user` interrupt payload."""
-    return isinstance(value, Mapping) and value.get("type") == "ask_user"
-
-
-def is_tool_approval_interrupt(value: Any) -> bool:
-    """Return True if `value` is a deepagents `action_requests` interrupt.
-
-    Emitted by `HumanInTheLoopMiddleware` when a tool call matches an
-    `interrupt_on` rule. Captured into the relay (`tool_approval` origin) and
-    resolved by the multi-stage pipeline or veritas fallback — never
-    auto-approved silently.
-    """
-    return isinstance(value, Mapping) and "action_requests" in value
 
 
 def answer_to_decision(answer: str) -> str:
@@ -73,14 +61,17 @@ def build_tool_approval_resume_payload(
 def build_auto_resume_payload(pending_interrupts: Mapping[str, Any]) -> dict[str, Any]:
     """Build a `Command(resume=...)` payload for residual non-clarification interrupts.
 
-    `ask_user` and `action_requests` interrupts are captured by the relay
+    `ask_user` and `tool_approval` interrupts are captured by the relay
     before this runs; they never reach `pending_interrupts`. This auto-approves
     any other interrupt type (typically deepagents middleware interrupts
     unrelated to clarification).
     """
     payload: dict[str, Any] = {}
     for iid, value in pending_interrupts.items():
-        if is_ask_user_interrupt(value) or is_tool_approval_interrupt(value):
+        if classify_interrupt_payload(value) in (
+            InterruptKind.ASK_USER,
+            InterruptKind.TOOL_APPROVAL,
+        ):
             continue
         payload[iid] = {"decisions": [{"type": "approve"}]}
     return payload
@@ -135,6 +126,4 @@ __all__ = [
     "build_auto_resume_payload",
     "build_clarification_resume_payload",
     "build_tool_approval_resume_payload",
-    "is_ask_user_interrupt",
-    "is_tool_approval_interrupt",
 ]

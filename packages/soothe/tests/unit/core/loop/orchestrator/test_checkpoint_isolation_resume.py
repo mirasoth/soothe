@@ -125,7 +125,7 @@ async def test_clarification_resume_command_uses_resume_when_interrupt_live() ->
     relay_state = {
         "inbox": [{"request": {"origin_node": "plan_mode_review"}}],
         "active_origin": ORIGIN_PLAN_MODE_REVIEW,
-        "answer": None,
+        "answers": [],
     }
     snap = SimpleNamespace(interrupts=(object(),), tasks=(), values={"relay_state": relay_state})
     cmd = await _clarification_resume_command(
@@ -145,7 +145,7 @@ async def test_clarification_resume_command_goto_recovery_when_interrupt_orphane
     relay_state = {
         "inbox": [{"request": {"origin_node": "plan_mode_review"}}],
         "active_origin": ORIGIN_PLAN_MODE_REVIEW,
-        "answer": None,
+        "answers": [],
     }
     snap = SimpleNamespace(interrupts=(), tasks=(), values={"relay_state": relay_state})
     cmd = await _clarification_resume_command(
@@ -161,7 +161,9 @@ async def test_clarification_resume_command_goto_recovery_when_interrupt_orphane
     assert isinstance(update, dict)
     relay_update = update.get("relay_state")
     assert isinstance(relay_update, dict)
-    answer = relay_update.get("answer")
+    answers = relay_update.get("answers")
+    assert isinstance(answers, list) and len(answers) == 1
+    answer = answers[0].get("answer")
     assert isinstance(answer, dict)
     assert answer.get("answers") == ["Approve", ""]
     assert answer.get("source") == "human"
