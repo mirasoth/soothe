@@ -3,6 +3,13 @@
 Isolates `langgraph.types.Command` imports from the relay orchestration so
 `relay.relay` can be unit-tested without LangGraph at import time. The two
 resume shapes (live-interrupt resume vs orphan goto) are centralized here.
+
+Boundary contract: normal turns enter the graph with `Command(resume=...)`
+or a plain input dict only. `Command(update=..., goto=...)` is exclusively
+the orphan-recovery shape — a persisted pending clarification whose live
+LangGraph `interrupt()` was destroyed by a worker crash. Any other use as
+graph input is a protocol violation (enforced by
+`test_adapter_orphan_confinement.py`).
 """
 
 from __future__ import annotations
@@ -33,12 +40,13 @@ def build_orphan_goto_command(
     Used when the persisted state shows a pending clarification but no live
     LangGraph `interrupt()` to resume (e.g. after a worker crash destroyed the
     in-flight interrupt). Routes directly to the origin's resume node with the
-    answer merged into `relay_state`.
+    answer merged into `relay_state` as a single answer record (the empty
+    interrupt id maps to the inbox head on consume).
     """
     from langgraph.types import Command
 
     merged_relay_state: dict[str, Any] = dict(relay_state or {})
-    merged_relay_state["answer"] = answer_state
+    merged_relay_state["answers"] = [{"interrupt_id": "", "answer": answer_state}]
     return Command(
         update={"relay_state": merged_relay_state},
         goto=goto,

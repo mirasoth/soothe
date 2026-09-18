@@ -25,6 +25,7 @@ from soothe.sloop.orchestrator.node_base import _maybe_await
 from soothe.sloop.orchestrator.runtime_context import LoopRuntimeContext
 from soothe.sloop.relay.inbox import RelayInbox
 from soothe.sloop.relay.outbox import build_clarification_resume_payload
+from soothe.sloop.relay.reconcile import reconcile_inbox_with_checkpoints
 from soothe.sloop.relay.ticket import ResumeTicket
 from soothe.sloop.state.schemas import (
     AgentDecision,
@@ -360,6 +361,21 @@ async def node_execute(ctx: LoopRuntimeContext, state_dict: dict[str, Any]) -> d
             decision = ctx.scratch.decision
         if ctx.scratch.plan_result is not None and plan_result is None:
             plan_result = ctx.scratch.plan_result
+        # The CoreAgent checkpoint is the source of truth for pending
+        # interrupts; drop inbox entries whose interrupt no longer exists on
+        # their fork thread (stale after worker crash / resolved elsewhere).
+        if any(entry.resume_ticket.thread_id for entry in relay.inbox):
+            from soothe.coreagent.lazy import LazyCoreAgent
+
+            core_agent = strange_loop.core_agent
+            if isinstance(core_agent, LazyCoreAgent):
+                await core_agent.amaterialize()
+            await reconcile_inbox_with_checkpoints(
+                core_agent,
+                relay.inbox,
+                loop_id=state_manager.loop_id,
+                emit=ctx.emit,
+            )
 
     ready_n = len(decision.steps) if decision is not None else 0
     logger.info(
@@ -382,96 +398,107 @@ async def node_execute(ctx: LoopRuntimeContext, state_dict: dict[str, Any]) -> d
     # gate keeps a non-approving turn from wiping the persisted channel.
     current_allowlist: list[dict[str, Any]] = list(state_dict.get("tool_approval_allowlist") or [])
     allowlist_dirty = False
-    pending_answer_state: dict[str, Any] | None = None
-    pending_request_state: dict[str, Any] | None = None
+    pending_answer_states: list[dict[str, Any]] = []
+    pending_request_states: list[dict[str, Any]] = []
+    consumed_tickets: list[ResumeTicket] = []
     consumed_ticket: ResumeTicket | None = None
-    # The relay owns the answer slot; consume it (pops the head + reads the
-    # answer projected by await_user).
+    # The relay owns the answer records; consume the batch (pops the head plus
+    # its answered same-thread prefix, reading the answers projected by
+    # await_user).
     if relay is not None and isinstance(relay_state_in, dict):
-        consumed = relay.consume_answer(relay_state_in)
-        if consumed is not None:
-            req, ans, consumed_ticket = consumed
-            pending_request_state = request_to_state(req)
-            pending_answer_state = answer_to_state(ans)
-    if pending_answer_state and pending_request_state:
+        consumed_batch = relay.consume_answer_batch(relay_state_in)
+        if consumed_batch:
+            for req, ans, ticket in consumed_batch:
+                pending_request_states.append(request_to_state(req))
+                pending_answer_states.append(answer_to_state(ans))
+                consumed_tickets.append(ticket)
+            consumed_ticket = consumed_tickets[0]
+    if pending_answer_states and pending_request_states:
         try:
-            ans = answer_from_state(pending_answer_state)
-            origin_iid = str(pending_request_state.get("origin_interrupt_id", ""))
-            origin_node = str(pending_request_state.get("origin_node", ""))
+            first_ans = answer_from_state(pending_answer_states[0])
+            origin_iid = str(pending_request_states[0].get("origin_interrupt_id", ""))
             if origin_iid.startswith(PLANNER_ASK_INTERRUPT_PREFIX):
                 # Branch 1: planner-emitted ask_user step. No CoreAgent
                 # interrupt to resume — instead synthesize a StepExecutionRecord below
                 # so the next get_ready_steps() call naturally skips this step.
                 planner_ask_answered_step_id = origin_iid[len(PLANNER_ASK_INTERRUPT_PREFIX) :]
-                planner_ask_answers = tuple(ans.answers)
-                planner_ask_source = ans.source
+                planner_ask_answers = tuple(first_ans.answers)
+                planner_ask_source = first_ans.source
                 planner_ask_questions = tuple(
-                    str(q) for q in (pending_request_state.get("questions") or ())
+                    str(q) for q in (pending_request_states[0].get("questions") or ())
                 )
-                planner_ask_confidence = ans.confidence
+                planner_ask_confidence = first_ans.confidence
             elif origin_iid:
                 # Branch 2/3 unified: tool_approval maps the relay's answer to a
                 # HITL ``decisions`` payload; ask_user (execute) delivers the
                 # answers verbatim so the tool returns the Q&A and the agent
-                # continues its turn on the original step thread (IG-763). The
-                # ask_user-only ledger side effect is applied below.
-                req = request_from_state(pending_request_state)
-                resume_answer_payload = build_clarification_resume_payload(req, ans)
-                # IG-774: record a human tool_approval approval so the agent's
-                # retry of the same action auto-approves instead of re-escalating.
-                if (
-                    origin_node == ORIGIN_TOOL_APPROVAL
-                    and ans.source == "human"
-                    and ans.answers
-                    and str(ans.answers[0]).strip().lower() == "approve"
+                # continues its turn on the original step thread (IG-763).
+                # Same-thread entries merge into ONE id-keyed resume map — a
+                # single Command(resume=...) resolves every pending interrupt
+                # of the head's fork thread (batch resume).
+                resume_answer_payload = {}
+                for req_state, ans_state, entry_ticket in zip(
+                    pending_request_states, pending_answer_states, consumed_tickets
                 ):
-                    req_metadata = pending_request_state.get("metadata") or {}
-                    if isinstance(req_metadata, dict):
-                        for ar in req_metadata.get("action_requests") or []:
-                            if not isinstance(ar, dict):
-                                continue
-                            rec = approval_record(
-                                str(ar.get("name") or ""),
-                                ar.get("args") or {},
-                            )
-                            if rec is not None and rec not in current_allowlist:
-                                current_allowlist.append(rec)
+                    req = request_from_state(req_state)
+                    ans = answer_from_state(ans_state)
+                    resume_answer_payload.update(build_clarification_resume_payload(req, ans))
+                    origin_node = str(req_state.get("origin_node", ""))
+                    # IG-774: record a human tool_approval approval so the agent's
+                    # retry of the same action auto-approves instead of re-escalating.
+                    if (
+                        origin_node == ORIGIN_TOOL_APPROVAL
+                        and ans.source == "human"
+                        and ans.answers
+                        and str(ans.answers[0]).strip().lower() == "approve"
+                    ):
+                        req_metadata = req_state.get("metadata") or {}
+                        if isinstance(req_metadata, dict):
+                            for ar in req_metadata.get("action_requests") or []:
+                                if not isinstance(ar, dict):
+                                    continue
+                                rec = approval_record(
+                                    str(ar.get("name") or ""),
+                                    ar.get("args") or {},
+                                )
+                                if rec is not None and rec not in current_allowlist:
+                                    current_allowlist.append(rec)
+                                    allowlist_dirty = True
+                                    logger.info(
+                                        "[execute] recorded loop allowlist signature "
+                                        "tool=%s for tool_approval approval",
+                                        rec["tool"],
+                                    )
+                        # Record a rule-level override when the human approved a
+                        # safety-escalated action so the same rule does not
+                        # re-escalate for a different command in this loop.
+                        escalated_rule = (
+                            ans.audit.get("escalated_rule_id")
+                            if isinstance(ans.audit, dict)
+                            else None
+                        )
+                        if escalated_rule:
+                            rule_rec = {"rule": escalated_rule}
+                            if rule_rec not in current_allowlist:
+                                current_allowlist.append(rule_rec)
                                 allowlist_dirty = True
                                 logger.info(
-                                    "[execute] recorded loop allowlist signature "
-                                    "tool=%s for tool_approval approval",
-                                    rec["tool"],
+                                    "[execute] recorded loop allowlist rule override "
+                                    "rule=%s for tool_approval approval",
+                                    escalated_rule,
                                 )
-                    # Record a rule-level override when the human approved a
-                    # safety-escalated action so the same rule does not
-                    # re-escalate for a different command in this loop.
-                    escalated_rule = (
-                        ans.audit.get("escalated_rule_id") if isinstance(ans.audit, dict) else None
-                    )
-                    if escalated_rule:
-                        rule_rec = {"rule": escalated_rule}
-                        if rule_rec not in current_allowlist:
-                            current_allowlist.append(rule_rec)
-                            allowlist_dirty = True
-                            logger.info(
-                                "[execute] recorded loop allowlist rule override "
-                                "rule=%s for tool_approval approval",
-                                escalated_rule,
-                            )
-                if origin_node != ORIGIN_TOOL_APPROVAL:
-                    _append_ask_user_loop_messages(
-                        state,
-                        step_id=(consumed_ticket.step_id if consumed_ticket else None)
-                        or "ask_user_resume",
-                        description="Ask user clarifying question",
-                        questions=tuple(
-                            str(q) for q in (pending_request_state.get("questions") or ())
-                        ),
-                        answers=tuple(ans.answers),
-                        source=ans.source,
-                        confidence=ans.confidence,
-                        context_engine=ctx.ce,
-                    )
+                    if origin_node != ORIGIN_TOOL_APPROVAL:
+                        _append_ask_user_loop_messages(
+                            state,
+                            step_id=(entry_ticket.step_id if entry_ticket else None)
+                            or "ask_user_resume",
+                            description="Ask user clarifying question",
+                            questions=tuple(str(q) for q in (req_state.get("questions") or ())),
+                            answers=tuple(ans.answers),
+                            source=ans.source,
+                            confidence=ans.confidence,
+                            context_engine=ctx.ce,
+                        )
         except (ValueError, TypeError):
             logger.exception("[execute] malformed pending_clarification_answer; ignoring")
 
@@ -1002,7 +1029,7 @@ async def node_execute(ctx: LoopRuntimeContext, state_dict: dict[str, Any]) -> d
         # to await_clarification for the next one.
         result: dict[str, Any] = {}
         if relay is not None:
-            result.update(relay.clear_answer(scratch=ctx.scratch))
+            result.update(relay.clear_answers(scratch=ctx.scratch))
         if allowlist_dirty:
             result["tool_approval_allowlist"] = current_allowlist
         if clarification_capture:

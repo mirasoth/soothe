@@ -902,6 +902,29 @@ class EvalLoopConfig(BaseModel):
     )
 
 
+class LoopDebugConfig(BaseModel):
+    """Static LangGraph breakpoints on the StrangeLoop graph (ops/debug).
+
+    Station names (e.g. `execute`, `dispatch`, `finalize`) validated at graph
+    compile time; unknown names are dropped with a warning. The graph pauses
+    before/after the listed stations each time they run; the next turn
+    resumes from the paused node. Requires a durable checkpointer.
+    """
+
+    interrupt_before: list[str] = Field(
+        default_factory=list,
+        description="Station names to pause before.",
+    )
+    interrupt_after: list[str] = Field(
+        default_factory=list,
+        description="Station names to pause after.",
+    )
+
+    def is_active(self) -> bool:
+        """True when any static breakpoint is configured."""
+        return bool(self.interrupt_before or self.interrupt_after)
+
+
 class StrangeLoopConfig(BaseModel):
     """Configuration for agent loop execution mode.
 
@@ -1117,6 +1140,11 @@ class StrangeLoopConfig(BaseModel):
     concurrency: LoopConcurrencyConfig = Field(
         default_factory=LoopConcurrencyConfig,
         description="Parallelism caps and step scheduling strategy",
+    )
+
+    debug: LoopDebugConfig = Field(
+        default_factory=LoopDebugConfig,
+        description="Static graph breakpoints for ops/debug step-through",
     )
 
     goal_synthesis_model_role: ModelRole = Field(

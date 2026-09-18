@@ -58,7 +58,7 @@ class TestScratchProjectionRoundTrip:
             inbox=RelayInbox(),
             scratch=scratch,
             active_origin="plan_mode_review",
-            answer=None,
+            answers=None,
             audit=[],
         )
         assert update["relay_state"]["scratch"]["plan_draft_path"] == "/tmp/plan.md"
@@ -90,7 +90,7 @@ class TestScratchProjectionRoundTrip:
             inbox=RelayInbox(),
             scratch=scratch,
             active_origin=None,
-            answer=None,
+            answers=None,
             audit=[],
         )
         fresh = LoopPhaseScratch()

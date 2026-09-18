@@ -8,6 +8,7 @@ from typing import Any
 
 from langgraph.types import interrupt
 
+from soothe.sloop.clarification.interrupt_kinds import INTERRUPT_TYPE_CLARIFICATION
 from soothe.sloop.clarification.origins import (
     ORIGIN_PLAN_MODE_REVIEW,
     ORIGIN_TOOL_APPROVAL,
@@ -95,7 +96,7 @@ class InteractiveClarificationPolicy:
 
         payload = interrupt(
             {
-                "type": "clarification",
+                "type": INTERRUPT_TYPE_CLARIFICATION,
                 "interrupt_id": request.origin_interrupt_id,
                 "questions": list(request.questions),
             }
@@ -115,6 +116,18 @@ class InteractiveClarificationPolicy:
             answers=tuple(answers),
             source="human",
         )
+
+    def try_static_answer(self, request: ClarificationRequest) -> ClarificationAnswer | None:
+        """Statically resolve a request without a human pause, or `None`.
+
+        Only the tool-approval pipeline pre-filter qualifies (deterministic
+        allow/deny stages — no LLM, no `interrupt()`), so this is safe to
+        call for follower entries inside the same node invocation that
+        answered the head (`await_clarification` batch resume). `escalate`
+        and non-tool-approval origins return `None` — they need their own
+        human pause.
+        """
+        return self._evaluate_tool_approval_pipeline(request)
 
     def _evaluate_tool_approval_pipeline(
         self, request: ClarificationRequest

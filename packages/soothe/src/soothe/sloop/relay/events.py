@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from soothe.events.catalog import (
     RELAY_CAPTURED,
+    RELAY_RECONCILED,
     RELAY_RECOVERED,
     RELAY_RESUME_COMMAND_BUILT,
     RELAY_STALE_INTERRUPT_SKIPPED,
@@ -16,6 +17,7 @@ from soothe.events.catalog import (
 
 __all__ = [
     "RELAY_CAPTURED",
+    "RELAY_RECONCILED",
     "RELAY_RECOVERED",
     "RELAY_RESUME_COMMAND_BUILT",
     "RELAY_STALE_INTERRUPT_SKIPPED",

@@ -182,12 +182,12 @@ class TestBuildResumeCommand:
         snapshot = SimpleNamespace(
             interrupts=(object(),),
             tasks=(),
-            values={"relay_state": {"inbox": [{}], "answer": None}},
+            values={"relay_state": {"inbox": [{}], "answers": []}},
         )
         cmd = await relay.build_resume_command(
             answers=["do X"],
             snapshot=snapshot,
-            relay_state={"inbox": [{}], "answer": None, "parked_head_ticket_id": "loop-1__a3f7c"},
+            relay_state={"inbox": [{}], "answers": [], "parked_head_ticket_id": "loop-1__a3f7c"},
         )
         assert cmd is not None
         assert cmd.resume == {"answers": ["do X"]}
@@ -206,7 +206,7 @@ class TestBuildResumeCommand:
         snapshot = SimpleNamespace(
             interrupts=(object(),),
             tasks=(),
-            values={"relay_state": {"inbox": [{}], "answer": None}},
+            values={"relay_state": {"inbox": [{}], "answers": []}},
         )
         with pytest.raises(RelayStaleInterruptError):
             await relay.build_resume_command(
@@ -214,7 +214,7 @@ class TestBuildResumeCommand:
                 snapshot=snapshot,
                 relay_state={
                     "inbox": [{}],
-                    "answer": None,
+                    "answers": [],
                     "parked_head_ticket_id": "different-thread",
                 },
             )
@@ -252,14 +252,15 @@ class TestAnswerLifecycle:
     async def test_record_then_consume(self, relay_and_events) -> None:
         relay, _ = relay_and_events
         await _capture(relay, _ask_user_interrupt())
+        request = relay.inbox.head
         answer = ClarificationAnswer(answers=("do X",), source="human")
-        update = relay.record_answer(answer=answer, scratch=LoopPhaseScratch())
-        assert update["relay_state"]["answer"]["answers"] == ["do X"]
+        update = relay.record_answers([(request, answer)], scratch=LoopPhaseScratch())
+        assert update["relay_state"]["answers"][0]["answer"]["answers"] == ["do X"]
 
-        consumed = relay.consume_answer(update["relay_state"])
+        consumed = relay.consume_answer_batch(update["relay_state"])
         assert consumed is not None
-        request, ans, ticket = consumed
-        assert request.origin_interrupt_id == "iAU1"
+        req, ans, ticket = consumed[0]
+        assert req.origin_interrupt_id == "iAU1"
         assert ans.answers == ("do X",)
         assert ticket.thread_id == "loop-1__a3f7c"
         assert len(relay.inbox) == 0
@@ -267,9 +268,9 @@ class TestAnswerLifecycle:
     @pytest.mark.asyncio
     async def test_consume_empty_returns_none(self, relay_and_events) -> None:
         relay, _ = relay_and_events
-        assert relay.consume_answer(None) is None
-        assert relay.consume_answer({}) is None
-        assert relay.consume_answer({"answer": None}) is None
+        assert relay.consume_answer_batch(None) is None
+        assert relay.consume_answer_batch({}) is None
+        assert relay.consume_answer_batch({"answers": []}) is None
 
     @pytest.mark.asyncio
     async def test_build_core_agent_resume_payload(self, relay_and_events) -> None:

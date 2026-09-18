@@ -64,7 +64,11 @@ def _reject_answer_state() -> dict:
 
 
 def _state(answer_state: dict, *, scratch: dict | None = None) -> dict:
-    relay_state: dict = {"answer": answer_state, "inbox": [], "active_origin": "plan_mode_review"}
+    relay_state: dict = {
+        "answers": [{"interrupt_id": "", "answer": answer_state}],
+        "inbox": [],
+        "active_origin": "plan_mode_review",
+    }
     if scratch is not None:
         relay_state["scratch"] = scratch
     return {"relay_state": relay_state}
@@ -107,7 +111,7 @@ def test_approve_clears_clarification_channels() -> None:
     ctx = _build_ctx()
     out = handle_plan_mode_review_answer(ctx, _state(_approve_answer_state()))
 
-    assert out["relay_state"]["answer"] is None
+    assert out["relay_state"]["answers"] == []
     assert out["relay_state"]["inbox"] == []
 
 
@@ -117,7 +121,7 @@ def test_reject_terminates_without_follow_on_exec() -> None:
     out = handle_plan_mode_review_answer(ctx, _state(_reject_answer_state()))
 
     assert out["plan_rejected_terminal"] is True
-    assert out["relay_state"]["answer"] is None
+    assert out["relay_state"]["answers"] == []
     assert ctx.scratch.follow_on_exec is None
 
 

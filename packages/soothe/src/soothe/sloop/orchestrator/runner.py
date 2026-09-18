@@ -6,10 +6,14 @@ import logging
 import traceback
 from typing import Any
 
+from soothe.events import STRANGE_LOOP_BREAKPOINT_PAUSED
 from soothe.sloop.orchestrator.builder import build_strange_loop_graph
 from soothe.sloop.orchestrator.checkpoint import strange_loop_configurable
 from soothe.sloop.orchestrator.runtime_context import LoopRuntimeContext
-from soothe.sloop.relay.snapshot import snapshot_has_unanswered_pending
+from soothe.sloop.relay.snapshot import (
+    snapshot_has_resumable_interrupt,
+    snapshot_has_unanswered_pending,
+)
 from soothe.sloop.utils.plan_action_text import resolve_plan_action_text
 from soothe.utils.observability.langfuse import (
     SootheLangfuse,
@@ -18,6 +22,33 @@ from soothe.utils.observability.langfuse import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _loop_breakpoints_active(ctx: LoopRuntimeContext) -> bool:
+    """True when `agent.loop.debug` static breakpoints are configured."""
+    debug_cfg = getattr(getattr(ctx.strange_loop.config.agent, "loop", None), "debug", None)
+    return debug_cfg is not None and debug_cfg.is_active()
+
+
+def _paused_at_static_breakpoint(snapshot: Any) -> bool:
+    """True when the graph stopped at a static breakpoint (not a dynamic interrupt).
+
+    A static-breakpoint pause has pending nodes (`next`) but no interrupts —
+    a dynamic `interrupt()` pause always shows interrupts, and a completed or
+    hard-deferred turn has an empty `next`.
+    """
+    pending_nodes = getattr(snapshot, "next", None) or ()
+    if not pending_nodes:
+        return False
+    return not snapshot_has_resumable_interrupt(snapshot)
+
+
+async def _breakpoint_pending_nodes(compiled: Any, config: dict[str, Any]) -> list[str]:
+    """Return the pending station names when paused at a static breakpoint."""
+    snapshot = await compiled.aget_state(config)
+    if not _paused_at_static_breakpoint(snapshot):
+        return []
+    return [str(node) for node in (getattr(snapshot, "next", None) or ())]
 
 
 def _langfuse_goal_output_text(ctx: LoopRuntimeContext) -> str:
@@ -148,7 +179,7 @@ async def invoke_strange_loop_graph(ctx: LoopRuntimeContext) -> None:
     # resume the suspended ``interrupt(...)`` instead of starting a new
     # iteration. Falls back to a normal invocation when no clarification is
     # actually pending (defensive against a stale flag).
-    graph_input: dict[str, Any] | Command = {"last_outcome": None}
+    graph_input: dict[str, Any] | Command | None = {"last_outcome": None}
     answer_text = (ctx.clarification_resume_text or "").strip()
     answer_list = ctx.clarification_resume_answers
     if answer_text or answer_list:
@@ -185,6 +216,25 @@ async def invoke_strange_loop_graph(ctx: LoopRuntimeContext) -> None:
                 "falling back to normal invocation",
                 loop_id,
             )
+    elif _loop_breakpoints_active(ctx):
+        # A prior turn parked at a static breakpoint: resume the paused node
+        # with `None` (LangGraph breakpoint resume) instead of starting a
+        # fresh iteration with new input.
+        try:
+            pending_nodes = await _breakpoint_pending_nodes(compiled, config)
+            if pending_nodes:
+                logger.info(
+                    "[runner] Resuming static breakpoint pause at %s (loop=%s)",
+                    pending_nodes,
+                    loop_id,
+                )
+                graph_input = None
+        except Exception:
+            logger.exception(
+                "[runner] failed to read graph state for breakpoint resume (loop=%s); "
+                "falling back to normal invocation",
+                loop_id,
+            )
 
     logger.info(
         "[runner] Graph invoke start loop_id=%s thread_id=%s resume=%s",
@@ -206,6 +256,26 @@ async def invoke_strange_loop_graph(ctx: LoopRuntimeContext) -> None:
             traceback.format_exc(),
         )
         raise
+
+    if _loop_breakpoints_active(ctx):
+        # The turn stopped at a static breakpoint: surface the pending nodes
+        # so operators know the loop is parked, not finished. The next turn
+        # resumes via the breakpoint-resume branch above.
+        try:
+            pending_nodes = await _breakpoint_pending_nodes(compiled, config)
+        except Exception:
+            logger.debug("[runner] breakpoint pause check failed (loop=%s)", loop_id, exc_info=True)
+            pending_nodes = []
+        if pending_nodes:
+            await ctx.emit(
+                STRANGE_LOOP_BREAKPOINT_PAUSED,
+                {"loop_id": loop_id, "pending_nodes": pending_nodes},
+            )
+            logger.info(
+                "[runner] Paused at static breakpoint before %s (loop=%s); next turn resumes",
+                pending_nodes,
+                loop_id,
+            )
 
     cfg = ctx.strange_loop.config
     if cfg.observability.langfuse.enabled and ctx.goal_trace is not None:

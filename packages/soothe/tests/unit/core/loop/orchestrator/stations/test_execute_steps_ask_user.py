@@ -125,7 +125,7 @@ async def test_branch2_short_circuits_when_planner_emits_ask_user(
     executor_called.assert_not_called()
     assert "relay_state" in result
     assert result["relay_state"]["active_origin"] == "execute"
-    assert result["relay_state"]["answer"] is None
+    assert result["relay_state"]["answers"] == []
 
     pending = request_from_state(result["relay_state"]["inbox"][0]["request"])
     assert pending.questions == ("Which output format?",)
@@ -255,7 +255,7 @@ async def test_branch1_synthesizes_step_result_from_planner_ask_answer(
                         "resume_ticket": ticket_to_state(ResumeTicket(thread_id="t1")),
                     }
                 ],
-                "answer": pending_ans,
+                "answers": [{"interrupt_id": "", "answer": pending_ans}],
                 "active_origin": "execute",
             },
         },
@@ -306,8 +306,8 @@ async def test_branch1_synthesizes_step_result_from_planner_ask_answer(
     # Must not re-route to await_clarification for the step we just answered.
     assert not result.get("relay_state", {}).get("inbox")
 
-    # Answer state is cleared so the next iteration doesn't re-consume it.
-    assert result["relay_state"]["answer"] is None
+    # Answer records are cleared so the next iteration doesn't re-consume them.
+    assert result["relay_state"]["answers"] == []
 
 
 @pytest.mark.asyncio
@@ -404,14 +404,14 @@ async def test_branch1_ce_bound_does_not_re_emit_planner_ask(
                         "resume_ticket": ticket_to_state(ResumeTicket(thread_id="t1")),
                     }
                 ],
-                "answer": answer_to_state(answer),
+                "answers": [{"interrupt_id": "", "answer": answer_to_state(answer)}],
                 "active_origin": "execute",
             },
         },
     )
 
     assert not result.get("relay_state", {}).get("inbox")
-    assert result["relay_state"]["answer"] is None
+    assert result["relay_state"]["answers"] == []
     assert executor_called is True
     plan_manager.record_step_outcomes.assert_called_once()
     assert "ASK-01" in loop_state.dependency_completion_ids()
@@ -563,7 +563,7 @@ async def test_synth_path_persists_qa_pair_to_goal_record() -> None:
                         "resume_ticket": ticket_to_state(ResumeTicket(thread_id="t1")),
                     }
                 ],
-                "answer": pending_ans,
+                "answers": [{"interrupt_id": "", "answer": pending_ans}],
                 "active_origin": "execute",
             },
         },
@@ -679,7 +679,7 @@ async def test_synth_answer_flows_through_record_iteration_without_fatal(
                         "resume_ticket": ticket_to_state(ResumeTicket(thread_id="t1")),
                     }
                 ],
-                "answer": pending_ans,
+                "answers": [{"interrupt_id": "", "answer": pending_ans}],
                 "active_origin": "execute",
             },
         },
@@ -816,7 +816,7 @@ async def test_ask_user_answer_resume_uses_command_resume(
                         ),
                     }
                 ],
-                "answer": pending_ans,
+                "answers": [{"interrupt_id": "", "answer": pending_ans}],
                 "active_origin": "execute",
             },
         },
@@ -831,7 +831,7 @@ async def test_ask_user_answer_resume_uses_command_resume(
     assert ctx.scratch.decision.steps[0].id == "PPX-01"
     # Channels cleared; no synth step_completed emission.
     assert not result.get("relay_state", {}).get("inbox")
-    assert result.get("relay_state", {}).get("answer") is None
+    assert result.get("relay_state", {}).get("answers") == []
     assert "step_completed" not in [e for e, _ in emitted]
     # Q&A pair still reaches the ledger for the next plan iteration.
     msgs = ce.ledger.get_messages()
@@ -919,7 +919,7 @@ async def test_clarification_resume_syncs_ticket_when_decision_hydrated(
                         ),
                     }
                 ],
-                "answer": answer_to_state(answer),
+                "answers": [{"interrupt_id": "", "answer": answer_to_state(answer)}],
                 "active_origin": "tool_approval",
             },
         },

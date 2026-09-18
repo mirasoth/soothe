@@ -7,6 +7,8 @@ from typing import Any
 
 from langgraph.graph import END
 
+from soothe.sloop.relay.channel import recorded_answers
+
 from .stations import (
     AWAIT_USER,
     DELEGATE,
@@ -25,7 +27,7 @@ logger = logging.getLogger(__name__)
 def _pending_clarification(state: dict[str, Any]) -> bool:
     """True when the relay inbox has a head entry with no answer built yet.
 
-    Reads the `relay_state` channel: inbox non-empty and answer slot `None`.
+    Reads the `relay_state` channel: inbox non-empty and no recorded answers.
     """
     relay_state = state.get("relay_state")
     if not isinstance(relay_state, dict):
@@ -33,22 +35,22 @@ def _pending_clarification(state: dict[str, Any]) -> bool:
     inbox = relay_state.get("inbox")
     if not isinstance(inbox, list) or not inbox:
         return False
-    return relay_state.get("answer") is None
+    return not recorded_answers(relay_state)
 
 
 def _has_relay_answer(state: dict[str, Any]) -> bool:
-    """True when a resume turn populated the relay answer slot.
+    """True when a resume turn populated the relay answer records.
 
     On a clarification resume, `await_user` flags `resume_turn` so the
-    policy consumes the relay inbox head into the `answer` slot. This makes
-    `_pending_clarification` return False (its `answer is None` guard
-    fails), so callers that need to route to the node which *processes* the
-    answer must check this instead.
+    policy consumes the relay inbox head (plus any statically resolved
+    same-thread followers) into the `answers` records. This makes
+    `_pending_clarification` return False, so callers that need to route to
+    the node which *processes* the answers must check this instead.
     """
     relay_state = state.get("relay_state")
     if not isinstance(relay_state, dict):
         return False
-    return relay_state.get("answer") is not None
+    return bool(recorded_answers(relay_state))
 
 
 def route_after_preprocess(state: dict[str, Any]) -> str:

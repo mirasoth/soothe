@@ -230,17 +230,19 @@ def build_relay_state_update(
     inbox: RelayInbox,
     scratch: LoopPhaseScratch | None,
     active_origin: str | None,
-    answer: dict[str, Any] | None,
+    answers: list[dict[str, Any]] | None,
     audit: list[dict[str, Any]] | None,
 ) -> dict[str, Any]:
     """Assemble the full `relay_state` dict for a graph channel update.
 
     Returns `{"relay_state": {...}}` ready to merge into a node's return dict.
+    `answers` is a list of `{"interrupt_id": ..., "answer": answer_state}`
+    records — one per answered inbox entry (batch resume).
     """
     state: dict[str, Any] = {
         "inbox": project_inbox(inbox),
         "active_origin": active_origin,
-        "answer": answer,
+        "answers": list(answers or []),
         "audit": list(audit or []),
     }
     if scratch is not None:
@@ -291,6 +293,20 @@ def hydrate_scratch_from_relay_state(
             scratch.plan_draft_path = path
 
 
+def recorded_answers(relay_state: Mapping[str, Any] | None) -> list[dict[str, Any]]:
+    """Read the recorded answer records from the `relay_state` channel.
+
+    Returns `[{"interrupt_id": ..., "answer": answer_state}]` — one per
+    answered inbox entry (batch resume).
+    """
+    if not isinstance(relay_state, Mapping):
+        return []
+    answers = relay_state.get("answers")
+    if isinstance(answers, list):
+        return [a for a in answers if isinstance(a, Mapping)]
+    return []
+
+
 __all__ = [
     "ScratchProjection",
     "build_relay_state_update",
@@ -299,4 +315,5 @@ __all__ = [
     "hydrate_scratch_from_relay_state",
     "project_inbox",
     "project_scratch",
+    "recorded_answers",
 ]
