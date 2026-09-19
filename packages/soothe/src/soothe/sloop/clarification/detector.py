@@ -135,7 +135,7 @@ class ClarificationDetector:
 
         Preserves structured dicts (QuestionSpec with question,
         header, options) when the payload carries them; falls back to
-        plain strings for legacy in-flight interrupts.
+        plain strings for in-flight interrupts.
         """
         raw = value.get("questions")
         if isinstance(raw, Sequence) and not isinstance(raw, (str, bytes)):

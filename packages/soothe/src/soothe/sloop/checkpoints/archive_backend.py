@@ -73,7 +73,7 @@ class ArchiveBackend:
             with open(checkpoint_file, "w", encoding="utf-8") as f:
                 json.dump(checkpoint_data, f, indent=2, default=str)
 
-        # Run in thread pool for async compatibility
+        # Run in thread pool for async safety
         import asyncio
 
         await asyncio.to_thread(_write_checkpoint)

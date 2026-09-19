@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 import logging
-import shutil
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -97,43 +96,18 @@ class JsonlRailTraceStore:
 
     Args:
         root: Job artifact root (typically `$SOOTHE_DATA_DIR/jobs`).
-        legacy_root: Optional prior root (`…/loops`) for one-shot migrate.
     """
 
     root: Path
-    legacy_root: Path | None = None
 
     def _path(self, job_id: str) -> Path:
         _sanitize_job_id(job_id)
         return self.root / job_id / "rail_trace.jsonl"
 
-    def _legacy_path(self, job_id: str) -> Path | None:
-        if self.legacy_root is None:
-            return None
-        _sanitize_job_id(job_id)
-        return self.legacy_root / job_id / "rail_trace.jsonl"
-
-    def _ensure_migrated(self, job_id: str) -> Path:
-        """Return job path, copying from legacy `loops/{job_id}/` once if needed."""
-        path = self._path(job_id)
-        if path.is_file():
-            return path
-        legacy = self._legacy_path(job_id)
-        if legacy is not None and legacy.is_file():
-            path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(legacy, path)
-            logger.info(
-                "[rail] Migrated job %s rail_trace from %s to %s",
-                job_id,
-                legacy,
-                path,
-            )
-        return path
-
     def append(self, job_id: str, record: RuleFireRecord) -> RuleFireRecord:
         """Append a rule-fire record to the JSONL trace file for `job_id`."""
         _sanitize_job_id(job_id)
-        path = self._ensure_migrated(job_id)
+        path = self._path(job_id)
         path.parent.mkdir(parents=True, exist_ok=True)
         existing = self.read(job_id)
         record.seq = len(existing)
@@ -144,7 +118,7 @@ class JsonlRailTraceStore:
     def read(self, job_id: str) -> list[RuleFireRecord]:
         """Read all rule-fire records from the JSONL trace for `job_id`."""
         _sanitize_job_id(job_id)
-        path = self._ensure_migrated(job_id)
+        path = self._path(job_id)
         if not path.is_file():
             return []
         out: list[RuleFireRecord] = []

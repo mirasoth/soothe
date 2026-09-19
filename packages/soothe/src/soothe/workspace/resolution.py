@@ -56,7 +56,7 @@ def cleanup_anonymous_workspaces() -> None:
                 try:
                     shutil.rmtree(ws_dir)
                     cleaned += 1
-                    logger.info("Cleaned legacy anonymous workspace: %s", ws_dir)
+                    logger.info("Cleaned anonymous workspace: %s", ws_dir)
                 except OSError as e:
                     logger.warning("Failed to cleanup %s: %s", ws_dir, e)
 

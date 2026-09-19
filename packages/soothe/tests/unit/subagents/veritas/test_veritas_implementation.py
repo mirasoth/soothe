@@ -99,6 +99,7 @@ async def test_answer_ending_with_question_coerced_to_defer(
         monkeypatch,
         {
             "answers": ["should we use JWT?"],
+            "answer_is_question": [True],
             "confidence": 0.9,
             "defer": False,
             "rationale": "unclear",

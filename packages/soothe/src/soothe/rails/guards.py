@@ -140,7 +140,7 @@ def _structural_short_circuit(
     architecture_done = bool(structural.get("all_architecture_terminal"))
     has_makers = bool(structural.get("implementation_goal_ids"))
     # Catalog expansion room: spawned_slices < effective_max_slices (IG-732).
-    # Accept legacy structural key from older tests / dumps.
+    # Accept older structural key name from tests / dumps.
     below_slice_budget = bool(
         structural.get(
             "below_slice_budget",
@@ -310,7 +310,7 @@ def _structural_short_circuit(
 
     if name == "ready_for_next_wave":
         # Deprecated as a spawn barrier (RFC-231 §8). Alias to
-        # slices_ready_to_spawn so legacy YAML does not withhold ready slices.
+        # slices_ready_to_spawn so older YAML does not withhold ready slices.
         require_plan = bool(structural.get("require_plan", False))
         wave_plan_ready = bool(structural.get("wave_plan_ready", False))
         plan_ok = (not require_plan) or wave_plan_ready

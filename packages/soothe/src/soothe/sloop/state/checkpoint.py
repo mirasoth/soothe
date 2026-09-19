@@ -113,7 +113,7 @@ class StrangeLoopCheckpoint(BaseModel):
     total_duration_ms: int = 0
     total_tokens_used: int = 0
 
-    # RFC-217 (legacy): goal context injection control. No writer remains; the
+    # RFC-217: goal context injection control. No writer remains; the
     # flag is persisted for schema compatibility and always False.
     thread_switch_pending: bool = False
 
@@ -217,7 +217,7 @@ def normalize_checkpoint_data(
 
     current_thread_id = out.get("current_thread_id") or ""
     # IG-764: thread_ids holds [main_thread_id] only. Backfill from
-    # current_thread_id for legacy blobs that predate the field.
+    # current_thread_id for older blobs that predate the field.
     if not out.get("thread_ids"):
         out["thread_ids"] = [current_thread_id] if current_thread_id else []
 

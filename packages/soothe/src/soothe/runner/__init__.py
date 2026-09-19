@@ -336,13 +336,11 @@ class SootheRunner(
         self,
         *,
         thread_id: str | None = None,
-        initial_message: Any = None,
         metadata: Any = None,
     ) -> Any:
         """Create a persisted thread (wrapper for daemon/CLI)."""
         return await self.thread_context_manager().create_thread(
             thread_id=thread_id,
-            initial_message=initial_message,
             metadata=metadata,
         )
 

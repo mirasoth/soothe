@@ -284,12 +284,8 @@ class AutopilotNotifyConfig(BaseModel):
 class RailConfig(BaseModel):
     """Loop-native rail and goal-execution configuration.
 
-    Holds the fields consumed by the loop-native path (LoopRail selection,
-    intake scope, engine recovery budgets). Legacy daemon-only scheduling
-    fields (enabled, max_retries, max_parallel_goals, gc_*, dreaming_enabled,
-    monitor_model_role, consensus_model_role, judge_allow_structural_dag_ops,
-    verify_*, max_loops, workspace_reservation, context_projection) were
-    removed when the legacy autopilot service was retired.
+    Holds fields consumed by the loop-native path (LoopRail selection,
+    intake scope, engine recovery budgets).
     """
 
     # === Orchestration budgets (loop-native) ===
@@ -370,8 +366,7 @@ class RailConfig(BaseModel):
         description=(
             "When True, LoopRail pause_for_user runs Veritas auto-clarification "
             "before CE-suspending the job root. PROCEED skips suspend and fires "
-            "user_intervention; defer/deny keeps suspend. When False, always "
-            "suspend (legacy operator gate)."
+            "user_intervention; defer/deny keeps suspend. When False, always suspend."
         ),
     )
 
@@ -550,7 +545,7 @@ class LoopWorkingMemoryConfig(BaseModel):
 class PlanPromptLedgerConfig(BaseModel):
     """Caps for ledger copies sent to plan-assess / plan-generate.
 
-    Use `0` for unlimited (legacy: full ledger, no copies).
+    Use `0` for unlimited (full ledger, no copies).
     """
 
     plan_ledger_max_messages: int = Field(
@@ -672,7 +667,7 @@ class LoopCheckpointAsyncConfig(BaseModel):
 class LoopConcurrencyConfig(BaseModel):
     """Loop execution concurrency and scheduling controls.
 
-    Goal fan-out is owned by the daemon scheduler (legacy autopilot was retired).
+    Goal fan-out is owned by the daemon scheduler.
     """
 
     max_parallel_steps: int = Field(
@@ -985,7 +980,7 @@ class StrangeLoopConfig(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _reject_nano_middleware_and_legacy_keys(cls, data: Any) -> Any:
+    def _reject_nano_middleware_keys(cls, data: Any) -> Any:
         """Keep nano middleware knobs out of `agent.loop`."""
         if not isinstance(data, dict):
             return data
@@ -1320,7 +1315,7 @@ class ClarificationConfig(BaseModel):
     synthetic retry answer instead of parking the goal. The sentinel
     `"(retry)"` is fed back to the CoreAgent as the tool result, prompting
     the LLM to try a different action. When False, veritas failures hard-defer
-    (legacy behavior — the goal parks in `awaiting_clarification` status)."""
+    (the goal parks in `awaiting_clarification` status)."""
 
     default_mode: Literal["auto", "manual"] = "auto"
     """Mode used when a request payload does not specify `clarification_mode`.

@@ -81,9 +81,8 @@ class WireEnvelopeKind(StrEnum):
 class WireVisibilityDecision(NamedTuple):
     """Result of a visibility check, with a short machine-readable reason.
 
-    The public `is_client_wire_visible` API returns just the boolean for
-    backwards compatibility; callers wanting diagnostics use
-    `decide_client_wire_visibility` instead.
+    The public `is_client_wire_visible` API returns just the boolean;
+    callers wanting diagnostics use `decide_client_wire_visibility`.
     """
 
     visible: bool

@@ -7,7 +7,7 @@ from typing import Any
 
 from soothe.sloop.utils.vision_context import merge_vision_instructions
 
-# Strip legacy StrangeLoop suffix accidentally baked into goal text or stored checkpoints.
+# Strip StrangeLoop suffix accidentally baked into goal text or stored checkpoints.
 _GOAL_ITERATION_SUFFIX_RE = re.compile(
     r"\s*\(iteration\s+\d+/\d+\)\s*$",
     re.IGNORECASE,

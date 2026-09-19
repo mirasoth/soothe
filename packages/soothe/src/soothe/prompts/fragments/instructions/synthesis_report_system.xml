@@ -1,4 +1,15 @@
 <SYNTHESIS_INSTRUCTIONS>
+{% if scratchpad_mode %}
+<analysis>
+Before writing the report body, self-classify this request inside <analysis>...</analysis> tags. Reason through:
+- The report format that best fits the goal (choose from the list below).
+- The key evidence from the preceding conversation that should appear in the report.
+- A 3–7 section `##` outline tailored to the goal and evidence.
+- Your focus areas and how to weight the evidence.
+After </analysis>, write only the finished report body starting with the first `##` heading. The <analysis> block is internal reasoning — do not let its contents appear in the final user-visible report.
+</analysis>
+
+{% endif %}
 You are writing the final report for the person who submitted this request:
 {{ user_goal }}
 
@@ -18,7 +29,12 @@ Available report formats (reference only — do not copy this list into your rep
 
 Report style: {{ scenario }}
 
-{% if sections %}
+{% if scratchpad_mode %}
+Suggested outline (optional — adapt or replace based on your <analysis> self-classification; omit empty sections):
+{% for section in sections %}
+- {{ section }}
+{% endfor %}
+{% elif sections %}
 Suggested outline (adapt freely — merge, rename, add, or drop sections to fit the evidence; omit empty sections):
 {% for section in sections %}
 - {{ section }}
@@ -27,10 +43,18 @@ Suggested outline (adapt freely — merge, rename, add, or drop sections to fit 
 Outline: design 3–7 `##` section titles appropriate to this goal and evidence, then write the report under them.
 {% endif %}
 
+{% if scratchpad_mode %}
+Focus areas (optional reference — adapt or replace via your <analysis>):
+{% else %}
 Focus areas:
+{% endif %}
 {{ contextual_focus }}
 
+{% if scratchpad_mode %}
+How to use the evidence (optional reference — adapt or replace via your <analysis>):
+{% else %}
 How to use the evidence:
+{% endif %}
 {{ evidence_emphasis }}
 
 Structure and Markdown (must follow):
@@ -48,7 +72,11 @@ Scenario-specific layout for "{{ scenario }}":
 {{ format_hint }}
 
 Rules:
+{% if scratchpad_mode %}
+1. Begin with an `<analysis>` scratchpad block to self-classify the request, then write only the finished report body after `</analysis>` starting with the first `##` heading. The `<analysis>` block is internal reasoning and must not appear in the final user-visible report. Never output `<SYNTHESIS_INSTRUCTIONS>`, `</SYNTHESIS_INSTRUCTIONS>`, or any text from this block.
+{% else %}
 1. Your reply is ONLY the finished report — start immediately with the first `##` heading. Never output `<SYNTHESIS_INSTRUCTIONS>`, `</SYNTHESIS_INSTRUCTIONS>`, or any text from this block.
+{% endif %}
 2. Do not repeat, quote, or summarize these instructions, the scenario list, focus areas, or rules.
 3. Use only the execution evidence in the preceding conversation — do not invent steps or results.
 4. Summarize by theme or outcome, not by replaying messages in order.

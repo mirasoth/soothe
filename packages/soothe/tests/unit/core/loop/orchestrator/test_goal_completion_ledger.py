@@ -92,6 +92,10 @@ async def test_synthesize_appends_goal_completion_ledger_pair() -> None:
     with patch.object(SynthesisGenerator, "generate_synthesis", fake_gen):
         await node_goal_completion(ctx, {})
 
+    # JIU-02: ledger pair is appended by a fire-and-forget background task.
+    if ctx.ledger_reconciliation_task is not None:
+        await ctx.ledger_reconciliation_task
+
     completed_payload = next(
         (c.args[1] for c in ctx.emit.await_args_list if c.args and c.args[0] == "completed"),
         None,
@@ -175,6 +179,10 @@ async def test_goal_completion_logs_planning_dag_at_info(
     with patch.object(SynthesisGenerator, "generate_synthesis", fake_gen):
         await node_goal_completion(ctx, {})
 
+    # JIU-02: drain ledger reconciliation background task.
+    if ctx.ledger_reconciliation_task is not None:
+        await ctx.ledger_reconciliation_task
+
     assert "Planning DAG at goal end" in caplog.text
     assert "ABC-01" in caplog.text
     lm = loop_state.loop_messages
@@ -229,6 +237,10 @@ async def test_goal_completion_dag_reflects_finalized_goal_status(
 
     with patch.object(SynthesisGenerator, "generate_synthesis", fake_gen):
         await node_goal_completion(ctx, {})
+
+    # JIU-02: drain ledger reconciliation background task.
+    if ctx.ledger_reconciliation_task is not None:
+        await ctx.ledger_reconciliation_task
 
     assert "Planning DAG at goal end" in caplog.text
     assert "Mock DAG report" in caplog.text
@@ -286,6 +298,10 @@ async def test_ledger_direct_appends_goal_completion_ledger_pair() -> None:
 
     await node_goal_completion(ctx, {})
 
+    # JIU-02: drain ledger reconciliation background task.
+    if ctx.ledger_reconciliation_task is not None:
+        await ctx.ledger_reconciliation_task
+
     completed_payload = next(
         (c.args[1] for c in ctx.emit.await_args_list if c.args and c.args[0] == "completed"),
         None,
@@ -341,6 +357,10 @@ async def test_empty_ledger_direct_falls_back_to_synthesis() -> None:
 
     with patch.object(SynthesisGenerator, "generate_synthesis", fake_gen):
         await node_goal_completion(ctx, {})
+
+    # JIU-02: drain ledger reconciliation background task.
+    if ctx.ledger_reconciliation_task is not None:
+        await ctx.ledger_reconciliation_task
 
     gc_ai = next(
         m
@@ -406,6 +426,10 @@ async def test_minimal_intake_ledger_direct_uses_synthesis_prompt_as_human() -> 
 
     await node_goal_completion(ctx, {})
 
+    # JIU-02: drain ledger reconciliation background task.
+    if ctx.ledger_reconciliation_task is not None:
+        await ctx.ledger_reconciliation_task
+
     lm = loop_state.loop_messages
     gc_human = next(
         m
@@ -468,6 +492,10 @@ async def test_synthesis_fallback_sets_skip_replay_false() -> None:
         patch.object(SynthesisGenerator, "generate_synthesis", empty_gen),
     ):
         await node_goal_completion(ctx, {})
+
+    # JIU-02: drain ledger reconciliation background task.
+    if ctx.ledger_reconciliation_task is not None:
+        await ctx.ledger_reconciliation_task
 
     completed_payload = next(
         (c.args[1] for c in ctx.emit.await_args_list if c.args and c.args[0] == "completed"),
@@ -564,6 +592,10 @@ async def test_ledger_direct_filters_out_planning_messages_for_final_output() ->
 
     await node_goal_completion(ctx, {})
 
+    # JIU-02: drain ledger reconciliation background task.
+    if ctx.ledger_reconciliation_task is not None:
+        await ctx.ledger_reconciliation_task
+
     completed_payload = next(
         (c.args[1] for c in ctx.emit.await_args_list if c.args and c.args[0] == "completed"),
         None,
@@ -610,6 +642,10 @@ async def test_goal_completion_emits_finalize_phase_status() -> None:
     )
 
     await node_goal_completion(ctx, {})
+
+    # JIU-02: drain ledger reconciliation background task.
+    if ctx.ledger_reconciliation_task is not None:
+        await ctx.ledger_reconciliation_task
 
     phase_emits = [
         c.args[1] for c in ctx.emit.await_args_list if c.args and c.args[0] == "plan_phase_status"

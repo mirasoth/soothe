@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import TYPE_CHECKING, Any
@@ -11,9 +12,13 @@ from soothe_sdk.observability.langfuse import merge_langfuse_runnable_config
 from soothe.config.constants import GOAL_COMPLETION_REPORT_MAX_CHARS
 from soothe.sloop.engine.completion.scenario_classifier import (
     ScenarioClassification,
-    classify_synthesis_scenario,
+    _extract_execution_summary,
+    _heuristic_classify,
 )
-from soothe.sloop.engine.completion.synthesis_projection import build_synthesis_messages
+from soothe.sloop.engine.completion.synthesis_projection import (
+    build_synthesis_messages,
+    render_synthesis_system_prompt,
+)
 from soothe.sloop.orchestrator.checkpoint import synthesis_thread_id
 from soothe.sloop.state.schemas import LoopState
 from soothe.sloop.utils.config_keys import SOOTHE_GOAL_SYNTHESIS_CONFIG_KEY
@@ -38,7 +43,8 @@ _DEFAULT_SYNTHESIS_EVIDENCE_MAX = GOAL_COMPLETION_REPORT_MAX_CHARS
 class SynthesisGenerator:
     """Generate synthesis reports from execution evidence.
 
-    Two-phase synthesis: scenario classification, then CoreAgent generation.
+    Heuristic fast-path for obvious scenarios; otherwise single-pass
+    scratchpad-mode LLM streaming with timeout-protected fallback.
     """
 
     def __init__(
@@ -48,60 +54,39 @@ class SynthesisGenerator:
         soothe_config: SootheConfig | None = None,
         *,
         loop_id: str | None = None,
-        fast_llm_client: BaseChatModel | None = None,
     ) -> None:
         """Initialize synthesis generator with LLM client and CoreAgent.
 
         Args:
-            llm_client: Model for synthesis streaming (Phase 2).
-            core_agent: CoreAgent for synthesis execution with streaming (Phase 2).
+            llm_client: Model for synthesis streaming.
+            core_agent: CoreAgent for synthesis execution with streaming.
             soothe_config: Optional daemon config for evidence budgeting.
             loop_id: Optional loop identifier for Langfuse trace correlation.
-            fast_llm_client: Fast model for scenario classification (Phase 1).
-                Falls back to `llm_client` when not provided.
         """
         self.llm = llm_client
-        self._classify_llm = fast_llm_client or llm_client
         self.core_agent = core_agent
         self._soothe_config = soothe_config
         self._loop_id = loop_id
-
-    async def _classify_scenario(self, goal: str, state: LoopState) -> ScenarioClassification:
-        """Wrap classifier with error handling.
-
-        Args:
-            goal: User's goal description.
-            state: Loop state with intent and execution history.
-
-        Returns:
-            ScenarioClassification with scenario + optional outline suggestions + focus.
-            Fallback to general_summary (empty sections) on classification failure.
-        """
-        try:
-            return await classify_synthesis_scenario(
-                goal, state, self._classify_llm, soothe_config=self._soothe_config
-            )
-        except Exception:
-            logger.warning("Classifier failed, using fallback", exc_info=True)
-            return ScenarioClassification(
-                scenario="general_summary",
-                sections=[],
-                contextual_focus=["Summarize major actions and outcomes for the request"],
-                evidence_emphasis=(
-                    "Group evidence by concern or outcome in bullets/tables; "
-                    "do not replay turns chronologically; invent a clear ## outline"
-                ),
-            )
 
     async def generate_synthesis(
         self,
         goal: str,
         state: LoopState,
     ) -> AsyncGenerator:
-        """Generate synthesis via CoreAgent streaming.
+        """Generate synthesis via LLM streaming.
 
-        Two-phase: classify scenario, then project evidence and stream via CoreAgent.
-        Uses isolated checkpoint thread to prevent replay of parent StrangeLoop history.
+        Heuristic fast-path for obvious scenarios (single-step, all-failed,
+        high-step analysis). When the heuristic is inconclusive, renders the
+        system prompt in scratchpad mode so the model self-classifies via
+        `<analysis>` tags before writing the report body — collapsing the
+        former two-phase classify→generate into a single LLM call.
+
+        The scratchpad stream is wrapped in `asyncio.timeout` bounded by
+        `dispatch_idle_seconds`. On timeout, falls back to
+        `generate_user_fallback_summary`.
+
+        Uses isolated checkpoint thread to prevent replay of parent StrangeLoop
+        history.
 
         Args:
             goal: Goal description.
@@ -110,15 +95,7 @@ class SynthesisGenerator:
         Yields:
             LangGraph `messages`-mode stream tuples tagged with `phase=goal_completion`.
         """
-
-        classify_start = time.perf_counter()
-        classification = await self._classify_scenario(goal, state)
-        classify_elapsed_ms = int((time.perf_counter() - classify_start) * 1000)
-        logger.info(
-            "Synthesis Phase 1 (classify): scenario=%s elapsed_ms=%d",
-            classification.scenario,
-            classify_elapsed_ms,
-        )
+        classification, scratchpad_mode = self._resolve_classification(goal, state)
 
         max_total = self._synthesis_max_chars()
         ledger_cfg = None
@@ -128,7 +105,184 @@ class SynthesisGenerator:
             agent_instructions_max_chars = int(
                 self._soothe_config.agent.agent_instructions_max_chars
             )
-        messages = build_synthesis_messages(
+
+        if scratchpad_mode:
+            messages = self._build_scratchpad_messages(
+                goal,
+                state,
+                classification,
+                max_total,
+                ledger_cfg,
+                agent_instructions_max_chars,
+            )
+        else:
+            messages = build_synthesis_messages(
+                state,
+                classification,
+                user_query=goal,
+                max_chars=max_total,
+                ledger_cfg=ledger_cfg,
+                agent_instructions_max_chars=agent_instructions_max_chars,
+            )
+
+        approx_chars = sum(
+            len(extract_text_from_message_content(getattr(m, "content", ""))) for m in messages
+        )
+        execute_ledger_count = max(0, len(messages) - 2)
+        logger.info(
+            "Synthesis generator: scenario=%s sections=%d scratchpad=%s execute_ledger_msgs=%d prompt_msgs=%d approx_chars=%d",
+            classification.scenario,
+            len(classification.sections),
+            scratchpad_mode,
+            execute_ledger_count,
+            len(messages),
+            approx_chars,
+        )
+
+        graph_config = self._build_graph_config(state)
+
+        from soothe.sloop.utils.token_usage import direct_llm_token_call_scope
+
+        synthesis_start = time.perf_counter()
+        logger.info(
+            "Synthesis (generate): starting stream scenario=%s scratchpad=%s approx_chars=%d",
+            classification.scenario,
+            scratchpad_mode,
+            approx_chars,
+        )
+
+        if scratchpad_mode:
+            timeout_seconds = self._dispatch_idle_seconds()
+            try:
+                with direct_llm_token_call_scope():
+                    if timeout_seconds > 0:
+                        async with asyncio.timeout(timeout_seconds):
+                            async for chunk in self.llm.astream(messages, config=graph_config):
+                                yield tag_messages_stream_chunk_for_goal_completion(
+                                    ((), "messages", (chunk, {})),
+                                    thread_id=state.thread_id,
+                                    iteration=state.iteration,
+                                )
+                    else:
+                        async for chunk in self.llm.astream(messages, config=graph_config):
+                            yield tag_messages_stream_chunk_for_goal_completion(
+                                ((), "messages", (chunk, {})),
+                                thread_id=state.thread_id,
+                                iteration=state.iteration,
+                            )
+            except TimeoutError:
+                logger.warning(
+                    "Synthesis scratchpad stream timed out after %.1fs; using fallback summary",
+                    timeout_seconds,
+                )
+                async for chunk in self._yield_fallback_chunk(state):
+                    yield chunk
+                synthesis_elapsed_ms = int((time.perf_counter() - synthesis_start) * 1000)
+                logger.info(
+                    "Synthesis (generate): fallback after timeout elapsed_ms=%d",
+                    synthesis_elapsed_ms,
+                )
+                return
+        else:
+            with direct_llm_token_call_scope():
+                async for chunk in self.llm.astream(messages, config=graph_config):
+                    yield tag_messages_stream_chunk_for_goal_completion(
+                        ((), "messages", (chunk, {})),
+                        thread_id=state.thread_id,
+                        iteration=state.iteration,
+                    )
+
+        synthesis_elapsed_ms = int((time.perf_counter() - synthesis_start) * 1000)
+        logger.info(
+            "Synthesis (generate): completed elapsed_ms=%d",
+            synthesis_elapsed_ms,
+        )
+
+    def _resolve_classification(
+        self,
+        goal: str,
+        state: LoopState,
+    ) -> tuple[ScenarioClassification, bool]:
+        """Run heuristic fast-path; return classification and scratchpad flag.
+
+        Returns:
+            Tuple of (classification, scratchpad_mode). When the heuristic is
+            conclusive, scratchpad_mode is False and the classification drives
+            the standard message-build path. When the heuristic returns None,
+            a minimal fallback classification is returned with scratchpad_mode=True
+            so the model self-classifies inside `<analysis>` tags.
+        """
+        intent_type = "agentic"
+        execution_summary = _extract_execution_summary(state)
+
+        scenario_rules = None
+        if self._soothe_config is not None:
+            scenario_rules = getattr(
+                getattr(getattr(self._soothe_config, "agent", None), "loop", None),
+                "rules",
+                None,
+            )
+            if scenario_rules is not None:
+                scenario_rules = scenario_rules.scenario
+
+        heuristic = _heuristic_classify(
+            goal,
+            intent_type,
+            execution_summary,
+            scenario_rules=scenario_rules,
+        )
+        if heuristic is not None:
+            logger.info(
+                "Synthesis heuristic: scenario=%s steps=%d",
+                heuristic.scenario,
+                execution_summary["total_steps"],
+            )
+            return heuristic, False
+
+        logger.info(
+            "Synthesis heuristic inconclusive (steps=%d); using scratchpad mode",
+            execution_summary["total_steps"],
+        )
+        fallback = ScenarioClassification(
+            scenario="custom",
+            sections=[],
+            contextual_focus=[f"Summarize key findings for: {goal[:120]}"],
+            evidence_emphasis=(
+                "Group evidence by concern or outcome in bullets/tables; "
+                "do not replay turns chronologically"
+            ),
+        )
+        return fallback, True
+
+    def _build_scratchpad_messages(
+        self,
+        goal: str,
+        state: LoopState,
+        classification: ScenarioClassification,
+        max_total: int,
+        ledger_cfg: Any,
+        agent_instructions_max_chars: int,
+    ) -> list:
+        """Build messages with scratchpad-mode system prompt for self-classification.
+
+        Renders the system prompt via `render_synthesis_system_prompt` with
+        `scratchpad_mode=True`, then delegates to `build_synthesis_messages`
+        to attach the projected execute ledger and TASK human trigger.
+        """
+        from langchain_core.messages import SystemMessage
+
+        from soothe.sloop.engine.completion.synthesis_projection import normalize_user_query
+
+        system_text = render_synthesis_system_prompt(
+            classification,
+            user_goal=normalize_user_query(goal),
+            workspace=state.workspace,
+            agent_instructions_max_chars=agent_instructions_max_chars,
+            response_language=getattr(state, "response_language", None),
+            scratchpad_mode=True,
+        )
+
+        base_messages = build_synthesis_messages(
             state,
             classification,
             user_query=goal,
@@ -136,20 +290,14 @@ class SynthesisGenerator:
             ledger_cfg=ledger_cfg,
             agent_instructions_max_chars=agent_instructions_max_chars,
         )
+        if base_messages and isinstance(base_messages[0], SystemMessage):
+            base_messages[0] = SystemMessage(content=system_text)
+        else:
+            base_messages.insert(0, SystemMessage(content=system_text))
+        return base_messages
 
-        approx_chars = sum(
-            len(extract_text_from_message_content(getattr(m, "content", ""))) for m in messages
-        )
-        execute_ledger_count = max(0, len(messages) - 2)
-        logger.info(
-            "Synthesis generator: scenario=%s sections=%d execute_ledger_msgs=%d prompt_msgs=%d approx_chars=%d",
-            classification.scenario,
-            len(classification.sections),
-            execute_ledger_count,
-            len(messages),
-            approx_chars,
-        )
-
+    def _build_graph_config(self, state: LoopState) -> dict[str, Any]:
+        """Build LangGraph config with isolated checkpoint thread and Langfuse wiring."""
         checkpoint_thread_id = synthesis_thread_id(state.thread_id)
         configurable: dict[str, Any] = {
             "thread_id": checkpoint_thread_id,
@@ -191,35 +339,28 @@ class SynthesisGenerator:
 
             from soothe.sloop.utils.graph_config import strip_parent_checkpoint_coordinates
 
-            # Drop the parent graph's checkpoint coordinates (see the executor's
-            # ``_executor_langfuse_merge_for_stream``): inheriting
-            # ``checkpoint_ns`` nests this stream under the parent's task
-            # namespace instead of its own thread root (IG-763).
             graph_config = strip_parent_checkpoint_coordinates(
                 merge_configs(parent_runnable_config, graph_config)
             )
+        return graph_config
 
-        # Stream via LLM directly — avoids CoreAgent graph checkpointer
-        # during goal-completion synthesis (same class of leak as execute streaming).
-        synthesis_start = time.perf_counter()
-        logger.info(
-            "Synthesis Phase 2 (generate): starting stream scenario=%s approx_chars=%d",
-            classification.scenario,
-            approx_chars,
-        )
-        from soothe.sloop.utils.token_usage import direct_llm_token_call_scope
+    def _dispatch_idle_seconds(self) -> float:
+        """Return the dispatch idle timeout for scratchpad-mode synthesis streaming."""
+        if self._soothe_config is None:
+            return 0.0
+        return max(0.0, float(self._soothe_config.agent.loop.dispatch_idle_seconds))
 
-        with direct_llm_token_call_scope():
-            async for chunk in self.llm.astream(messages, config=graph_config):
-                yield tag_messages_stream_chunk_for_goal_completion(
-                    ((), "messages", (chunk, {})),
-                    thread_id=state.thread_id,
-                    iteration=state.iteration,
-                )
-        synthesis_elapsed_ms = int((time.perf_counter() - synthesis_start) * 1000)
-        logger.info(
-            "Synthesis Phase 2 (generate): completed elapsed_ms=%d",
-            synthesis_elapsed_ms,
+    def _yield_fallback_chunk(self, state: LoopState) -> AsyncGenerator:
+        """Yield a fallback summary as a tagged goal-completion message chunk."""
+        from langchain_core.messages import AIMessage
+
+        plan_result = state.previous_plan
+        fallback_text = generate_user_fallback_summary(state, plan_result)
+        fallback_msg = AIMessage(content=fallback_text)
+        yield tag_messages_stream_chunk_for_goal_completion(
+            ((), "messages", (fallback_msg, {})),
+            thread_id=state.thread_id,
+            iteration=state.iteration,
         )
 
     def _synthesis_max_chars(self) -> int:

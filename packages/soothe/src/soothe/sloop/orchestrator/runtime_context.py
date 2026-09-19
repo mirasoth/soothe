@@ -84,6 +84,10 @@ class LoopRuntimeContext:
     ce_goal_id: str | None = None
     goal_trace: GoalLoopTrace | None = None
     tail_persistence_task: asyncio.Task[None] | None = None
+    # JIU-02: fire-and-forget task for reconcile_synthesis_with_step_ledger +
+    # _append_goal_completion_ledger_pair, launched after the ``completed``
+    # emit so the wire event is not blocked by ledger work.
+    ledger_reconciliation_task: asyncio.Task[None] | None = None
     # RFC-904: queued DecompositionProposal objects awaiting RECONCILE.
     decompose_proposals: list[Any] = field(default_factory=list)
     # RFC-231 LoopRail: job-scoped rail interpreter bound when an autopilot

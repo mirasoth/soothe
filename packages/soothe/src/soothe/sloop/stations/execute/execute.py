@@ -71,7 +71,7 @@ def _build_loop_state_view(
         if not plan_summary:
             plan_summary = getattr(plan_result, "next_action", None)
     # goal_user_submission holds the original user line (set by strange_loop.continue_goal).
-    # Fall back to goal when goal_user_submission is None (e.g. autopilot or legacy paths).
+    # Fall back to goal when goal_user_submission is None.
     from soothe.sloop.utils.goal_text import resolve_user_request
 
     user_request = resolve_user_request(state)

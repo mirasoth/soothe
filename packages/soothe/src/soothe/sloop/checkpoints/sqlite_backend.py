@@ -124,7 +124,7 @@ class SQLitePersistenceBackend(StrangeLoopPersistenceBackend):
         # Seed '[]' — the column persists StrangeLoopCheckpoint.thread_ids (the
         # checkpoint model field, written by sloop_manager on first save). Loop
         # metadata no longer indexes threads (IG-764); the '[]' placeholder
-        # satisfies legacy NOT NULL constraints until sloop_manager overwrites it.
+        # satisfies NOT NULL constraints until sloop_manager overwrites it.
         conn.execute(
             """
             INSERT INTO agentloop_loops
@@ -691,7 +691,7 @@ class SQLitePersistenceBackend(StrangeLoopPersistenceBackend):
 
     @staticmethod
     def _migrate_goal_records_slim(db: sqlite3.Connection) -> None:
-        """Replace legacy goal_records columns with GoalIndexEntry schema."""
+        """Replace old goal_records columns with GoalIndexEntry schema."""
         cursor = db.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='goal_records'"
         )
@@ -739,7 +739,7 @@ class SQLitePersistenceBackend(StrangeLoopPersistenceBackend):
 
     @staticmethod
     def _ensure_goal_record_columns(db: sqlite3.Connection) -> None:
-        """Migrate `goal_records` to slim schema when legacy columns exist."""
+        """Migrate `goal_records` to slim schema when old columns exist."""
         SQLitePersistenceBackend._migrate_goal_records_slim(db)
 
     @staticmethod

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Literal
 
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
@@ -60,7 +60,6 @@ class GraphPromptWrapper:
         kind: GraphCallKind,
         state: LoopState,
         ledger_cfg: PlanPromptLedgerConfig | None = None,
-        soothe_config: Any | None = None,
     ) -> ProjectionResult:
         """Project the CE ledger for synthesis (step_completion has no ledger).
 
@@ -68,13 +67,10 @@ class GraphPromptWrapper:
             kind: Call kind discriminator.
             state: Loop state whose `loop_messages` are projected.
             ledger_cfg: Optional caps; `None` inherits from config.
-            soothe_config: Unused for synthesis/step_completion; retained for
-                call-site compatibility.
 
         Returns:
             `ProjectionResult` with projected messages and completion flag.
         """
-        _ = soothe_config
         cfg = ledger_cfg
         if cfg is None and self.config is not None:
             cfg = self.config.agent.loop.plan_prompt_ledger
@@ -211,6 +207,7 @@ class GraphPromptWrapper:
         workspace: str | None = None,
         agent_instructions_max_chars: int = 8000,
         response_language: object | None = None,
+        scratchpad_mode: bool = False,
     ) -> str:
         """Delegate to synthesis_projection.render_synthesis_system_prompt."""
         from soothe.sloop.engine.completion.synthesis_projection import (
@@ -223,6 +220,7 @@ class GraphPromptWrapper:
             workspace=workspace,
             agent_instructions_max_chars=agent_instructions_max_chars,
             response_language=response_language,
+            scratchpad_mode=scratchpad_mode,
         )
 
     def _normalize_user_query(self, goal: str | None) -> str:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 from langchain_core.messages import BaseMessage
@@ -18,6 +19,27 @@ from soothe.sloop.engine.completion.scenario_classifier import (
 if TYPE_CHECKING:
     from soothe.config.models import PlanPromptLedgerConfig
     from soothe.sloop.state.schemas import LoopState
+
+_ANALYSIS_BLOCK_RE = re.compile(r"<analysis>.*?</analysis>", re.DOTALL | re.IGNORECASE)
+
+
+def strip_analysis_scratchpad(text: str) -> str:
+    """Remove `<analysis>...</analysis>` scratchpad blocks from model output.
+
+    The scratchpad is internal reasoning emitted before the report body when
+    scratchpad mode is active. This strips it so downstream consumers only
+    see the finished report.
+
+    Args:
+        text: Raw model output that may contain one or more analysis blocks.
+
+    Returns:
+        Text with analysis blocks removed and surrounding whitespace collapsed.
+    """
+    if not text:
+        return text
+    stripped = _ANALYSIS_BLOCK_RE.sub("", text)
+    return stripped.strip()
 
 
 def normalize_user_query(goal: str | None) -> str:
@@ -44,8 +66,28 @@ def render_synthesis_system_prompt(
     workspace: str | None = None,
     agent_instructions_max_chars: int = 8000,
     response_language: object | None = None,
+    scratchpad_mode: bool = False,
 ) -> str:
-    """Render system instructions from the synthesis template (no orchestration terms)."""
+    """Render system instructions from the synthesis template (no orchestration terms).
+
+    When `scratchpad_mode` is True, the template instructs the model to
+    self-classify inside an `<analysis>` block before writing the report
+    body, and scenario sections/focus areas/evidence emphasis become
+    optional reference rather than fixed directives. The caller is
+    responsible for stripping the analysis block from the final output
+    via `strip_analysis_scratchpad`.
+
+    Args:
+        classification: Scenario classification with style, sections, and focus.
+        user_goal: Normalized goal text for the user-facing report.
+        workspace: Optional workspace path for agent instructions inlining.
+        agent_instructions_max_chars: Budget for inlined AGENTS.md content.
+        response_language: Optional language hint object for output language.
+        scratchpad_mode: When True, enable `<analysis>` self-classification.
+
+    Returns:
+        Rendered system prompt string.
+    """
     from soothe.prompts import (
         build_response_language_hint,
         build_timestamp_xml_footer,
@@ -63,6 +105,7 @@ def render_synthesis_system_prompt(
             evidence_emphasis=classification.evidence_emphasis,
             format_hint=format_hint_for_scenario(classification.scenario),
             user_goal=user_goal,
+            scratchpad_mode=scratchpad_mode,
         ),
         build_response_language_hint(response_language),
     ]
@@ -110,4 +153,5 @@ __all__ = [
     "flatten_execute_human_content",
     "normalize_user_query",
     "render_synthesis_system_prompt",
+    "strip_analysis_scratchpad",
 ]

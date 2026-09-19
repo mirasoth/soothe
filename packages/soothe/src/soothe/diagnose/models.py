@@ -1,4 +1,4 @@
-"""Lightweight diagnose result models (dict-contract compatible)."""
+"""Lightweight diagnose result models (dict-contract)."""
 
 from __future__ import annotations
 

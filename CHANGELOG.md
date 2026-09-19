@@ -9,10 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Add config-gated static breakpoints on the loop graph: `agent.loop.debug.interrupt_before` / `interrupt_after` pause the StrangeLoop before/after named stations (e.g. `execute`, `finalize`); the turn emits `soothe.cognition.strange_loop.breakpoint.paused` with the pending nodes and the next turn resumes the paused node.
+- Add `strip_analysis_scratchpad()` and `scratchpad_mode` parameter to `render_synthesis_system_prompt`: the synthesis system prompt can now instruct the model to self-classify its scenario inside an `<analysis>` scratchpad block, collapsing the former two-phase classify→generate pipeline into a single LLM call.
 
 ### Changed
+- Replace two-phase synthesis classification with single-call scratchpad mode: when the heuristic fast-path is inconclusive, the synthesis system prompt renders in scratchpad mode so the model self-classifies and generates in one streaming call instead of a blocking `ainvoke` round trip followed by a streaming call.
 - Resume all pending same-thread clarification interrupts with one `Command(resume=...)`: statically resolvable tool-approval followers (allow/deny rules) join the head's answer batch instead of each costing a full park → answer → resume round trip.
 - Reconcile the clarification inbox against CoreAgent checkpoint state on each execute turn: entries whose interrupt no longer exists on their fork thread are dropped, and interrupts pending on a thread but missing from the inbox are alerted via `soothe.cognition.relay.reconciled`.
+- Remove the `classify_synthesis_scenario` LLM entry point from the scenario classifier: heuristic classification is the only fast-path; non-conclusive cases fall through to scratchpad self-classification, eliminating a second LLM round trip and its unguarded hang risk.
+- Remove dead legacy and backward-compat code: `fast_llm_client`/`_classify_llm` synthesis shim, `wrapped_legacy` node path, `soothe_config`/`**_kwargs` unused parameters, `legacy_root` trace-store migration, and the `endswith("?")` regex fallback in veritas question detection.
+
+### Fixed
+- Wrap goal-completion synthesis streaming in `asyncio.timeout(dispatch_idle_seconds)`: the synthesis LLM calls that previously hung indefinitely when the provider stalled now time out and fall back to `generate_user_fallback_summary` instead of blocking goal finalization forever.
+- Redirect stdin from `/dev/null` for Python and `uv` subprocess invocations in `scripts/verify_finally.sh`: broken parent-shell file descriptors previously caused `init_sys_streams: bad file descriptor` crashes during vulture, pin-alignment, alert-pipeline, and `uv sync` checks.
 
 ### Fixed
 - Persist client `cwd` as the loop workspace in ACP `session/load`, `session/resume`, and `session/fork`: reopening or forking a session now calls `ensure_loop_registered` with the client-supplied directory instead of letting the first prompt silently register the loop against the daemon workspace.
