@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import logging
-import re
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -14,20 +13,16 @@ from soothe.prompts.fragments import (
 )
 
 if TYPE_CHECKING:
-    from langchain_core.language_models.chat_models import BaseChatModel
-
     from soothe.sloop.state.schemas import LoopState
 
 from soothe.config.models import ScenarioRulesConfig
-from soothe.utils.messages import extract_text_from_message_content
 
 logger = logging.getLogger(__name__)
 
 _DEFAULT_SCENARIO_RULES = ScenarioRulesConfig()
 
 # Built-in scenario style names → short descriptions.
-# Outline section lists are no longer hardcoded here; the classify LLM designs
-# goal-specific suggestions and Phase 2 may adapt them.
+# Used by the prompt fragments for the scenario list reference.
 _SCENARIO_DESCRIPTIONS: dict[str, str] = {
     "code_architecture_design": "System/module structure analysis",
     "code_implementation_design": "Concrete implementation patterns and examples",
@@ -93,8 +88,6 @@ SCENARIO_FORMAT_HINTS: dict[str, str] = {
         "bullets for lists of 3+ items; ```mermaid when a diagram clarifies structure."
     ),
 }
-
-_JSON_FENCE_PATTERN = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.IGNORECASE | re.DOTALL)
 
 
 def format_hint_for_scenario(scenario: str) -> str:
@@ -198,62 +191,6 @@ def _build_classifier_user_prompt(
     )
 
 
-def _coerce_response_text(content: object) -> str:
-    """Normalize model response content into a parseable text payload."""
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        return extract_text_from_message_content(content)
-    return str(content)
-
-
-def _iter_json_candidates(raw_text: str) -> list[str]:
-    """Yield likely JSON payload candidates from model response text."""
-    candidates: list[str] = []
-    text = raw_text.strip()
-    if text:
-        candidates.append(text)
-
-    # Most common failure mode: fenced markdown JSON block.
-    for match in _JSON_FENCE_PATTERN.finditer(raw_text):
-        fenced = match.group(1).strip()
-        if fenced:
-            candidates.append(fenced)
-
-    # If prose surrounds JSON, take first/last object envelope.
-    first_brace = raw_text.find("{")
-    last_brace = raw_text.rfind("}")
-    if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
-        candidates.append(raw_text[first_brace : last_brace + 1].strip())
-
-    # Preserve order, remove duplicates.
-    deduped: list[str] = []
-    seen: set[str] = set()
-    for candidate in candidates:
-        if candidate and candidate not in seen:
-            seen.add(candidate)
-            deduped.append(candidate)
-    return deduped
-
-
-def _parse_classification_response(content: object) -> ScenarioClassification:
-    """Parse classification response from raw/fenced/wrapped JSON content."""
-    response_text = _coerce_response_text(content)
-    last_error: Exception | None = None
-
-    for candidate in _iter_json_candidates(response_text):
-        try:
-            return ScenarioClassification.model_validate_json(candidate)
-        except Exception as exc:  # noqa: BLE001
-            last_error = exc
-            continue
-
-    if last_error is not None:
-        raise last_error
-
-    raise ValueError("Empty scenario classification response")
-
-
 def _heuristic_classify(
     goal: str,
     intent_type: str,
@@ -261,10 +198,12 @@ def _heuristic_classify(
     *,
     scenario_rules: ScenarioRulesConfig | None = None,
 ) -> ScenarioClassification | None:
-    """Config-driven fast-path that skips the classify LLM call.
+    """Config-driven fast-path for obvious scenario classification.
 
     Sets scenario style + focus/emphasis only. Leaves `sections` empty so
-    Phase 2 invents the report outline (builtins are not outline authority).
+    the synthesis model invents the report outline (builtins are not
+    outline authority). Returns None when no rule matches — the caller
+    then activates scratchpad mode for the model to self-classify.
     """
     rules = scenario_rules or _DEFAULT_SCENARIO_RULES
     total_steps = execution_summary["total_steps"]
@@ -316,111 +255,5 @@ def _heuristic_classify(
             evidence_emphasis="Present key outcomes as a short bullet list",
         )
 
-    # Could not confidently classify — fall through to LLM
+    # No heuristic matched — caller activates scratchpad self-classification.
     return None
-
-
-async def classify_synthesis_scenario(
-    goal: str,
-    state: LoopState,
-    llm_client: BaseChatModel,
-    *,
-    soothe_config: Any | None = None,
-) -> ScenarioClassification:
-    """Classify synthesis scenario from goal + intent + execution pattern.
-
-    Uses a heuristic fast-path for obvious cases, then falls back to the LLM
-    for ambiguous ones.  The LLM call uses the supplied `llm_client` which
-    should be a *fast* model (not a reasoning/think model).
-
-    Args:
-        goal: User's goal description.
-        state: Loop state with intent classification and step results.
-        llm_client: Fast model for classification (from config).
-        soothe_config: Optional SootheConfig for Langfuse tracing.
-
-    Returns:
-        ScenarioClassification with scenario style, optional outline suggestions,
-        focus, and evidence emphasis. Empty `sections` means Phase 2 invents
-        the outline.
-
-    Raises:
-        No exceptions - returns fallback classification on any failure.
-    """
-    # intent_type is always "agentic" after RFC-630 3-class intake
-    intent_type = "agentic"
-    task_complexity = "complex"
-    if state.intent:
-        task_complexity = getattr(state.intent, "task_complexity", "complex")
-
-    # Extract execution summary
-    execution_summary = _extract_execution_summary(state)
-
-    scenario_rules = None
-    if soothe_config is not None:
-        scenario_rules = getattr(
-            getattr(getattr(soothe_config, "agent", None), "loop", None),
-            "rules",
-            None,
-        )
-        if scenario_rules is not None:
-            scenario_rules = scenario_rules.scenario
-
-    heuristic = _heuristic_classify(
-        goal,
-        intent_type,
-        execution_summary,
-        scenario_rules=scenario_rules,
-    )
-    if heuristic is not None:
-        logger.info(
-            "Scenario classifier (heuristic): scenario=%s steps=%d",
-            heuristic.scenario,
-            execution_summary["total_steps"],
-        )
-        return heuristic
-
-    # Build system + user prompts
-    system_prompt = _build_classifier_system_prompt()
-    user_prompt = _build_classifier_user_prompt(
-        goal, intent_type, task_complexity, execution_summary
-    )
-
-    # Call LLM with structured output
-    try:
-        from langchain_core.messages import HumanMessage, SystemMessage
-        from soothe_nano.llm import ainvoke_traced
-
-        response = await ainvoke_traced(
-            llm_client,
-            [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)],
-            soothe_config=soothe_config,
-            purpose="scenario_classify",
-            component="synthesis.scenario_classifier",
-            phase="post-loop",
-            session_id=getattr(state, "thread_id", None),
-            run_name="soothe:scenario-classify",
-        )
-
-        # Parse JSON response into ScenarioClassification
-        classification = _parse_classification_response(response.content)
-
-        logger.info(
-            "Scenario classifier (llm): scenario=%s sections=%d focus_items=%d",
-            classification.scenario,
-            len(classification.sections),
-            len(classification.contextual_focus),
-        )
-
-        return classification
-
-    except Exception:
-        logger.warning("Scenario classification failed, using fallback", exc_info=True)
-        return ScenarioClassification(
-            scenario="general_summary",
-            sections=[],
-            contextual_focus=["Provide concise summary of goal completion"],
-            evidence_emphasis=(
-                "Use available tool results as bullets/tables; invent a clear ## outline"
-            ),
-        )

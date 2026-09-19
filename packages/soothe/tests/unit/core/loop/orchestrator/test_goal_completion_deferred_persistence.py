@@ -108,6 +108,9 @@ async def test_completed_emits_before_finalize_goal_persistence() -> None:
     finalize_release.set()
     await ctx.tail_persistence_task
     sm.finalize_goal.assert_awaited()
+    # JIU-02: drain ledger reconciliation background task.
+    if ctx.ledger_reconciliation_task is not None:
+        await ctx.ledger_reconciliation_task
 
 
 @pytest.mark.asyncio

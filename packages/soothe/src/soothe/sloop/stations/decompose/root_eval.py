@@ -267,8 +267,8 @@ class RootEvalNode(LoopNode):
                     # unverified gaps hide, and the documented contract is
                     # that complex goals run the full coverage Eval gate.
                     # Unlabeled (None) goals continue to trust the structural
-                    # skip, preserving existing behavior for legacy/forced
-                    # goals that never passed through intake classification.
+                    # skip, preserving existing behavior for goals that never
+                    # passed through intake classification.
                     if intake_label != IntakeLabel.COMPLEX:
                         logger.info("[root_eval] eval skip predicate matched; finalize")
                         return NodeResult(payload={"root_eval_route": "finalize"})

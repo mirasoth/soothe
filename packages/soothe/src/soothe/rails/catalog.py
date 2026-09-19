@@ -186,7 +186,7 @@ def _normalize_fanout(raw: Any, *, path: Path) -> dict[str, Any]:
             raise RailCatalogError(f"{path}: fanout.max_slices out of range 1..64")
         out["max_slices"] = ms
     elif "max_waves" in raw and raw["max_waves"] is not None:
-        # Accept legacy `max_waves` key from older rail YAML.
+        # Accept `max_waves` key from older rail YAML.
         try:
             mw = int(raw["max_waves"])
         except (TypeError, ValueError) as exc:

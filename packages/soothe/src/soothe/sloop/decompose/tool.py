@@ -103,7 +103,7 @@ async def _arun_decompose_task(task: str, subtasks: list[Any]) -> str:
 
 
 def _run_decompose_task(task: str, subtasks: list[Any]) -> str:
-    """Sync fallback for StructuredTool compatibility / test scaffolding."""
+    """Sync fallback for StructuredTool (used when called outside async context)."""
     step_id = current_step_id()
     sink = current_proposal_sink()
     if not step_id or sink is None:

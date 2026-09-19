@@ -473,7 +473,7 @@ validate_package_dependencies() {
     print_warn "uv not found, skipping workspace sync check"
   else
     local sync_output
-    sync_output=$(uv sync --all-packages --all-extras --dry-run 2>&1) || true
+    sync_output=$(uv sync --all-packages --all-extras --dry-run </dev/null 2>&1) || true
     if echo "$sync_output" | grep -qE "error|would update|would install"; then
       print_fail "workspace out of sync (run 'make sync')"
       record_check_outcome "dependencies" "workspace in sync" "fail"
@@ -500,7 +500,7 @@ validate_package_dependencies() {
 
   if [ -f "$WORKSPACE_ROOT/scripts/check_first_party_pin_alignment.py" ]; then
     local pin_output
-    if pin_output=$("$VENV_PYTHON" "$WORKSPACE_ROOT/scripts/check_first_party_pin_alignment.py" 2>&1); then
+    if pin_output=$("$VENV_PYTHON" "$WORKSPACE_ROOT/scripts/check_first_party_pin_alignment.py" </dev/null 2>&1); then
       print_ok "first-party pin alignment"
       record_check_outcome "dependencies" "first-party pin alignment" "pass"
     else
@@ -531,7 +531,7 @@ setup_workspace() {
   print_note "syncing packages..."
   local sync_log
   sync_log=$(mktemp)
-  if ! "${UV_SYNC_CMD[@]}" >"$sync_log" 2>&1; then
+  if ! "${UV_SYNC_CMD[@]}" </dev/null >"$sync_log" 2>&1; then
     print_fail "uv sync failed"
     # Show the useful tail; full log path for deep dives.
     tail -n 40 "$sync_log" | sed 's/^/  /' >&2
@@ -545,7 +545,7 @@ setup_workspace() {
 
   # Mirror sync rewrites registry/wheel URLs; normalize back to PyPI hosts
   # (same as `make sync`) so a dirty mirror lock is never left behind.
-  if ! ./scripts/rewrite_uv_lock_to_pypi.sh >/dev/null 2>&1; then
+  if ! ./scripts/rewrite_uv_lock_to_pypi.sh </dev/null >/dev/null 2>&1; then
     print_fail "uv.lock mirror→PyPI rewrite failed"
     exit 1
   fi
@@ -567,7 +567,7 @@ ensure_deps_installed() {
     return 0
   fi
   print_warn "critical deps missing mid-run; re-syncing..."
-  if ! "${UV_SYNC_CMD[@]}" >/dev/null 2>&1; then
+  if ! "${UV_SYNC_CMD[@]}" </dev/null >/dev/null 2>&1; then
     print_fail "re-sync failed"
     return 1
   fi
@@ -634,7 +634,7 @@ _run_pkg_tests_streaming() {
   # Use pytest-xdist for packages with mostly sync tests (cli).
   # soothe and soothe-daemon have many async fixtures that don't work well with xdist.
   local xdist_opts=""
-  if "$VENV_PYTHON" -c "import xdist" 2>/dev/null; then
+  if "$VENV_PYTHON" -c "import xdist" </dev/null 2>/dev/null; then
     case "$pkg" in
     soothe-cli)
       xdist_opts="-n4 --dist=loadgroup"
@@ -659,7 +659,7 @@ _run_pkg_tests_streaming() {
   # Process substitution creates a subshell; $! captures its PID for exit code retrieval.
   exec 3< <(PYTHONUNBUFFERED=1 "$VENV_PYTHON" -u -m pytest tests/unit/ \
     $xdist_opts \
-    -v --tb=line --no-header --disable-warnings --durations=15 2>&1)
+    -v --tb=line --no-header --disable-warnings --durations=15 </dev/null 2>&1)
   local pytest_pid=$!
 
   while IFS= read -r -u 3 line; do
@@ -950,7 +950,7 @@ check_vulture() {
 
   local output
   local exit_code
-  output=$("$VENV_VULTURE" 2>&1) && exit_code=0 || exit_code=$?
+  output=$("$VENV_VULTURE" </dev/null 2>&1) && exit_code=0 || exit_code=$?
   if [ $exit_code -eq 0 ]; then
     print_ok "no high-confidence dead code (≥90%)"
     record_check_outcome "vulture" "dead code scan" "pass"
@@ -987,7 +987,7 @@ check_alert_pipeline_slo() {
 
   local output
   local exit_code
-  output=$("$VENV_PYTHON" scripts/benchmark_alert_pipeline.py --slo-only --iterations 200 2>&1) && exit_code=0 || exit_code=$?
+  output=$("$VENV_PYTHON" scripts/benchmark_alert_pipeline.py --slo-only --iterations 200 </dev/null 2>&1) && exit_code=0 || exit_code=$?
   if [ $exit_code -eq 0 ]; then
     print_ok "alert pipeline latency SLOs"
     record_check_outcome "bench-slo" "alert pipeline SLO" "pass"

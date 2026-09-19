@@ -13,7 +13,7 @@ from soothe.sloop.clarification.interrupt_kinds import INTERRUPT_TYPE_ASK_USER
 
 logger = logging.getLogger(__name__)
 
-# Old field names → new field names (for backward-compat coercion of in-flight loops).
+# Old field names → new field names (coercion for LLM-produced old schemas).
 _FIELD_RENAMES: dict[str, str] = {
     "title": "header",
     "short": "label",

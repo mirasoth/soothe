@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from soothe.sloop.engine.completion.scenario_classifier import ScenarioClassification
 from soothe.sloop.engine.completion.synthesis import (
     SOOTHE_GOAL_SYNTHESIS_CONFIG_KEY,
     SynthesisGenerator,
@@ -53,13 +52,6 @@ async def test_generate_synthesis_astream_uses_isolated_thread_and_workspace() -
     captured: dict = {}
     llm = _recording_llm(captured)
 
-    classification = ScenarioClassification(
-        scenario="general_summary",
-        sections=["Summary", "Key Points"],
-        contextual_focus=["c1"],
-        evidence_emphasis="Use evidence",
-    )
-
     state = LoopState(
         goal="g",
         thread_id="parent-thread",
@@ -81,14 +73,8 @@ async def test_generate_synthesis_astream_uses_isolated_thread_and_workspace() -
     )
 
     gen = SynthesisGenerator(llm, MagicMock(), soothe_config=None)
-    with patch.object(
-        SynthesisGenerator,
-        "_classify_scenario",
-        new_callable=AsyncMock,
-        return_value=classification,
-    ):
-        async for _ in gen.generate_synthesis("g", state):
-            pass
+    async for _ in gen.generate_synthesis("g", state):
+        pass
 
     cfg = captured.get("config") or {}
     conf = cfg.get("configurable") or {}
@@ -104,13 +90,6 @@ async def test_generate_synthesis_sets_finalize_langfuse_run_name(monkeypatch) -
     """Phase-2 synthesis uses the same run-name convention as execute-step (pattern)."""
     captured: dict = {}
     llm = _recording_llm(captured)
-
-    classification = ScenarioClassification(
-        scenario="general_summary",
-        sections=["Summary"],
-        contextual_focus=["c1"],
-        evidence_emphasis="Use evidence",
-    )
 
     from soothe.config import SootheConfig
     from soothe.config.models import LangfuseIntegrationConfig, ObservabilityConfig
@@ -142,14 +121,8 @@ async def test_generate_synthesis_sets_finalize_langfuse_run_name(monkeypatch) -
     )
 
     gen = SynthesisGenerator(llm, MagicMock(), soothe_cfg, loop_id="loop-9")
-    with patch.object(
-        SynthesisGenerator,
-        "_classify_scenario",
-        new_callable=AsyncMock,
-        return_value=classification,
-    ):
-        async for _ in gen.generate_synthesis("g", state):
-            pass
+    async for _ in gen.generate_synthesis("g", state):
+        pass
 
     cfg = captured.get("config") or {}
     assert cfg.get("run_name") == "soothe-dev:finalize"
@@ -162,13 +135,6 @@ async def test_generate_synthesis_uses_projected_context_not_raw_ledger() -> Non
     """Synthesis sends system + projected evidence, excluding plan-phase ledger rows."""
     captured: dict = {}
     llm = _recording_llm(captured)
-
-    classification = ScenarioClassification(
-        scenario="general_summary",
-        sections=["Summary", "Key Points"],
-        contextual_focus=["c1"],
-        evidence_emphasis="Use evidence",
-    )
 
     ledger = [
         LoopHumanMessage(
@@ -199,14 +165,8 @@ async def test_generate_synthesis_uses_projected_context_not_raw_ledger() -> Non
     )
 
     gen = SynthesisGenerator(llm, MagicMock(), soothe_config=None)
-    with patch.object(
-        SynthesisGenerator,
-        "_classify_scenario",
-        new_callable=AsyncMock,
-        return_value=classification,
-    ):
-        async for _ in gen.generate_synthesis("g", state):
-            pass
+    async for _ in gen.generate_synthesis("g", state):
+        pass
 
     msgs = captured.get("messages") or []
     assert len(msgs) == 4

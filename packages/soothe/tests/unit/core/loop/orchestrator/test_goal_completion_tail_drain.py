@@ -24,6 +24,7 @@ async def test_await_goal_completion_tail_persistence_waits_for_task() -> None:
 
     ctx = Mock(spec=LoopRuntimeContext)
     ctx.state_manager = Mock(loop_id="loop-await-test")
+    ctx.ledger_reconciliation_task = None
     ctx.tail_persistence_task = asyncio.create_task(_slow_tail())
 
     wait_task = asyncio.create_task(
@@ -44,6 +45,7 @@ async def test_await_goal_completion_tail_persistence_cancels_on_timeout() -> No
 
     ctx = Mock(spec=LoopRuntimeContext)
     ctx.state_manager = Mock(loop_id="loop-timeout-test")
+    ctx.ledger_reconciliation_task = None
     task = asyncio.create_task(_never_finishes())
     ctx.tail_persistence_task = task
 
@@ -90,6 +92,7 @@ async def test_tail_persistence_chains_instead_of_cancelling_prior() -> None:
     ctx.state_manager = Mock(loop_id="loop-chain-test")
     ctx.ce = Mock()
     ctx.loop_state = Mock()
+    ctx.ledger_reconciliation_task = None
     ctx.tail_persistence_task = None
 
     async def _first_tail() -> None:

@@ -535,7 +535,7 @@ class LoopRailInterpreter:
 
 
 def _rule_event(entry: dict[str, Any]) -> str:
-    """Read flow/rule trigger name (canonical `event`, legacy `on`)."""
+    """Read flow/rule trigger name (canonical `event`, fallback `on`)."""
     if "event" in entry:
         return str(entry["event"])
     if "on" in entry:

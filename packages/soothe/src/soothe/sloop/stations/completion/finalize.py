@@ -17,6 +17,9 @@ from soothe.sloop.engine.completion.synthesis import (
     SynthesisGenerator,
     generate_user_fallback_summary,
 )
+from soothe.sloop.engine.completion.synthesis_projection import (
+    strip_analysis_scratchpad,
+)
 from soothe.sloop.orchestrator.phase_status import emit_plan_phase_status
 from soothe.sloop.orchestrator.runtime_context import LoopRuntimeContext
 from soothe.sloop.state.schemas import LoopState
@@ -113,6 +116,47 @@ def _append_goal_completion_ledger_pair(
 
 
 _GOAL_COMPLETION_TAIL_PERSIST_TIMEOUT_SECONDS = 120.0
+
+
+async def _ledger_reconciliation_background(
+    *,
+    final_output: str,
+    state: LoopState,
+    iteration_completed: int,
+    action: CompletionStrategy,
+    context_engine: Any | None,
+) -> None:
+    """Fire-and-forget: reconcile synthesis with step ledger, then append the goal-completion ledger pair.
+
+    This runs after the ``completed`` wire event so the user-visible result
+    is not blocked by ledger work. Errors are logged and swallowed; the
+    ledger is best-effort relative to the wire event.
+
+    Args:
+        final_output: Synthesis text (already scratchpad-stripped) to reconcile.
+        state: Loop state whose ``loop_messages`` list is extended.
+        iteration_completed: Iteration index that just finished.
+        action: Completion strategy used for this goal.
+        context_engine: ContextEngine instance for direct LedgerManager writes.
+    """
+    try:
+        reconciled = reconcile_synthesis_with_step_ledger(
+            final_output,
+            loop_messages=await state.get_loop_messages(),
+        )
+    except Exception:
+        logger.warning(
+            "[goal_completion] ledger reconciliation failed",
+            exc_info=True,
+        )
+        reconciled = final_output
+    _append_goal_completion_ledger_pair(
+        state=state,
+        iteration_completed=iteration_completed,
+        action=action,
+        final_output=reconciled,
+        context_engine=context_engine,
+    )
 
 
 async def _goal_completion_tail_persistence(
@@ -254,9 +298,40 @@ async def await_goal_completion_tail_persistence(
     *,
     timeout_seconds: float = _GOAL_COMPLETION_TAIL_PERSIST_TIMEOUT_SECONDS,
 ) -> None:
-    """Drain tail persistence before `StrangeLoopStateManager.close()`."""
+    """Drain ledger reconciliation and tail persistence before `StrangeLoopStateManager.close()`.
+
+    The ledger reconciliation task (JIU-02) must finish before tail
+    persistence snapshots the ledger to disk, so it is awaited first.
+    """
     if ctx is None:
         return
+
+    # JIU-02: drain the fire-and-forget ledger reconciliation task first so
+    # the goal_completion ledger pair is in ``loop_messages`` before the
+    # tail persistence snapshot runs.
+    ledger_task = ctx.ledger_reconciliation_task
+    if ledger_task is not None and not ledger_task.done():
+        try:
+            await asyncio.wait_for(
+                asyncio.shield(ledger_task),
+                timeout=timeout_seconds,
+            )
+        except TimeoutError:
+            logger.warning(
+                "Goal-completion ledger reconciliation timed out after %.0fs for loop %s; cancelling",
+                timeout_seconds,
+                ctx.state_manager.loop_id,
+            )
+            ledger_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await ledger_task
+        except Exception:
+            logger.debug(
+                "Goal-completion ledger reconciliation failed for loop %s",
+                ctx.state_manager.loop_id,
+                exc_info=True,
+            )
+
     task = ctx.tail_persistence_task
     if task is None or task.done():
         return
@@ -542,7 +617,6 @@ async def node_goal_completion(
         strange_loop.core_agent,
         strange_loop.config,
         loop_id=ctx.state_manager.loop_id,
-        fast_llm_client=strange_loop._fast_llm,
     )
 
     action = plan_manager.determine_completion_strategy(
@@ -608,10 +682,10 @@ async def node_goal_completion(
 
         final_output = resolve_goal_completion_text(accum)
 
-        final_output = reconcile_synthesis_with_step_ledger(
-            final_output,
-            loop_messages=await state.get_loop_messages(),
-        )
+        # JIU-02: strip ``<analysis>`` scratchpad blocks from the synthesis
+        # output before emitting ``completed`` so the wire event carries only
+        # the finished report body.
+        final_output = strip_analysis_scratchpad(final_output)
 
         logger.info(
             "Synthesis stream: chunks=%d ai_msgs=%d chars=%d",
@@ -628,21 +702,9 @@ async def node_goal_completion(
                 len(final_output or ""),
             )
 
-    _append_goal_completion_ledger_pair(
-        state=state,
-        iteration_completed=iteration_completed,
-        action=action,
-        final_output=final_output,
-        context_engine=ctx.ce,
-    )
-
-    # Goal_completion only runs when the goal is, in fact, done. Force status="done"
-    # so the runner emits the final answer to the wire (RFC-225/RFC-226: the bootstrap
-    # path arrives here with PlanResult.status="continue", which would otherwise
-    # suppress loop_assistant_messages_chunk emission).
-    # Seed evidence_summary from full_output when empty so the autopilot wire
-    # carries the StrangeLoop response for consensus (goal text vs response;
-    # IG-710) without substituting the goal description.
+    # JIU-02: Seed evidence_summary and emit ``completed`` immediately.
+    # Ledger reconciliation + goal_completion ledger pair run fire-and-forget
+    # after the emit so the wire event is not blocked by ledger work.
     seeded_evidence = (plan_result.evidence_summary or "").strip()
     if not seeded_evidence and (final_output or "").strip():
         seeded_evidence = str(final_output).strip()[:2048]
@@ -673,6 +735,21 @@ async def node_goal_completion(
             "step_results_count": len(pre_clear_step_results),
             "skip_goal_completion_wire_duplicate": skip_goal_completion_wire_duplicate,
         },
+    )
+
+    # JIU-02: launch ledger reconciliation + goal_completion ledger pair as a
+    # fire-and-forget background task so the ``completed`` wire event is not
+    # blocked. The task is tracked on ``ctx.ledger_reconciliation_task`` and
+    # drained by ``await_goal_completion_tail_persistence`` before close().
+    ctx.ledger_reconciliation_task = asyncio.create_task(
+        _ledger_reconciliation_background(
+            final_output=final_output or "",
+            state=state,
+            iteration_completed=iteration_completed,
+            action=action,
+            context_engine=ctx.ce,
+        ),
+        name=f"goal-ledger-reconcile-{str(getattr(ctx.state_manager, 'loop_id', 'unknown'))[:12]}",
     )
 
     logger.info(

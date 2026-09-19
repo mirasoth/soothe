@@ -110,15 +110,13 @@ class ThreadContextManager:
         self,
         metadata: dict[str, Any] | None = None,
         thread_id: str | None = None,
-        **_kwargs: Any,
     ) -> ThreadInfo:
-        """Create a new thread with optional initial message.
+        """Create a new thread.
 
         Args:
             metadata: Optional thread metadata
             thread_id: Optional thread ID. If not provided, a new UUID is generated.
                        Use this to persist a draft thread with its existing ID.
-            **_kwargs: Additional arguments (ignored, for compatibility)
 
         Returns:
             ThreadInfo for the created thread

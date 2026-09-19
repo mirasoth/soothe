@@ -874,8 +874,8 @@ class ContextEngine:
         """Bring an interrupted CE goal back to `active` for in-place resume.
 
         Handles `active` (no-op), `pending`, `suspended`, `blocked`, and
-        `cancelled` (legacy interrupt path). Preserves the step DAG so planning
-        continues from completed checkpoints.
+        `cancelled`. Preserves the step DAG so planning continues from
+        completed checkpoints.
 
         Args:
             goal_id: Goal to resume.

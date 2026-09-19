@@ -373,15 +373,8 @@ class StepDAG(BaseModel):
 class GoalNode(BaseModel):
     """Single goal in the unified Goal+Step DAG.
 
-    Migrated fields from the legacy Goal model (retired autopilot package):
-    - retry_count, max_retries, send_back_count, max_send_backs
-    - workspace, attempts_after_crash
-    - pending_clarification
-    - guidance_accumulated
-    - report (GoalReport on completion)
-
-    New dreaming fields:
-    - topic, findings, distilled
+    Carries retry/send-back budgets, workspace, clarification state,
+    accumulated guidance, and the completion report.
     """
 
     # Core identity
@@ -414,10 +407,7 @@ class GoalNode(BaseModel):
     action_history: list[str] = Field(default_factory=list)
     evidence_ledger: list[EvidenceEntry] = Field(
         default_factory=list,
-        description=(
-            "Legacy append-only evidence ids (schema retained for persistence). "
-            "Autopilot judgment SoT is `report` / `report_revision`."
-        ),
+        description="Append-only evidence ids (schema retained for persistence).",
     )
 
     # Retry/backoff (from Goal, RFC-204)

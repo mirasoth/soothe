@@ -224,15 +224,12 @@ def _any_answer_is_a_question(
 ) -> bool:
     """Detect whether any answer is itself a question.
 
-    Prefers the model's structured self-classification (`answer_is_question`
-    field) when available. Falls back to the legacy `endswith("?")` regex
-    check when the model omits the field — a transitional safety net that will
-    be removed once all models reliably emit the structured field.
+    Uses the model's structured `answer_is_question` field. When the model
+    omits it (malformed response), returns False.
     """
     if answer_is_question:
         return any(answer_is_question)
-    # Transitional fallback: ?-suffix heuristic (to be removed post-migration).
-    return any(a.strip().endswith("?") for a in answers)
+    return False
 
 
 def _preview_questions(questions: tuple) -> str:

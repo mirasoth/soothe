@@ -220,7 +220,7 @@ class AutoClarificationPolicy:
         - Autopilot: return a synthetic retry answer when
           `autopilot_retry_on_fail` is True, prompting the LLM to try a
           different action.
-        - Otherwise: hard defer (legacy behavior).
+        - Otherwise: hard defer.
         """
         result = await self._veritas_answer(request)
         kind = self._classify(result)
@@ -248,7 +248,7 @@ class AutoClarificationPolicy:
                 )
                 return self._build_retry_answer(request)
 
-            # Path 3: hard defer (legacy / opt-out).
+            # Path 3: hard defer.
             raise ClarificationDeferredError(reason, request, kind=kind)
 
         answers = tuple(str(a).strip() for a in result.answers)

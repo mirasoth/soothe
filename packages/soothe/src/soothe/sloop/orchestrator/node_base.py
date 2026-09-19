@@ -133,37 +133,27 @@ class LoopNode(ABC):
 
 def wrap_node(
     station: str,
-    node: LoopNode | Any,
+    node: LoopNode,
     ctx: LoopRuntimeContext,
 ) -> Any:
-    """Adapt a `LoopNode` or legacy node function for LangGraph `add_node`.
+    """Adapt a `LoopNode` for LangGraph `add_node`.
 
     Args:
         station: Canonical station id (for logging/debugging only).
-        node: A :class:`LoopNode` instance or legacy `async def(ctx, state)`.
+        node: A :class:`LoopNode` instance.
         ctx: The :class:`LoopRuntimeContext` to bind.
 
     Returns:
         `async def(state) -> dict` suitable for `graph.add_node`.
     """
 
-    if isinstance(node, LoopNode):
-
-        async def wrapped(state: dict[str, Any]) -> dict[str, Any]:
-            """Invoke a LoopNode with the runtime context and return state."""
-            return await node(ctx, state)
-
-        wrapped.__name__ = f"node_{station}"
-        wrapped.__doc__ = node.__doc__
-        return wrapped
-
-    async def wrapped_legacy(state: dict[str, Any]) -> dict[str, Any]:
-        """Invoke a legacy node function with the runtime context."""
+    async def wrapped(state: dict[str, Any]) -> dict[str, Any]:
+        """Invoke a LoopNode with the runtime context and return state."""
         return await node(ctx, state)
 
-    wrapped_legacy.__name__ = f"node_{station}"
-    wrapped_legacy.__doc__ = getattr(node, "__doc__", None)
-    return wrapped_legacy
+    wrapped.__name__ = f"node_{station}"
+    wrapped.__doc__ = node.__doc__
+    return wrapped
 
 
 __all__ = [

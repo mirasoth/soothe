@@ -1,16 +1,13 @@
-"""Unit tests for scenario classifier heuristic + LLM response parsing."""
+"""Unit tests for scenario classifier heuristic fast-path."""
 
 from __future__ import annotations
 
 from types import SimpleNamespace
 
-import pytest
-
 from soothe.sloop.engine.completion.scenario_classifier import (
     ScenarioClassification,
     _extract_execution_summary,
     _heuristic_classify,
-    classify_synthesis_scenario,
     format_hint_for_scenario,
 )
 
@@ -24,14 +21,6 @@ class _StubStepResult:
 
     def to_evidence_string(self, truncate: bool = False) -> str:  # noqa: ARG002
         return "evidence" * 200  # ~1600 chars per step
-
-
-class _StubLLM:
-    def __init__(self, content: object) -> None:
-        self._content = content
-
-    async def ainvoke(self, _messages: list[object], **_kwargs: object) -> object:
-        return SimpleNamespace(content=self._content)
 
 
 def _build_state(
@@ -119,7 +108,7 @@ def test_heuristic_ambiguous_returns_none() -> None:
         "evidence_volume": 5000,
     }
     result = _heuristic_classify("refactor the module", "agentic", summary)
-    assert result is None  # falls through to LLM
+    assert result is None  # caller activates scratchpad self-classification
 
 
 # ── _extract_execution_summary tests ───────────────────────────────────
@@ -132,64 +121,6 @@ def test_extract_execution_summary_from_state() -> None:
     assert summary["successful_steps"] == 3
     assert len(summary["step_types"]) == 3
     assert summary["evidence_volume"] > 0
-
-
-# ── LLM path tests (use state that bypasses heuristic) ─────────────────
-
-
-@pytest.mark.asyncio
-async def test_classify_scenario_accepts_raw_json_response() -> None:
-    llm = _StubLLM(
-        """{
-  "scenario": "general_summary",
-  "sections": ["Summary", "Key Points"],
-  "contextual_focus": ["Focus area A", "Focus area B"],
-  "evidence_emphasis": "Use available evidence"
-}"""
-    )
-    # 3-step state → heuristic returns None, falls through to LLM
-    result = await classify_synthesis_scenario("count readmes", _build_state(step_count=3), llm)
-    assert isinstance(result, ScenarioClassification)
-    assert result.scenario == "general_summary"
-    assert result.sections == ["Summary", "Key Points"]
-
-
-@pytest.mark.asyncio
-async def test_classify_scenario_accepts_fenced_json_response() -> None:
-    llm = _StubLLM(
-        """```json
-{
-  "scenario": "general_summary",
-  "sections": ["Summary", "Key Points"],
-  "contextual_focus": ["Count by package", "Highlight totals"],
-  "evidence_emphasis": "Reference file discovery evidence"
-}
-```"""
-    )
-    # 3-step state → heuristic returns None, falls through to LLM
-    result = await classify_synthesis_scenario("count readmes", _build_state(step_count=3), llm)
-    assert result.scenario == "general_summary"
-    assert result.contextual_focus[0] == "Count by package"
-
-
-@pytest.mark.asyncio
-async def test_classify_scenario_falls_back_on_invalid_response() -> None:
-    llm = _StubLLM("not json at all")
-    # 3-step state → heuristic returns None, falls through to LLM → LLM fails → fallback
-    result = await classify_synthesis_scenario("count readmes", _build_state(step_count=3), llm)
-    assert result.scenario == "general_summary"
-    assert result.sections == []
-
-
-@pytest.mark.asyncio
-async def test_heuristic_skips_llm_for_single_step() -> None:
-    """Single-step state should never call the LLM (heuristic fast-path)."""
-    # Use a broken LLM that would fail — if heuristic works, it won't be called
-    llm = _StubLLM("THIS_WOULD_FAIL_IF_CALLED")
-    result = await classify_synthesis_scenario("count readmes", _build_state(step_count=1), llm)
-    assert result.scenario == "general_summary"
-    assert result.sections == []
-    assert result.contextual_focus[0].startswith("Summarize result for:")
 
 
 def test_scenario_classification_allows_empty_sections() -> None:

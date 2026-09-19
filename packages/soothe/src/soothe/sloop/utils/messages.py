@@ -67,8 +67,7 @@ def _record_ledger_message(
             Must be provided in production code. Tests without CE must
             use a sqlite :memory: ContextEngine instance.
         msg: Message to record (should be a BaseMessage subclass).
-        phase: Phase tag (e.g., `execute_step`, `goal_completion`; legacy
-            plan-spine tags such as `plan_assess` may appear in old ledgers).
+        phase: Phase tag (e.g., `execute_step`, `goal_completion`).
 
     Raises:
         ValueError: If context_engine is None (production code must provide CE).

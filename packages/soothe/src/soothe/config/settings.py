@@ -159,7 +159,7 @@ class SootheConfigLoggingView:
 
     @property
     def level(self) -> str:
-        """Top-level file log level (CLI compatibility)."""
+        """Top-level file log level."""
         return self._cfg.observability.log_file_level
 
 
@@ -309,7 +309,7 @@ class SootheConfig(BaseSettings):
 
     @model_validator(mode="before")
     @classmethod
-    def _reject_legacy_flat_router(cls, data: Any) -> Any:
+    def _reject_flat_router(cls, data: Any) -> Any:
         """Reject removed top-level `router` / `embedding_dims` YAML keys.
 
         When `router_profiles` is present (including `model_dump` round-trips),

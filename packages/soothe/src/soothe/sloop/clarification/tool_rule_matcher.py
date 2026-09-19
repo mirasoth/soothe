@@ -91,8 +91,7 @@ def _parse_command_rule(pattern: str) -> dict[str, str]:
 def _has_wildcards(pattern: str) -> bool:
     """Check if a pattern contains unescaped wildcards.
 
-    Mirrors Claude Code's `hasWildcards`. A trailing `:*` is legacy
-    prefix syntax, not a wildcard.
+    A trailing `:*` is prefix syntax, not a wildcard.
     """
     if pattern.endswith(":*"):
         return False

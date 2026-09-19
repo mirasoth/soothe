@@ -176,8 +176,7 @@ def hydrate_inbox(
     When ``current_goal_id`` is provided, entries belonging to a *different*
     goal are silently dropped. This prevents stale clarification interrupts
     from a cancelled prior goal from leaking into the newly submitted goal.
-    Entries without a ``goal_id`` (legacy / pre-fix) are kept for backward
-    compatibility.
+    Entries without a ``goal_id`` are kept for backward compatibility.
     """
     from soothe.sloop.relay.inbox import RelayInbox
 

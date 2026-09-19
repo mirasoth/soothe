@@ -123,7 +123,7 @@ def build_prior_goal_summaries(
     CE `action_history` when present; full reports live in the ledger.
 
     Args:
-        ce: ContextEngine (or compatible) exposing `get_all_goals()`.
+        ce: ContextEngine exposing `get_all_goals()`.
         checkpoint: StrangeLoop checkpoint with persisted goal completions.
         exclude_goal_id: Current goal id to omit from the summary list.
 

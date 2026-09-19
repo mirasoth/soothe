@@ -79,8 +79,7 @@ def _resolve_resumable_ce_goal(
         return None
 
     # Prefer active, then awaiting_clarification, then pending/suspended,
-    # then cancelled (legacy interrupt). Among the same rank, pick the most
-    # recently updated.
+    # then cancelled. Among the same rank, pick the most recently updated.
     _status_rank = {
         "active": 0,
         "awaiting_clarification": 1,
