@@ -145,7 +145,7 @@ def evaluate_step_deliverable_structural(
     hit_tool_budget: bool,
     min_answer_chars: int,
 ) -> StepDeliverableVerdict:
-    """Layer 1–2: deterministic deliverable gate."""
+    """Deterministic deliverable gate."""
     answer = (final_ai_text or "").strip()
     answer_len = len(answer)
 

@@ -118,6 +118,7 @@ class StepNode(BaseModel):
     plan_iteration: int = 0
     reasoning_trace: str | None = None
     execution: StepExecution | None = None
+    prior_execution: StepExecution | None = None
     parent_step_id: str | None = None
     secondary_parent_step_ids: list[str] = Field(default_factory=list)
     replacement_of: str | None = None
@@ -210,9 +211,14 @@ class StepDAG(BaseModel):
             node.status = "superseded"
 
     def reset_failed_step(self, step_id: str) -> bool:
-        """Reset a failed step to pending for retry. Returns True if reset."""
+        """Reset a failed step to pending for retry. Returns True if reset.
+
+        Preserves the prior execution in `prior_execution` so the executor
+        can inspect partial progress when re-dispatching.
+        """
         node = self.nodes.get(step_id)
         if node is not None and node.status == "failed":
+            node.prior_execution = node.execution
             node.status = "pending"
             node.execution = None
             return True
