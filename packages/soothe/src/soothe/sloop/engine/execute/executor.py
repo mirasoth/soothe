@@ -266,7 +266,7 @@ def _capture_interrupts(
 
 
 class Executor:
-    """Execute phase: Execute steps via Layer 1 CoreAgent.
+    """Execute phase: Execute steps via CoreAgent.
 
     This component handles step execution with two modes:
     - parallel: Execute ready steps with isolated per-step CoreAgent runs (chunked by
@@ -2033,7 +2033,7 @@ class Executor:
                         step_result = StepExecutionRecord(
                             step_id=sid,
                             success=False,
-                            outcome={"type": "error", "error": parallel_error},  # RFC-211
+                            outcome={"type": "error", "error": parallel_error},
                             error=parallel_error,
                             error_type=self._classify_error_severity(result),
                             duration_ms=0,
@@ -2123,7 +2123,6 @@ class Executor:
         # Aggregate metrics from parallel execution
         if all_step_results:
             # For parallel, use max output length across steps
-            # RFC-211: Use outcome metadata to get size
             output_lengths = [
                 r.outcome.get("size_bytes", 0) for r in all_step_results if r.success and r.outcome
             ]
@@ -2272,12 +2271,15 @@ class Executor:
             if resume_ticket is not None:
                 prior_duration_ms = int(getattr(resume_ticket, "prior_duration_ms", 0) or 0)
         events: list[StreamEvent] = []
-        output = ""  # Still collect for Layer 1 final report
+        output = ""
+        # Declared before try-block so partial progress survives into the
+        # except handler for failure-mode recording.
+        messages: list[BaseMessage] = []
+        main_tool_call_count = 0
         budget = _ActStreamBudget(
             max_subagent_tasks_per_wave=self._max_subagent_tasks_per_wave(),
             max_tool_calls_per_step=self._max_tool_calls_per_step(),
         )
-        # Init tool_call_args_registry directly (semaphore removed, registry preserved)
         init_tool_call_args_registry()
 
         decompose_tokens = None
@@ -2455,11 +2457,7 @@ class Executor:
 
             stream_input_messages: list[Any] = graph_input_messages
 
-            # Stream events and collect outcome metadata (RFC-211)
-            output = ""
-            main_tool_call_count = 0
             subgraph_tool_call_count = 0
-            messages: list[BaseMessage] = []
             delegate_final = ""
             stream_outcomes: list[dict[str, Any]] = []
             has_tool_error = False
@@ -2679,7 +2677,7 @@ class Executor:
                 }
 
             # Add CoreAgent input/output evidence
-            primary_outcome["step_input"] = envelope  # HumanMessage content sent to Layer 1
+            primary_outcome["step_input"] = envelope  # HumanMessage content sent to CoreAgent
             primary_outcome["output_summary"] = create_output_summary(output)  # Truncated findings
             # Compute captured_clarification early — it gates both the close-report
             # LLM call below and the step-success logic. A captured clarification
@@ -2946,7 +2944,7 @@ class Executor:
                 step_result=StepExecutionRecord(
                     step_id=step.id,
                     success=step_success,
-                    outcome=primary_outcome,  # RFC-211: outcome metadata
+                    outcome=primary_outcome,
                     error=step_error,
                     error_type=step_error_type,
                     duration_ms=duration_ms,
@@ -3027,32 +3025,35 @@ class Executor:
                 )
 
             error_msg = self._extract_error_message(e, "Step execution failed")
-            # Persist the full traceback for non-recoverable failures so the
-            # exact crash site survives in the step.completed event payload
-            # (conversation.jsonl) and the daemon event stream. Without this,
-            # the `error` field carries only `str(e)` (truncated to 50 chars
-            # by the TUI summary builder) and the traceback is lost when the
-            # per-loop runner.log handler is detached mid-run.
-            #
-            # The ToolErrorGuardMiddleware now converts unhandled tool
-            # exceptions into error ToolMessages, so a single tool failure no
-            # longer reaches this branch and aborts the whole step. The
-            # original d15f post-mortem misattributed the crash to the
-            # aggregation path; the 33c1 recurrence traceback shows the real
-            # site is tool execution.
+            # Persist the full traceback so the crash site survives in the
+            # step.completed event payload. ToolErrorGuardMiddleware converts
+            # unhandled tool exceptions into error ToolMessages, so only
+            # non-recoverable failures reach this branch.
             if not _is_recoverable_tool_network_error(e) and not isinstance(e, GraphRecursionError):
                 tb = traceback.format_exc()
                 if tb and tb.strip():
                     error_msg = f"{error_msg}\n\n{tb}" if error_msg else tb.strip()
+
+            # Record failure-mode signature so the circuit breaker can
+            # attempt guided retry before tripping fatally.
+            error_type = self._classify_error_severity(e)
+            if loop_state is not None:
+                loop_state.step_failure_modes[step.id] = self._failure_mode_signature(
+                    step_error=error_msg,
+                    step_error_type=error_type,
+                    tool_call_count=main_tool_call_count,
+                    had_recoverable_tool_errors=False,
+                    outcome={"type": "error", "error": error_msg},
+                )
 
             return _ExecuteStepResult(
                 events=events,
                 step_result=StepExecutionRecord(
                     step_id=step.id,
                     success=False,
-                    outcome={"type": "error", "error": error_msg},  # RFC-211: error outcome
+                    outcome={"type": "error", "error": error_msg},
                     error=error_msg,
-                    error_type=self._classify_error_severity(e),
+                    error_type=error_type,
                     duration_ms=duration_ms,
                     thread_id=thread_id,
                     subagent_task_completions=0,
@@ -3060,9 +3061,9 @@ class Executor:
                     hit_tool_budget=False,
                     hit_identical_repeat=False,
                 ),
-                messages=[],
-                delegate_final="",
-                output="",  # empty output for error case
+                messages=messages,
+                delegate_final=delegate_final,
+                output=output,
             )
         finally:
             if decompose_tokens is not None:
@@ -3128,7 +3129,7 @@ class Executor:
         tool_args = ToolCallArgsCollector()
         subgraph_task_binder = _SubgraphNamespaceTaskBinder()
 
-        # RFC-211: Collect per-tool outcome metadata (structured, no filesystem cache;)
+        # Collect per-tool outcome metadata (structured, no filesystem cache)
         outcomes: list[dict] = []
 
         no_progress_watchdog_triggered = 0

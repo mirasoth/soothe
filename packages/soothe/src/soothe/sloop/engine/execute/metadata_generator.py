@@ -28,7 +28,7 @@ def generate_outcome_metadata(
         tool_status: Optional LangChain ToolMessage status (e.g. `"error"`).
 
     Returns:
-        Structured metadata dict for Layer 2 reasoning with fields:
+        Structured metadata dict with fields:
         - type: Tool category (file_read, file_write, web_search, etc.)
         - tool_call_id: Unique identifier
         - tool_name: Tool name
