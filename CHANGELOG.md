@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.0.13] - 2026-09-19
+
 ### Added
 - Add config-gated static breakpoints on the loop graph: `agent.loop.debug.interrupt_before` / `interrupt_after` pause the StrangeLoop before/after named stations (e.g. `execute`, `finalize`); the turn emits `soothe.cognition.strange_loop.breakpoint.paused` with the pending nodes and the next turn resumes the paused node.
 - Add `strip_analysis_scratchpad()` and `scratchpad_mode` parameter to `render_synthesis_system_prompt`: the synthesis system prompt can now instruct the model to self-classify its scenario inside an `<analysis>` scratchpad block, collapsing the former two-phase classify→generate pipeline into a single LLM call.
@@ -17,17 +19,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reconcile the clarification inbox against CoreAgent checkpoint state on each execute turn: entries whose interrupt no longer exists on their fork thread are dropped, and interrupts pending on a thread but missing from the inbox are alerted via `soothe.cognition.relay.reconciled`.
 - Remove the `classify_synthesis_scenario` LLM entry point from the scenario classifier: heuristic classification is the only fast-path; non-conclusive cases fall through to scratchpad self-classification, eliminating a second LLM round trip and its unguarded hang risk.
 - Remove dead legacy and backward-compat code: `fast_llm_client`/`_classify_llm` synthesis shim, `wrapped_legacy` node path, `soothe_config`/`**_kwargs` unused parameters, `legacy_root` trace-store migration, and the `endswith("?")` regex fallback in veritas question detection.
+- Trim the DashScope multi-instance provider pool in `config/develop/nano.yml` and `config/production/nano.yml` from 16 endpoints to the 7 with valid credentials (`ds2`, `ds4`, `ds5`, `ds6`, `ds7`, `ds9`, `ds10`) and update the `glm-mm` router profile and `example.env` to match; blocked or invalid keys previously stalled failover ~3s per dead endpoint before reaching a working one.
 
 ### Fixed
 - Wrap goal-completion synthesis streaming in `asyncio.timeout(dispatch_idle_seconds)`: the synthesis LLM calls that previously hung indefinitely when the provider stalled now time out and fall back to `generate_user_fallback_summary` instead of blocking goal finalization forever.
 - Redirect stdin from `/dev/null` for Python and `uv` subprocess invocations in `scripts/verify_finally.sh`: broken parent-shell file descriptors previously caused `init_sys_streams: bad file descriptor` crashes during vulture, pin-alignment, alert-pipeline, and `uv sync` checks.
-
-### Fixed
 - Persist client `cwd` as the loop workspace in ACP `session/load`, `session/resume`, and `session/fork`: reopening or forking a session now calls `ensure_loop_registered` with the client-supplied directory instead of letting the first prompt silently register the loop against the daemon workspace.
 - Propagate a `GraphInterrupt` escaping the parallel step driver to the graph runtime instead of recording the step as failed.
 
-### Changed
-- Trim the DashScope multi-instance provider pool in `config/develop/nano.yml` and `config/production/nano.yml` from 16 endpoints to the 7 with valid credentials (`ds2`, `ds4`, `ds5`, `ds6`, `ds7`, `ds9`, `ds10`) and update the `glm-mm` router profile and `example.env` to match; blocked or invalid keys previously stalled failover ~3s per dead endpoint before reaching a working one.
+[Compare with previous version]: https://github.com/mirasoth/soothe/compare/v1.0.12...v1.0.13
 
 ## [v1.0.12] - 2026-09-15
 
