@@ -224,7 +224,7 @@ def build_risk_classifier(soothe_config: Any) -> RiskClassifier:
     cfg = classifier_config(soothe_config)
     if cfg is None:
         return NullRiskClassifier("no classifier config")
-    if not getattr(cfg, "enabled", False):
+    if not cfg.enabled:
         return NullRiskClassifier("classifier disabled")
 
     resolved = resolve_classifier_provider(soothe_config)

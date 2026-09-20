@@ -80,7 +80,7 @@ async def decide_eval_coverage_typesafe(
         suppression bar is not met — the caller then uses the LLM path.
     """
     cfg = classifier_config(soothe_config)
-    if cfg is None or not getattr(cfg, "enabled", False):
+    if cfg is None or not cfg.enabled:
         return None
 
     from langchain_typesafe import Choice
@@ -123,7 +123,7 @@ async def decide_eval_coverage_typesafe(
         logger.debug("[eval_decision] typesafe: run audit (conf=%s)", confidence)
         return True
     if choice == _NO_EVAL:
-        suppress_bar = float(getattr(cfg, "suppress_min_confidence", 0.9))
+        suppress_bar = float(cfg.suppress_min_confidence)
         if confidence is not None and confidence < suppress_bar:
             logger.info(
                 "[eval_decision] suppression below bar (conf=%s < %s); using LLM",
@@ -131,7 +131,7 @@ async def decide_eval_coverage_typesafe(
                 suppress_bar,
             )
             return None
-        if getattr(cfg, "shadow", False):
+        if cfg.shadow:
             logger.info("[eval_decision] typesafe(shadow): would skip audit")
             return None
         logger.debug("[eval_decision] typesafe: skip audit (conf=%s)", confidence)

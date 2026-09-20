@@ -43,7 +43,7 @@ def resolve_classifier_provider(soothe_config: Any) -> tuple[str, dict[str, Any]
         cfg = soothe_config.classifier
     except AttributeError:
         return None
-    if not getattr(cfg, "enabled", False):
+    if not cfg.enabled:
         return None
 
     try:

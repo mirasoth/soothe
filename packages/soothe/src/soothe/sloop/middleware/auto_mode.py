@@ -194,7 +194,7 @@ class AutoModeMiddleware(AgentMiddleware):
         result = self.after_model(state, runtime)
         if self._classifier is None or self._classifier_cfg is None:
             return result
-        if not getattr(self._classifier_cfg, "enabled", False):
+        if not self._classifier_cfg.enabled:
             return result
         return await self._apply_classification(state, runtime)
 
@@ -236,7 +236,7 @@ class AutoModeMiddleware(AgentMiddleware):
         if not candidates:
             return None
 
-        bounded = candidates[: int(getattr(cfg, "max_calls_per_turn", 4))]
+        bounded = candidates[: int(cfg.max_calls_per_turn)]
         queries = [
             RiskQuery(
                 tool=str(tc.get("name") or ""),
@@ -251,7 +251,7 @@ class AutoModeMiddleware(AgentMiddleware):
             logger.warning("[auto_mode] classifier failed; keeping deterministic outcome")
             return None
 
-        if getattr(cfg, "shadow", True):
+        if cfg.shadow:
             for (_, tc), verdict in zip(bounded, verdicts):
                 logger.info(
                     "[auto_mode] classify(shadow) tool=%s band=%s conf=%s",
@@ -268,7 +268,7 @@ class AutoModeMiddleware(AgentMiddleware):
         for idx, tc in enumerate(last_ai_msg.tool_calls):
             verdict = verdict_by_idx.get(idx)
             if verdict is None or verdict.band in ("allow", "untrusted", "unavailable"):
-                if verdict is not None and getattr(cfg, "strict", False):
+                if verdict is not None and cfg.strict:
                     # strict: no trusted answer → do not allow silently.
                     artificial.append(self._classifier_reject_message(tc, verdict))
                     changed = True

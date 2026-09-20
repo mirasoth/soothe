@@ -86,7 +86,7 @@ async def classify_intent_typesafe(
         back to the existing LLM path on `None`.
     """
     cfg = classifier_config(soothe_config)
-    if cfg is None or not getattr(cfg, "enabled", False):
+    if cfg is None or not cfg.enabled:
         return None
 
     from langchain_typesafe import Choice
@@ -128,7 +128,7 @@ async def classify_intent_typesafe(
         logger.info("[intent] typesafe returned unknown label %r; falling back", raw_label)
         return None
 
-    if getattr(cfg, "shadow", False):
+    if cfg.shadow:
         logger.info(
             "[intent] typesafe(shadow) label=%s conf=%s; using LLM path",
             label.value,
