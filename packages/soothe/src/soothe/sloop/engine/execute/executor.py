@@ -294,6 +294,8 @@ class Executor:
         goal_trace: Any | None = None,
         fast_model: Any | None = None,
         interaction_mode: str | None = None,
+        clarification_mode: str | None = None,
+        human_attached: bool = False,
     ) -> None:
         """Initialize the Execute phase.
 
@@ -318,6 +320,10 @@ class Executor:
             fast_model: Fast model for lightweight classification calls.
             interaction_mode: CoreAgent interaction mode
                 (`agent`/`ask`/`plan`/`bypass`).
+            clarification_mode: RFC-634 resolved clarification mode
+                (`auto`/`manual`) propagated to the AutoModeMiddleware gate.
+            human_attached: RFC-634 whether a human relay answers
+                interrupts; gates safety escalation vs autopilot reject.
         """
         self.core_agent = core_agent
         self._checkpointer = checkpointer
@@ -335,6 +341,8 @@ class Executor:
         self._goal_trace = goal_trace
         self._fast_model = fast_model
         self._interaction_mode = interaction_mode
+        self._clarification_mode = clarification_mode
+        self._human_attached = human_attached
         # RFC-904 / IG-751: proposals queued by decompose_task during step THREADS.
         self.decompose_proposals: list[Any] = []
 
@@ -2311,7 +2319,7 @@ class Executor:
             if workspace:
                 configurable["workspace"] = workspace
             # Loop-scoped tool-approval allowlist — read by the
-            # `interrupt_on` `when` predicates (interrupt_rules.py) so an
+            # `AutoModeMiddleware` inline gate (RFC-634) so an
             # already-approved command (exact signature OR safety rule) does
             # not re-interrupt; the tool executes silently on the next hop.
             if (
@@ -2345,6 +2353,23 @@ class Executor:
                     pass
             if self._interaction_mode:
                 configurable[SOOTHE_INTERACTION_MODE_KEY] = self._interaction_mode
+            # RFC-634: clarification mode + human attachment for the
+            # AutoModeMiddleware inline tool-approval gate.
+            if self._clarification_mode:
+                from soothe.sloop.utils.config_keys import (
+                    SOOTHE_CLARIFICATION_MODE_KEY,
+                    SOOTHE_HUMAN_ATTACHED_KEY,
+                )
+
+                configurable[SOOTHE_CLARIFICATION_MODE_KEY] = self._clarification_mode
+                configurable[SOOTHE_HUMAN_ATTACHED_KEY] = self._human_attached
+            # RFC-635: per-step LoopStateView + loop id for the
+            # AskUserGateMiddleware inline veritas fast path (context parity
+            # with the station's veritas call).
+            if self._clarification_loop_state_view is not None:
+                configurable["soothe_veritas_loop_view"] = self._clarification_loop_state_view
+            if self._loop_id:
+                configurable["soothe_loop_id"] = self._loop_id
             if step.kind == "eval":
                 configurable[SOOTHE_EVAL_STEP_ID_KEY] = step.id
             # Propagate intake label + root flag so DecomposeTaskMiddleware can

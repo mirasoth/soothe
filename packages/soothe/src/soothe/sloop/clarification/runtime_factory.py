@@ -12,7 +12,6 @@ from soothe.sloop.clarification.protocol import (
     ClarificationRequest,
 )
 from soothe.sloop.clarification.selector import build_default_clarification_policy
-from soothe.sloop.clarification.tool_approval_pipeline import ToolApprovalPipeline
 from soothe.subagents.veritas import answer as veritas_answer
 
 if TYPE_CHECKING:
@@ -50,9 +49,13 @@ def build_clarification_policy_for_runner(
     human_attached: bool = False,
     thread_id: str | None = None,
     loop_id: str | None = None,
-    interaction_mode: str | None = None,
 ) -> ClarificationPolicy:
     """Build the clarification policy a runner injects into `LoopRuntimeContext`.
+
+    RFC-634: tool-approval evaluation lives in `AutoModeMiddleware` (built by
+    the CoreAgent builder); this factory only wires the clarification
+    policies — veritas auto-answering for question origins, the interactive
+    relay for human decisions.
 
     Args:
         config: Soothe config providing clarification and veritas sub-blocks
@@ -64,62 +67,24 @@ def build_clarification_policy_for_runner(
             `InteractiveClarificationPolicy` as the `interactive_fallback`.
         thread_id: Loop thread id used as the Langfuse `session_id`.
         loop_id: Loop id forwarded to Langfuse for trace correlation.
-        interaction_mode: CoreAgent interaction mode. `bypass` skips all
-            tool-approval deny/safety checks.
 
     Returns:
         A `ClarificationPolicy` ready to attach to a goal run.
     """
     resolved_mode = resolve_clarification_mode(mode, config)
     clar_cfg = config.agent.clarification
-    ta_cfg = clar_cfg.tool_approval
-
-    is_bypass = interaction_mode == "bypass"
-    tool_approval_pipeline: ToolApprovalPipeline | None = None
-    if ta_cfg.enabled:
-        tool_approval_pipeline = ToolApprovalPipeline(
-            config=ta_cfg,
-            security_config=config.security,
-            bypass_security=is_bypass,
-        )
 
     if resolved_mode == "manual":
-        # RFC-622 §9b: pipeline pre-filters the human relay in manual mode —
-        # deny/safety stages always auto-reject dangerous actions; allow
-        # rules auto-approve only when manual_scope is ambiguous_only.
-        return build_default_clarification_policy(
-            mode="manual",
-            emit=emit,
-            tool_approval_pipeline=tool_approval_pipeline,
-            manual_allow_rules=(ta_cfg.manual_scope == "ambiguous_only"),
-        )
+        return build_default_clarification_policy(mode="manual", emit=emit)
 
     veritas_cfg = config.agent.veritas
     veritas_model = config.create_chat_model(veritas_cfg.model_role)
 
-    # RFC-622 §9b: fast model for tool-approval fallback, think for intent.
-    ta_fallback_cfg = ta_cfg.veritas_fallback
-    tool_approval_model = veritas_model
-    if (
-        ta_cfg.enabled
-        and ta_fallback_cfg.enabled
-        and ta_fallback_cfg.model_role != veritas_cfg.model_role
-    ):
-        tool_approval_model = config.create_chat_model(ta_fallback_cfg.model_role)
-
     async def _veritas(request: ClarificationRequest) -> VeritasAnswerSchema:
-        # RFC-622 §9b: fast model for tool-approval fallback, think for intent.
-        use_ta_fallback = (
-            request.origin_node == "tool_approval" and ta_cfg.enabled and ta_fallback_cfg.enabled
-        )
-        model = tool_approval_model if use_ta_fallback else veritas_model
-        max_context_steps = (
-            ta_fallback_cfg.max_context_steps if use_ta_fallback else veritas_cfg.max_context_steps
-        )
         return await veritas_answer(
             request,
-            model=model,
-            max_context_steps=max_context_steps,
+            model=veritas_model,
+            max_context_steps=veritas_cfg.max_context_steps,
             soothe_config=config,
             thread_id=thread_id,
             loop_id=loop_id,
@@ -141,7 +106,6 @@ def build_clarification_policy_for_runner(
         force_manual_origins=list(clar_cfg.force_manual_origins or ()),
         degrade_to_manual_on_failure=clar_cfg.degrade_to_manual_on_failure,
         autopilot_retry_on_fail=clar_cfg.autopilot_retry_on_fail,
-        tool_approval_pipeline=tool_approval_pipeline,
     )
 
 

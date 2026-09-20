@@ -68,6 +68,17 @@ AUTOPILOT_FEEDBACK_SENT = "soothe.internal.autopilot.feedback.sent"
 AUTOPILOT_RELATIONSHIP_DETECTED = "soothe.internal.autopilot.relationship.detected"
 AUTOPILOT_CHECKPOINT_SAVED = "soothe.internal.autopilot.checkpoint.saved"
 
+# Tool-approval inline gate (RFC-634) — emitted via the agent node
+# stream_writer as a custom chunk whenever AutoModeMiddleware rejects a
+# gated tool call inline (deny rule or autopilot safety degrade).
+TOOL_AUTO_GATE_REJECTED = "soothe.internal.tool.auto_gate.rejected"
+
+# ask_user inline fast path (RFC-635) — emitted via the agent node
+# stream_writer as a custom chunk whenever AskUserGateMiddleware answers an
+# ask_user question inline. node_execute consumes it to append the Q&A to
+# `clarification_history` so later veritas calls see prior gate answers.
+CLARIFICATION_AUTO_ANSWERED = "soothe.internal.clarification.auto_answered"
+
 # ============================================================================
 # CLIENT-FACING (soothe.<domain>.*)
 # ============================================================================

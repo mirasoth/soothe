@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Add `AskUserGateMiddleware` (RFC-635): an inline veritas fast path for `ask_user` calls in auto clarification mode. Confident questions resolve inline in the gate's `aafter_model` hook — a synthetic `ToolMessage` rendered by the tool's own `_format_answers` (zero interrupts, zero graph hops, identical model contract); defer/low-confidence/failure questions are re-emitted as the gate's own `ask_user`-shaped interrupt carrying a `gate_deferred` marker so the station skips its veritas call (no double LLM) and routes straight to the human relay, the autopilot `(retry)` sentinel, or the seven-day `awaiting_clarification` hard defer (park semantics untouched — they live in the goal state machine outside the graph).
+- Add `agent.clarification.ask_user_gate.enabled` config (default on), the `soothe_veritas_loop_view` / `soothe_loop_id` configurable keys (per-step `LoopStateView` context parity for the gate's veritas call), and the `soothe.internal.clarification.auto_answered` stream event — `node_execute` consumes it to append gate inline answers to `clarification_history` so later veritas calls see prior gate Q&A.
+- Add `AutoModeMiddleware` (RFC-634): a host `AgentMiddleware` installed on the CoreAgent graph as the sole tool-approval human-in-the-loop. It evaluates every gated tool call (`edit_file`/`write_file`/`delete`/`run_command`) in its `after_model` hook — deny-rule and autopilot-safety rejects resolve inline as instructive error `ToolMessage`s (no interrupt, no graph round trip), auto-mode approvals execute silently, and only genuinely human decisions emit the standard `action_requests` interrupt routed through the `await_clarification` station.
+- Add `agent.clarification.tool_approval.inline_gate` config block (`enabled`, `tools`, `active_in_bypass=true`) and the `soothe.internal.tool.auto_gate.rejected` event, stream-emitted with stage/reason/rule_id/signature on every inline reject.
+- Add `soothe_clarification_mode` and `soothe_human_attached` LangGraph configurable keys: `node_execute` derives the live clarification mode from the attached policy type and human attachment from relay presence, propagating both to the executor so the gate decides interrupt vs inline resolution per run.
+
+### Changed
+- Move tool-approval evaluation from the clarification station to the inline gate: `ToolApprovalPipeline` becomes a single-action evaluator (`evaluate_action`) shared by the middleware; the builder no longer wires `interrupt_on` for the four mutating tools, so the deepagents `HumanInTheLoopMiddleware` is not installed in agent mode.
+- Route `tool_approval` clarification requests directly to the human relay: `AutoClarificationPolicy` drops its pipeline short-circuit (middleware-originated interrupts imply a human decision is wanted) and `InteractiveClarificationPolicy` drops its manual-mode pre-filter, reading the escalated safety `rule_id` from request metadata instead of a pipeline result.
+- Deny rules now reject gated calls the old `when_*` heuristics would have let execute silently (e.g. in-workspace paths matching a deny pattern) — the gate evaluates every gated call, not only interrupt-worthy ones; deny rules also stay absolute in bypass interaction mode (`active_in_bypass: true` default).
+
+### Removed
+- Remove `sloop/clarification/interrupt_rules.py` (`when_edit_file`/`when_write_file`/`when_delete`/`when_run_command` predicates — absorbed into the gate's decision table), the veritas tool-approval prompt variants (`build_veritas_system_prompt_for_origin`, slim user prompt — dead path since veritas never sees `tool_approval` requests), and the `tool_approval.veritas_fallback` config block with its dual-model wiring.
+
 ## [v1.0.13] - 2026-09-19
 
 ### Added

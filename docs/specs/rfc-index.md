@@ -548,6 +548,22 @@ This index provides a comprehensive catalog of all RFCs in the Soothe project.
   - Supersedes: ---
   - Authors: Soothe Team
   - Updated: 2026-08-19
+- **RFC-634**: [AutoModeMiddleware — Inline Tool-Approval Gate](RFC-634-automode-middleware.md)
+  - Kind: Implementation Interface Design
+  - Status: Implemented
+  - Created: 2026-09-20
+  - Depends on: RFC-622 (CoreAgent Clarification Relay), RFC-623 (Veritas Auto-Mode Robustness), Tool-Approval Pipeline draft (2026-08-27)
+  - Supersedes: Station-side tool-approval pipeline evaluation (`AutoClarificationPolicy._answer_tool_approval`, `InteractiveClarificationPolicy` pre-filter, `interrupt_rules.py` `when_*` predicates)
+  - Authors: Soothe Team
+  - Updated: 2026-09-20
+- **RFC-635**: [AskUserGateMiddleware — Inline Veritas Fast Path for `ask_user`](RFC-635-askuser-gate-middleware.md)
+  - Kind: Implementation Interface Design
+  - Status: Implemented
+  - Created: 2026-09-20
+  - Depends on: RFC-622 (CoreAgent Clarification Relay), RFC-623 (Veritas Auto-Mode Robustness), RFC-634 (AutoModeMiddleware)
+  - Supersedes: ---
+  - Authors: Soothe Team
+  - Updated: 2026-09-20
 - **RFC-624**: [Context Engine](RFC-624-context-engine.md)
   - Kind: Architecture Design
   - Status: Implemented (partial)

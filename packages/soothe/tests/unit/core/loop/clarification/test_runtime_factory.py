@@ -64,31 +64,14 @@ class TestBuildClarificationPolicyForRunner:
         policy = build_clarification_policy_for_runner(config, mode="manual")
         assert isinstance(policy, InteractiveClarificationPolicy)
 
-    def test_manual_mode_wires_pipeline_pre_filter(self) -> None:
-        """Manual mode pre-filters tool approvals via the pipeline (§9b)."""
+    def test_manual_mode_has_no_pipeline_pre_filter(self) -> None:
+        """RFC-634: the station-side pre-filter is gone — manual mode asks
+        the human for every tool_approval request the gate escalates."""
         config = _make_config()
         config.agent.clarification.tool_approval.enabled = True
         policy = build_clarification_policy_for_runner(config, mode="manual")
         assert isinstance(policy, InteractiveClarificationPolicy)
-        assert policy._tool_approval_pipeline is not None  # noqa: SLF001
-        assert policy._manual_allow_rules is False  # noqa: SLF001
-
-    def test_manual_mode_ambiguous_only_enables_allow_rules(self) -> None:
-        """manual_scope=ambiguous_only: allow rules auto-approve in manual mode."""
-        config = _make_config()
-        config.agent.clarification.tool_approval.enabled = True
-        config.agent.clarification.tool_approval.manual_scope = "ambiguous_only"
-        policy = build_clarification_policy_for_runner(config, mode="manual")
-        assert isinstance(policy, InteractiveClarificationPolicy)
-        assert policy._manual_allow_rules is True  # noqa: SLF001
-
-    def test_manual_mode_pipeline_disabled_no_pre_filter(self) -> None:
-        """tool_approval.enabled=false: manual mode asks the human for all."""
-        config = _make_config()
-        config.agent.clarification.tool_approval.enabled = False
-        policy = build_clarification_policy_for_runner(config, mode="manual")
-        assert isinstance(policy, InteractiveClarificationPolicy)
-        assert policy._tool_approval_pipeline is None  # noqa: SLF001
+        assert not hasattr(policy, "_tool_approval_pipeline")
 
     def test_none_mode_uses_config_default(self) -> None:
         config = _make_config(default_mode="manual")
@@ -105,9 +88,6 @@ class TestBuildClarificationPolicyForRunner:
     def test_veritas_model_built_with_configured_role(self) -> None:
         config = _make_config()
         config.agent.veritas.model_role = "fast"
-        # When veritas model_role matches tool-approval fallback model_role
-        # (both "fast"), only one model is constructed.
-        config.agent.clarification.tool_approval.veritas_fallback.model_role = "fast"
         build_clarification_policy_for_runner(config, mode="auto")
         config.create_chat_model.assert_called_once_with("fast")
 

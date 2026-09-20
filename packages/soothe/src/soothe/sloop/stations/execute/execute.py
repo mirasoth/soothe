@@ -95,6 +95,70 @@ def _build_loop_state_view(
     )
 
 
+def _resolved_clarification_mode(ctx: LoopRuntimeContext) -> str | None:
+    """Derive the live clarification mode from the attached policy type.
+
+    RFC-634: propagated to the executor's configurable so
+    `AutoModeMiddleware` can decide interrupt vs inline resolution. Returns
+    `None` when no policy is attached (headless runs without clarification).
+    """
+    policy = getattr(ctx, "clarification_policy", None)
+    if policy is None:
+        return None
+    from soothe.sloop.clarification.auto import AutoClarificationPolicy
+    from soothe.sloop.clarification.interactive import InteractiveClarificationPolicy
+
+    if isinstance(policy, InteractiveClarificationPolicy):
+        return "manual"
+    if isinstance(policy, AutoClarificationPolicy):
+        return "auto"
+    return None
+
+
+def _maybe_record_gate_answer(chunk: Any, state: Any) -> bool:
+    """Record an AskUserGate inline answer into clarification history.
+
+    Returns True when the chunk is a `clarification_auto_answered` custom
+    event (consumed here — not forwarded as a stream event). The entry shape
+    matches `await_clarification`'s history append so later veritas calls
+    see prior gate Q&A (RFC-635 §5).
+    """
+    if not (isinstance(chunk, tuple) and len(chunk) == _STREAM_CHUNK_LEN):
+        return False
+    _ns, mode, data = chunk
+    if mode != "custom" or not isinstance(data, dict):
+        return False
+    from soothe.events.catalog import CLARIFICATION_AUTO_ANSWERED
+
+    if data.get("type") != CLARIFICATION_AUTO_ANSWERED:
+        return False
+    questions = data.get("questions")
+    answers = data.get("answers")
+    if not (isinstance(questions, list) and isinstance(answers, list) and answers):
+        return False
+    history = list(getattr(state, "clarification_history", []) or [])
+    history.append(
+        {
+            "questions": list(questions),
+            "answers": [str(a) for a in answers],
+            "source": str(data.get("source") or "veritas"),
+            "confidence": data.get("confidence"),
+        }
+    )
+    if len(history) > 20:
+        history = history[-20:]
+    try:
+        state.clarification_history = history
+    except AttributeError:
+        logger.debug("[execute] cannot record gate answer: loop state missing field")
+        return True
+    logger.info(
+        "[execute] recorded ask_user gate answer into clarification history (%d question(s))",
+        len(questions),
+    )
+    return True
+
+
 def _extract_prior_clarifications(state: Any) -> tuple[str, ...]:
     """Extract prior Q&A pairs from the loop state's clarification history.
 
@@ -832,7 +896,6 @@ async def node_execute(ctx: LoopRuntimeContext, state_dict: dict[str, Any]) -> d
     if ctx.clarification_policy is not None:
         clarification_detector = ClarificationDetector()
         clarification_view = _build_loop_state_view(ctx, allowlist=current_allowlist)
-
     from soothe.coreagent.lazy import LazyCoreAgent
 
     if isinstance(strange_loop.core_agent, LazyCoreAgent):
@@ -861,6 +924,8 @@ async def node_execute(ctx: LoopRuntimeContext, state_dict: dict[str, Any]) -> d
         goal_trace=ctx.goal_trace,
         fast_model=strange_loop._fast_llm,
         interaction_mode=getattr(ctx, "interaction_mode", None),
+        clarification_mode=_resolved_clarification_mode(ctx),
+        human_attached=relay is not None,
     )
     async for item in run_executor.execute(
         decision=decision,
@@ -871,6 +936,12 @@ async def node_execute(ctx: LoopRuntimeContext, state_dict: dict[str, Any]) -> d
         elif isinstance(item, StepWaveStart):
             await _emit_step_started_for_steps(list(item.steps))
         elif isinstance(item, tuple) and len(item) == _STREAM_CHUNK_LEN:
+            # RFC-635: gate inline answers surface as custom chunks — record
+            # them into clarification_history (same entry shape as the
+            # station's await_clarification) so later veritas calls see prior
+            # gate Q&A; other chunks forward as stream events.
+            if _maybe_record_gate_answer(item, state):
+                continue
             await ctx.emit("stream_event", item)
         elif isinstance(item, StepCompletionReport):
             await ctx.emit(

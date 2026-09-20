@@ -231,8 +231,9 @@ class StrangeLoop:
 
         Args:
             mode: `"auto"` or `"manual"`.
-            interaction_mode: `"bypass"` or `None` (default graph); sets the
-                rebuilt tool-approval pipeline's bypass flag.
+            interaction_mode: `"bypass"` or `None` (default graph); recorded
+                on the context — the RFC-634 `AutoModeMiddleware` gate reads
+                bypass per step from the graph configurable.
 
         Returns:
             `True` when swapped on a live context, `False` when no goal is
@@ -251,7 +252,6 @@ class StrangeLoop:
                 mode=mode,
                 emit=ctx.emit,
                 human_attached=True,
-                interaction_mode=interaction_mode,
                 thread_id=str(getattr(ctx.strange_loop, "_thread_id", "") or ""),
                 loop_id=str(getattr(ctx.state_manager, "loop_id", "") or ""),
             )

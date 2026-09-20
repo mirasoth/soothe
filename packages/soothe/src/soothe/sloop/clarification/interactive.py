@@ -19,9 +19,6 @@ from soothe.sloop.clarification.protocol import (
     ClarificationRequest,
     merge_answer_audit,
 )
-from soothe.sloop.clarification.tool_approval_pipeline import (
-    ToolApprovalPipeline,
-)
 
 EmitFn = Callable[[str, dict[str, Any]], Awaitable[None]]
 
@@ -31,22 +28,19 @@ logger = logging.getLogger(__name__)
 class InteractiveClarificationPolicy:
     """Relay clarifications to a human via the TUI with a durable pause.
 
-    When a `ToolApprovalPipeline` is attached (manual mode), it pre-filters
-    `tool_approval` requests — deny/safety stages auto-reject, allow rules
-    auto-approve.  Only rule-unresolved actions reach the human.
+    RFC-634: tool-approval requests arrive from `AutoModeMiddleware` with
+    the escalated safety `rule_id` in `request.metadata["escalated_rule_id"]`
+    (deterministic verdicts never reach the station). The rule id is stamped
+    onto the human answer's audit so `node_execute` records a rule-level
+    allowlist override.
     """
 
     def __init__(
         self,
         emit: EmitFn | None = None,
-        *,
-        tool_approval_pipeline: ToolApprovalPipeline | None = None,
-        manual_allow_rules: bool = False,
     ) -> None:
-        """Wire the emit callback and optional tool-approval pipeline."""
+        """Wire the emit callback."""
         self._emit = emit
-        self._tool_approval_pipeline = tool_approval_pipeline
-        self._manual_allow_rules = manual_allow_rules
         self._escalated_rule_id: str | None = None
 
     def bind_emit(self, emit: EmitFn) -> None:
@@ -55,10 +49,7 @@ class InteractiveClarificationPolicy:
 
     async def answer(self, request: ClarificationRequest) -> ClarificationAnswer:
         """Pause for a human answer.  `await_clarification` already emitted."""
-        self._escalated_rule_id = None
-        static = self._evaluate_tool_approval_pipeline(request)
-        if static is not None:
-            return static
+        self._escalated_rule_id = self._metadata_rule_id(request)
         answer = await self._answer(request, announce=False)
         return self._merge_escalated_rule_id(answer)
 
@@ -70,8 +61,15 @@ class InteractiveClarificationPolicy:
         The TUI only mounts the interactive card for `mode=manual` emits;
         resume replays pass `announce=False` since the card already exists.
         """
+        self._escalated_rule_id = self._metadata_rule_id(request)
         answer = await self._answer(request, announce=announce)
         return self._merge_escalated_rule_id(answer)
+
+    @staticmethod
+    def _metadata_rule_id(request: ClarificationRequest) -> str | None:
+        """Safety rule id attached by the middleware gate, if any."""
+        raw = request.metadata.get("escalated_rule_id") if request.metadata else None
+        return str(raw) if raw else None
 
     def _merge_escalated_rule_id(self, answer: ClarificationAnswer) -> ClarificationAnswer:
         """Stamp the escalated safety rule_id onto a human answer's audit."""
@@ -120,53 +118,12 @@ class InteractiveClarificationPolicy:
     def try_static_answer(self, request: ClarificationRequest) -> ClarificationAnswer | None:
         """Statically resolve a request without a human pause, or `None`.
 
-        Only the tool-approval pipeline pre-filter qualifies (deterministic
-        allow/deny stages — no LLM, no `interrupt()`), so this is safe to
-        call for follower entries inside the same node invocation that
-        answered the head (`await_clarification` batch resume). `escalate`
-        and non-tool-approval origins return `None` — they need their own
-        human pause.
+        RFC-634 removed the station-side tool-approval pre-filter (the
+        `AutoModeMiddleware` gate resolves deterministic verdicts inline),
+        so every request reaching this policy needs its own human pause.
         """
-        return self._evaluate_tool_approval_pipeline(request)
-
-    def _evaluate_tool_approval_pipeline(
-        self, request: ClarificationRequest
-    ) -> ClarificationAnswer | None:
-        """Run the tool-approval pipeline pre-filter.  Returns a static answer
-        or `None` to fall through to the human interrupt."""
-        if request.origin_node != ORIGIN_TOOL_APPROVAL or self._tool_approval_pipeline is None:
-            return None
-        action_requests = request.metadata.get("action_requests", [])
-        result = self._tool_approval_pipeline.evaluate(
-            action_requests,
-            workspace_root=request.loop_state.workspace_summary,
-            auto_approve=self._manual_allow_rules,
-            allowlist=list(request.loop_state.tool_approval_allowlist),
-        )
-        if result is None:
-            return None
-        # Banned safety action → fall through to the human interrupt so a
-        # human decides. Do not auto-resolve. Stash the rule_id so the
-        # human's answer carries it for a rule-level allowlist override.
-        if result.decision == "escalate":
-            logger.info(
-                "[clarification] tool_approval safety escalate rule=%s; routing to human (manual)",
-                result.rule_id,
-            )
-            self._escalated_rule_id = result.rule_id
-            return None
-        logger.info(
-            "[clarification] tool_approval %s by stage=%s reason=%s (manual pre-filter)",
-            result.decision,
-            result.stage,
-            result.reason,
-        )
-        return ClarificationAnswer(
-            answers=(result.decision,),
-            source="static",
-            confidence=1.0,
-            audit={"stage": result.stage, "reason": result.reason},
-        )
+        del request
+        return None
 
     @staticmethod
     def _extract_answers(
