@@ -48,6 +48,23 @@ class _Verdict:
         self.result = result
 
 
+# Argument keys worth sending to a classifier (bounded, low-risk of secrets).
+_CLASSIFY_ARG_KEYS: tuple[str, ...] = ("command", "file_path", "path", "directory")
+_CLASSIFY_PREVIEW_CHARS = 200
+_SECRET_ARG_MARKERS = ("token", "password", "secret", "api_key", "authorization")
+
+# Configurable key the executor writes the per-step LoopStateView under.
+_LOOP_VIEW_KEY = "soothe_veritas_loop_view"
+
+
+def _loop_view(ctx: AutoModeContext) -> Any | None:
+    """Read the per-step LoopStateView from configurable (classifier context)."""
+    from soothe.sloop.clarification.protocol import LoopStateView
+
+    view = ctx.configurable.get(_LOOP_VIEW_KEY)
+    return view if isinstance(view, LoopStateView) else None
+
+
 class AutoModeMiddleware(AgentMiddleware):
     """Inline tool-approval gate (RFC-634). See module docstring."""
 
@@ -60,6 +77,8 @@ class AutoModeMiddleware(AgentMiddleware):
         default_clarification_mode: str = "auto",
         manual_scope: str = "all",
         force_manual_tool_approval: bool = False,
+        classifier: Any | None = None,
+        classifier_config: Any | None = None,
     ) -> None:
         """Wire the evaluator and gate posture.
 
@@ -74,9 +93,15 @@ class AutoModeMiddleware(AgentMiddleware):
                 ``ambiguous_only`` auto-approves rule-unresolved calls.
             force_manual_tool_approval: ``tool_approval`` listed in
                 ``force_manual_origins`` — every gated call goes to the human.
+            classifier: Optional ``RiskClassifier`` consulted for rule-unresolved
+                (ambiguous) calls. ``None`` keeps the deterministic behaviour.
+            classifier_config: nano ``ClassifierConfig`` supplying shadow /
+                strict / per-turn limits for the classifier path.
         """
         super().__init__()
         self._pipeline = pipeline
+        self._classifier = classifier
+        self._classifier_cfg = classifier_config
         self._tools = frozenset(tools)
         self._active_in_bypass = active_in_bypass
         self._default_mode = default_clarification_mode
@@ -165,8 +190,170 @@ class AutoModeMiddleware(AgentMiddleware):
         return {"messages": [last_ai_msg, *artificial]}
 
     async def aafter_model(self, state: Any, runtime: Any) -> dict[str, Any] | None:
-        """Async delegation to the sync gate."""
-        return self.after_model(state, runtime)
+        """Async gate: deterministic verdicts, then the optional classifier."""
+        result = self.after_model(state, runtime)
+        if self._classifier is None or self._classifier_cfg is None:
+            return result
+        if not getattr(self._classifier_cfg, "enabled", False):
+            return result
+        return await self._apply_classification(state, runtime)
+
+    # ------------------------------------------------------------------
+    # Optional classifier pass (rule-unresolved calls only)
+    # ------------------------------------------------------------------
+
+    async def _apply_classification(self, state: Any, runtime: Any) -> dict[str, Any] | None:
+        """Classify ambiguous gated calls and act on trusted verdicts.
+
+        Only calls the deterministic stages left unresolved (`default_approve`)
+        reach the classifier, so most tool calls never pay for it. Verdicts
+        that are untrusted (distribution shift / near-tie) or unavailable
+        leave the deterministic outcome untouched unless `strict` is set.
+        """
+        from soothe.sloop.clarification.risk_classifier import RiskQuery
+
+        ctx = AutoModeContext.from_runtime(runtime, default_mode=self._default_mode)
+        view = _loop_view(ctx)
+        if view is None or ctx.clarification_mode != "auto":
+            return None
+
+        try:
+            messages = state["messages"]
+        except (KeyError, TypeError):
+            return None
+        last_ai_msg = next((msg for msg in reversed(messages) if isinstance(msg, AIMessage)), None)
+        if not last_ai_msg or not last_ai_msg.tool_calls:
+            return None
+
+        cfg = self._classifier_cfg
+        candidates: list[tuple[int, Any]] = []
+        for idx, tc in enumerate(last_ai_msg.tool_calls):
+            if tc.get("name") not in self._tools:
+                continue
+            if not self._is_ambiguous(tc, ctx):
+                continue
+            candidates.append((idx, tc))
+        if not candidates:
+            return None
+
+        bounded = candidates[: int(getattr(cfg, "max_calls_per_turn", 4))]
+        queries = [
+            RiskQuery(
+                tool=str(tc.get("name") or ""),
+                args_preview=self._args_preview(tc),
+                goal_summary=view.goal_description or None,
+            )
+            for _, tc in bounded
+        ]
+        try:
+            verdicts = await self._classifier.classify(queries)
+        except Exception:  # noqa: BLE001 — never block on the classifier
+            logger.warning("[auto_mode] classifier failed; keeping deterministic outcome")
+            return None
+
+        if getattr(cfg, "shadow", True):
+            for (_, tc), verdict in zip(bounded, verdicts):
+                logger.info(
+                    "[auto_mode] classify(shadow) tool=%s band=%s conf=%s",
+                    tc.get("name"),
+                    verdict.band,
+                    verdict.confidence,
+                )
+            return None
+
+        revised: list[Any] = []
+        artificial: list[ToolMessage] = []
+        verdict_by_idx = {idx: verdict for (idx, _), verdict in zip(bounded, verdicts)}
+        changed = False
+        for idx, tc in enumerate(last_ai_msg.tool_calls):
+            verdict = verdict_by_idx.get(idx)
+            if verdict is None or verdict.band in ("allow", "untrusted", "unavailable"):
+                if verdict is not None and getattr(cfg, "strict", False):
+                    # strict: no trusted answer → do not allow silently.
+                    artificial.append(self._classifier_reject_message(tc, verdict))
+                    changed = True
+                    continue
+                revised.append(tc)
+                continue
+            if verdict.band == "reject":
+                artificial.append(self._classifier_reject_message(tc, verdict))
+                changed = True
+                continue
+            # escalate → human decision via the standard interrupt.
+            payload = {
+                "action_requests": [self._action_request(tc)],
+                "review_configs": [self._review_config(tc)],
+                "gate_deferred": True,
+                "gate_deferred_kind": "classifier_escalate",
+            }
+            resumed = interrupt(payload)
+            decisions = self._extract_decisions(resumed, expected=1)
+            edited = self._apply_decision(tc, decisions[0], artificial)
+            if edited is None:
+                changed = True
+                continue
+            tc = edited
+            revised.append(tc)
+
+        if not changed and not artificial:
+            return None
+        last_ai_msg.tool_calls = revised
+        return {"messages": [last_ai_msg, *artificial]}
+
+    def _is_ambiguous(self, tool_call: Any, ctx: AutoModeContext) -> bool:
+        """True when the deterministic stages left this call unresolved."""
+        if ctx.bypass and not self._active_in_bypass:
+            return False
+        args = tool_call.get("args") or {}
+        if not isinstance(args, dict):
+            args = {}
+        try:
+            result = self._pipeline.evaluate_action(
+                str(tool_call.get("name") or ""),
+                args,
+                workspace_root=ctx.workspace,
+                allowlist=list(ctx.allowlist),
+                bypass=ctx.bypass,
+            )
+        except Exception:  # noqa: BLE001
+            return False
+        return result.decision == "approve" and result.stage == "default_approve"
+
+    @staticmethod
+    def _args_preview(tool_call: Any) -> dict[str, Any]:
+        """Bounded, redacted argument preview for the classifier."""
+        args = tool_call.get("args") or {}
+        if not isinstance(args, dict):
+            return {}
+        preview: dict[str, Any] = {}
+        for key in _CLASSIFY_ARG_KEYS:
+            value = args.get(key)
+            if not isinstance(value, str) or not value.strip():
+                continue
+            if any(marker in key.lower() for marker in _SECRET_ARG_MARKERS):
+                continue
+            preview[key] = truncate_text(value.strip(), limit=_CLASSIFY_PREVIEW_CHARS)
+            break
+        return preview
+
+    @staticmethod
+    def _classifier_reject_message(tool_call: Any, verdict: Any) -> ToolMessage:
+        """Instructive reject citing the classifier verdict."""
+        from soothe.sloop.clarification.risk_classifier import RiskVerdict
+
+        detail = verdict.reason if isinstance(verdict, RiskVerdict) else str(verdict)
+        content = (
+            f"Tool call `{tool_call['name']}` was blocked by the tool-approval "
+            f"classifier ({detail}). The tool was not executed. Choose a "
+            "different action or adjust the arguments; do not retry this exact "
+            "call unless the goal changes."
+        )
+        return ToolMessage(
+            content=content,
+            name=tool_call["name"],
+            tool_call_id=tool_call["id"],
+            status="error",
+        )
 
     # ------------------------------------------------------------------
     # Evaluation

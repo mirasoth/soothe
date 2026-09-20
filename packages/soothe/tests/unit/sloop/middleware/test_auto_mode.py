@@ -391,6 +391,149 @@ class TestAutoModeContext:
 
 
 # ---------------------------------------------------------------------------
+# Optional classifier pass (rule-unresolved calls only)
+# ---------------------------------------------------------------------------
+
+
+def _classifier_runtime(human: bool = False) -> _Runtime:
+    def _loop_view() -> Any:
+        from soothe.sloop.clarification.protocol import LoopStateView
+
+        return LoopStateView(
+            goal_id="g",
+            goal_description="refactor auth",
+            user_request="",
+            iteration=0,
+            intent_classification=None,
+            plan_summary=None,
+            recent_step_outputs=(),
+            workspace_summary=None,
+            active_skills=(),
+            active_mcp_servers=(),
+        )
+
+    return _Runtime(
+        {
+            "soothe_clarification_mode": "auto",
+            "soothe_human_attached": human,
+            "soothe_veritas_loop_view": _loop_view(),
+            "thread_id": "t1",
+        }
+    )
+
+
+class _StubClassifier:
+    """Returns canned verdicts and records the queries it received."""
+
+    def __init__(self, band: str, confidence: float = 0.95) -> None:
+        from soothe.sloop.clarification.risk_classifier import RiskVerdict
+
+        self._verdict = RiskVerdict(
+            band=band, confidence=confidence, probabilities={band: 0.9}, reason=f"stub {band}"
+        )
+        self.queries: list[Any] = []
+
+    async def classify(self, items: list[Any]) -> list[Any]:
+        self.queries.extend(items)
+        return [self._verdict for _ in items]
+
+
+def _classifier_cfg(**over: Any) -> Any:
+    from soothe_nano.config import ClassifierConfig
+
+    return ClassifierConfig(enabled=True, **over)
+
+
+class TestClassifierPass:
+    @staticmethod
+    def _gate(band: str, **cfg: Any) -> tuple[AutoModeMiddleware, _StubClassifier]:
+        clf = _StubClassifier(band)
+        gate = _gate(**{})  # type: ignore[arg-type]
+        gate._classifier = clf  # noqa: SLF001
+        gate._classifier_cfg = _classifier_cfg(**cfg)  # noqa: SLF001
+        return gate, clf
+
+    @pytest.mark.asyncio
+    async def test_shadow_records_without_changing_outcome(self, monkeypatch) -> None:
+        """Default mode: verdicts are logged, the deterministic allow stands."""
+        gate, clf = self._gate("reject", shadow=True)
+        state = _state([_tc("run_command", {"command": "pytest -xvs"})])
+        result = await gate.aafter_model(state, _classifier_runtime())
+        assert result is None  # no message rewrite
+        assert len(clf.queries) == 1
+        assert clf.queries[0].tool == "run_command"
+
+    @pytest.mark.asyncio
+    async def test_reject_verdict_blocks_inline(self, monkeypatch) -> None:
+        gate, clf = self._gate("reject", shadow=False)
+        state = _state([_tc("run_command", {"command": "pytest -xvs"})])
+        result = await gate.aafter_model(state, _classifier_runtime())
+        assert result is not None
+        tool_msg = next(m for m in result["messages"] if isinstance(m, ToolMessage))
+        assert tool_msg.status == "error"
+        assert "classifier" in tool_msg.content
+
+    @pytest.mark.asyncio
+    async def test_allow_verdict_keeps_call(self, monkeypatch) -> None:
+        gate, _ = self._gate("allow", shadow=False)
+        state = _state([_tc("run_command", {"command": "pytest -xvs"})])
+        assert await gate.aafter_model(state, _classifier_runtime()) is None
+
+    @pytest.mark.asyncio
+    async def test_untrusted_verdict_falls_back_when_not_strict(self) -> None:
+        gate, _ = self._gate("untrusted", shadow=False)
+        state = _state([_tc("run_command", {"command": "pytest -xvs"})])
+        assert await gate.aafter_model(state, _classifier_runtime()) is None
+
+    @pytest.mark.asyncio
+    async def test_untrusted_verdict_rejects_when_strict(self) -> None:
+        gate, _ = self._gate("untrusted", shadow=False, strict=True)
+        state = _state([_tc("run_command", {"command": "pytest -xvs"})])
+        result = await gate.aafter_model(state, _classifier_runtime())
+        assert result is not None
+        tool_msg = next(m for m in result["messages"] if isinstance(m, ToolMessage))
+        assert tool_msg.status == "error"
+
+    @pytest.mark.asyncio
+    async def test_deny_rule_calls_are_not_classified(self) -> None:
+        """Deterministic rejections never reach the classifier."""
+        gate, clf = self._gate("allow", shadow=False)
+        state = _state([_tc("run_command", {"command": "apt install foo"})])
+        await gate.aafter_model(state, _classifier_runtime())
+        assert clf.queries == []
+
+    @pytest.mark.asyncio
+    async def test_args_preview_is_bounded_and_redacted(self) -> None:
+        gate, clf = self._gate("allow", shadow=True)
+        args = {"command": "curl https://x/y " + ("a" * 500), "token": "s3cr3t"}
+        state = _state([_tc("run_command", args)])
+        await gate.aafter_model(state, _classifier_runtime())
+        preview = clf.queries[0].args_preview
+        assert "token" not in preview
+        assert len(preview["command"]) <= 200
+
+    @pytest.mark.asyncio
+    async def test_missing_loop_view_skips_classification(self) -> None:
+        gate, clf = self._gate("reject", shadow=False)
+        state = _state([_tc("run_command", {"command": "pytest"})])
+        runtime = _Runtime({"soothe_clarification_mode": "auto"})
+        assert await gate.aafter_model(state, runtime) is None
+        assert clf.queries == []
+
+    @pytest.mark.asyncio
+    async def test_classifier_error_preserves_deterministic_outcome(self) -> None:
+        class _Boom:
+            async def classify(self, items: list[Any]) -> list[Any]:
+                raise RuntimeError("down")
+
+        gate = _gate()  # type: ignore[arg-type]
+        gate._classifier = _Boom()  # noqa: SLF001
+        gate._classifier_cfg = _classifier_cfg(shadow=False)  # noqa: SLF001
+        state = _state([_tc("run_command", {"command": "pytest -xvs"})])
+        assert await gate.aafter_model(state, _classifier_runtime()) is None
+
+
+# ---------------------------------------------------------------------------
 # Builder wiring
 # ---------------------------------------------------------------------------
 

@@ -95,6 +95,11 @@ class AgentBuilder(nano_builder.AgentBuilder):
         if not (ta_cfg.enabled and ta_cfg.inline_gate.enabled):
             return None
         pipeline = ToolApprovalPipeline(ta_cfg, security_config=self._config.security)
+        # Optional calibrated-probability classifier for rule-unresolved calls
+        # (nano-configured backend; null when disabled or misconfigured).
+        from soothe.sloop.clarification.risk_classifier import build_risk_classifier
+
+        classifier_cfg = getattr(self._config, "classifier", None)
         return AutoModeMiddleware(
             pipeline,
             tools=ta_cfg.inline_gate.tools,
@@ -102,6 +107,8 @@ class AgentBuilder(nano_builder.AgentBuilder):
             default_clarification_mode=clar_cfg.default_mode,
             manual_scope=ta_cfg.manual_scope,
             force_manual_tool_approval="tool_approval" in (clar_cfg.force_manual_origins or ()),
+            classifier=build_risk_classifier(self._config),
+            classifier_config=classifier_cfg,
         )
 
     def _host_middleware_suffix(self) -> tuple:
