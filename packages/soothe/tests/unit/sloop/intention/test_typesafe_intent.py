@@ -125,6 +125,27 @@ class TestTrustedVerdicts:
         assert intent.intake_label is IntakeLabel.MINIMAL
 
     @pytest.mark.asyncio
+    async def test_untrusted_language_leaves_field_unset(self, monkeypatch) -> None:
+        """Language rides in the same request but is gated on its own
+        confidence — a weak language verdict must not misroute the reply."""
+        response = _confident("simple")
+        response.answers["language"] = _answer("zh", {"zh": 0.9}, 0.35)
+        fake = _FakeClassifier(response)
+        _patch_client(monkeypatch, fake)
+        intent = await classify_intent_typesafe("...", soothe_config=_CfgStub(shadow=False))
+        assert intent is not None
+        assert intent.intake_label is IntakeLabel.SIMPLE
+        assert intent.response_language is None
+
+    @pytest.mark.asyncio
+    async def test_missing_language_answer_leaves_field_unset(self, monkeypatch) -> None:
+        response = _confident("complex", language=None)
+        _patch_client(monkeypatch, _FakeClassifier(response))
+        intent = await classify_intent_typesafe("...", soothe_config=_CfgStub(shadow=False))
+        assert intent is not None
+        assert intent.response_language is None
+
+    @pytest.mark.asyncio
     async def test_query_is_truncated_before_sending(self, monkeypatch) -> None:
         fake = _FakeClassifier(_confident("complex"))
         _patch_client(monkeypatch, fake)

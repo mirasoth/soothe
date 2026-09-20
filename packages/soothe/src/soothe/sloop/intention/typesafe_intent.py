@@ -136,6 +136,16 @@ async def classify_intent_typesafe(
         )
         return None
 
+    # Language rides along in the same request but is gated independently:
+    # an untrusted language verdict leaves the field unset rather than
+    # misrouting the reply language.
+    language = choices.get(_LANGUAGE_QUESTION_ID)
+    if language is not None:
+        lang_trusted, lang_reason = verdict_trusted(cfg, language)
+        if not lang_trusted:
+            logger.debug("[intent] language verdict untrusted (%s); leaving unset", lang_reason)
+            language = None
+
     if label is IntakeLabel.CHITCHAT:
         # A social reply needs generated text — a decision model cannot
         # produce it, so hand this back to the LLM path.
@@ -146,7 +156,7 @@ async def classify_intent_typesafe(
         intake_label=label,
         reasoning=None,
         chitchat_response=None,
-        response_language=_language_from(choices.get(_LANGUAGE_QUESTION_ID)),
+        response_language=_language_from(language),
         task_complexity=derive_task_complexity_from_intake(label),
     )
 
