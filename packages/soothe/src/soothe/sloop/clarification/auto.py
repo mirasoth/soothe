@@ -107,16 +107,6 @@ class AutoClarificationPolicy:
         # --- veritas LLM auto-answer ---
         return await self._answer_veritas(request)
 
-    def try_static_answer(self, request: ClarificationRequest) -> ClarificationAnswer | None:
-        """Statically resolve without an LLM call — always `None` here.
-
-        The veritas path is an LLM round trip and the tool-approval relay
-        path may escalate to the attached human; neither is batchable.
-        Follower entries under auto mode get their own `answer()` visit.
-        """
-        del request  # no static resolution under the auto policy
-        return None
-
     async def _answer_tool_approval(self, request: ClarificationRequest) -> ClarificationAnswer:
         """Route a middleware tool-approval interrupt to the human relay.
 

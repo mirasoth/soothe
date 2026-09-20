@@ -115,15 +115,9 @@ class InteractiveClarificationPolicy:
             source="human",
         )
 
-    def try_static_answer(self, request: ClarificationRequest) -> ClarificationAnswer | None:
-        """Statically resolve a request without a human pause, or `None`.
-
-        RFC-634 removed the station-side tool-approval pre-filter (the
-        `AutoModeMiddleware` gate resolves deterministic verdicts inline),
-        so every request reaching this policy needs its own human pause.
-        """
-        del request
-        return None
+    # RFC-634 removed the station-side static pre-filter (the
+    # `AutoModeMiddleware` gate resolves deterministic verdicts inline), so
+    # every request reaching this policy needs its own human pause.
 
     @staticmethod
     def _extract_answers(

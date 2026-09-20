@@ -1237,17 +1237,6 @@ def _default_deny_rules() -> list[ToolApprovalRule]:
     ]
 
 
-def _default_allow_rules() -> list[ToolApprovalRule]:
-    """Allow rules are empty by default — the pipeline is deny-list-first.
-
-    In auto mode, any tool action that does NOT match a deny rule or
-    safety check is auto-approved. Operators who need a stricter posture
-    can switch to manual mode (`clarification.default_mode: manual`)
-    or add custom deny rules.
-    """
-    return []
-
-
 class InlineGateConfig(BaseModel):
     """RFC-634: `AutoModeMiddleware` inline tool-approval gate config.
 
@@ -1296,13 +1285,13 @@ class ToolApprovalConfig(BaseModel):
     manual_scope: Literal["all", "ambiguous_only"] = "all"
     """Which tool actions reach the human in manual clarification mode.
 
-    Deny/safety stages always auto-reject dangerous actions in any mode.
-    `all` (default) asks the human for every remaining tool action;
-    `ambiguous_only` also auto-approves allow-rule matches, so only
-    rule-unresolved actions reach the human.
+    Deny/safety stages always auto-reject dangerous actions in any mode, and
+    allowlist matches (prior human approval) never re-ask. `all` (default)
+    asks the human for every remaining tool action; `ambiguous_only`
+    auto-approves rule-unresolved actions so only safety escalations reach
+    the human.
     """
     deny_rules: list[ToolApprovalRule] = Field(default_factory=_default_deny_rules)
-    allow_rules: list[ToolApprovalRule] = Field(default_factory=_default_allow_rules)
     inline_gate: InlineGateConfig = Field(default_factory=InlineGateConfig)
 
 

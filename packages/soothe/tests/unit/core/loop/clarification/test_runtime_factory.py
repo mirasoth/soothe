@@ -176,41 +176,56 @@ class TestBuildClarificationPolicyForRunner:
 
         config = _make_config()
         config.agent.veritas.max_context_steps = 3
+        built: dict[str, Any] = {}
 
-        with patch("soothe.sloop.clarification.runtime_factory.veritas_answer") as mock_answer:
-            mock_answer.return_value = VeritasAnswerSchema(
-                answers=["ok"], confidence=0.9, defer=False
-            )
+        def _fake_factory(cfg: Any, *, model_role: str | None = None) -> Any:
+            built["config"] = cfg
+            built["max_context_steps"] = cfg.agent.veritas.max_context_steps
+
+            async def _answerer(request: Any, *, thread_id: Any = None, loop_id: Any = None) -> Any:
+                return VeritasAnswerSchema(answers=["ok"], confidence=0.9, defer=False)
+
+            return _answerer
+
+        with patch(
+            "soothe.sloop.clarification.runtime_factory.build_veritas_answerer",
+            side_effect=_fake_factory,
+        ):
             policy = build_clarification_policy_for_runner(config, mode="auto")
             assert isinstance(policy, AutoClarificationPolicy)
             stub_request = MagicMock(questions=("Q?",))
             # AutoClarificationPolicy.answer awaits the closure.
             await policy._veritas_answer(stub_request)  # noqa: SLF001
-            mock_answer.assert_called_once()
-            kwargs = mock_answer.call_args.kwargs
-            assert kwargs["max_context_steps"] == 3
+            assert built["max_context_steps"] == 3
+            assert built["config"] is config
 
     @pytest.mark.asyncio
     async def test_auto_policy_forwards_thread_and_loop_id_to_veritas(self) -> None:
-        """Langfuse trace correlation: thread_id/loop_id reach veritas_answer."""
+        """Langfuse trace correlation: thread_id/loop_id reach the answerer."""
         from soothe.subagents.veritas.schemas import VeritasAnswerSchema
 
         config = _make_config()
+        captured: dict[str, Any] = {}
 
-        with patch("soothe.sloop.clarification.runtime_factory.veritas_answer") as mock_answer:
-            mock_answer.return_value = VeritasAnswerSchema(
-                answers=["ok"], confidence=0.9, defer=False
-            )
+        async def _fake_answerer(
+            request: Any, *, thread_id: Any = None, loop_id: Any = None
+        ) -> Any:
+            captured["thread_id"] = thread_id
+            captured["loop_id"] = loop_id
+            return VeritasAnswerSchema(answers=["ok"], confidence=0.9, defer=False)
+
+        with patch(
+            "soothe.sloop.clarification.runtime_factory.build_veritas_answerer",
+            return_value=_fake_answerer,
+        ):
             policy = build_clarification_policy_for_runner(
                 config, mode="auto", thread_id="tid-1", loop_id="lid-1"
             )
             assert isinstance(policy, AutoClarificationPolicy)
             stub_request = MagicMock(questions=("Q?",))
             await policy._veritas_answer(stub_request)  # noqa: SLF001
-            kwargs = mock_answer.call_args.kwargs
-            assert kwargs["thread_id"] == "tid-1"
-            assert kwargs["loop_id"] == "lid-1"
-            assert kwargs["soothe_config"] is config
+            assert captured["thread_id"] == "tid-1"
+            assert captured["loop_id"] == "lid-1"
 
 
 class TestBindClarificationEmit:

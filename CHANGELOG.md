@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 - Remove `sloop/clarification/interrupt_rules.py` (`when_edit_file`/`when_write_file`/`when_delete`/`when_run_command` predicates — absorbed into the gate's decision table), the veritas tool-approval prompt variants (`build_veritas_system_prompt_for_origin`, slim user prompt — dead path since veritas never sees `tool_approval` requests), and the `tool_approval.veritas_fallback` config block with its dual-model wiring.
+- Remove dead clarification surface left behind by the gate migration: `tool_approval.allow_rules` (declared but never read by any code path), both policies' `try_static_answer` hooks and the batch-follower branch in `await_clarification` that consumed them (no implementation produced static answers once deterministic verdicts moved inline), and the duplicate veritas closure construction — `build_veritas_answerer()` is now the single source shared by the ask_user gate and the station policy. `source: "static"` / `"fallback"` remain accepted on `ClarificationAnswer` for deserialization compatibility only (no producer).
 
 ## [v1.0.13] - 2026-09-19
 

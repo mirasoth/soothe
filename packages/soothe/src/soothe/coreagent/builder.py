@@ -62,32 +62,15 @@ class AgentBuilder(nano_builder.AgentBuilder):
 
         try:
             clar_cfg = self._config.agent.clarification
-            veritas_cfg = self._config.agent.veritas
         except AttributeError:
             return None
         if not clar_cfg.ask_user_gate.enabled:
             return None
 
-        model = self._config.create_chat_model(veritas_cfg.model_role)
-        config = self._config
-
-        async def _veritas(request: Any, *, thread_id: str | None, loop_id: str | None) -> Any:
-            from soothe.subagents.veritas import answer as veritas_answer
-
-            return await veritas_answer(
-                request,
-                model=model,
-                max_context_steps=veritas_cfg.max_context_steps,
-                soothe_config=config,
-                thread_id=thread_id,
-                loop_id=loop_id,
-                max_retries=veritas_cfg.max_retries,
-                retry_backoff_seconds=veritas_cfg.retry_backoff_seconds,
-                coerced_confidence=veritas_cfg.coerced_confidence,
-            )
+        from soothe.subagents.veritas.implementation import build_veritas_answerer
 
         return AskUserGateMiddleware(
-            _veritas,
+            build_veritas_answerer(self._config),
             min_confidence=clar_cfg.auto_min_confidence,
             default_clarification_mode=clar_cfg.default_mode,
             autopilot_retry_on_fail=clar_cfg.autopilot_retry_on_fail,

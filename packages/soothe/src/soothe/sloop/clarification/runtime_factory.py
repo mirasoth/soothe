@@ -12,7 +12,7 @@ from soothe.sloop.clarification.protocol import (
     ClarificationRequest,
 )
 from soothe.sloop.clarification.selector import build_default_clarification_policy
-from soothe.subagents.veritas import answer as veritas_answer
+from soothe.subagents.veritas.implementation import build_veritas_answerer
 
 if TYPE_CHECKING:
     from soothe.config.models import SootheConfig
@@ -77,21 +77,13 @@ def build_clarification_policy_for_runner(
     if resolved_mode == "manual":
         return build_default_clarification_policy(mode="manual", emit=emit)
 
-    veritas_cfg = config.agent.veritas
-    veritas_model = config.create_chat_model(veritas_cfg.model_role)
+    # Shared answerer (model/context/retry policy in one place); the station
+    # path still serves rail_pause, planner-emitted questions, and gate
+    # fail-safes.
+    answerer = build_veritas_answerer(config)
 
     async def _veritas(request: ClarificationRequest) -> VeritasAnswerSchema:
-        return await veritas_answer(
-            request,
-            model=veritas_model,
-            max_context_steps=veritas_cfg.max_context_steps,
-            soothe_config=config,
-            thread_id=thread_id,
-            loop_id=loop_id,
-            max_retries=veritas_cfg.max_retries,
-            retry_backoff_seconds=veritas_cfg.retry_backoff_seconds,
-            coerced_confidence=veritas_cfg.coerced_confidence,
-        )
+        return await answerer(request, thread_id=thread_id, loop_id=loop_id)
 
     interactive_fallback: ClarificationPolicy | None = (
         InteractiveClarificationPolicy(emit=emit) if human_attached else None
