@@ -216,25 +216,21 @@ def build_risk_classifier(soothe_config: Any) -> RiskClassifier:
         A `TypeSafeRiskClassifier` when enabled and resolvable; otherwise a
         `NullRiskClassifier` (the caller's deterministic path stays intact).
     """
-    try:
-        cfg = soothe_config.classifier
-    except AttributeError:
-        return NullRiskClassifier("no classifier config")
+    from soothe.sloop.clarification.typesafe_client import (
+        classifier_config,
+        resolve_classifier_provider,
+    )
 
+    cfg = classifier_config(soothe_config)
+    if cfg is None:
+        return NullRiskClassifier("no classifier config")
     if not getattr(cfg, "enabled", False):
         return NullRiskClassifier("classifier disabled")
 
-    try:
-        resolved = soothe_config.classifier_provider_kwargs()
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("[risk_classifier] provider resolution failed: %s", exc)
-        return NullRiskClassifier("provider resolution failed")
+    resolved = resolve_classifier_provider(soothe_config)
     if resolved is None:
         return NullRiskClassifier("provider unavailable")
-
-    provider_type, kwargs = resolved
-    if provider_type != "typesafe":
-        return NullRiskClassifier(f"unsupported provider_type: {provider_type}")
+    _provider_type, kwargs = resolved
 
     try:
         return TypeSafeRiskClassifier(
