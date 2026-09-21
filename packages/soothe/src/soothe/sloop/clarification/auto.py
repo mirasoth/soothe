@@ -12,10 +12,6 @@ from soothe.sloop.clarification.protocol import (
     ClarificationPolicy,
     ClarificationRequest,
     DeferKind,
-    merge_answer_audit,
-)
-from soothe.sloop.clarification.tool_approval_pipeline import (
-    ToolApprovalPipeline,
 )
 from soothe.subagents.veritas.schemas import VeritasAnswerSchema
 
@@ -44,6 +40,11 @@ class AutoClarificationPolicy:
     TUI fallback: routes to the interactive relay (auto→manual upgrade).
     Autopilot fallback: returns a synthetic retry answer prompting the LLM
     to try a different action.
+
+    RFC-634: `tool_approval` requests skip veritas — `AutoModeMiddleware`
+    resolves deterministic verdicts inline and only escalates to an
+    interrupt when a human is attached, so these route straight to the
+    interactive relay.
     """
 
     def __init__(
@@ -55,16 +56,14 @@ class AutoClarificationPolicy:
         force_manual_origins: Collection[ClarificationOrigin] | None = None,
         degrade_to_manual_on_failure: bool = True,
         autopilot_retry_on_fail: bool = True,
-        tool_approval_pipeline: ToolApprovalPipeline | None = None,
     ) -> None:
-        """Wire veritas, fallback policy, and tool-approval pipeline."""
+        """Wire veritas and the fallback policy."""
         self._veritas_answer = veritas_answer
         self._min_confidence = min_confidence
         self._interactive_fallback = interactive_fallback
         self._force_manual_origins: frozenset[str] = frozenset(force_manual_origins or ())
         self._degrade_to_manual_on_failure = degrade_to_manual_on_failure
         self._autopilot_retry_on_fail = autopilot_retry_on_fail
-        self._tool_approval_pipeline = tool_approval_pipeline
 
     @property
     def min_confidence(self) -> float:
@@ -96,9 +95,9 @@ class AutoClarificationPolicy:
         return origin_node in self._force_manual_origins
 
     async def answer(self, request: ClarificationRequest) -> ClarificationAnswer:
-        """Resolve a clarification request via veritas, pipeline, or fallback."""
-        # --- tool-approval pipeline (deny-list-first) ---
-        if request.origin_node == "tool_approval" and self._tool_approval_pipeline is not None:
+        """Resolve a clarification request via relay, veritas, or fallback."""
+        # --- tool-approval: middleware-originated, human-only (RFC-634) ---
+        if request.origin_node == "tool_approval":
             return await self._answer_tool_approval(request)
 
         # --- force-manual origins: skip veritas, go straight to human ---
@@ -108,84 +107,27 @@ class AutoClarificationPolicy:
         # --- veritas LLM auto-answer ---
         return await self._answer_veritas(request)
 
-    def try_static_answer(self, request: ClarificationRequest) -> ClarificationAnswer | None:
-        """Statically resolve without an LLM call — always `None` here.
-
-        The veritas path is an LLM round trip and the pipeline path may
-        escalate to the attached human; neither is batchable. Follower
-        entries under auto mode get their own `answer()` visit.
-        """
-        del request  # no static resolution under the auto policy
-        return None
-
     async def _answer_tool_approval(self, request: ClarificationRequest) -> ClarificationAnswer:
-        """Deny-list-first pipeline evaluation for tool_approval origins.
+        """Route a middleware tool-approval interrupt to the human relay.
 
-        `escalate` (banned safety rule) routes to the human relay when one
-        is attached; under autopilot it degrades to an instructive reject.
+        `AutoModeMiddleware` already resolved every deterministic verdict
+        inline; an interrupt reaching the station implies a human decision
+        is wanted. Resume replays delegate without re-announcing (the card
+        already exists). Autopilot (no human attached) is defensive — the
+        middleware degrades safety escalations to instructive rejects before
+        interrupting — and gets the synthetic retry answer.
         """
-        # Resume replay: the answer is in flight; re-evaluating would
-        # re-escalate before node_execute records the allowlist override.
-        if request.metadata.get("resume_turn") and self._interactive_fallback is not None:
-            return await self._delegate_to_fallback(request, announce=False)
-
-        action_requests = request.metadata.get("action_requests", [])
-        result = self._tool_approval_pipeline.evaluate(
-            action_requests,
-            workspace_root=request.loop_state.workspace_summary,
-            auto_approve=not self.requires_manual(request.origin_node),
-            allowlist=list(request.loop_state.tool_approval_allowlist),
-        )
-        if result is not None:
-            logger.info(
-                "[clarification] tool_approval %s by stage=%s reason=%s",
-                result.decision,
-                result.stage,
-                result.reason,
-            )
-            # Banned safety action → escalate to a human when one is attached.
-            if result.decision == "escalate":
-                if self._interactive_fallback is not None:
-                    logger.info(
-                        "[clarification] tool_approval safety escalate rule=%s; "
-                        "routing to human relay",
-                        result.rule_id,
-                    )
-                    return await self._delegate_to_fallback(request, rule_id=result.rule_id)
-                # Autopilot — degrade to an instructive reject.
-                logger.info(
-                    "[clarification] tool_approval safety escalate rule=%s; "
-                    "autopilot degrade-to-instructive-reject",
-                    result.rule_id,
-                )
-                return ClarificationAnswer(
-                    answers=("reject",),
-                    source="static",
-                    confidence=1.0,
-                    audit={
-                        "stage": result.stage,
-                        "reason": result.reason,
-                        "rule_id": result.rule_id,
-                        "instructive": True,
-                    },
-                )
-            return ClarificationAnswer(
-                answers=(result.decision,),
-                source="static",
-                confidence=1.0,
-                audit={"stage": result.stage, "reason": result.reason},
-            )
-        # Pipeline returned None — manual mode with a human attached.
-        # Route to the interactive relay so the human can decide.
         if self._interactive_fallback is not None:
-            logger.info("[clarification] tool_approval no rule match; routing to interactive relay")
-            return await self._delegate_to_fallback(request)
-        # Autopilot — retry instead of hard defer.
+            announce = not request.metadata.get("resume_turn")
+            logger.info(
+                "[clarification] tool_approval interrupt from auto gate; routing to human relay"
+            )
+            return await self._delegate_to_fallback(request, announce=announce)
         if self._autopilot_retry_on_fail:
-            logger.info("[clarification] tool_approval no rule match; autopilot retry")
+            logger.info("[clarification] tool_approval without human; autopilot retry")
             return self._build_retry_answer(request)
         raise ClarificationDeferredError(
-            "tool_approval: no rule matched and veritas fallback disabled",
+            "tool_approval: no human attached and autopilot retry disabled",
             request,
             kind="explicit",
         )
@@ -214,6 +156,11 @@ class AutoClarificationPolicy:
     async def _answer_veritas(self, request: ClarificationRequest) -> ClarificationAnswer:
         """Veritas LLM auto-answer with confidence-based fallback.
 
+        RFC-635: requests carrying the `gate_deferred` marker already ran
+        veritas inline (`AskUserGateMiddleware`) and deferred — skip the LLM
+        call and route straight through the fallback ladder (human when
+        attached, autopilot retry, hard defer).
+
         On any veritas failure (DeferKind is not None):
         - TUI: route to the interactive relay when
           `degrade_to_manual_on_failure` is True.
@@ -222,6 +169,9 @@ class AutoClarificationPolicy:
           different action.
         - Otherwise: hard defer.
         """
+        if request.metadata.get("gate_deferred"):
+            return await self._answer_gate_deferred(request)
+
         result = await self._veritas_answer(request)
         kind = self._classify(result)
 
@@ -271,6 +221,27 @@ class AutoClarificationPolicy:
             audit={"rationale": result.rationale},
         )
 
+    async def _answer_gate_deferred(self, request: ClarificationRequest) -> ClarificationAnswer:
+        """Route a gate-deferred question through the fallback ladder.
+
+        `AskUserGateMiddleware` already ran veritas inline (RFC-635) — the
+        gate defers only for genuine "I don't know" verdicts, so the station
+        goes straight to the human relay when one is attached, the autopilot
+        retry sentinel when enabled, or a hard defer (park) otherwise.
+        """
+        kind = str(request.metadata.get("gate_deferred_kind") or "explicit")
+        if self._interactive_fallback is not None:
+            logger.info("[clarification] ask_user gate deferred (kind=%s); routing to human", kind)
+            return await self._delegate_to_fallback(request)
+        if self._autopilot_retry_on_fail:
+            logger.info("[clarification] ask_user gate deferred (kind=%s); autopilot retry", kind)
+            return self._build_retry_answer(request)
+        raise ClarificationDeferredError(
+            f"ask_user gate deferred (kind={kind})",
+            request,
+            kind=kind,  # type: ignore[arg-type]
+        )
+
     def _build_retry_answer(self, request: ClarificationRequest) -> ClarificationAnswer:
         """Build a synthetic retry answer for autopilot mode.
 
@@ -290,25 +261,19 @@ class AutoClarificationPolicy:
         self,
         request: ClarificationRequest,
         *,
-        rule_id: str | None = None,
         announce: bool = True,
     ) -> ClarificationAnswer:
         """Route to the interactive relay with auto→manual re-announce.
 
         Prefers `answer_as_manual_fallback` (mode=manual emit) over bare
-        `answer()`. `rule_id` stamps `audit["escalated_rule_id"]` so
-        node_execute can record a rule-level allowlist override.
-        `announce=False` for resume replays, where the card already exists.
+        `answer()`. `announce=False` for resume replays, where the card
+        already exists.
         """
         fallback = self._interactive_fallback
         upgrade = getattr(fallback, "answer_as_manual_fallback", None)
         if callable(upgrade):
-            answer = await upgrade(request, announce=announce)
-        else:
-            answer = await fallback.answer(request)
-        if rule_id:
-            return merge_answer_audit(answer, escalated_rule_id=rule_id)
-        return answer
+            return await upgrade(request, announce=announce)
+        return await fallback.answer(request)
 
     def _classify(self, result: VeritasAnswerSchema) -> DeferKind | None:
         """Resolve a veritas result to a :data:`DeferKind`, or `None` to accept."""

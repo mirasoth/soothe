@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 from langchain_core.language_models import BaseChatModel
@@ -13,7 +14,7 @@ from soothe_nano.llm import StructuredOutputError, ainvoke_structured_traced
 
 from soothe.sloop.clarification.protocol import ClarificationRequest
 from soothe.subagents.veritas.prompts import (
-    build_veritas_system_prompt_for_origin,
+    build_veritas_system_prompt,
     build_veritas_user_prompt,
 )
 from soothe.subagents.veritas.schemas import (
@@ -37,6 +38,53 @@ _PROMPT_PREVIEW_CHARS = 240
 
 _DEFAULT_MAX_RETRIES = 2
 _DEFAULT_RETRY_BACKOFF_SECONDS = 2.0
+
+VeritasAnswerer = Callable[..., Awaitable[VeritasAnswerSchema]]
+"""Bound veritas answerer: ``await answerer(request, thread_id=..., loop_id=...)``."""
+
+
+def build_veritas_answerer(
+    soothe_config: SootheConfig,
+    *,
+    model_role: str | None = None,
+) -> VeritasAnswerer:
+    """Build a configured veritas answerer (single source of truth).
+
+    Both inline consumers share this constructor so model selection, context
+    depth, retry policy, and confidence coercion stay in one place:
+
+    - `AskUserGateMiddleware` (RFC-635) — built once per CoreAgent graph,
+      called per `ask_user` tool call with per-run trace ids.
+    - `AutoClarificationPolicy` (station) — built once per goal run for
+      rail_pause / planner-emitted questions and gate fail-safes.
+
+    Args:
+        soothe_config: Config providing `agent.veritas` and the chat-model
+            factory.
+        model_role: Override for `agent.veritas.model_role`.
+    """
+    veritas_cfg = soothe_config.agent.veritas
+    model = soothe_config.create_chat_model(model_role or veritas_cfg.model_role)
+
+    async def _answerer(
+        request: ClarificationRequest,
+        *,
+        thread_id: str | None = None,
+        loop_id: str | None = None,
+    ) -> VeritasAnswerSchema:
+        return await answer(
+            request,
+            model=model,
+            max_context_steps=veritas_cfg.max_context_steps,
+            soothe_config=soothe_config,
+            thread_id=thread_id,
+            loop_id=loop_id,
+            max_retries=veritas_cfg.max_retries,
+            retry_backoff_seconds=veritas_cfg.retry_backoff_seconds,
+            coerced_confidence=veritas_cfg.coerced_confidence,
+        )
+
+    return _answerer
 
 
 async def answer(
@@ -69,7 +117,7 @@ async def answer(
     logger.debug("[veritas] questions: %s", _preview_questions(request.questions))
 
     json_schema = build_veritas_response_schema(n)
-    system_prompt = build_veritas_system_prompt_for_origin(request.origin_node)
+    system_prompt = build_veritas_system_prompt()
     user_prompt = build_veritas_user_prompt(request, max_context_steps=max_context_steps)
     messages = [
         SystemMessage(content=system_prompt),
@@ -281,4 +329,4 @@ def _log_call_stat(
     )
 
 
-__all__ = ["answer"]
+__all__ = ["VeritasAnswerer", "answer", "build_veritas_answerer"]

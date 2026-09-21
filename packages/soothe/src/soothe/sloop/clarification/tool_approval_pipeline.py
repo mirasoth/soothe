@@ -1,4 +1,11 @@
-"""Deny-list-first tool-approval pipeline evaluator."""
+"""Tool-approval evaluator shared by the `AutoModeMiddleware` inline gate.
+
+RFC-634: deterministic evaluation for a single tool call — deny rules →
+loop allowlist (exact signature) → nano operation security (with rule-family
+allowlist override). The middleware maps the result onto its decision table
+(auto/manual mode, bypass, human attachment) and owns all interrupt /
+inline-reject / allow behavior.
+"""
 
 from __future__ import annotations
 
@@ -60,7 +67,12 @@ def rule_approved(
 
 @dataclass(frozen=True)
 class ApprovalResult:
-    """Decision returned by the pipeline for a batch of action requests."""
+    """Evaluation outcome for one tool action.
+
+    `escalate` (safety-check hit without a prior human override) is the only
+    verdict that may need a human decision — the middleware decides whether
+    one is available and routes to an interrupt or an inline reject.
+    """
 
     decision: ApprovalDecision
     stage: PipelineStage
@@ -69,10 +81,11 @@ class ApprovalResult:
 
 
 class ToolApprovalPipeline:
-    """Deny-list-first evaluator: deny → allowlist → safety → default-approve.
+    """Deny-list-first single-action evaluator.
 
-    First deciding stage wins.  Deny rules are absolute; the allowlist
-    overrides safety-escalated actions a human approved earlier in the loop.
+    Stage order (first deciding stage wins): deny rules → loop allowlist
+    (exact signature) → safety checks (rule-family allowlist override
+    honored). Deny rules are absolute; no allowlist entry overrides them.
     """
 
     def __init__(
@@ -80,124 +93,77 @@ class ToolApprovalPipeline:
         config: ToolApprovalConfig,
         *,
         security_config: Any = None,
-        bypass_security: bool = False,
     ) -> None:
-        """Initialize deny rules, security config, and lazy evaluator."""
+        """Initialize deny rules and security config."""
         self._deny_rules = config.deny_rules
         self._security_config = security_config
-        self._bypass_security = bypass_security
         self._security_evaluator: Any = None  # lazy-init in _check_safety
 
-    def evaluate(
+    def evaluate_action(
         self,
-        action_requests: list[Mapping[str, Any]],
+        tool_name: str,
+        args: Mapping[str, Any],
         *,
         workspace_root: str | None = None,
-        auto_approve: bool = True,
-        bypass_security: bool | None = None,
         allowlist: list[Mapping[str, Any]] | None = None,
-    ) -> ApprovalResult | None:
-        """Run deny → allowlist → safety stages.  Returns `None` to defer.
+        bypass: bool = False,
+    ) -> ApprovalResult:
+        """Evaluate one tool call. Raises on evaluator failure (caller fail-safes).
 
         Args:
-            action_requests: Batched HITL action requests.
+            tool_name: Tool being called.
+            args: Tool-call arguments.
             workspace_root: Per-request workspace root (`<workspace>` token).
-            auto_approve: When True, passing actions are auto-approved.
-                When False (manual), they defer to the human.
-            bypass_security: Skip all checks and approve.
-            allowlist: Loop-scoped `{"tool", "signature"}` records from
-                prior human approvals.
+            allowlist: Loop-scoped `{"tool", "signature"}` / `{"rule"}` records
+                from prior human approvals.
+            bypass: Skip the safety stage (deny rules still run).
         """
-        try:
-            if not action_requests:
-                return None  # nothing to evaluate → defer to veritas
+        allowlist = allowlist or []
 
-            if bypass_security is None:
-                bypass_security = self._bypass_security
-            if bypass_security:
-                result = ApprovalResult(
-                    "approve",
-                    "default_approve",
-                    "bypass mode — all security rules skipped",
-                )
-                logger.info(
-                    "[%s] %s by stage=%s (bypass)", "tool_approval", result.decision, result.stage
-                )
-                return result
+        # Stage 1: deny rules — absolute, never overridden.
+        if self._matches_any_rule(tool_name, args, self._deny_rules, workspace_root):
+            return ApprovalResult(
+                "reject",
+                "deny_rule",
+                f"matched deny rule for {tool_name}",
+            )
 
-            allowlisted = False
-            for ar in action_requests:
-                name = str(ar.get("name") or "")
-                args = ar.get("args") or {}
-                if not isinstance(args, Mapping):
-                    args = {}
+        # Stage 2: loop allowlist — prior human approval of this exact action.
+        if allowlist and self._matches_allowlist(tool_name, args, allowlist):
+            return ApprovalResult(
+                "approve",
+                "allowlist",
+                "matched loop-scoped approval",
+            )
 
-                # Stage 1: deny rules — absolute.
-                if self._matches_any_rule(name, args, self._deny_rules, workspace_root):
-                    result = ApprovalResult(
-                        "reject",
-                        "deny_rule",
-                        f"matched deny rule for {name}",
-                    )
+        # Stage 3: safety checks (delegated to nano), with rule-family override.
+        if not bypass:
+            safety_result = self._check_safety(tool_name, args, workspace_root)
+            if safety_result is not None:
+                reason, rule_id = safety_result
+                if rule_approved(rule_id, allowlist):
                     logger.info(
-                        "[%s] %s by stage=%s", "tool_approval", result.decision, result.stage
-                    )
-                    return result
-
-                # Stage 2: loop allowlist — prior human approval.
-                if allowlist and self._matches_allowlist(name, args, allowlist):
-                    allowlisted = True
-                    continue
-
-                # Stage 3: safety checks (delegated to nano).
-                safety_result = self._check_safety(name, args, workspace_root)
-                if safety_result is not None:
-                    reason, rule_id = safety_result
-                    if allowlist and rule_approved(rule_id, allowlist):
-                        allowlisted = True
-                        logger.info(
-                            "[%s] safety rule=%s overridden by prior human approval",
-                            "tool_approval",
-                            rule_id,
-                        )
-                        continue
-                    result = ApprovalResult(
-                        "escalate",
-                        "safety_check",
-                        reason,
-                        rule_id=rule_id,
-                    )
-                    logger.info(
-                        "[%s] %s by stage=%s rule=%s",
-                        "tool_approval",
-                        result.decision,
-                        result.stage,
+                        "[tool_approval] safety rule=%s overridden by prior human approval",
                         rule_id,
                     )
-                    return result
-
-            if allowlisted:
-                result = ApprovalResult(
-                    "approve",
-                    "allowlist",
-                    "matched loop-scoped approval",
+                    return ApprovalResult(
+                        "approve",
+                        "allowlist",
+                        f"rule {rule_id} overridden by prior human approval",
+                        rule_id=rule_id,
+                    )
+                return ApprovalResult(
+                    "escalate",
+                    "safety_check",
+                    reason,
+                    rule_id=rule_id,
                 )
-                logger.info("[%s] %s by stage=%s", "tool_approval", result.decision, result.stage)
-                return result
-            if auto_approve:
-                result = ApprovalResult(
-                    "approve",
-                    "default_approve",
-                    "no deny rule or safety check matched",
-                )
-                logger.info("[%s] %s by stage=%s", "tool_approval", result.decision, result.stage)
-                return result
 
-            return None  # manual mode → defer to human relay
-
-        except Exception:
-            logger.exception("[tool_approval] pipeline error; deferring to veritas")
-            return None
+        return ApprovalResult(
+            "approve",
+            "default_approve",
+            "no deny rule or safety check matched",
+        )
 
     def _matches_allowlist(
         self,

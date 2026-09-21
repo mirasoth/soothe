@@ -11,6 +11,9 @@ import pytest
 # Re-exported nano-owned models (must stay identical class objects).
 _REEXPORTED_MODELS = (
     "AgentRuntimeConfig",
+    "ClassifierConfig",
+    "ClassifierProviderConfig",
+    "ClassifierProviderType",
     "CodeInterpreterConfig",
     "ConsoleLoggingConfig",
     "CoreAgentMiddlewareConfig",

@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 import pytest
 
-from soothe.config.models import ToolApprovalConfig
 from soothe.sloop.clarification import interactive as interactive_mod
 from soothe.sloop.clarification.interactive import InteractiveClarificationPolicy
 from soothe.sloop.clarification.protocol import (
@@ -14,7 +14,6 @@ from soothe.sloop.clarification.protocol import (
     ClarificationRequest,
     LoopStateView,
 )
-from soothe.sloop.clarification.tool_approval_pipeline import ToolApprovalPipeline
 
 
 def _request(num_questions: int = 1, *, origin_node: str = "execute") -> ClarificationRequest:
@@ -56,10 +55,6 @@ def _tool_approval_request(command: str) -> ClarificationRequest:
         ),
         metadata={"action_requests": [{"name": "run_command", "args": {"command": command}}]},
     )
-
-
-def _pipeline() -> ToolApprovalPipeline:
-    return ToolApprovalPipeline(ToolApprovalConfig())
 
 
 def _stub_interrupt(monkeypatch: pytest.MonkeyPatch, return_value: Any) -> list[Any]:
@@ -287,85 +282,58 @@ async def test_tool_approval_defers_on_blank_action(
 
 
 # ---------------------------------------------------------------------------
-# Manual-mode pipeline pre-filter (RFC-622 §9b)
+# Tool-approval routing (RFC-634: middleware-originated interrupts)
 # ---------------------------------------------------------------------------
 
 
-async def test_pre_filter_deny_rule_auto_rejects_without_asking(
+async def test_tool_approval_asks_human_for_every_request(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Dangerous actions are auto-rejected in manual mode — the human is
-    never prompted to approve them."""
-    captured = _stub_interrupt(monkeypatch, {"answers": ["approve"]})
-    policy = InteractiveClarificationPolicy(tool_approval_pipeline=_pipeline())
-    ans = await policy.answer(_tool_approval_request("apt install foo"))
-    assert ans.source == "static"
-    assert ans.answers == ("reject",)
-    assert ans.audit["stage"] == "deny_rule"
-    assert captured == []
-
-
-async def test_pre_filter_asks_human_for_allow_rule_match_by_default(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """manual_scope=all (default): allow-rule matches still reach the human."""
-    captured = _stub_interrupt(monkeypatch, {"answers": ["approve"]})
-    policy = InteractiveClarificationPolicy(tool_approval_pipeline=_pipeline())
-    ans = await policy.answer(_tool_approval_request("pytest -xvs"))
-    assert ans.source == "human"
-    assert captured, "human interrupt must fire for non-rejected actions"
-
-
-async def test_pre_filter_default_approves_when_enabled(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """manual_scope=ambiguous_only: non-denied actions auto-approve."""
-    captured = _stub_interrupt(monkeypatch, {"answers": ["approve"]})
-    policy = InteractiveClarificationPolicy(
-        tool_approval_pipeline=_pipeline(),
-        manual_allow_rules=True,
-    )
-    ans = await policy.answer(_tool_approval_request("pytest -xvs"))
-    assert ans.source == "static"
-    assert ans.answers == ("approve",)
-    assert ans.audit["stage"] == "default_approve"
-    assert captured == []
-
-
-async def test_pre_filter_asks_human_when_allow_rules_disabled(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """When manual_allow_rules=False, non-denied actions reach the human."""
-    captured = _stub_interrupt(monkeypatch, {"answers": ["approve"]})
-    policy = InteractiveClarificationPolicy(
-        tool_approval_pipeline=_pipeline(),
-        manual_allow_rules=False,
-    )
-    ans = await policy.answer(_tool_approval_request("curl https://example.com"))
-    assert ans.source == "human"
-    assert captured
-
-
-async def test_pre_filter_skipped_without_pipeline(monkeypatch: pytest.MonkeyPatch) -> None:
-    """No pipeline attached (tool_approval.enabled: false): current behavior,
-    every tool action asks the human."""
+    """The station-side pre-filter is gone (the AutoModeMiddleware gate
+    resolves deterministic verdicts inline) — every tool_approval request
+    reaching this policy needs its own human pause."""
     captured = _stub_interrupt(monkeypatch, {"answers": ["approve"]})
     policy = InteractiveClarificationPolicy()
-    ans = await policy.answer(_tool_approval_request("rm -rf /"))
+    ans = await policy.answer(_tool_approval_request("apt install foo"))
     assert ans.source == "human"
-    assert captured
+    assert captured, "human interrupt must fire for middleware tool_approval"
 
 
-async def test_manual_fallback_path_skips_pre_filter(
+async def test_tool_approval_metadata_rule_id_stamped_on_answer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """answer_as_manual_fallback (auto→manual upgrade) must not re-evaluate
-    the pipeline — the auto policy already ran it before deferring."""
-    captured = _stub_interrupt(monkeypatch, {"answers": ["approve"]})
-    policy = InteractiveClarificationPolicy(
-        tool_approval_pipeline=_pipeline(),
-        manual_allow_rules=True,
-    )
-    ans = await policy.answer_as_manual_fallback(_tool_approval_request("pytest -xvs"))
+    """The gate stamps the escalated safety rule id into request metadata;
+    the human answer's audit carries it for the allowlist override."""
+    _stub_interrupt(monkeypatch, {"answers": ["approve"]})
+    policy = InteractiveClarificationPolicy()
+    request = _tool_approval_request("rm -rf /")
+    request = replace(request, metadata={**request.metadata, "escalated_rule_id": "cmd.rm_rf"})
+    ans = await policy.answer(request)
     assert ans.source == "human"
-    assert captured
+    assert ans.audit.get("escalated_rule_id") == "cmd.rm_rf"
+
+
+async def test_tool_approval_manual_fallback_stamps_metadata_rule_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """answer_as_manual_fallback (auto→manual upgrade) stamps the metadata
+    rule id identically."""
+    _stub_interrupt(monkeypatch, {"answers": ["approve"]})
+    policy = InteractiveClarificationPolicy()
+    request = _tool_approval_request("rm -rf /")
+    request = replace(request, metadata={**request.metadata, "escalated_rule_id": "cmd.rm_rf"})
+    ans = await policy.answer_as_manual_fallback(request)
+    assert ans.source == "human"
+    assert ans.audit.get("escalated_rule_id") == "cmd.rm_rf"
+
+
+async def test_tool_approval_without_rule_id_has_clean_audit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ambiguous (non-safety) interrupts carry no rule id — the answer audit
+    stays clean so node_execute records only a signature approval."""
+    _stub_interrupt(monkeypatch, {"answers": ["approve"]})
+    policy = InteractiveClarificationPolicy()
+    ans = await policy.answer(_tool_approval_request("pytest -xvs"))
+    assert ans.source == "human"
+    assert "escalated_rule_id" not in ans.audit

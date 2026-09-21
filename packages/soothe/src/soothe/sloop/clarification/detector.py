@@ -50,11 +50,20 @@ class ClarificationDetector:
         questions = self._extract_questions(value)
         if not questions:
             return None
+        metadata: dict[str, Any] = {}
+        # RFC-635: the AskUserGate already ran veritas inline and deferred —
+        # the station policy skips its own veritas call (no double LLM).
+        if value.get("gate_deferred"):
+            metadata["gate_deferred"] = True
+            raw_kind = value.get("gate_deferred_kind")
+            if isinstance(raw_kind, str) and raw_kind.strip():
+                metadata["gate_deferred_kind"] = raw_kind
         return ClarificationRequest(
             questions=questions,
             origin_node=origin_node,
             origin_interrupt_id=interrupt_id,
             loop_state=loop_state,
+            metadata=metadata,
         )
 
     def from_tool_approval_interrupt(
@@ -84,12 +93,19 @@ class ClarificationDetector:
         )
         if not questions:
             return None
+        metadata: dict[str, Any] = {"action_requests": list(action_requests)}
+        # RFC-634: the AutoModeMiddleware gate stamps the escalated safety
+        # rule id so the human's approval records a rule-level allowlist
+        # override in node_execute.
+        escalated_rule_id = value.get("escalated_rule_id")
+        if isinstance(escalated_rule_id, str) and escalated_rule_id.strip():
+            metadata["escalated_rule_id"] = escalated_rule_id
         return ClarificationRequest(
             questions=questions,
             origin_node=ORIGIN_TOOL_APPROVAL,
             origin_interrupt_id=interrupt_id,
             loop_state=loop_state,
-            metadata={"action_requests": list(action_requests)},
+            metadata=metadata,
         )
 
     def detect(

@@ -639,7 +639,6 @@ class StrangeLoopMixin:
                 human_attached=True,
                 thread_id=tid,
                 loop_id=strange_loop_id,
-                interaction_mode=interaction_mode,
             )
         except Exception:
             logger.exception(

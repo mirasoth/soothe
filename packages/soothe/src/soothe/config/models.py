@@ -10,6 +10,9 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from soothe_nano.config.models import (  # noqa: F401
     MODEL_KNOWLEDGE_CUTOFFS,
     AgentRuntimeConfig,
+    ClassifierConfig,
+    ClassifierProviderConfig,
+    ClassifierProviderType,
     CodeInterpreterConfig,
     ConsoleLoggingConfig,
     CoreAgentMiddlewareConfig,
@@ -1191,31 +1194,16 @@ class ToolApprovalRule(BaseModel):
     pattern: str
 
 
-class VeritasFallbackConfig(BaseModel):
-    """Stage 4: veritas LLM fallback for ambiguous tool approvals.
-
-    Disabled by default. When no rule matches, the interrupt defers to the
-    human relay (manual mode) or raises `ClarificationDeferredError` (auto).
-    """
-
-    enabled: bool = False
-    model_role: Literal["default", "fast", "think", "image", "ocr", "embedding"] = "fast"
-    max_context_steps: int = Field(default=0, ge=0)
-
-
 def _default_deny_rules() -> list[ToolApprovalRule]:
-    """Default deny rules — belt-and-suspenders for the `when` predicates.
+    """Default deny rules — absolute rejects enforced by `AutoModeMiddleware`.
 
-    The `interrupt_on` `when` predicates in
-    :mod:`soothe.sloop.clarification.interrupt_rules` already prevent
-    dangerous operations from reaching execution without an interrupt.
-    These deny rules provide a second layer: if an interrupt fires and
-    reaches the pipeline, these patterns are auto-rejected without user
-    input. Stage 2 safety checks (nano's
-    `WorkspaceToolOperationSecurity`) add a third layer.
+    RFC-634: the inline gate rejects these patterns outright (error
+    `ToolMessage`, no interrupt, no human input) across all modes. Stage 2
+    safety checks (nano's `WorkspaceToolOperationSecurity`) escalate to the
+    human relay.
 
-    Only operations that are high-risk AND not already caught by the
-    `when` predicates or safety checks belong here.
+    Only operations that are high-risk AND not already caught by the safety
+    checks belong here.
     """
     return [
         # --- Privilege escalation (sudo is caught by safety; su/doas are not) ---
@@ -1252,19 +1240,43 @@ def _default_deny_rules() -> list[ToolApprovalRule]:
     ]
 
 
-def _default_allow_rules() -> list[ToolApprovalRule]:
-    """Allow rules are empty by default — the pipeline is deny-list-first.
+class InlineGateConfig(BaseModel):
+    """RFC-634: `AutoModeMiddleware` inline tool-approval gate config.
 
-    In auto mode, any tool action that does NOT match a deny rule or
-    safety check is auto-approved. Operators who need a stricter posture
-    can switch to manual mode (`clarification.default_mode: manual`)
-    or add custom deny rules.
+    The gate evaluates every gated tool call in its `after_model` hook:
+    deny-rule and autopilot-safety rejects resolve inline (error
+    `ToolMessage`, no interrupt); human-decision cases emit the standard
+    `action_requests` interrupt; everything else executes silently.
     """
-    return []
+
+    enabled: bool = True
+    tools: list[Literal["edit_file", "write_file", "delete", "run_command"]] = Field(
+        default_factory=lambda: ["edit_file", "write_file", "delete", "run_command"]
+    )
+    active_in_bypass: bool = True
+    """Whether deny rules still reject in bypass interaction mode.
+
+    `True` (default) keeps deny rules absolute across all modes — bypass
+    suppresses safety escalation and interrupts, never the deny list.
+    """
+
+
+class AskUserGateConfig(BaseModel):
+    """RFC-635: `AskUserGateMiddleware` inline veritas fast-path config.
+
+    When enabled and clarification mode is `auto`, the gate answers
+    confident `ask_user` questions inline (synthetic `ToolMessage`, zero
+    interrupts) and defers everything else to the station with a
+    `gate_deferred` marker so veritas never runs twice. Model, prompt,
+    context depth, and the confidence threshold reuse the existing
+    `agent.veritas` / `agent.clarification.auto_min_confidence` values.
+    """
+
+    enabled: bool = True
 
 
 class ToolApprovalConfig(BaseModel):
-    """Deny-list-first tool-approval pipeline config.
+    """Deny-list-first tool-approval config (RFC-634 middleware gate).
 
     Two stages: deny rules → safety checks. Any action not matching a deny
     rule or failing a safety check is auto-approved in auto mode. In manual
@@ -1276,14 +1288,14 @@ class ToolApprovalConfig(BaseModel):
     manual_scope: Literal["all", "ambiguous_only"] = "all"
     """Which tool actions reach the human in manual clarification mode.
 
-    Deny/safety stages always auto-reject dangerous actions in any mode.
-    `all` (default) asks the human for every remaining tool action;
-    `ambiguous_only` also auto-approves allow-rule matches, so only
-    rule-unresolved actions reach the human.
+    Deny/safety stages always auto-reject dangerous actions in any mode, and
+    allowlist matches (prior human approval) never re-ask. `all` (default)
+    asks the human for every remaining tool action; `ambiguous_only`
+    auto-approves rule-unresolved actions so only safety escalations reach
+    the human.
     """
     deny_rules: list[ToolApprovalRule] = Field(default_factory=_default_deny_rules)
-    allow_rules: list[ToolApprovalRule] = Field(default_factory=_default_allow_rules)
-    veritas_fallback: VeritasFallbackConfig = Field(default_factory=VeritasFallbackConfig)
+    inline_gate: InlineGateConfig = Field(default_factory=InlineGateConfig)
 
 
 DEFAULT_FORCE_MANUAL_ORIGINS: tuple[str, ...] = ("plan_mode_review",)
@@ -1353,6 +1365,13 @@ class ClarificationConfig(BaseModel):
     deterministic deny → safety → allow stages resolve most tool_approval
     interrupts without an LLM. Veritas remains the final guard for ambiguous
     cases."""
+
+    ask_user_gate: AskUserGateConfig = Field(default_factory=AskUserGateConfig)
+    """RFC-635 inline veritas fast path for `ask_user` calls in auto mode.
+    Confident answers resolve inline (no interrupt, no graph hop); defer /
+    failure questions carry a `gate_deferred` marker so the station skips
+    its veritas call and routes straight to the human relay, retry
+    sentinel, or hard defer."""
 
 
 class VeritasConfig(BaseModel):

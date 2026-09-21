@@ -53,6 +53,30 @@ def _step_history_table(nodes: list[StepNode]) -> str:
     return "\n".join(rows)
 
 
+async def _classify_eval_coverage(
+    *,
+    user_goal: str,
+    step_history_table: str,
+    task_complexity: str | None,
+    soothe_config: SootheConfig | None,
+) -> bool | None:
+    """Try the TypeSafe coverage verdict; never raises, never blocks."""
+    try:
+        from soothe.sloop.eval.typesafe_eval_decision import decide_eval_coverage_typesafe
+    except Exception:  # noqa: BLE001 — optional dependency
+        return None
+    try:
+        return await decide_eval_coverage_typesafe(
+            user_goal=user_goal,
+            step_history_table=step_history_table,
+            task_complexity=task_complexity,
+            soothe_config=soothe_config,
+        )
+    except Exception:  # noqa: BLE001 — fall back on any classifier failure
+        logger.debug("TypeSafe coverage decision failed; using LLM path", exc_info=True)
+        return None
+
+
 async def decide_eval_required(
     *,
     fast_model: Any,
@@ -88,6 +112,24 @@ async def decide_eval_required(
 
     if fast_model is None:
         return _fail_safe_decision("No fast model available; requiring Eval")
+
+    # TypeSafe fast path: a trusted categorical verdict answers the coverage
+    # question with no LLM round trip. `None` (unavailable, untrusted, or
+    # below the suppression bar) falls through to the LLM path unchanged,
+    # whose own fail-safe is `should_run_eval=True`.
+    classified = await _classify_eval_coverage(
+        user_goal=user_goal,
+        step_history_table=_step_history_table(step_history),
+        task_complexity=intake_label.value,
+        soothe_config=soothe_config,
+    )
+    if classified is not None:
+        if classified:
+            return _fail_safe_decision("Classifier: coverage audit warranted")
+        return EvalDecision(
+            should_run_eval=False,
+            reasoning="Classifier: steps already cover the goal.",
+        )
 
     from soothe.prompts import EVAL_DECISION_SYSTEM
 

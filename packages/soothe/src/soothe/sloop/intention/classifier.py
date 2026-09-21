@@ -82,6 +82,13 @@ class IntentClassifier:
         if not self._fast_model:
             return self._fallback(query)
 
+        # TypeSafe fast path: a trusted categorical verdict routes the query
+        # with no LLM round trip. `None` (unavailable, untrusted, or chitchat)
+        # falls through to the existing LLM classification path unchanged.
+        typesafe_intent = await self._classify_typesafe(query)
+        if typesafe_intent is not None:
+            return self._patch_missing_fields(typesafe_intent, query)
+
         ledger_messages = self._project_ledger_for_intake(loop_messages)
 
         intake_result = await self._coordinator.classify(
@@ -100,6 +107,23 @@ class IntentClassifier:
             intent.task_complexity,
         )
         return intent
+
+    async def _classify_typesafe(self, query: str) -> IntentClassification | None:
+        """Try the TypeSafe intent classifier; never raises, never blocks.
+
+        Returns `None` on any failure so the LLM path stays authoritative.
+        """
+        if not query.strip():
+            return None
+        try:
+            from soothe.sloop.intention.typesafe_intent import classify_intent_typesafe
+        except Exception:  # noqa: BLE001 — optional dependency
+            return None
+        try:
+            return await classify_intent_typesafe(query, soothe_config=self._soothe_config)
+        except Exception:  # noqa: BLE001 — fall back on any classifier failure
+            logger.debug("TypeSafe intent classification failed; using LLM path", exc_info=True)
+            return None
 
     def _project_ledger_for_intake(self, loop_messages: Any | None) -> list[Any] | None:
         """Project preamble + prior-goal completion units for intake classification."""

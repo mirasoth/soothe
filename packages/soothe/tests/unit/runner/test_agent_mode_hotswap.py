@@ -64,7 +64,12 @@ def test_strange_loop_no_live_context_returns_false() -> None:
 
 
 def test_strange_loop_swaps_policy_and_interaction_mode() -> None:
-    """`interaction_mode` lands on `ctx` alongside the rebuilt policy."""
+    """`interaction_mode` lands on `ctx` alongside the rebuilt policy.
+
+    RFC-634: `interaction_mode` no longer parameterizes the policy build —
+    the `AutoModeMiddleware` gate reads bypass per step from the graph
+    configurable, so only `ctx.interaction_mode` records the swap.
+    """
     loop = _bare_strange_loop()
     sentinel_policy = object()
     ctx = SimpleNamespace(
@@ -85,7 +90,7 @@ def test_strange_loop_swaps_policy_and_interaction_mode() -> None:
     assert result is True
     assert ctx.clarification_policy is sentinel_policy
     assert ctx.interaction_mode == "bypass"
-    assert mocked.call_args.kwargs["interaction_mode"] == "bypass"
+    assert "interaction_mode" not in mocked.call_args.kwargs
     assert mocked.call_args.kwargs["mode"] == "auto"
 
 
