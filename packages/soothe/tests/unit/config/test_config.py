@@ -437,7 +437,7 @@ class TestModelRouter:
                 image="g:h",
                 ocr="k:l",
             ),
-            embedding_profile=[{"model_role": "i:j", "embedding_dims": 1536}],
+            embedding_profile={"model_role": "i:j", "embedding_dims": 1536},
         )
         assert cfg.resolve_model("default") == "a:b"
         assert cfg.resolve_model("think") == "c:d"
@@ -508,9 +508,10 @@ class TestRouterProfiles:
                     "router": {"default": "omlx:glm"},
                 },
             ],
-            embedding_profile=[
-                {"model_role": "dashscope:multimodal-embedding-v1", "embedding_dims": 768}
-            ],
+            embedding_profile={
+                "model_role": "dashscope:multimodal-embedding-v1",
+                "embedding_dims": 768,
+            },
             active_router_profile="production",
         )
         assert cfg.router.default == "dashscope:glm-5.2"
@@ -531,9 +532,10 @@ class TestRouterProfiles:
                     "router": {"default": "omlx:glm"},
                 },
             ],
-            embedding_profile=[
-                {"model_role": "openai:text-embedding-3-small", "embedding_dims": 384}
-            ],
+            embedding_profile={
+                "model_role": "openai:text-embedding-3-small",
+                "embedding_dims": 384,
+            },
             active_router_profile="local",
         )
         assert cfg.router.default == "omlx:glm"
@@ -560,8 +562,8 @@ class TestRouterProfiles:
             "      default: openai:gpt-4o-mini\n"
             "    embedding_dims: 1536\n"
             "embedding_profile:\n"
-            "  - model_role: openai:text-embedding-3-small\n"
-            "    embedding_dims: 1536\n",
+            "  model_role: openai:text-embedding-3-small\n"
+            "  embedding_dims: 1536\n",
             encoding="utf-8",
         )
         with pytest.raises(
@@ -578,8 +580,8 @@ class TestRouterProfiles:
             "      default: openai:gpt-4o-mini\n"
             "      embedding: openai:text-embedding-3-small\n"
             "embedding_profile:\n"
-            "  - model_role: openai:text-embedding-3-small\n"
-            "    embedding_dims: 1536\n",
+            "  model_role: openai:text-embedding-3-small\n"
+            "  embedding_dims: 1536\n",
             encoding="utf-8",
         )
         with pytest.raises(ValueError, match="router.embedding has been removed"):
@@ -609,8 +611,8 @@ class TestRouterProfiles:
             "    router:\n"
             "      default: omlx:test\n"
             "embedding_profile:\n"
-            "  - model_role: omlx:embed\n"
-            "    embedding_dims: 768\n"
+            "  model_role: omlx:embed\n"
+            "  embedding_dims: 768\n"
             "active_router_profile: local\n",
             encoding="utf-8",
         )
@@ -632,9 +634,10 @@ class TestRouterProfiles:
                     "router": {"default": "omlx:glm"},
                 },
             ],
-            embedding_profile=[
-                {"model_role": "openai:text-embedding-3-small", "embedding_dims": 384}
-            ],
+            embedding_profile={
+                "model_role": "openai:text-embedding-3-small",
+                "embedding_dims": 384,
+            },
             active_router_profile="production",
         )
         assert cfg.active_router_profile == "local-deploy"

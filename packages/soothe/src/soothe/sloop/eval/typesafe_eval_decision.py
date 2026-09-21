@@ -131,9 +131,6 @@ async def decide_eval_coverage_typesafe(
                 suppress_bar,
             )
             return None
-        if cfg.shadow:
-            logger.info("[eval_decision] typesafe(shadow): would skip audit")
-            return None
         logger.debug("[eval_decision] typesafe: skip audit (conf=%s)", confidence)
         return False
 

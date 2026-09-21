@@ -103,3 +103,35 @@ def test_from_yaml_file_accepts_nano_owned_keys(tmp_path: Path) -> None:
     cfg = SootheConfig.from_yaml_file(str(path))
     assert cfg.agent.runtime.recursion_limit == 111
     assert cfg.persistence.default_backend == "sqlite"
+
+
+def test_from_split_yaml_files_accepts_classifier_block(tmp_path: Path) -> None:
+    """nano.yml `classifier` must validate on the host config (mirror nano field)."""
+    nano_path = tmp_path / "nano.yml"
+    soothe_path = tmp_path / "soothe.yml"
+
+    nano_path.write_text(
+        "providers:\n"
+        "  - name: typesafe-official\n"
+        "    provider_type: typesafe\n"
+        "    api_base_url: https://api.typesafe.ai\n"
+        "    api_key: test-key\n"
+        "    model: jev-latest\n"
+        "classifier:\n"
+        "  enabled: true\n"
+        "  provider: typesafe-official\n",
+        encoding="utf-8",
+    )
+    soothe_path.write_text("cron: {}\n", encoding="utf-8")
+
+    cfg = SootheConfig.from_split_yaml_files(
+        nano_path=str(nano_path),
+        soothe_path=str(soothe_path),
+    )
+    assert cfg.classifier.enabled is True
+    assert cfg.classifier.provider == "typesafe-official"
+
+    provider_type, kwargs = cfg.classifier_provider_kwargs()
+    assert provider_type == "typesafe"
+    assert kwargs["model"] == "jev-latest"
+    assert kwargs["base_url"] == "https://api.typesafe.ai"

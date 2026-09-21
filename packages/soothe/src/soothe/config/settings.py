@@ -20,6 +20,7 @@ from soothe.config.env import (
 )
 from soothe.config.models import (
     AgentConfig,
+    ClassifierConfig,
     ConsoleLoggingConfig,
     CronConfig,
     EmbeddingProfile,
@@ -67,12 +68,9 @@ def default_router_profiles() -> list[RouterProfile]:
     ]
 
 
-def default_embedding_profile() -> list[EmbeddingProfile]:
+def default_embedding_profile() -> EmbeddingProfile:
     """Host alias to nano default embedding profile."""
-    return [
-        EmbeddingProfile.model_validate(profile.model_dump())
-        for profile in nano_settings.default_embedding_profile()
-    ]
+    return EmbeddingProfile.model_validate(nano_settings.default_embedding_profile().model_dump())
 
 
 def default_vector_stores() -> list[VectorStoreProviderConfig]:
@@ -169,7 +167,7 @@ class SootheConfig(BaseSettings):
     Can be driven by environment variables (prefix `SOOTHE_`) or passed directly.
     """
 
-    model_config = {"env_prefix": "SOOTHE_"}
+    model_config = {"env_prefix": "SOOTHE_", "extra": "ignore"}
 
     _llm_factory: Any = None  # LLMFactory instance (lazy-initialized)
 
@@ -234,7 +232,7 @@ class SootheConfig(BaseSettings):
     router_profiles: list[RouterProfile] = Field(default_factory=default_router_profiles)
     """Named router presets for chat/image/ocr roles."""
 
-    embedding_profile: list[EmbeddingProfile] = Field(default_factory=default_embedding_profile)
+    embedding_profile: EmbeddingProfile = Field(default_factory=default_embedding_profile)
     """Embedding model + vector dimensions (independent from router profile switching)."""
 
     active_router_profile: str = "default"
@@ -372,6 +370,46 @@ class SootheConfig(BaseSettings):
             data["agent"] = agent
         return data
 
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_known_bad_top_level_keys(cls, data: Any) -> Any:
+        """Reject known misplaced/removed top-level keys with a clear error.
+
+        These were previously caught by ``extra="forbid"``; keep them hard
+        failures (rather than silent ignore) so misconfigured files fail fast.
+        """
+        if not isinstance(data, dict):
+            return data
+        if "daemon" in data:
+            raise ValueError(
+                "Top-level 'daemon' block belongs in daemon.yml, not the agent "
+                "config (nano.yml/soothe.yml)."
+            )
+        if "strange_loop" in data:
+            raise ValueError(
+                "Top-level 'strange_loop' is no longer accepted; move its keys under 'agent.loop'."
+            )
+        return data
+
+    @model_validator(mode="before")
+    @classmethod
+    def _warn_on_unknown_fields(cls, data: Any) -> Any:
+        """Log unknown top-level config keys instead of failing validation.
+
+        Host config ignores unknown keys (``extra="ignore"``) so a nano.yml
+        that carries a field the host has not mirrored yet does not abort
+        startup; the ignored keys are surfaced here so drift stays visible.
+        """
+        if not isinstance(data, dict):
+            return data
+        unknown = [key for key in data if key not in cls.model_fields]
+        if unknown:
+            _logger.warning(
+                "Ignoring unknown config key(s): %s",
+                ", ".join(sorted(str(key) for key in unknown)),
+            )
+        return data
+
     @model_validator(mode="after")
     def _validate_router_profile_names(self) -> SootheConfig:
         """Ensure router profile names are unique."""
@@ -418,11 +456,8 @@ class SootheConfig(BaseSettings):
 
     @model_validator(mode="after")
     def _apply_embedding_profile(self) -> SootheConfig:
-        """Apply the active embedding profile to `embedding_model` + `embedding_dims`."""
-        if not self.embedding_profile:
-            msg = "embedding_profile must contain at least one profile."
-            raise ValueError(msg)
-        profile = self.embedding_profile[0]
+        """Apply the embedding profile to `embedding_model` + `embedding_dims`."""
+        profile = self.embedding_profile
         object.__setattr__(self, "embedding_model", profile.model_role)
         object.__setattr__(self, "embedding_dims", profile.embedding_dims)
         return self
@@ -597,6 +632,12 @@ class SootheConfig(BaseSettings):
 
     vector_store_router: VectorStoreRouter = Field(default_factory=default_vector_store_router)
     """Maps component roles to provider:collection pairs."""
+
+    # --- Classifier config (calibrated-probability decisions) ---
+
+    classifier: ClassifierConfig = Field(default_factory=ClassifierConfig)
+    """Shared classifier parameters: provider reference, confidence floor, and
+    the probability band that maps onto allow / escalate / reject."""
 
     _vector_store_cache: dict[str, Any] = {}
     """Cache for vector store instances."""
@@ -828,6 +869,74 @@ class SootheConfig(BaseSettings):
         logger.debug("Created and cached vector store for '%s'", router_str)
 
         return vs
+
+    # --- Classifier helpers ---
+
+    def find_classifier_provider(self, provider_name: str) -> ModelProviderConfig | None:
+        """Find a classifier provider (a `provider_type: typesafe` entry) by name.
+
+        Args:
+            provider_name: Provider instance name (`classifier.provider`).
+
+        Returns:
+            Provider config or None if not found or not a classifier backend.
+        """
+        for p in self.providers:
+            if p.provider_type == nano_settings.TYPESAFE_PROVIDER_TYPE and p.name == provider_name:
+                return p
+        return None
+
+    def classifier_provider_kwargs(
+        self,
+        provider_name: str | None = None,
+    ) -> tuple[str, dict[str, Any]] | None:
+        """Resolve a classifier provider into `(provider_type, kwargs)`.
+
+        Expands `${ENV_VAR}` placeholders for endpoint and credentials and
+        applies the shared `classifier` limits (timeout, batch cap).
+
+        Args:
+            provider_name: Provider instance name; defaults to
+                `classifier.provider`.
+
+        Returns:
+            `(provider_type_value, kwargs)` or `None` when the provider is
+            missing or its env placeholders cannot be resolved — callers
+            treat `None` as "classification unavailable" and fall back.
+        """
+        name = provider_name or self.classifier.provider
+        provider = self.find_classifier_provider(name)
+        if provider is None:
+            _logger.warning(
+                "Classifier provider '%s' not found among providers (provider_type "
+                "'%s'); classification unavailable.",
+                name,
+                nano_settings.TYPESAFE_PROVIDER_TYPE,
+            )
+            return None
+        api_base_url = None
+        if provider.api_base_url:
+            api_base_url = _resolve_provider_env(
+                provider.api_base_url,
+                provider_name=provider.name,
+                field_name="api_base_url",
+            )
+        api_key = None
+        if provider.api_key:
+            api_key = _resolve_provider_env(
+                provider.api_key,
+                provider_name=provider.name,
+                field_name="api_key",
+            )
+        return nano_settings.TYPESAFE_PROVIDER_TYPE, {
+            "base_url": api_base_url,
+            "api_key": api_key,
+            "model": provider.model or nano_settings.DEFAULT_CLASSIFIER_MODEL,
+            "timeout": provider.timeout_seconds or nano_settings.DEFAULT_CLASSIFIER_TIMEOUT_SECONDS,
+            "max_states_per_request": (
+                provider.max_states_per_request or nano_settings.DEFAULT_CLASSIFIER_MAX_STATES
+            ),
+        }
 
     # --- Model resolution ---
 
