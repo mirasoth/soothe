@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.0.14] - 2026-09-21
+
 ### Added
 - Add TypeSafe-backed goal-coverage decision with LLM fallback: `decide_eval_required` asks the classifier whether a coverage Eval step is warranted before calling the LLM. The gate is asymmetric — skipping an audit *suppresses* work, so a `no_eval` verdict must clear `classifier.suppress_min_confidence` (0.9) on top of the shared confidence/margin gates, while an `eval` verdict matches the fail-safe default and needs only `min_confidence`. Anything unavailable or untrusted falls through to the existing LLM path, whose fail-safe remains `should_run_eval=True`.
 - Intent classification now gates the `response_language` answer on its own confidence: an untrusted language verdict leaves the field unset instead of misrouting the reply language.
@@ -27,6 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 - Remove `sloop/clarification/interrupt_rules.py` (`when_edit_file`/`when_write_file`/`when_delete`/`when_run_command` predicates — absorbed into the gate's decision table), the veritas tool-approval prompt variants (`build_veritas_system_prompt_for_origin`, slim user prompt — dead path since veritas never sees `tool_approval` requests), and the `tool_approval.veritas_fallback` config block with its dual-model wiring.
 - Remove dead clarification surface left behind by the gate migration: `tool_approval.allow_rules` (declared but never read by any code path), both policies' `try_static_answer` hooks and the batch-follower branch in `await_clarification` that consumed them (no implementation produced static answers once deterministic verdicts moved inline), and the duplicate veritas closure construction — `build_veritas_answerer()` is now the single source shared by the ask_user gate and the station policy. `source: "static"` / `"fallback"` remain accepted on `ClarificationAnswer` for deserialization compatibility only (no producer).
+
+[Compare with previous version]: https://github.com/mirasoth/soothe/compare/v1.0.13...v1.0.14
 
 ## [v1.0.13] - 2026-09-19
 
