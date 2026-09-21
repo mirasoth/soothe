@@ -90,14 +90,14 @@ def _patch_client(monkeypatch: pytest.MonkeyPatch, fake: _FakeClassifier) -> Non
 
 
 class TestTrustedVerdicts:
-    """Verdicts are honoured only when shadow is off (the shipped default)."""
+    """Trusted verdicts route without an LLM round trip."""
 
     @pytest.mark.asyncio
     async def test_complex_label_routes_without_llm(self, monkeypatch) -> None:
         fake = _FakeClassifier(_confident("complex"))
         _patch_client(monkeypatch, fake)
         intent = await classify_intent_typesafe(
-            "refactor the auth module across the repo", soothe_config=_CfgStub(shadow=False)
+            "refactor the auth module across the repo", soothe_config=_CfgStub()
         )
         assert intent is not None
         assert intent.intake_label is IntakeLabel.COMPLEX
@@ -109,7 +109,7 @@ class TestTrustedVerdicts:
     async def test_simple_label_and_language(self, monkeypatch) -> None:
         fake = _FakeClassifier(_confident("simple", language="zh"))
         _patch_client(monkeypatch, fake)
-        intent = await classify_intent_typesafe("帮我修个bug", soothe_config=_CfgStub(shadow=False))
+        intent = await classify_intent_typesafe("帮我修个bug", soothe_config=_CfgStub())
         assert intent is not None
         assert intent.intake_label is IntakeLabel.SIMPLE
         assert intent.response_language is ResponseLanguage.ZH
@@ -118,9 +118,7 @@ class TestTrustedVerdicts:
     async def test_minimal_label(self, monkeypatch) -> None:
         fake = _FakeClassifier(_confident("minimal"))
         _patch_client(monkeypatch, fake)
-        intent = await classify_intent_typesafe(
-            "what time is it", soothe_config=_CfgStub(shadow=False)
-        )
+        intent = await classify_intent_typesafe("what time is it", soothe_config=_CfgStub())
         assert intent is not None
         assert intent.intake_label is IntakeLabel.MINIMAL
 
@@ -132,7 +130,7 @@ class TestTrustedVerdicts:
         response.answers["language"] = _answer("zh", {"zh": 0.9}, 0.35)
         fake = _FakeClassifier(response)
         _patch_client(monkeypatch, fake)
-        intent = await classify_intent_typesafe("...", soothe_config=_CfgStub(shadow=False))
+        intent = await classify_intent_typesafe("...", soothe_config=_CfgStub())
         assert intent is not None
         assert intent.intake_label is IntakeLabel.SIMPLE
         assert intent.response_language is None
@@ -141,7 +139,7 @@ class TestTrustedVerdicts:
     async def test_missing_language_answer_leaves_field_unset(self, monkeypatch) -> None:
         response = _confident("complex", language=None)
         _patch_client(monkeypatch, _FakeClassifier(response))
-        intent = await classify_intent_typesafe("...", soothe_config=_CfgStub(shadow=False))
+        intent = await classify_intent_typesafe("...", soothe_config=_CfgStub())
         assert intent is not None
         assert intent.response_language is None
 
@@ -149,7 +147,7 @@ class TestTrustedVerdicts:
     async def test_query_is_truncated_before_sending(self, monkeypatch) -> None:
         fake = _FakeClassifier(_confident("complex"))
         _patch_client(monkeypatch, fake)
-        await classify_intent_typesafe("a" * 5000, soothe_config=_CfgStub(shadow=False))
+        await classify_intent_typesafe("a" * 5000, soothe_config=_CfgStub())
         assert len(fake.states[0]["query"]) == 1000
 
 
@@ -210,15 +208,6 @@ class TestFallback:
             classifier = ClassifierConfig(enabled=False)
 
         assert await classify_intent_typesafe("...", soothe_config=_Disabled()) is None
-
-    @pytest.mark.asyncio
-    async def test_shadow_never_changes_routing(self, monkeypatch) -> None:
-        """Shadow mode records the verdict and hands back to the LLM path."""
-        fake = _FakeClassifier(_confident("minimal"))
-        _patch_client(monkeypatch, fake)
-        cfg = _CfgStub(shadow=True)
-        assert await classify_intent_typesafe("...", soothe_config=cfg) is None
-        assert fake.states, "shadow still samples the endpoint for calibration"
 
 
 # ---------------------------------------------------------------------------

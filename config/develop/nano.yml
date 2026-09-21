@@ -119,13 +119,12 @@ router_profiles:
 active_router_profile: glm-mm
 
 embedding_profile:
-  - model_role: dashscope:text-embedding-v4
-    embedding_dims: 1536
+  model_role: dashscope:text-embedding-v4
+  embedding_dims: 1536
 
 classifier:
-  enabled: false
+  enabled: true
   provider: typesafe-official
-  shadow: true
 
 persistence:
   default_backend: sqlite

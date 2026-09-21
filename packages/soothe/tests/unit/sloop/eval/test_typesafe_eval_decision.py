@@ -86,14 +86,14 @@ class TestTrusted:
         offers here — the other direction matches the fail-safe anyway)."""
         fake = _FakeClassifier(_response("no_eval", 0.97))
         _patch(monkeypatch, fake)
-        assert await _decide(shadow=False) is False
+        assert await _decide() is False
         assert "refactor" in fake.states[0]["goal"]
 
     @pytest.mark.asyncio
     async def test_confident_eval_runs_audit(self, monkeypatch) -> None:
         fake = _FakeClassifier(_response("eval", 0.93))
         _patch(monkeypatch, fake)
-        assert await _decide(shadow=False) is True
+        assert await _decide() is True
 
     @pytest.mark.asyncio
     async def test_state_is_truncated(self, monkeypatch) -> None:
@@ -102,7 +102,7 @@ class TestTrusted:
         await decide_eval_coverage_typesafe(
             user_goal="g" * 9000,
             step_history_table="h" * 9000,
-            soothe_config=_CfgStub(shadow=False),
+            soothe_config=_CfgStub(),
         )
         assert len(fake.states[0]["goal"]) == 1200
         assert len(fake.states[0]["step_history"]) == 4000
@@ -119,29 +119,29 @@ class TestSuppressionBar:
         """Trusted (>= min_confidence) but below suppress_min_confidence:
         suppressing an audit needs a higher bar than running one."""
         _patch(monkeypatch, _FakeClassifier(_response("no_eval", 0.82)))
-        assert await _decide(shadow=False) is None
+        assert await _decide() is None
 
     @pytest.mark.asyncio
     async def test_eval_at_same_confidence_still_counts(self, monkeypatch) -> None:
         """The fail-safe direction is not held to the suppression bar."""
         _patch(monkeypatch, _FakeClassifier(_response("eval", 0.82)))
-        assert await _decide(shadow=False) is True
+        assert await _decide() is True
 
     @pytest.mark.asyncio
     async def test_low_confidence_falls_back(self, monkeypatch) -> None:
         _patch(monkeypatch, _FakeClassifier(_response("no_eval", 0.4)))
-        assert await _decide(shadow=False) is None
+        assert await _decide() is None
 
     @pytest.mark.asyncio
     async def test_near_tie_falls_back(self, monkeypatch) -> None:
         response = _response("no_eval", 0.99)
         response.answers["coverage"] = _answer("no_eval", {"no_eval": 0.51, "eval": 0.49}, 0.99)
         _patch(monkeypatch, _FakeClassifier(response))
-        assert await _decide(shadow=False) is None
+        assert await _decide() is None
 
 
 # ---------------------------------------------------------------------------
-# Fallback / shadow
+# Fallback
 # ---------------------------------------------------------------------------
 
 
@@ -149,12 +149,12 @@ class TestFallback:
     @pytest.mark.asyncio
     async def test_transport_error_falls_back(self, monkeypatch) -> None:
         _patch(monkeypatch, _FakeClassifier(error=RuntimeError("connection refused")))
-        assert await _decide(shadow=False) is None
+        assert await _decide() is None
 
     @pytest.mark.asyncio
     async def test_unknown_choice_falls_back(self, monkeypatch) -> None:
         _patch(monkeypatch, _FakeClassifier(_response("maybe", 0.99)))
-        assert await _decide(shadow=False) is None
+        assert await _decide() is None
 
     @pytest.mark.asyncio
     async def test_disabled_and_missing_config_return_none(self) -> None:
@@ -163,8 +163,6 @@ class TestFallback:
         class _Disabled:
             classifier = ClassifierConfig(enabled=False)
 
-        # Default config is shadow=True → sampling only, never a decision.
-        assert await _decide() is None
         assert (
             await decide_eval_coverage_typesafe(
                 user_goal="g", step_history_table="h", soothe_config=None
@@ -177,13 +175,6 @@ class TestFallback:
             )
             is None
         )
-
-    @pytest.mark.asyncio
-    async def test_shadow_never_changes_decision(self, monkeypatch) -> None:
-        fake = _FakeClassifier(_response("no_eval", 0.99))
-        _patch(monkeypatch, fake)
-        assert await _decide(shadow=True) is None
-        assert fake.states, "shadow still samples the endpoint"
 
 
 # ---------------------------------------------------------------------------

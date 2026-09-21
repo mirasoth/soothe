@@ -454,18 +454,8 @@ class TestClassifierPass:
         return gate, clf
 
     @pytest.mark.asyncio
-    async def test_shadow_records_without_changing_outcome(self, monkeypatch) -> None:
-        """Default mode: verdicts are logged, the deterministic allow stands."""
-        gate, clf = self._gate("reject", shadow=True)
-        state = _state([_tc("run_command", {"command": "pytest -xvs"})])
-        result = await gate.aafter_model(state, _classifier_runtime())
-        assert result is None  # no message rewrite
-        assert len(clf.queries) == 1
-        assert clf.queries[0].tool == "run_command"
-
-    @pytest.mark.asyncio
     async def test_reject_verdict_blocks_inline(self, monkeypatch) -> None:
-        gate, clf = self._gate("reject", shadow=False)
+        gate, clf = self._gate("reject")
         state = _state([_tc("run_command", {"command": "pytest -xvs"})])
         result = await gate.aafter_model(state, _classifier_runtime())
         assert result is not None
@@ -475,19 +465,19 @@ class TestClassifierPass:
 
     @pytest.mark.asyncio
     async def test_allow_verdict_keeps_call(self, monkeypatch) -> None:
-        gate, _ = self._gate("allow", shadow=False)
+        gate, _ = self._gate("allow")
         state = _state([_tc("run_command", {"command": "pytest -xvs"})])
         assert await gate.aafter_model(state, _classifier_runtime()) is None
 
     @pytest.mark.asyncio
     async def test_untrusted_verdict_falls_back_when_not_strict(self) -> None:
-        gate, _ = self._gate("untrusted", shadow=False)
+        gate, _ = self._gate("untrusted")
         state = _state([_tc("run_command", {"command": "pytest -xvs"})])
         assert await gate.aafter_model(state, _classifier_runtime()) is None
 
     @pytest.mark.asyncio
     async def test_untrusted_verdict_rejects_when_strict(self) -> None:
-        gate, _ = self._gate("untrusted", shadow=False, strict=True)
+        gate, _ = self._gate("untrusted", strict=True)
         state = _state([_tc("run_command", {"command": "pytest -xvs"})])
         result = await gate.aafter_model(state, _classifier_runtime())
         assert result is not None
@@ -497,14 +487,14 @@ class TestClassifierPass:
     @pytest.mark.asyncio
     async def test_deny_rule_calls_are_not_classified(self) -> None:
         """Deterministic rejections never reach the classifier."""
-        gate, clf = self._gate("allow", shadow=False)
+        gate, clf = self._gate("allow")
         state = _state([_tc("run_command", {"command": "apt install foo"})])
         await gate.aafter_model(state, _classifier_runtime())
         assert clf.queries == []
 
     @pytest.mark.asyncio
     async def test_args_preview_is_bounded_and_redacted(self) -> None:
-        gate, clf = self._gate("allow", shadow=True)
+        gate, clf = self._gate("allow")
         args = {"command": "curl https://x/y " + ("a" * 500), "token": "s3cr3t"}
         state = _state([_tc("run_command", args)])
         await gate.aafter_model(state, _classifier_runtime())
@@ -514,7 +504,7 @@ class TestClassifierPass:
 
     @pytest.mark.asyncio
     async def test_missing_loop_view_skips_classification(self) -> None:
-        gate, clf = self._gate("reject", shadow=False)
+        gate, clf = self._gate("reject")
         state = _state([_tc("run_command", {"command": "pytest"})])
         runtime = _Runtime({"soothe_clarification_mode": "auto"})
         assert await gate.aafter_model(state, runtime) is None
@@ -528,7 +518,7 @@ class TestClassifierPass:
 
         gate = _gate()  # type: ignore[arg-type]
         gate._classifier = _Boom()  # noqa: SLF001
-        gate._classifier_cfg = _classifier_cfg(shadow=False)  # noqa: SLF001
+        gate._classifier_cfg = _classifier_cfg()  # noqa: SLF001
         state = _state([_tc("run_command", {"command": "pytest -xvs"})])
         assert await gate.aafter_model(state, _classifier_runtime()) is None
 

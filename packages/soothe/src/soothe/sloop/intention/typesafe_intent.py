@@ -87,6 +87,7 @@ async def classify_intent_typesafe(
     """
     cfg = classifier_config(soothe_config)
     if cfg is None or not cfg.enabled:
+        logger.info("[intent] typesafe disabled; using LLM path")
         return None
 
     from langchain_typesafe import Choice
@@ -101,39 +102,34 @@ async def classify_intent_typesafe(
         },
     )
     if classifier is None:
+        logger.info("[intent] typesafe backend unavailable; using LLM path")
         return None
 
     state = {"query": truncate_text(query.strip(), limit=_QUERY_MAX_CHARS)}
     try:
         response = await classifier.ainvoke(state)
     except Exception as exc:  # noqa: BLE001 — never block on the classifier
-        logger.warning("[intent] typesafe classification unavailable (%s); falling back", exc)
+        logger.warning(
+            "[intent] typesafe classification unavailable (%s); falling back to LLM", exc
+        )
         return None
 
     choices = getattr(response, "choices", {}) or {}
     label_answer = choices.get(_LABEL_QUESTION_ID)
     if label_answer is None:
-        logger.warning("[intent] typesafe returned no label answer; falling back")
+        logger.info("[intent] typesafe returned no label answer; falling back to LLM")
         return None
 
     trusted, reason = verdict_trusted(cfg, label_answer)
     if not trusted:
-        logger.info("[intent] typesafe verdict untrusted (%s); falling back", reason)
+        logger.info("[intent] typesafe verdict untrusted (%s); falling back to LLM", reason)
         return None
 
     raw_label = str(getattr(label_answer, "choice", "") or "")
     try:
         label = IntakeLabel(raw_label)
     except ValueError:
-        logger.info("[intent] typesafe returned unknown label %r; falling back", raw_label)
-        return None
-
-    if cfg.shadow:
-        logger.info(
-            "[intent] typesafe(shadow) label=%s conf=%s; using LLM path",
-            label.value,
-            getattr(label_answer, "confidence", None),
-        )
+        logger.info("[intent] typesafe returned unknown label %r; falling back to LLM", raw_label)
         return None
 
     # Language rides along in the same request but is gated independently:
@@ -149,9 +145,14 @@ async def classify_intent_typesafe(
     if label is IntakeLabel.CHITCHAT:
         # A social reply needs generated text — a decision model cannot
         # produce it, so hand this back to the LLM path.
-        logger.debug("[intent] chitchat needs a generated reply; falling back")
+        logger.info("[intent] chitchat needs a generated reply; falling back to LLM")
         return None
 
+    logger.info(
+        "[intent] typesafe label=%s conf=%s",
+        label.value,
+        getattr(label_answer, "confidence", None),
+    )
     return IntentClassification(
         intake_label=label,
         reasoning=None,

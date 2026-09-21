@@ -95,8 +95,8 @@ class AutoModeMiddleware(AgentMiddleware):
                 ``force_manual_origins`` — every gated call goes to the human.
             classifier: Optional ``RiskClassifier`` consulted for rule-unresolved
                 (ambiguous) calls. ``None`` keeps the deterministic behaviour.
-            classifier_config: nano ``ClassifierConfig`` supplying shadow /
-                strict / per-turn limits for the classifier path.
+            classifier_config: nano ``ClassifierConfig`` supplying strict /
+                per-turn limits for the classifier path.
         """
         super().__init__()
         self._pipeline = pipeline
@@ -249,16 +249,6 @@ class AutoModeMiddleware(AgentMiddleware):
             verdicts = await self._classifier.classify(queries)
         except Exception:  # noqa: BLE001 — never block on the classifier
             logger.warning("[auto_mode] classifier failed; keeping deterministic outcome")
-            return None
-
-        if cfg.shadow:
-            for (_, tc), verdict in zip(bounded, verdicts):
-                logger.info(
-                    "[auto_mode] classify(shadow) tool=%s band=%s conf=%s",
-                    tc.get("name"),
-                    verdict.band,
-                    verdict.confidence,
-                )
             return None
 
         revised: list[Any] = []

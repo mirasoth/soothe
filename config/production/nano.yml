@@ -18,70 +18,6 @@ providers:
       - MiniMax-M3
       - text-embedding-v4
 
-  # Multi-instance DashScope providers for random selection + failover.
-  - name: ds2
-    provider_type: openai
-    api_base_url: "${DS2_BASE_URL}"
-    api_key: "${DS2_API_KEY}"
-    models:
-      - glm-5.2
-      - qwen3.7-plus
-      - qwen3.6-flash
-
-  - name: ds4
-    provider_type: openai
-    api_base_url: "${DS4_BASE_URL}"
-    api_key: "${DS4_API_KEY}"
-    models:
-      - glm-5.2
-      - qwen3.7-plus
-      - qwen3.6-flash
-
-  - name: ds5
-    provider_type: openai
-    api_base_url: "${DS5_BASE_URL}"
-    api_key: "${DS5_API_KEY}"
-    models:
-      - glm-5.2
-      - qwen3.7-plus
-      - qwen3.6-flash
-
-  - name: ds6
-    provider_type: openai
-    api_base_url: "${DS6_BASE_URL}"
-    api_key: "${DS6_API_KEY}"
-    models:
-      - glm-5.2
-      - qwen3.7-plus
-      - qwen3.6-flash
-
-  - name: ds7
-    provider_type: openai
-    api_base_url: "${DS7_BASE_URL}"
-    api_key: "${DS7_API_KEY}"
-    models:
-      - glm-5.2
-      - qwen3.7-plus
-      - qwen3.6-flash
-
-  - name: ds9
-    provider_type: openai
-    api_base_url: "${DS9_BASE_URL}"
-    api_key: "${DS9_API_KEY}"
-    models:
-      - glm-5.2
-      - qwen3.7-plus
-      - qwen3.6-flash
-
-  - name: ds10
-    provider_type: openai
-    api_base_url: "${DS10_BASE_URL}"
-    api_key: "${DS10_API_KEY}"
-    models:
-      - glm-5.2
-      - qwen3.7-plus
-      - qwen3.6-flash
-
   - name: omlx
     provider_type: openai
     api_base_url: "http://localhost:9642/v1"
@@ -105,14 +41,6 @@ router_profiles:
       image: "dashscope:qwen3.7-plus"
       ocr: "omlx:DeepSeek-OCR-4bit"
 
-  - name: glm-mm
-    router:
-      default: "ds2:glm-5.2;ds4:glm-5.2;ds5:glm-5.2;ds6:glm-5.2;ds7:glm-5.2;ds9:glm-5.2;ds10:glm-5.2"
-      fast: "ds2:qwen3.6-flash;ds4:qwen3.6-flash;ds5:qwen3.6-flash;ds6:qwen3.6-flash;ds7:qwen3.6-flash;ds9:qwen3.6-flash;ds10:qwen3.6-flash"
-      think: "ds2:glm-5.2;ds4:glm-5.2;ds5:glm-5.2;ds6:glm-5.2;ds7:glm-5.2;ds9:glm-5.2;ds10:glm-5.2"
-      image: "ds2:qwen3.7-plus;ds4:qwen3.7-plus;ds5:qwen3.7-plus;ds6:qwen3.7-plus;ds7:qwen3.7-plus;ds9:qwen3.7-plus;ds10:qwen3.7-plus"
-      ocr: "omlx:DeepSeek-OCR-4bit"
-
   - name: qwen
     router:
       default: "omlx:Qwen3.8-27B-4bit"
@@ -130,8 +58,8 @@ router_profiles:
 active_router_profile: production
 
 embedding_profile:
-  - model_role: dashscope:text-embedding-v4
-    embedding_dims: 1536
+  model_role: dashscope:text-embedding-v4
+  embedding_dims: 1536
 
 # =============================================================================
 # Persistence Backend

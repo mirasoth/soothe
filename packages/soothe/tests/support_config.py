@@ -25,7 +25,7 @@ def config_with_router_profile(
         router = ModelRouter(**router)
     embedding_profile = kwargs.pop(
         "embedding_profile",
-        [{"model_role": "openai:text-embedding-3-small", "embedding_dims": embedding_dims}],
+        {"model_role": "openai:text-embedding-3-small", "embedding_dims": embedding_dims},
     )
     return SootheConfig(
         router_profiles=[

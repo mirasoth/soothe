@@ -22,8 +22,8 @@ router_profiles:
       ocr: null
 
 embedding_profile:
-  - model_role: openai:text-embedding-3-small
-    embedding_dims: 1536
+  model_role: openai:text-embedding-3-small
+  embedding_dims: 1536
 
 active_router_profile: default
 
