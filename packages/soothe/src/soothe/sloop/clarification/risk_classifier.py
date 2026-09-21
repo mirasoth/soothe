@@ -1,9 +1,10 @@
 """Calibrated-probability risk classifier (nano-configured, swappable backend).
 
 The classifier picks one of three labels — `allow`, `escalate`, `reject` —
-for a subject. Backends are configured in nano (`classifier_providers` /
-`classifier`); this module only binds a resolved provider to the TypeSafe
-wire protocol via `langchain-typesafe`.
+for a subject. Backends are configured in nano (`providers` entries with
+`provider_type: typesafe`, plus the shared `classifier` parameters); this
+module only binds a resolved provider to the TypeSafe wire protocol via
+`langchain-typesafe`.
 
 Why a categorical (`Choice`) question rather than a binary (`Noul`) one:
 `Noul` answers expose only a probability — the API documents that they carry

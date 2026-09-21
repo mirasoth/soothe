@@ -2,7 +2,8 @@
 
 Every TypeSafe-backed decision in Soothe (tool-approval risk gating, intent
 classification, future local replacements for LLM round trips) resolves its
-endpoint the same way: nano's `classifier_providers` / `classifier` config.
+endpoint the same way: nano's `providers` (a `provider_type: typesafe` entry)
+/ `classifier` config.
 Questions are bound at construction, so each decision owns its own client
 instance — this module owns the shared resolution and gating logic.
 

@@ -86,6 +86,13 @@ providers:
       - DeepSeek-OCR-4bit
       - nomicai-modernbert-embed-base-bf16
 
+  - name: typesafe-official
+    provider_type: typesafe
+    api_base_url: "https://api.typesafe.ai"
+    api_key: "${TYPESAFE_API_KEY}"
+    model: jev-latest
+    timeout_seconds: 5
+
 router_profiles:
   - name: glm
     router:
@@ -110,9 +117,15 @@ router_profiles:
       ocr: "omlx:DeepSeek-OCR-4bit"
 
 active_router_profile: glm-mm
+
 embedding_profile:
   - model_role: dashscope:text-embedding-v4
     embedding_dims: 1536
+
+classifier:
+  enabled: false
+  provider: typesafe-official
+  shadow: true
 
 persistence:
   default_backend: sqlite
@@ -155,3 +168,4 @@ observability:
 
 security:
   allow_paths_outside_workspace: true
+

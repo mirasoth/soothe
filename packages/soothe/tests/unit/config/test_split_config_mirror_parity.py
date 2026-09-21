@@ -12,8 +12,6 @@ import pytest
 _REEXPORTED_MODELS = (
     "AgentRuntimeConfig",
     "ClassifierConfig",
-    "ClassifierProviderConfig",
-    "ClassifierProviderType",
     "CodeInterpreterConfig",
     "ConsoleLoggingConfig",
     "CoreAgentMiddlewareConfig",
