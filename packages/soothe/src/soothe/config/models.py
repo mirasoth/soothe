@@ -11,8 +11,6 @@ from soothe_nano.config.models import (  # noqa: F401
     MODEL_KNOWLEDGE_CUTOFFS,
     AgentRuntimeConfig,
     ClassifierConfig,
-    ClassifierProviderConfig,
-    ClassifierProviderType,
     CodeInterpreterConfig,
     ConsoleLoggingConfig,
     CoreAgentMiddlewareConfig,
