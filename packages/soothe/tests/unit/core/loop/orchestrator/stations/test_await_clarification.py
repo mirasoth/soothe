@@ -412,48 +412,31 @@ def _two_entry_state(*, follower_thread: str = "t1") -> dict[str, Any]:
     }
 
 
-class _BatchingPolicyStub:
-    """Answers the head like any policy; statically resolves the follower."""
-
-    def __init__(self, static_answer: ClarificationAnswer | None) -> None:
-        self._static = static_answer
+class _HeadOnlyPolicyStub:
+    """Answers the head request; the station resolves one request per visit."""
 
     async def answer(self, _request: ClarificationRequest) -> ClarificationAnswer:
         return ClarificationAnswer(answers=("head answered",), source="human")
 
-    def try_static_answer(self, _request: ClarificationRequest) -> ClarificationAnswer | None:
-        return self._static
 
-
-async def test_same_thread_follower_joins_the_answer_batch() -> None:
-    policy = _BatchingPolicyStub(ClarificationAnswer(answers=("allow",), source="static"))
-    ctx = _StubCtx(policy=policy)
-
-    result = await node_await_clarification(ctx, _two_entry_state())
-
-    records = result["relay_state"]["answers"]
-    assert [r["interrupt_id"] for r in records] == ["i1", "i2"]
-    assert records[0]["answer"]["answers"] == ["head answered"]
-    assert records[1]["answer"]["source"] == "static"
-
-
-async def test_follower_without_static_answer_stays_queued() -> None:
-    policy = _BatchingPolicyStub(None)
-    ctx = _StubCtx(policy=policy)
+async def test_station_resolves_one_request_per_visit() -> None:
+    """RFC-634: the static pre-filter is gone (the inline gates resolve
+    deterministic verdicts before any interrupt), so a same-thread follower
+    is no longer batched — it stays queued for its own visit."""
+    ctx = _StubCtx(policy=_HeadOnlyPolicyStub())
 
     result = await node_await_clarification(ctx, _two_entry_state())
 
     records = result["relay_state"]["answers"]
     assert [r["interrupt_id"] for r in records] == ["i1"]
+    assert records[0]["answer"]["answers"] == ["head answered"]
     # Both entries remain in the inbox — the follower gets its own turn.
     assert len(result["relay_state"]["inbox"]) == 2
 
 
 async def test_follower_on_other_thread_stays_queued() -> None:
-    """Only same-thread followers batch — a different thread's resume is its
-    own Command on its own fork."""
-    policy = _BatchingPolicyStub(ClarificationAnswer(answers=("allow",), source="static"))
-    ctx = _StubCtx(policy=policy)
+    """A different thread's resume is its own Command on its own fork."""
+    ctx = _StubCtx(policy=_HeadOnlyPolicyStub())
 
     result = await node_await_clarification(ctx, _two_entry_state(follower_thread="t2"))
 

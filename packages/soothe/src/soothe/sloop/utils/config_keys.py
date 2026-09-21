@@ -32,6 +32,14 @@ SOOTHE_INTAKE_LABEL_KEY = "soothe_intake_label"
 # (prevents recursive fan-out nudging at every decompose layer).
 SOOTHE_IS_DAG_ROOT_KEY = "soothe_is_dag_root"
 
+# RFC-634: resolved clarification mode ("auto" | "manual") for the live goal
+# run. Read by AutoModeMiddleware to decide interrupt vs inline resolution.
+SOOTHE_CLARIFICATION_MODE_KEY = "soothe_clarification_mode"
+
+# RFC-634: whether a human relay is attached to the live goal run. When
+# False (autopilot), safety escalations degrade to inline instructive rejects.
+SOOTHE_HUMAN_ATTACHED_KEY = "soothe_human_attached"
+
 
 def positive_config_int(value: Any, default: int, *, minimum: int = 1) -> int:
     """Coerce a config budget to an int at or above `minimum`.
@@ -51,5 +59,7 @@ __all__ = [
     "SOOTHE_MAX_BRANCH_ROOT_KEY",
     "SOOTHE_INTAKE_LABEL_KEY",
     "SOOTHE_IS_DAG_ROOT_KEY",
+    "SOOTHE_CLARIFICATION_MODE_KEY",
+    "SOOTHE_HUMAN_ATTACHED_KEY",
     "positive_config_int",
 ]

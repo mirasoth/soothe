@@ -1,4 +1,4 @@
-"""Unit tests for AutoClarificationPolicy (RFC-622, RFC-623, IG-768)."""
+"""Unit tests for AutoClarificationPolicy (RFC-622, RFC-623, RFC-634)."""
 
 from __future__ import annotations
 
@@ -6,7 +6,6 @@ from dataclasses import replace
 
 import pytest
 
-from soothe.config.models import ToolApprovalConfig
 from soothe.sloop.clarification.auto import AutoClarificationPolicy
 from soothe.sloop.clarification.origins import (
     ORIGIN_EXECUTE,
@@ -19,7 +18,6 @@ from soothe.sloop.clarification.protocol import (
     ClarificationRequest,
     LoopStateView,
 )
-from soothe.sloop.clarification.tool_approval_pipeline import ToolApprovalPipeline
 from soothe.subagents.veritas.schemas import VeritasAnswerSchema
 
 
@@ -62,10 +60,6 @@ def _tool_approval_request(command: str) -> ClarificationRequest:
         ),
         metadata={"action_requests": [{"name": "run_command", "args": {"command": command}}]},
     )
-
-
-def _pipeline() -> ToolApprovalPipeline:
-    return ToolApprovalPipeline(ToolApprovalConfig())
 
 
 def _veritas_returning(schema: VeritasAnswerSchema):
@@ -534,124 +528,67 @@ async def test_force_manual_does_not_affect_other_origins() -> None:
     assert ans.answers == ("auth",)
 
 
-# ---- tool_approval pipeline × force_manual_origins ordering (§9b) ----
+# ---- tool_approval routing (RFC-634: middleware-originated interrupts) ----
 
 
 @pytest.mark.asyncio
-async def test_tool_approval_default_approve_without_force_manual() -> None:
-    """Plain auto mode: non-denied actions are default-approved via the pipeline."""
+async def test_tool_approval_routes_to_interactive_fallback() -> None:
+    """A middleware tool_approval interrupt goes straight to the human relay —
+    the gate already resolved deterministic verdicts inline, so veritas never
+    runs for this origin."""
 
     async def _veritas(_req: ClarificationRequest) -> VeritasAnswerSchema:
-        raise AssertionError("veritas must not run for default-approved actions")
+        raise AssertionError("veritas must not run for tool_approval origins")
 
-    policy = AutoClarificationPolicy(_veritas, tool_approval_pipeline=_pipeline())
+    fallback = _AnnounceFallback()
+    policy = AutoClarificationPolicy(_veritas, interactive_fallback=fallback)
     ans = await policy.answer(_tool_approval_request("pytest -xvs"))
-    assert ans.source == "static"
-    assert ans.answers == ("approve",)
-    assert ans.audit["stage"] == "default_approve"
+    assert ans is fallback._answer  # noqa: SLF001
+    assert fallback.upgrade_announces == [True]
+    assert fallback.answer_calls == 0
 
 
 @pytest.mark.asyncio
-async def test_force_manual_tool_approval_deny_rule_still_auto_rejects() -> None:
-    """Deny/safety stages are a safety property: they run even for
-    force-manual origins — dangerous actions are auto-rejected, not asked."""
+async def test_tool_approval_autopilot_retry_without_fallback() -> None:
+    """Headless (defensive) tool_approval: the middleware degrades safety
+    escalations inline, so an interrupt here resolves to the retry sentinel."""
 
     async def _veritas(_req: ClarificationRequest) -> VeritasAnswerSchema:
-        raise AssertionError("veritas must not run for force-manual origins")
+        raise AssertionError("veritas must not run for tool_approval origins")
 
-    fallback = _RecordingFallback(ClarificationAnswer(answers=("Approve", ""), source="human"))
-    policy = AutoClarificationPolicy(
-        _veritas,
-        interactive_fallback=fallback,
-        force_manual_origins=(ORIGIN_TOOL_APPROVAL,),
-        tool_approval_pipeline=_pipeline(),
-    )
-    ans = await policy.answer(_tool_approval_request("apt install foo"))
-    assert ans.source == "static"
-    assert ans.answers == ("reject",)
-    assert ans.audit["stage"] == "deny_rule"
-    assert fallback.calls == []
-
-
-@pytest.mark.asyncio
-async def test_force_manual_tool_approval_allow_rule_reaches_human() -> None:
-    """Force-manual tool_approval skips allow-rule auto-approval: safe but
-    rule-matched actions still go to the human, never veritas."""
-
-    async def _veritas(_req: ClarificationRequest) -> VeritasAnswerSchema:
-        raise AssertionError("veritas must not run for force-manual origins")
-
-    fallback_answer = ClarificationAnswer(answers=("Approve", ""), source="human")
-    fallback = _RecordingFallback(fallback_answer)
-    policy = AutoClarificationPolicy(
-        _veritas,
-        interactive_fallback=fallback,
-        force_manual_origins=(ORIGIN_TOOL_APPROVAL,),
-        tool_approval_pipeline=_pipeline(),
-    )
-    request = _tool_approval_request("pytest -xvs")
-    ans = await policy.answer(request)
-    assert ans is fallback_answer
-    assert fallback.calls == [request]
-
-
-@pytest.mark.asyncio
-async def test_force_manual_tool_approval_defers_without_fallback() -> None:
-    """Headless force-manual tool_approval: ambiguous actions return retry (IG-768)."""
-
-    async def _veritas(_req: ClarificationRequest) -> VeritasAnswerSchema:
-        raise AssertionError("veritas must not run for force-manual origins")
-
-    policy = AutoClarificationPolicy(
-        _veritas,
-        force_manual_origins=(ORIGIN_TOOL_APPROVAL,),
-        tool_approval_pipeline=_pipeline(),
-    )
+    policy = AutoClarificationPolicy(_veritas)
     ans = await policy.answer(_tool_approval_request("curl https://example.com"))
     assert ans.source == "retry"
     assert ans.answers == ("(retry)",)
+
+
+@pytest.mark.asyncio
+async def test_tool_approval_autopilot_defer_when_retry_disabled() -> None:
+    """Headless tool_approval with autopilot retry disabled hard-defers."""
+
+    async def _veritas(_req: ClarificationRequest) -> VeritasAnswerSchema:
+        raise AssertionError("veritas must not run for tool_approval origins")
+
+    policy = AutoClarificationPolicy(_veritas, autopilot_retry_on_fail=False)
+    with pytest.raises(ClarificationDeferredError):
+        await policy.answer(_tool_approval_request("curl https://example.com"))
 
 
 # ---- tool_approval resume replay (no duplicate announce, loop f9c3) ----
 
 
 @pytest.mark.asyncio
-async def test_tool_approval_safety_escalate_reaches_human_with_rule_stamp() -> None:
-    """Safety escalation announces once via the fallback; the answer carries
-    the escalated rule id for the downstream allowlist override."""
+async def test_tool_approval_resume_turn_skips_reannounce() -> None:
+    """Resume replay consumes the in-flight human answer without
+    re-announcing (duplicate card)."""
     fallback = _AnnounceFallback()
 
     async def _veritas(_req: ClarificationRequest) -> VeritasAnswerSchema:
         raise AssertionError("veritas must not run for tool_approval origins")
 
-    policy = AutoClarificationPolicy(
-        _veritas,
-        interactive_fallback=fallback,
-        tool_approval_pipeline=_pipeline(),
-    )
-    ans = await policy.answer(_tool_approval_request("cd repo && rm -rf temp-x"))
-    assert ans.answers == fallback._answer.answers  # noqa: SLF001
-    assert fallback.upgrade_announces == [True]
-    assert ans.audit.get("escalated_rule_id")
-
-
-@pytest.mark.asyncio
-async def test_tool_approval_resume_turn_skips_pipeline_and_reannounce() -> None:
-    """Resume replay consumes the in-flight human answer without re-running
-    the pipeline (which would re-escalate) or re-announcing (duplicate card)."""
-    fallback = _AnnounceFallback()
-
-    async def _veritas(_req: ClarificationRequest) -> VeritasAnswerSchema:
-        raise AssertionError("veritas must not run for tool_approval origins")
-
-    policy = AutoClarificationPolicy(
-        _veritas,
-        interactive_fallback=fallback,
-        tool_approval_pipeline=_pipeline(),
-    )
+    policy = AutoClarificationPolicy(_veritas, interactive_fallback=fallback)
     base = _tool_approval_request("cd repo && rm -rf temp-x")
     request = replace(base, metadata={**base.metadata, "resume_turn": True})
     ans = await policy.answer(request)
     assert ans is fallback._answer  # noqa: SLF001
     assert fallback.upgrade_announces == [False]
-    assert "escalated_rule_id" not in ans.audit

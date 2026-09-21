@@ -42,7 +42,74 @@ class AgentBuilder(nano_builder.AgentBuilder):
         if self._identity_runtime is not None and self._identity_runtime.enabled:
             prefix.append(IdentityMiddleware(self._identity_runtime))
         prefix.append(IntakeOnlyTaskGuardMiddleware())
+        auto_mode_gate = self._build_auto_mode_gate()
+        if auto_mode_gate is not None:
+            prefix.append(auto_mode_gate)
+        ask_user_gate = self._build_ask_user_gate()
+        if ask_user_gate is not None:
+            prefix.append(ask_user_gate)
         return tuple(prefix)
+
+    def _build_ask_user_gate(self) -> Any | None:
+        """Build the RFC-635 inline veritas fast path for `ask_user` calls.
+
+        The gate answers confident questions inline (no interrupt, no graph
+        hop); defer / failure questions fall through to the station with a
+        `gate_deferred` marker so veritas never runs twice. Returns `None`
+        when the gate is disabled.
+        """
+        from soothe.sloop.middleware import AskUserGateMiddleware
+
+        try:
+            clar_cfg = self._config.agent.clarification
+        except AttributeError:
+            return None
+        if not clar_cfg.ask_user_gate.enabled:
+            return None
+
+        from soothe.subagents.veritas.implementation import build_veritas_answerer
+
+        return AskUserGateMiddleware(
+            build_veritas_answerer(self._config),
+            min_confidence=clar_cfg.auto_min_confidence,
+            default_clarification_mode=clar_cfg.default_mode,
+            autopilot_retry_on_fail=clar_cfg.autopilot_retry_on_fail,
+        )
+
+    def _build_auto_mode_gate(self) -> Any | None:
+        """Build the RFC-634 inline tool-approval gate from config.
+
+        The gate replaces the old ``interrupt_on`` HITL wiring: deny-rule and
+        autopilot-safety rejects resolve inline; human-decision cases emit
+        the standard ``action_requests`` interrupt. Returns ``None`` when the
+        tool-approval block is disabled.
+        """
+        from soothe.sloop.clarification.tool_approval_pipeline import ToolApprovalPipeline
+        from soothe.sloop.middleware import AutoModeMiddleware
+
+        try:
+            clar_cfg = self._config.agent.clarification
+            ta_cfg = clar_cfg.tool_approval
+        except AttributeError:
+            return None
+        if not (ta_cfg.enabled and ta_cfg.inline_gate.enabled):
+            return None
+        pipeline = ToolApprovalPipeline(ta_cfg, security_config=self._config.security)
+        # Optional calibrated-probability classifier for rule-unresolved calls
+        # (nano-configured backend; null when disabled or misconfigured).
+        from soothe.sloop.clarification.risk_classifier import build_risk_classifier
+
+        classifier_cfg = getattr(self._config, "classifier", None)
+        return AutoModeMiddleware(
+            pipeline,
+            tools=ta_cfg.inline_gate.tools,
+            active_in_bypass=ta_cfg.inline_gate.active_in_bypass,
+            default_clarification_mode=clar_cfg.default_mode,
+            manual_scope=ta_cfg.manual_scope,
+            force_manual_tool_approval="tool_approval" in (clar_cfg.force_manual_origins or ()),
+            classifier=build_risk_classifier(self._config),
+            classifier_config=classifier_cfg,
+        )
 
     def _host_middleware_suffix(self) -> tuple:
         # Apply after ToolEnforcement so step/synthesis configurables win.
@@ -82,48 +149,14 @@ class AgentBuilder(nano_builder.AgentBuilder):
         extra_tools.append(build_ask_user_tool())
         kwargs["tools"] = extra_tools
 
-        # Wire conditional interrupt_on for mutating tools. The ``when``
-        # predicates interrupt only on genuinely dangerous operations
-        # (out-of-workspace writes, destructive commands) — safe
-        # in-workspace edits and routine commands execute without an
-        # interrupt, reducing the clarification queue load by ~90%.
-        # The deny-rule pipeline and nano safety evaluator still run as
-        # belt-and-suspenders regardless.
-        if kwargs.get("interaction_mode") not in ("plan", "ask", "bypass"):
-            from langchain.agents.middleware import InterruptOnConfig
-
-            from soothe.sloop.clarification.interrupt_rules import (
-                when_delete,
-                when_edit_file,
-                when_run_command,
-                when_write_file,
-            )
-
-            _approve_reject = InterruptOnConfig(
-                allowed_decisions=["approve", "reject"],
-            )
-            kwargs.setdefault(
-                "interrupt_on",
-                {
-                    "edit_file": InterruptOnConfig(
-                        allowed_decisions=["approve", "reject"],
-                        when=when_edit_file,
-                    ),
-                    "write_file": InterruptOnConfig(
-                        allowed_decisions=["approve", "reject"],
-                        when=when_write_file,
-                    ),
-                    "delete": InterruptOnConfig(
-                        allowed_decisions=["approve", "reject"],
-                        when=when_delete,
-                    ),
-                    "run_command": InterruptOnConfig(
-                        allowed_decisions=["approve", "reject"],
-                        when=when_run_command,
-                    ),
-                },
-            )
-
+        # RFC-634: the AutoModeMiddleware host gate (built in
+        # ``_host_middleware_prefix`` from ``agent.clarification.tool_approval``)
+        # is the sole tool-approval HITL — deny-rule and autopilot-safety
+        # rejects resolve inline (no interrupt, no graph round trip) and
+        # human-decision cases emit the standard ``action_requests``
+        # interrupt. No ``interrupt_on`` is wired for the mutating tools, so
+        # the deepagents HumanInTheLoopMiddleware is not installed in agent
+        # mode (fs permissions are None there).
         try:
             agent = super().build(*args, **kwargs)
         finally:

@@ -10,7 +10,6 @@ from soothe.sloop.clarification.interactive import (
     InteractiveClarificationPolicy,
 )
 from soothe.sloop.clarification.protocol import ClarificationPolicy
-from soothe.sloop.clarification.tool_approval_pipeline import ToolApprovalPipeline
 
 ClarificationMode = Literal["manual", "auto"]
 
@@ -25,8 +24,6 @@ def build_default_clarification_policy(
     force_manual_origins: tuple[str, ...] | list[str] | None = None,
     degrade_to_manual_on_failure: bool = True,
     autopilot_retry_on_fail: bool = True,
-    tool_approval_pipeline: ToolApprovalPipeline | None = None,
-    manual_allow_rules: bool = False,
 ) -> ClarificationPolicy:
     """Return the clarification policy for the given runtime mode.
 
@@ -42,19 +39,12 @@ def build_default_clarification_policy(
             interactive fallback (TUI only).
         autopilot_retry_on_fail: Return a synthetic retry answer when no
             human is attached, prompting the LLM to try a different action.
-        tool_approval_pipeline: Deterministic deny→safety→allow pipeline.
-        manual_allow_rules: Let manual mode auto-approve `tool_approval`
-            actions instead of asking the human.
 
     Raises:
         ValueError: `mode == "auto"` without `veritas_answer`.
     """
     if mode == "manual":
-        return InteractiveClarificationPolicy(
-            emit=emit,
-            tool_approval_pipeline=tool_approval_pipeline,
-            manual_allow_rules=manual_allow_rules,
-        )
+        return InteractiveClarificationPolicy(emit=emit)
     if mode == "auto":
         if veritas_answer is None:
             msg = "auto mode requires veritas_answer callable"
@@ -66,7 +56,6 @@ def build_default_clarification_policy(
             force_manual_origins=force_manual_origins,
             degrade_to_manual_on_failure=degrade_to_manual_on_failure,
             autopilot_retry_on_fail=autopilot_retry_on_fail,
-            tool_approval_pipeline=tool_approval_pipeline,
         )
     msg = f"unknown clarification mode: {mode!r}"
     raise ValueError(msg)
