@@ -105,6 +105,24 @@ class ContextWindowManager:
         self._checkpointer = checkpointer
         self._config = config
 
+        # Circuit-breaker state: consecutive compaction failures across waves.
+        # Reset to 0 on any successful compaction; incremented on exception or
+        # None result. When it reaches the configured threshold,
+        # check_and_compact_if_needed stops attempting auto-compact and surfaces
+        # the error to the planner for context reduction.
+        self._consecutive_failures: int = 0
+
+    def _max_consecutive_failures(self) -> int:
+        """Get the circuit-breaker threshold from config.
+
+        Returns:
+            Max consecutive compaction failures before auto-compact is
+            disabled. Falls back to 3 when config is absent.
+        """
+        if self._config is None:
+            return 3
+        return self._config.agent.loop.max_consecutive_compact_failures
+
     def _context_limit(self) -> int:
         """Get context_window_limit from config."""
         if self._config is None:
@@ -346,7 +364,10 @@ class ContextWindowManager:
     ) -> ContextCompactionResult | None:
         """Full flow: estimate → check → compact if needed.
 
-        Called after execute wave completes.
+        Called after execute wave completes. Tracks consecutive compaction
+        failures across waves; when the circuit-breaker threshold is reached,
+        auto-compact is disabled and the error is surfaced to the planner for
+        context reduction (drop old tool results, summarize history).
 
         Args:
             thread_id: Thread to check.
@@ -355,6 +376,22 @@ class ContextWindowManager:
         Returns:
             Compaction result if triggered, None otherwise.
         """
+        # Circuit breaker: stop attempting auto-compact after the configured
+        # number of consecutive failures to prevent compaction death-spirals.
+        # The planner is expected to reduce context (drop old tool results,
+        # summarize history) once the breaker is tripped.
+        threshold = self._max_consecutive_failures()
+        if self._consecutive_failures >= threshold:
+            logger.warning(
+                "[ContextWindow] Auto-compact disabled for thread %s: "
+                "%d consecutive failures (threshold %d); "
+                "surface to planner for context reduction",
+                thread_id,
+                self._consecutive_failures,
+                threshold,
+            )
+            return None
+
         try:
             estimated = await self.estimate_checkpoint_tokens(thread_id)
             if estimated == 0:
@@ -387,12 +424,34 @@ class ContextWindowManager:
                 )
                 result = await self.compact_checkpoint_inplace(thread_id, state)
 
+            # Circuit-breaker accounting: reset on success, increment on failure.
+            if result is not None:
+                if self._consecutive_failures > 0:
+                    logger.info(
+                        "[ContextWindow] Compaction recovered for thread %s; "
+                        "resetting failure counter (%d → 0)",
+                        thread_id,
+                        self._consecutive_failures,
+                    )
+                self._consecutive_failures = 0
+            else:
+                self._consecutive_failures += 1
+                logger.warning(
+                    "[ContextWindow] Compaction failure %d/%d for thread %s",
+                    self._consecutive_failures,
+                    threshold,
+                    thread_id,
+                )
+
             return result
 
         except Exception:
+            self._consecutive_failures += 1
             logger.warning(
-                "[ContextWindow] Compaction check failed for thread %s",
+                "[ContextWindow] Compaction check failed for thread %s (failure %d/%d)",
                 thread_id,
+                self._consecutive_failures,
+                threshold,
                 exc_info=True,
             )
             return None

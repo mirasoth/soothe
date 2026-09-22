@@ -39,11 +39,13 @@ class MockConfig:
         self,
         context_limit: int = 200_000,
         threshold_pct: float = 0.80,
+        max_consecutive_compact_failures: int = 3,
     ) -> None:
         self.agent = MagicMock()
         self.agent.loop = MagicMock()
         self.agent.loop.context_window_limit = context_limit
         self.agent.loop.context_overflow_threshold_pct = threshold_pct
+        self.agent.loop.max_consecutive_compact_failures = max_consecutive_compact_failures
 
 
 class TestEstimateCheckpointTokensSync:
@@ -383,3 +385,175 @@ class TestEstimateCheckpointTokensUnifiedAPI:
             _, kwargs = spy.call_args
             assert kwargs.get("model") == "gpt-4o"
         assert result > 0
+
+
+class TestCompactCircuitBreaker:
+    """Tests for the auto-compact circuit breaker (consecutive failure tracking).
+
+    After the configured number of consecutive compaction failures, the
+    circuit breaker trips and auto-compact stops attempting, surfacing the
+    error to the planner for context reduction.
+    """
+
+    @pytest.mark.asyncio
+    async def test_failure_counter_starts_at_zero(self) -> None:
+        """Fresh manager has zero consecutive failures."""
+        manager = ContextWindowManager(None, None)
+        assert manager._consecutive_failures == 0
+
+    @pytest.mark.asyncio
+    async def test_none_result_increments_counter(self) -> None:
+        """A None compaction result increments the failure counter."""
+        # context_limit=50 → threshold 40 tokens; "x"*500 ≈ 66 tokens > 40.
+        config = MockConfig(context_limit=50, threshold_pct=0.80)
+        mock_checkpointer = AsyncMock()
+        large_content = "x" * 500
+        messages = [MockMessage(content=large_content)]
+        checkpoint = MockCheckpoint(messages=messages)
+        checkpoint_tuple = MagicMock()
+        checkpoint_tuple.checkpoint = checkpoint
+        mock_checkpointer.aget_tuple = AsyncMock(return_value=checkpoint_tuple)
+        manager = ContextWindowManager(mock_checkpointer, config)
+        state = LoopState(thread_id="thread1", goal="test goal")
+
+        await manager.check_and_compact_if_needed("thread1", state)
+        assert manager._consecutive_failures == 1
+
+    @pytest.mark.asyncio
+    async def test_exception_increments_counter(self) -> None:
+        """An exception during compaction increments the failure counter."""
+        config = MockConfig(context_limit=50, threshold_pct=0.80)
+        mock_checkpointer = AsyncMock()
+        mock_checkpointer.aget_tuple = AsyncMock(side_effect=RuntimeError("checkpoint unavailable"))
+        manager = ContextWindowManager(mock_checkpointer, config)
+        state = LoopState(thread_id="thread1", goal="test goal")
+
+        result = await manager.check_and_compact_if_needed("thread1", state)
+        assert result is None
+        assert manager._consecutive_failures == 1
+
+    @pytest.mark.asyncio
+    async def test_circuit_breaker_trips_after_threshold(self) -> None:
+        """After threshold consecutive failures, auto-compact is disabled."""
+        config = MockConfig(
+            context_limit=50,
+            threshold_pct=0.80,
+            max_consecutive_compact_failures=3,
+        )
+        mock_checkpointer = AsyncMock()
+        large_content = "x" * 500
+        messages = [MockMessage(content=large_content)]
+        checkpoint = MockCheckpoint(messages=messages)
+        checkpoint_tuple = MagicMock()
+        checkpoint_tuple.checkpoint = checkpoint
+        mock_checkpointer.aget_tuple = AsyncMock(return_value=checkpoint_tuple)
+        manager = ContextWindowManager(mock_checkpointer, config)
+        state = LoopState(thread_id="thread1", goal="test goal")
+
+        # Two failures: counter reaches 2 (< threshold 3)
+        await manager.check_and_compact_if_needed("thread1", state)
+        assert manager._consecutive_failures == 1
+        await manager.check_and_compact_if_needed("thread1", state)
+        assert manager._consecutive_failures == 2
+
+        # compact_checkpoint_inplace should still be invoked while below threshold
+        assert mock_checkpointer.aget_tuple.await_count > 0
+
+        # Third failure reaches threshold
+        await manager.check_and_compact_if_needed("thread1", state)
+        assert manager._consecutive_failures == 3
+
+        # Fourth call: circuit breaker trips — no compaction attempted
+        aget_count_before = mock_checkpointer.aget_tuple.await_count
+        result = await manager.check_and_compact_if_needed("thread1", state)
+        assert result is None
+        # No additional checkpoint fetches (breaker returned early)
+        assert mock_checkpointer.aget_tuple.await_count == aget_count_before
+
+    @pytest.mark.asyncio
+    async def test_success_resets_counter(self) -> None:
+        """A successful compaction resets the failure counter to zero."""
+        config = MockConfig(
+            context_limit=50,
+            threshold_pct=0.80,
+            max_consecutive_compact_failures=3,
+        )
+        mock_checkpointer = AsyncMock()
+        large_content = "x" * 500
+        messages = [MockMessage(content=large_content)]
+        checkpoint = MockCheckpoint(messages=messages)
+        checkpoint_tuple = MagicMock()
+        checkpoint_tuple.checkpoint = checkpoint
+        mock_checkpointer.aget_tuple = AsyncMock(return_value=checkpoint_tuple)
+        manager = ContextWindowManager(mock_checkpointer, config)
+        state = LoopState(thread_id="thread1", goal="test goal")
+
+        # Simulate one prior failure
+        manager._consecutive_failures = 1
+
+        # Patch compact_checkpoint_inplace to return a successful result
+        success_result = ContextCompactionResult(
+            thread_id="thread1",
+            tokens_before=500,
+            tokens_after=10,
+            messages_removed=1,
+        )
+        manager.compact_checkpoint_inplace = AsyncMock(return_value=success_result)
+
+        result = await manager.check_and_compact_if_needed("thread1", state)
+        assert result is success_result
+        assert manager._consecutive_failures == 0
+
+    @pytest.mark.asyncio
+    async def test_no_config_uses_default_threshold(self) -> None:
+        """Without config, the default circuit-breaker threshold is 3."""
+        manager = ContextWindowManager(None, None)
+        assert manager._max_consecutive_failures() == 3
+
+    @pytest.mark.asyncio
+    async def test_config_threshold_respected(self) -> None:
+        """A custom threshold is honored by the circuit breaker."""
+        config = MockConfig(
+            context_limit=50,
+            threshold_pct=0.80,
+            max_consecutive_compact_failures=1,
+        )
+        mock_checkpointer = AsyncMock()
+        large_content = "x" * 500
+        messages = [MockMessage(content=large_content)]
+        checkpoint = MockCheckpoint(messages=messages)
+        checkpoint_tuple = MagicMock()
+        checkpoint_tuple.checkpoint = checkpoint
+        mock_checkpointer.aget_tuple = AsyncMock(return_value=checkpoint_tuple)
+        manager = ContextWindowManager(mock_checkpointer, config)
+        state = LoopState(thread_id="thread1", goal="test goal")
+
+        # First call: failure increments to 1 (== threshold 1)
+        await manager.check_and_compact_if_needed("thread1", state)
+        assert manager._consecutive_failures == 1
+
+        # Second call: breaker already tripped, no attempt
+        aget_count_before = mock_checkpointer.aget_tuple.await_count
+        result = await manager.check_and_compact_if_needed("thread1", state)
+        assert result is None
+        assert mock_checkpointer.aget_tuple.await_count == aget_count_before
+
+    @pytest.mark.asyncio
+    async def test_below_threshold_does_not_touch_counter(self) -> None:
+        """When compaction is not needed, the failure counter is untouched."""
+        config = MockConfig(context_limit=200_000, threshold_pct=0.80)
+        mock_checkpointer = AsyncMock()
+        messages = [MockMessage(content="short")]
+        checkpoint = MockCheckpoint(messages=messages)
+        checkpoint_tuple = MagicMock()
+        checkpoint_tuple.checkpoint = checkpoint
+        mock_checkpointer.aget_tuple = AsyncMock(return_value=checkpoint_tuple)
+        manager = ContextWindowManager(mock_checkpointer, config)
+        state = LoopState(thread_id="thread1", goal="test goal")
+
+        # Pre-set a failure count to ensure it's not reset by a no-op call
+        manager._consecutive_failures = 2
+        result = await manager.check_and_compact_if_needed("thread1", state)
+        assert result is None
+        # Counter unchanged — below-threshold is not a failure nor a recovery
+        assert manager._consecutive_failures == 2

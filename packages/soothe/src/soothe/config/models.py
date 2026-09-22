@@ -1133,6 +1133,52 @@ class StrangeLoopConfig(BaseModel):
     )
     """Trigger threshold for context compaction (0.80 = 80%)."""
 
+    max_consecutive_compact_failures: int = Field(
+        default=3,
+        ge=1,
+        le=10,
+        description=(
+            "Circuit-breaker threshold for auto-compaction. After this many "
+            "consecutive compaction failures (exception or None result) across "
+            "waves, auto-compact stops attempting and surfaces the error to the "
+            "planner for context reduction (drop old tool results, summarize "
+            "history). Prevents compaction death-spirals that burn API calls."
+        ),
+    )
+
+    token_continuation_enabled: bool = Field(
+        default=True,
+        description=(
+            "When True, the Act stream loop detects max_tokens truncation "
+            "(stop_reason == 'max_tokens' or finish_reason == 'length') and "
+            "re-invokes the model with a 'continue' nudge so long-form output "
+            "completes across multiple LLM hops. Diminishing-returns detection "
+            "stops continuation when a hop produces fewer than "
+            "token_continuation_min_delta tokens after 3+ continuations."
+        ),
+    )
+
+    token_continuation_max: int = Field(
+        default=5,
+        ge=0,
+        le=20,
+        description=(
+            "Maximum number of continuation hops per Act-stream pass when "
+            "token_continuation_enabled is True. 0 disables continuation."
+        ),
+    )
+
+    token_continuation_min_delta: int = Field(
+        default=500,
+        ge=1,
+        le=10_000,
+        description=(
+            "Minimum output_tokens a continuation hop must produce to be "
+            "considered worthwhile. After 3+ continuations, a hop below this "
+            "threshold stops further continuation (diminishing returns)."
+        ),
+    )
+
     output_streaming: OutputStreamingConfig = Field(
         default_factory=OutputStreamingConfig,
         description="Output streaming configuration",
