@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import random
 import time
 import traceback
 from collections.abc import AsyncGenerator
@@ -449,26 +450,51 @@ class Executor:
             return 0.0
         return max(0.0, float(self._config.agent.loop.dispatch_idle_seconds))
 
-    _DISPATCH_BACKOFF_FACTOR = 0.85
-    """Per-retry idle deadline multiplier. Attempt n uses base × factor^n."""
+    _DISPATCH_BACKOFF_FACTOR = 1.25
+    """Default per-retry idle deadline multiplier when config omits a value.
 
-    _DISPATCH_BACKOFF_FLOOR_SECONDS = 60.0
-    """Minimum idle deadline after backoff, so retries still allow LLM scheduling."""
+    Values > 1.0 extend the deadline on each retry, giving the LLM more time
+    to recover from transient stalls (network jitter, provider queueing) on
+    subsequent attempts — the right behavior for long-running goal execution
+    where auto-recovery is preferable to fast failure. Override via
+    ``agent.loop.dispatch_idle_backoff_factor``.
+    """
+
+    _DISPATCH_BACKOFF_CAP_SECONDS = 600.0
+    """Default ceiling on the extended idle deadline when config omits a value.
+
+    Caps the growth from the backoff factor so a misbehaving provider cannot
+    stall a step indefinitely. Override via
+    ``agent.loop.dispatch_idle_backoff_cap_seconds``.
+    """
+
+    def _dispatch_backoff_factor(self) -> float:
+        """Configured per-retry idle-deadline multiplier (falls back to default)."""
+        if self._config is None:
+            return self._DISPATCH_BACKOFF_FACTOR
+        return float(self._config.agent.loop.dispatch_idle_backoff_factor)
+
+    def _dispatch_backoff_cap_seconds(self) -> float:
+        """Configured ceiling on the extended idle deadline (falls back to default)."""
+        if self._config is None:
+            return self._DISPATCH_BACKOFF_CAP_SECONDS
+        return float(self._config.agent.loop.dispatch_idle_backoff_cap_seconds)
 
     def _dispatch_idle_seconds_for_attempt(self, attempt: int) -> float:
-        """Idle deadline for a dispatch attempt, with progressive backoff.
+        """Idle deadline for a dispatch attempt, with progressive extension.
 
-        Attempt 0 uses the full base; subsequent attempts shorten the deadline
-        by ``_DISPATCH_BACKOFF_FACTOR`` per retry, floored at
-        ``_DISPATCH_BACKOFF_FLOOR_SECONDS``. This makes genuine deadlocks fail
-        faster on retry instead of waiting the full base each time, while still
-        giving the LLM adequate time to respond on each retry.
+        Attempt 0 uses the full base; subsequent attempts extend the deadline
+        by the configured backoff factor per retry, capped at the configured
+        ceiling. This gives the LLM progressively more time on each retry to
+        recover from transient stalls (network jitter, provider queueing,
+        cold-start latency), favoring auto-recovery over fast failure for
+        long-running goal execution.
         """
         base = self._dispatch_idle_seconds()
         if base <= 0 or attempt <= 0:
             return base
-        scaled = base * (self._DISPATCH_BACKOFF_FACTOR**attempt)
-        return max(self._DISPATCH_BACKOFF_FLOOR_SECONDS, scaled)
+        scaled = base * (self._dispatch_backoff_factor() ** attempt)
+        return min(self._dispatch_backoff_cap_seconds(), scaled)
 
     def _execute_action_retry_max(self) -> int:
         if self._config is None:
@@ -2550,12 +2576,28 @@ class Executor:
                     if dispatch_retries_done >= max_dispatch_retries:
                         raise
                     dispatch_retries_done += 1
+                    # Inter-retry backoff sleep: give the provider/network time
+                    # to recover from transient stalls before re-dispatching.
+                    # Scaled to dispatch_idle_seconds so tests with tiny idle
+                    # thresholds don't block; production values (240s) yield
+                    # real recovery time. Jitter prevents thundering herd on
+                    # parallel step retries hitting the same provider.
+                    base_idle = self._dispatch_idle_seconds()
+                    backoff_sleep = min(
+                        30.0,
+                        base_idle * 0.1 * (2.0**dispatch_retries_done),
+                    ) + random.uniform(0, min(1.0, base_idle))
                     logger.warning(
-                        "[Execute] step %s stream stalled, retrying (dispatch retry %d/%d)",
+                        "[Execute] step %s stream stalled, retrying "
+                        "(dispatch retry %d/%d, idle=%.0fs, backoff=%.1fs)",
                         step.id,
                         dispatch_retries_done,
                         max_dispatch_retries,
+                        self._dispatch_idle_seconds_for_attempt(dispatch_retries_done),
+                        backoff_sleep,
                     )
+                    if backoff_sleep > 0:
+                        await asyncio.sleep(backoff_sleep)
                     # Reuse the same input — the LangGraph checkpoint has
                     # prior tool results so the LLM resumes from there.
                     stream_input_messages = graph_input_messages
@@ -3639,7 +3681,12 @@ class Executor:
         from soothe_deepagents.middleware.llm_rate_limit import EnhancedTimeoutError
 
         if isinstance(exc, DispatchTimeoutError):
-            return f"CoreAgent stream stalled for {exc.timeout_seconds:.0f}s without graph chunks"
+            return (
+                f"CoreAgent stream stalled for {exc.timeout_seconds:.0f}s without "
+                f"graph chunks after exhausting all dispatch retries. This is "
+                f"typically a transient provider/network stall. The step can be "
+                f"re-dispatched to resume from the LangGraph checkpoint."
+            )
 
         if _is_recoverable_tool_network_error(exc):
             return _format_tool_network_error(exc)
