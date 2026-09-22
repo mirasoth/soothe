@@ -28,6 +28,7 @@ VITAL_CATEGORIES: list[str] = [
     "observability",
     "host",
     "daemon",
+    "loop_stall",
 ]
 
 # Optional / deep diagnostics (enabled via --deep or explicit --category)
@@ -211,6 +212,7 @@ class HealthChecker:
             "daemon": lambda: self.check_daemon(require_running=require_running),
             "persistence": self.check_persistence,
             "external_apis": self.check_external_apis,
+            "loop_stall": self.check_loop_stall,
         }
 
         category_results: list[CategoryResult] = []
@@ -293,6 +295,12 @@ class HealthChecker:
         from soothe_daemon.health.checks.external_apis_check import check_external_apis
 
         return await check_external_apis(self.config)
+
+    async def check_loop_stall(self) -> CategoryResult:
+        """Scan running loops for stall signatures (no checkpoint update)."""
+        from soothe_daemon.health.checks.loop_stall_check import check_loop_stall
+
+        return await check_loop_stall(self.config, self.daemon_config)
 
 
 def _upgrade_offline_daemon_to_error(result: CategoryResult) -> CategoryResult:

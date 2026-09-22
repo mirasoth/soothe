@@ -728,6 +728,15 @@ class LoopStatusReconciliationConfig(BaseModel):
         le=1000,
         description="Maximum loops inspected per reconciliation tick",
     )
+    stall_timeout_minutes: int = Field(
+        default=30,
+        ge=5,
+        description=(
+            "Minutes a status=running loop may go without a checkpoint update "
+            "before the daemon health check flags it as stalled. "
+            "Should exceed the runner heartbeat interval (30s) with margin."
+        ),
+    )
 
 
 class MemoryProfilingConfig(BaseModel):

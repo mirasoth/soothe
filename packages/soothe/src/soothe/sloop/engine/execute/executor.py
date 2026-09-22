@@ -357,6 +357,60 @@ class Executor:
             return "auto"
         return str(self._config.agent.loop.execute_deliverable_assess)
 
+    def _token_continuation_enabled(self) -> bool:
+        """Whether max_tokens auto-continuation is enabled."""
+        if self._config is None:
+            return True
+        return bool(self._config.agent.loop.token_continuation_enabled)
+
+    def _token_continuation_max(self) -> int:
+        """Maximum continuation hops per Act-stream pass."""
+        if self._config is None:
+            return 5
+        return max(0, int(self._config.agent.loop.token_continuation_max))
+
+    def _token_continuation_min_delta(self) -> int:
+        """Minimum output_tokens for a continuation to be worthwhile."""
+        if self._config is None:
+            return 500
+        return max(1, int(self._config.agent.loop.token_continuation_min_delta))
+
+    @staticmethod
+    def _detect_max_tokens_truncation(
+        messages: list[BaseMessage],
+    ) -> tuple[bool, int]:
+        """Check whether the last AIMessage hit the max_tokens ceiling.
+
+        Examines `response_metadata` (stop_reason / finish_reason) and
+        `usage_metadata` (output_tokens) on the final AIMessage in the
+        collected stream messages.
+
+        Args:
+            messages: Messages collected from `_stream_and_collect`.
+
+        Returns:
+            A tuple of (truncated, last_delta_tokens). `truncated` is True
+            when the stop reason indicates max_tokens / length truncation.
+            `last_delta_tokens` is the output_tokens from the final AIMessage
+            (0 when unavailable).
+        """
+        ai_messages = [m for m in messages if isinstance(m, AIMessage)]
+        if not ai_messages:
+            return False, 0
+        final_ai = ai_messages[-1]
+        response_meta = getattr(final_ai, "response_metadata", {}) or {}
+        stop_reason = str(response_meta.get("stop_reason") or "").lower()
+        finish_reason = str(response_meta.get("finish_reason") or "").lower()
+        # Provider variants: Anthropic uses stop_reason='max_tokens',
+        # OpenAI uses finish_reason='length'. Some gateways surface
+        # stop_reason='max_tokens' for both.
+        truncated = stop_reason == "max_tokens" or finish_reason == "length"
+        if not truncated:
+            return False, 0
+        usage_meta = getattr(final_ai, "usage_metadata", {}) or {}
+        last_delta_tokens = int(usage_meta.get("output_tokens") or 0)
+        return True, last_delta_tokens
+
     def _executor_langfuse_merge_for_stream(
         self, base: dict[str, Any], *, thread_id: str | None
     ) -> dict[str, Any]:
@@ -2553,25 +2607,146 @@ class Executor:
                     pass_has_tool_error = False
                     pass_execution_metrics: dict[str, int] = {}
 
-                    async for chunk in self._stream_and_collect(
-                        stream,
-                        budget=budget,
-                        step_id=step.id,
-                        step_description=step.description,
-                        pre_streamed_message_ids=checkpoint_message_ids,
-                        dispatch_attempt=dispatch_retries_done,
-                    ):
-                        if chunk.event is not None:
-                            _append_parallel_stream_event(events, chunk.event, live_event_queue)
-                        elif chunk.output is not None:
-                            pass_output = chunk.output
-                            pass_main_tool_call_count = chunk.main_tool_count
-                            pass_subgraph_tool_call_count = chunk.subgraph_tool_count
-                            pass_messages = list(chunk.messages)
-                            pass_delegate_final = chunk.delegate_final
-                            pass_stream_outcomes = list(chunk.outcomes)
-                            pass_has_tool_error = chunk.has_error
-                            pass_execution_metrics = dict(chunk.execution_metrics)
+                    # Token-budget auto-continuation: when the LLM hits
+                    # max_tokens mid-turn, inject a 'continue' nudge and
+                    # re-dispatch the stream so long-form output completes
+                    # across multiple hops. Diminishing-returns detection
+                    # stops continuation when a hop produces too few tokens.
+                    continuation_count = 0
+                    last_delta_tokens = 0
+                    cont_accumulated_output = ""
+                    cont_accumulated_messages: list[BaseMessage] = []
+                    cont_accumulated_outcomes: list[dict[str, Any]] = []
+                    cont_accumulated_delegate = ""
+                    cont_max = self._token_continuation_max()
+                    cont_min_delta = self._token_continuation_min_delta()
+                    cont_enabled = self._token_continuation_enabled() and cont_max > 0
+
+                    current_stream = stream
+                    current_stream_input = stream_input_messages
+                    while True:
+                        async for chunk in self._stream_and_collect(
+                            current_stream,
+                            budget=budget,
+                            step_id=step.id,
+                            step_description=step.description,
+                            pre_streamed_message_ids=checkpoint_message_ids,
+                            dispatch_attempt=dispatch_retries_done,
+                        ):
+                            if chunk.event is not None:
+                                _append_parallel_stream_event(events, chunk.event, live_event_queue)
+                            elif chunk.output is not None:
+                                pass_output = chunk.output
+                                pass_main_tool_call_count = chunk.main_tool_count
+                                pass_subgraph_tool_call_count = chunk.subgraph_tool_count
+                                pass_messages = list(chunk.messages)
+                                pass_delegate_final = chunk.delegate_final
+                                pass_stream_outcomes = list(chunk.outcomes)
+                                pass_has_tool_error = chunk.has_error
+                                pass_execution_metrics = dict(chunk.execution_metrics)
+
+                        # Accumulate across continuation hops.
+                        if continuation_count == 0:
+                            cont_accumulated_output = pass_output
+                            cont_accumulated_messages = list(pass_messages)
+                            cont_accumulated_outcomes = list(pass_stream_outcomes)
+                            cont_accumulated_delegate = pass_delegate_final
+                        else:
+                            if pass_output:
+                                cont_accumulated_output = (
+                                    cont_accumulated_output + pass_output
+                                    if cont_accumulated_output
+                                    else pass_output
+                                )
+                            cont_accumulated_messages.extend(pass_messages)
+                            cont_accumulated_outcomes.extend(pass_stream_outcomes)
+                            if pass_delegate_final:
+                                cont_accumulated_delegate = (
+                                    cont_accumulated_delegate + "\n\n" + pass_delegate_final
+                                )
+
+                        # Check for max_tokens truncation and decide whether
+                        # to continue.
+                        if not cont_enabled:
+                            break
+                        truncated, hop_tokens = self._detect_max_tokens_truncation(pass_messages)
+                        if not truncated:
+                            break
+                        if continuation_count >= cont_max:
+                            logger.info(
+                                "[Execute] step %s max_tokens continuation "
+                                "limit reached (%d/%d); stopping",
+                                step.id,
+                                continuation_count,
+                                cont_max,
+                            )
+                            break
+                        # Diminishing-returns: after 3+ continuations, stop
+                        # when a hop produced fewer than min_delta tokens.
+                        if continuation_count >= 3 and hop_tokens < cont_min_delta:
+                            logger.info(
+                                "[Execute] step %s max_tokens continuation "
+                                "diminishing returns (hop %d: %d tokens < %d "
+                                "min); stopping",
+                                step.id,
+                                continuation_count,
+                                hop_tokens,
+                                cont_min_delta,
+                            )
+                            break
+                        last_delta_tokens = hop_tokens
+                        continuation_count += 1
+                        logger.info(
+                            "[Execute] step %s max_tokens truncation detected "
+                            "(hop %d: %d tokens); injecting continue nudge",
+                            step.id,
+                            continuation_count,
+                            hop_tokens,
+                        )
+                        # Inject a 'continue' HumanMessage so the model
+                        # resumes generating from where it left off. The
+                        # LangGraph checkpoint preserves prior context.
+                        continue_msg = LoopHumanMessage(
+                            content="continue",
+                            thread_id=thread_id,
+                            iteration=None,
+                            goal_summary=None,
+                            workspace=workspace,
+                            phase="execute_step",
+                        )
+                        current_stream_input = [continue_msg]
+                        current_stream = self._core_agent_astream_with_interrupt_resume(
+                            self._execute_graph_input(
+                                current_stream_input,
+                                routing_classification=routing_classification,
+                                response_language=response_language,
+                                workspace=workspace,
+                                continue_loop_mode=continue_loop_mode,
+                                skill_activation=skill_activation,
+                                mcp_state=mcp_state,
+                                tool_activation=tool_activation,
+                            ),
+                            config,
+                            detector=self._clarification_detector,
+                            capture=self._clarification_capture,
+                            loop_state_view=self._clarification_loop_state_view,
+                            origin_node=ORIGIN_EXECUTE,
+                            resume_answer_payload=self._clarification_resume_answer_payload,
+                            step_id=step.id,
+                            step_description=step.full_description or step.description,
+                            step_start_perf=start,
+                            dispatch_attempt=dispatch_retries_done,
+                        )
+
+                    # Merge accumulated continuation results into the pass
+                    # variables so downstream code sees the full output.
+                    if continuation_count > 0:
+                        pass_output = cont_accumulated_output
+                        pass_messages = cont_accumulated_messages
+                        pass_stream_outcomes = cont_accumulated_outcomes
+                        pass_delegate_final = cont_accumulated_delegate
+                        pass_execution_metrics["token_continuation_count"] = continuation_count
+                        pass_execution_metrics["token_continuation_last_delta"] = last_delta_tokens
                 except DispatchTimeoutError:
                     if dispatch_retries_done >= max_dispatch_retries:
                         raise
