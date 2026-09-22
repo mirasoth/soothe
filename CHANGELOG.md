@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Optimize CoreAgent dispatch stall recovery for long-running goals: invert progressive backoff from shortening (0.85^n) to extending (1.25^n) so each dispatch retry gives the LLM more time to recover from transient stalls instead of failing faster. Raise `dispatch_idle_seconds` default 180s→240s and `dispatch_retry_max` default 3→5 (cap 600s per attempt). The growth factor and cap are now configurable via `agent.loop.dispatch_idle_backoff_factor` (default 1.25) and `agent.loop.dispatch_idle_backoff_cap_seconds` (default 600.0), so operators can dial an escalating ramp such as 30s→60s→120s→240s by setting factor=2.0. Add inter-retry backoff sleep with jitter scaled to idle seconds for network stall recovery. Improve the `DispatchTimeoutError` message to indicate retries were exhausted and suggest re-dispatch. Total timeout budget before a step fails is now ~2400s (240 + 300 + 375 + 469 + 586 + 600) across 6 attempts, vs ~440s across 4 attempts before — favoring auto-recovery over fast failure for 24/7 autonomous goal execution.
+### Removed
+- Drop the vestigial `_DISPATCH_BACKOFF_FLOOR_SECONDS` constant: the floor only applied to the old shortening-backoff path and is unused now that retries extend (never shrink) the idle deadline.
+
 ## [v1.0.14] - 2026-09-21
 
 ### Added

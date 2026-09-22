@@ -51,7 +51,9 @@ class TestSootheConfig:
         assert "max_evidence_turns" not in type(cfg.agent.rail).model_fields
         assert "evidence_max_iterations" not in type(cfg.agent.rail).model_fields
         assert cfg.agent.loop.max_iterations == 99
-        assert cfg.agent.loop.dispatch_idle_seconds == 180.0
+        assert cfg.agent.loop.dispatch_idle_seconds == 240.0
+        assert cfg.agent.loop.dispatch_idle_backoff_factor == 1.25
+        assert cfg.agent.loop.dispatch_idle_backoff_cap_seconds == 600.0
         assert cfg.agent.middleware.llm_rate_limit.enabled is True
         assert len(cfg.vector_stores) == 1
         assert cfg.vector_stores[0].name == "sqlite_vec_default"
@@ -140,6 +142,32 @@ class TestSootheConfig:
         )
         assert not hasattr(cfg.agent.loop.concurrency, "max_parallel_goals")
         assert cfg.agent.loop.concurrency.max_parallel_steps == 5
+
+    def test_dispatch_idle_backoff_is_configurable(self) -> None:
+        """Escalating idle deadline honors configurable factor and cap.
+
+        Verifies the spec's "configurable, escalating wait": a custom factor
+        produces base × factor^n capped at the configured ceiling, so operators
+        can dial a 30s→60s→120s→240s-style ramp by setting factor=2.0.
+        """
+        from soothe.config.models import StrangeLoopConfig
+
+        loop = StrangeLoopConfig.model_validate(
+            {
+                "dispatch_idle_seconds": 30.0,
+                "dispatch_idle_backoff_factor": 2.0,
+                "dispatch_idle_backoff_cap_seconds": 240.0,
+            }
+        )
+        assert loop.dispatch_idle_seconds == 30.0
+        assert loop.dispatch_idle_backoff_factor == 2.0
+        assert loop.dispatch_idle_backoff_cap_seconds == 240.0
+
+        base = loop.dispatch_idle_seconds
+        factor = loop.dispatch_idle_backoff_factor
+        cap = loop.dispatch_idle_backoff_cap_seconds
+        schedule = [min(cap, base * (factor**n)) for n in range(5)]
+        assert schedule == [30.0, 60.0, 120.0, 240.0, 240.0]
 
     def test_checkpoint_defaults(self) -> None:
         cfg = SootheConfig()

@@ -1003,16 +1003,18 @@ class StrangeLoopConfig(BaseModel):
         return data
 
     dispatch_idle_seconds: float = Field(
-        default=180.0,
+        default=240.0,
         description=(
             "Deadlock detector: max seconds of stream inactivity when no root-level "
             "tool is pending — i.e. the gap waiting for the LLM to produce its next "
             "chunk after the last tool result. Resets on every real chunk. When it "
             "fires, the step is retried up to dispatch_retry_max times before "
-            "failing. Retries use progressive backoff: each retry shortens the idle "
-            "deadline (attempt n uses base × 0.85^n, floored at 60s), so genuine "
-            "deadlocks fail faster while still giving the LLM adequate time to "
-            "respond on each retry. Default 180s."
+            "failing. Retries use progressive extension: each retry extends the idle "
+            "deadline (attempt n uses base × dispatch_idle_backoff_factor^n, capped "
+            "at dispatch_idle_backoff_cap_seconds), giving the LLM more time to "
+            "recover from transient stalls on subsequent attempts. Default 240s, "
+            "tuned for long-running goal execution where auto-recovery is preferable "
+            "to fast failure."
         ),
         ge=0,
         le=86_400,
@@ -1028,16 +1030,44 @@ class StrangeLoopConfig(BaseModel):
     )
 
     dispatch_retry_max: int = Field(
-        default=3,
+        default=5,
         description=(
             "Max retries when dispatch_idle_seconds fires (0 = no retry, step fails "
             "on first timeout). Retries reuse the LangGraph checkpoint so prior tool "
-            "results are preserved. Each retry shortens the idle deadline via "
-            "progressive backoff (base × 0.85^n, floored at 60s), so total timeout "
-            "budget is less than dispatch_idle_seconds × (dispatch_retry_max + 1)."
+            "results are preserved. Each retry extends the idle deadline via "
+            "progressive extension (base × dispatch_idle_backoff_factor^n, capped "
+            "at dispatch_idle_backoff_cap_seconds) and includes an inter-retry "
+            "backoff sleep with jitter for network stall recovery. Default 5, tuned "
+            "for long-running goal execution."
         ),
         ge=0,
         le=10,
+    )
+
+    dispatch_idle_backoff_factor: float = Field(
+        default=1.25,
+        ge=1.0,
+        le=4.0,
+        description=(
+            "Per-retry multiplier for the dispatch idle deadline. Attempt n uses "
+            "dispatch_idle_seconds × factor^n (capped by "
+            "dispatch_idle_backoff_cap_seconds). Values > 1.0 extend the deadline "
+            "on each retry — the escalating-wait behavior that gives the LLM "
+            "progressively more time to recover from transient stalls before the "
+            "step fails. Default 1.25; set 2.0 for a 30s→60s→120s→240s-style ramp "
+            "(scaled to the configured base)."
+        ),
+    )
+
+    dispatch_idle_backoff_cap_seconds: float = Field(
+        default=600.0,
+        ge=1.0,
+        le=86_400,
+        description=(
+            "Ceiling on the progressively extended dispatch idle deadline, so a "
+            "misbehaving provider cannot stall a step indefinitely. Default 600s "
+            "(10 min) per attempt."
+        ),
     )
 
     execute_min_answer_chars: int = Field(
