@@ -88,7 +88,15 @@ async def test_plan_mode_suppresses_prose_when_expanded() -> None:
 
 @pytest.mark.asyncio
 async def test_agent_mode_shows_execute_prose_on_complete() -> None:
-    """Non-plan (agent) mode step cards still render execute prose in detail."""
+    """Non-plan (agent) mode step cards still render execute prose in detail.
+
+    Completion prose is rendered as themed Markdown (parity with the
+    goal-completion report), so the detail widget holds a
+    ``ThemedMarkdownRenderer`` rather than a plain string. The raw prose
+    is preserved on the card for dedup.
+    """
+    from soothe_cli.display.markdown_theme import ThemedMarkdownRenderer
+
     card = CognitionStepMessage(
         "S-AGENT-01",
         "Execute task",
@@ -103,16 +111,17 @@ async def test_agent_mode_shows_execute_prose_on_complete() -> None:
 
         assert card._card_collapsed is True
 
-        # Expand — detail should show the execute prose.
+        # Expand — detail should show the execute prose as Markdown.
         card.toggle_collapse()
         await pilot.pause()
 
         assert not card._card_collapsed
         assert card._detail_widget is not None
         assert card._detail_widget.display is True
-        assert "Here is the result of the task." in str(
-            getattr(card._detail_widget, "_Static__content", "")
-        )
+        content = getattr(card._detail_widget, "_Static__content", "")
+        assert isinstance(content, ThemedMarkdownRenderer)
+        # Prose is preserved for dedup against goal_completion.
+        assert "Here is the result of the task." in card.last_completed_execute_prose
 
 
 @pytest.mark.asyncio
