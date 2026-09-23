@@ -23,6 +23,7 @@ from soothe_cli.display.card import (
     _assemble_card_header,
     _card_body_gutter,
 )
+from soothe_cli.display.markdown_theme import build_markdown
 from soothe_cli.display.preview_limits import STEP_CARD_FILE_EDIT_PREVIEW_COUNT
 from soothe_cli.runtime.presentation.duration_format import format_duration_ms
 from soothe_cli.settings import get_glyphs
@@ -451,7 +452,7 @@ class CognitionStepMessage(Vertical):
             )
             prose = (self._last_completed_execute_prose or "").strip()
             if prose and not self._suppress_execute_prose:
-                self._detail_widget.update(self._step_branched_execute_body(prose, muted=True))
+                self._detail_widget.update(self._step_markdown_execute_body(prose))
                 self._detail_widget.display = True
             elif self._has_clarification_details:
                 self._detail_widget.display = True
@@ -789,6 +790,24 @@ class CognitionStepMessage(Vertical):
             circle_empty=g.circle_empty,
             style=style,
         )
+
+    def _step_markdown_execute_body(self, body: str) -> Any:
+        """Render completed execute-phase prose as themed markdown.
+
+        Mirrors the goal-completion report rendering: the step's final
+        prose is parsed as Markdown (headings, lists, code blocks, links)
+        via the active markdown theme preset, instead of the plain
+        tree-gutter wrapping used during streaming. Falls back to the
+        branched-prose rendering when Markdown construction fails.
+        """
+        text = (body or "").strip()
+        if not text:
+            return Content("")
+        try:
+            return build_markdown(text, self)
+        except Exception:  # noqa: BLE001  # Degrade gracefully on parse errors.
+            logger.debug("step markdown render failed; falling back to prose", exc_info=True)
+            return self._step_branched_execute_body(text, muted=True)
 
     def _step_branched_error_detail(self, err_text: str) -> Content:
         """Multiline error body: first line `⎿ ✗ …`; continuations `⎿ ○ …`."""
@@ -1314,7 +1333,7 @@ class CognitionStepMessage(Vertical):
             )
             self._sync_step_card_surface()
             if prose and not self._suppress_execute_prose:
-                self._detail_widget.update(self._step_branched_execute_body(prose, muted=True))
+                self._detail_widget.update(self._step_markdown_execute_body(prose))
             elif self._detail_widget is not None:
                 # Clear stale running-display content (e.g. plan markdown in
                 # plan mode) so the detail panel is empty when collapsed.
