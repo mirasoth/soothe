@@ -926,6 +926,7 @@ async def node_execute(ctx: LoopRuntimeContext, state_dict: dict[str, Any]) -> d
         interaction_mode=getattr(ctx, "interaction_mode", None),
         clarification_mode=_resolved_clarification_mode(ctx),
         human_attached=relay is not None,
+        interaction_mode_provider=lambda: getattr(ctx, "interaction_mode", None),
     )
     async for item in run_executor.execute(
         decision=decision,
