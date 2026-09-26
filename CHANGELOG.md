@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.0.16] - 2026-09-27
+
+### Fixed
+- Live-read `interaction_mode` in the executor so a mid-wave hot-swap (e.g. bypass) reaches steps queued in the current wave, not just the next execute node invocation. Falls back to the construction snapshot when no provider is wired.
+
+### Changed
+- Bump `soothe-client-python` floor to 1.0.24 in `soothe-cli` and `soothe-daemon` for `interaction_mode` `plan|bypass` support; pin client submodules (go v0.4.19, python v1.0.24, typescript v0.5.13).
+
+[Compare with previous version]: https://github.com/mirasoth/soothe/compare/v1.0.15...v1.0.16
+
 ## [v1.0.15] - 2026-09-23
 
 ### Added
