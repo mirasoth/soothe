@@ -8,7 +8,7 @@ import logging
 import random
 import time
 import traceback
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from typing import TYPE_CHECKING, Any, Literal
 
 from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, ToolMessage
@@ -297,6 +297,7 @@ class Executor:
         interaction_mode: str | None = None,
         clarification_mode: str | None = None,
         human_attached: bool = False,
+        interaction_mode_provider: Callable[[], str | None] | None = None,
     ) -> None:
         """Initialize the Execute phase.
 
@@ -325,6 +326,11 @@ class Executor:
                 (`auto`/`manual`) propagated to the AutoModeMiddleware gate.
             human_attached: RFC-634 whether a human relay answers
                 interrupts; gates safety escalation vs autopilot reject.
+            interaction_mode_provider: Live-read callable returning the
+                current `interaction_mode` from the runtime context. When
+                set, each step thread reads the latest value (picking up
+                hot-swapped bypass/ask/plan mid-wave) instead of the static
+                snapshot captured at construction time.
         """
         self.core_agent = core_agent
         self._checkpointer = checkpointer
@@ -342,6 +348,7 @@ class Executor:
         self._goal_trace = goal_trace
         self._fast_model = fast_model
         self._interaction_mode = interaction_mode
+        self._interaction_mode_provider = interaction_mode_provider
         self._clarification_mode = clarification_mode
         self._human_attached = human_attached
         # RFC-904 / IG-751: proposals queued by decompose_task during step THREADS.
@@ -2431,8 +2438,15 @@ class Executor:
                     )
                 except (AttributeError, TypeError, ValueError):
                     pass
-            if self._interaction_mode:
-                configurable[SOOTHE_INTERACTION_MODE_KEY] = self._interaction_mode
+            # Live-read interaction_mode so a mid-wave hot-swap (e.g. bypass)
+            # is picked up by steps queued in the current wave — not just the
+            # next execute node invocation. Falls back to the construction
+            # snapshot when no provider is wired (headless/test paths).
+            live_interaction_mode = self._interaction_mode
+            if self._interaction_mode_provider is not None:
+                live_interaction_mode = self._interaction_mode_provider()
+            if live_interaction_mode:
+                configurable[SOOTHE_INTERACTION_MODE_KEY] = live_interaction_mode
             # RFC-634: clarification mode + human attachment for the
             # AutoModeMiddleware inline tool-approval gate.
             if self._clarification_mode:
