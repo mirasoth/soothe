@@ -28,6 +28,26 @@ DEFAULT_MAX_ITERATIONS = 99
 # (DEFAULT_MAX_ITERATIONS) and consecutive rate-limit gate still bound runaway.
 DEFAULT_MAX_TOOL_CALLS_PER_STEP = 500
 
+# StrangeLoop visits ~10 graph nodes per iteration; clarification rounds and
+# plan reviews add cycles that don't increment the iteration counter, so the
+# recursion limit must scale with max_iterations and stay above LangGraph's
+# default (10007) to survive merge_configs.
+_STRANGE_LOOP_RECURSION_MULTIPLIER = 20
+_STRANGE_LOOP_RECURSION_BASE = 500
+
+
+def strange_loop_recursion_limit(max_iterations: int) -> int:
+    """LangGraph recursion_limit for a StrangeLoop graph invoke.
+
+    Scales with `max_iterations`; always exceeds LangGraph's default (10007)
+    so `merge_configs` cannot clamp it back down.
+    """
+    return max(
+        _STRANGE_LOOP_RECURSION_BASE + max(1, max_iterations) * _STRANGE_LOOP_RECURSION_MULTIPLIER,
+        10_008,  # must exceed DEFAULT_RECURSION_LIMIT (10007) to survive merge
+    )
+
+
 # ============================================================================
 # Prompt / Render Character-Cap Registry
 # ============================================================================

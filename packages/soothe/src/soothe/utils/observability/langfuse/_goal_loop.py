@@ -162,6 +162,7 @@ class GoalLoopTrace:
         self,
         *,
         configurable: dict[str, Any],
+        recursion_limit: int | None = None,
     ) -> dict[str, Any]:
         """RunnableConfig for `CompiledGraph.ainvoke` under this trace."""
         base: dict[str, Any] = {
@@ -169,6 +170,8 @@ class GoalLoopTrace:
             "metadata": dict(self.base_metadata()),
             "run_name": self.trace_display_name,
         }
+        if recursion_limit is not None:
+            base["recursion_limit"] = recursion_limit
         merged = merge_langfuse_runnable_config(
             base,
             self.soothe_config,

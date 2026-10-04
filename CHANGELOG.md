@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Scale the StrangeLoop graph `recursion_limit` with `agent.loop.max_iterations` so clarification rounds and plan reviews don't exhaust LangGraph's default budget and abort the loop mid-goal.
+- Deduplicate manual clarification cards on late re-emits: a submitted widget is reused instead of mounting a second question card after the user has already answered.
+
 ## [v1.0.16] - 2026-09-27
 
 ### Fixed

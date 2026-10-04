@@ -18,6 +18,7 @@ from soothe.config.composition import (
 from soothe.config.constants import (
     DEFAULT_EXECUTE_TIMEOUT,
     DEFAULT_MAX_ITERATIONS,
+    strange_loop_recursion_limit,
 )
 from soothe.config.env import SOOTHE_HOME
 from soothe.config.models import (
@@ -81,6 +82,7 @@ __all__ = [
     "DEFAULT_DAEMON_CONFIG_PATH",
     "DEFAULT_MAX_ITERATIONS",
     "DEFAULT_EXECUTE_TIMEOUT",
+    "strange_loop_recursion_limit",
     "SOOTHE_HOME",
     "AgentConfig",
     "AutopilotNotifyConfig",

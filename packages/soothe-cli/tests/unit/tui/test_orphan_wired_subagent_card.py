@@ -400,3 +400,41 @@ async def test_manual_clarification_prefers_active_orphan_step_id() -> None:
         origin_node="plan_mode_review",
     )
     assert key == "HYE_01"
+
+
+@pytest.mark.asyncio
+async def test_manual_clarification_dedup_after_submit() -> None:
+    """A late re-emit after submit reuses the existing widget, not a duplicate."""
+    adapter = _make_adapter()
+    questions = [
+        {
+            "question": "Which phase?",
+            "header": "Next phase",
+            "options": [
+                {"label": "A", "description": "Option A"},
+                {"label": "B", "description": "Option B"},
+            ],
+        }
+    ]
+    key1 = await _mount_manual_clarification_input(
+        adapter,
+        questions=questions,
+        origin_node="execute",
+    )
+    assert key1 == "execute"
+    widget1 = adapter._clarification_input_by_step[key1]
+    assert len(adapter._mounted) == 1  # type: ignore[attr-defined]
+
+    # Simulate user submit: mark submitted but keep in dict (new behavior).
+    widget1._submitted = True  # noqa: SLF001
+    widget1.add_class("is-submitted")
+
+    # Late re-emit with same origin — must NOT mount a second widget.
+    key2 = await _mount_manual_clarification_input(
+        adapter,
+        questions=questions,
+        origin_node="execute",
+    )
+    assert key2 == "execute"
+    assert len(adapter._mounted) == 1  # type: ignore[attr-defined]
+    assert adapter._clarification_input_by_step[key2] is widget1
