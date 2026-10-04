@@ -2928,10 +2928,10 @@ async def _mount_manual_clarification_input(
 ) -> str:
     """Mount (or reuse) the inline clarification answer widget.
 
-    Prefers the paused step id from the wire event, then a running step card,
-    then an active orphan SubAgent card, then a synthetic key from
-    `origin_node`. HITL origins get `allow_custom=False` and an optional plan
-    body; structured dicts render structured mode, plain strings degraded mode.
+    Reuses an existing widget for the same `origin_node` (including one already
+    submitted) to avoid duplicate cards on late re-emits. Otherwise resolves a
+    target step id from the wire event, a running step card, an active orphan
+    SubAgent card, or a synthetic key from `origin_node`.
 
     Returns:
         The step/key used for `adapter._clarification_input_by_step`.
@@ -2948,15 +2948,10 @@ async def _mount_manual_clarification_input(
     if not questions_list:
         return ""
 
-    # Reuse an already-mounted, unanswered widget for this origin. A single
-    # clarification can be announced more than once, and the first mount flips
-    # the step card to "pending", so a re-emit would otherwise resolve a
-    # different key and mount a duplicate question card.
+    # Reuse an already-mounted widget for this origin, including one already
+    # submitted, so a late re-emit does not mount a duplicate question card.
     for _key, _w in adapter._clarification_input_by_step.items():
-        if (
-            not getattr(_w, "_submitted", False)
-            and getattr(_w, "_origin_node", "") == str(origin_node or "").strip()
-        ):
+        if getattr(_w, "_origin_node", "") == str(origin_node or "").strip():
             return _key
 
     target_step_id = str(step_id or "").strip()
@@ -3012,7 +3007,7 @@ async def _mount_manual_clarification_input(
         mount_result = adapter._mount_message(input_widget)
         if mount_result is not None:
             await mount_result
-        return target_step_id
+    return target_step_id
 
 
 async def execute_task_textual(

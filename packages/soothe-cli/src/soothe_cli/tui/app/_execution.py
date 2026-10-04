@@ -232,13 +232,7 @@ class _ExecutionMixin:
         answers: list[str],
         origin_node: str = "",
     ) -> None:
-        """Shared clarification-answer forwarding.
-
-        Renders the answers on the matching step card, disarms stale inline
-        widgets, and hands the answers to `_send_to_agent` so the daemon
-        resumes the suspended loop graph with one answer per question
-        instead of starting a new turn.
-        """
+        """Forward clarification answers to the daemon so the loop graph resumes."""
         adapter = self._ui_adapter
         if adapter is None:
             return
@@ -258,9 +252,12 @@ class _ExecutionMixin:
             except Exception:  # noqa: BLE001
                 logger.debug("Failed to render clarification answers on step card", exc_info=True)
 
-        # Drop tracking; the inline widget itself stays mounted (disabled) so
-        # the user can still see what they answered.
-        adapter._clarification_input_by_step.pop(step_id, None)
+        # Mark the submitted widget so a late re-emit deduplicates against it
+        # instead of mounting a second card. The widget stays mounted (disabled).
+        submitted_widget = adapter._clarification_input_by_step.get(step_id)
+        if submitted_widget is not None:
+            submitted_widget._submitted = True  # noqa: SLF001
+            submitted_widget.add_class("is-submitted")
 
         # A stale empty remount (resume re-emit) can leave another interactive
         # plan-review card. Disable extras so a second click cannot fire a
@@ -282,7 +279,6 @@ class _ExecutionMixin:
                     inp.disabled = True
             except Exception:  # noqa: BLE001
                 logger.debug("Failed to disarm leftover clarification widget", exc_info=True)
-            adapter._clarification_input_by_step.pop(sid, None)
 
         non_empty = [a for a in answers if a.strip()]
         if not non_empty:

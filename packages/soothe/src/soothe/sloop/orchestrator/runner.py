@@ -6,6 +6,7 @@ import logging
 import traceback
 from typing import Any
 
+from soothe.config import strange_loop_recursion_limit
 from soothe.events import STRANGE_LOOP_BREAKPOINT_PAUSED
 from soothe.sloop.orchestrator.builder import build_strange_loop_graph
 from soothe.sloop.orchestrator.checkpoint import strange_loop_configurable
@@ -95,10 +96,14 @@ def build_loop_graph_invoke_config(ctx: LoopRuntimeContext) -> dict[str, Any]:
     configurable = strange_loop_configurable(loop_id, **extra)
 
     cfg = ctx.strange_loop.config
+    recursion_limit = strange_loop_recursion_limit(cfg.agent.loop.max_iterations)
     if ctx.goal_trace is not None:
-        return ctx.goal_trace.graph_invoke_config(configurable=configurable)
+        return ctx.goal_trace.graph_invoke_config(
+            configurable=configurable,
+            recursion_limit=recursion_limit,
+        )
 
-    base = {"configurable": configurable}
+    base: dict[str, Any] = {"configurable": configurable, "recursion_limit": recursion_limit}
     run_name = loop_graph_langfuse_run_display_name(cfg.observability.langfuse.trace_name)
     merged = merge_langfuse_runnable_config(
         base,
