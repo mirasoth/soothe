@@ -176,7 +176,10 @@ def hydrate_inbox(
     When ``current_goal_id`` is provided, entries belonging to a *different*
     goal are silently dropped. This prevents stale clarification interrupts
     from a cancelled prior goal from leaking into the newly submitted goal.
-    Entries without a ``goal_id`` are kept for backward compatibility.
+    Entries without a ``goal_id`` are also dropped when ``current_goal_id``
+    is set — they are legacy entries captured before goal_id tagging was
+    wired in, and keeping them risks dequeuing an interrupt from the wrong
+    goal (the root cause of the approve-tool infinite-loop bug).
     """
     from soothe.sloop.relay.inbox import RelayInbox
 

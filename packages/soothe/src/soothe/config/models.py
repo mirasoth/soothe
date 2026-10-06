@@ -1315,28 +1315,28 @@ def _default_deny_rules() -> list[ToolApprovalRule]:
 
 
 class InlineGateConfig(BaseModel):
-    """RFC-634: `AutoModeMiddleware` inline tool-approval gate config.
+    """`AutoModeMiddleware` inline tool-approval gate config.
 
     The gate evaluates every gated tool call in its `after_model` hook:
-    deny-rule and autopilot-safety rejects resolve inline (error
-    `ToolMessage`, no interrupt); human-decision cases emit the standard
-    `action_requests` interrupt; everything else executes silently.
+    deny-rule and safety rejects resolve inline (error `ToolMessage`, no
+    interrupt); human-decision cases emit the standard `action_requests`
+    interrupt; everything else executes silently.
     """
 
     enabled: bool = True
     tools: list[Literal["edit_file", "write_file", "delete", "run_command"]] = Field(
         default_factory=lambda: ["edit_file", "write_file", "delete", "run_command"]
     )
-    active_in_bypass: bool = True
+    active_in_bypass: bool = False
     """Whether deny rules still reject in bypass interaction mode.
 
-    `True` (default) keeps deny rules absolute across all modes — bypass
-    suppresses safety escalation and interrupts, never the deny list.
+    `False` (default) permits all tool calls in bypass mode. Set to `True`
+    to keep deny rules absolute even in bypass.
     """
 
 
 class AskUserGateConfig(BaseModel):
-    """RFC-635: `AskUserGateMiddleware` inline veritas fast-path config.
+    """`AskUserGateMiddleware` inline veritas fast-path config.
 
     When enabled and clarification mode is `auto`, the gate answers
     confident `ask_user` questions inline (synthetic `ToolMessage`, zero
@@ -1350,7 +1350,7 @@ class AskUserGateConfig(BaseModel):
 
 
 class ToolApprovalConfig(BaseModel):
-    """Deny-list-first tool-approval config (RFC-634 middleware gate).
+    """Deny-list-first tool-approval config.
 
     Two stages: deny rules → safety checks. Any action not matching a deny
     rule or failing a safety check is auto-approved in auto mode. In manual

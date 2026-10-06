@@ -1,4 +1,4 @@
-"""Unit tests for the RFC-634 AutoModeMiddleware inline tool-approval gate."""
+"""Unit tests for the AutoModeMiddleware inline tool-approval gate."""
 
 from __future__ import annotations
 
@@ -112,13 +112,21 @@ class TestDenyRuleReject:
         assert tool_msg.status == "error"
 
     def test_deny_rule_inactive_in_bypass_when_disabled(self) -> None:
-        """active_in_bypass=False: deny-rule evaluation is skipped in bypass
-        (call passes through, safety still skipped)."""
+        """active_in_bypass=False: all evaluation skipped in bypass."""
         state = _state([_tc("run_command", {"command": "apt install foo"})])
         runtime = _Runtime({"soothe_interaction_mode": "bypass"})
-        # Wait — active_in_bypass=False skips ALL evaluation in bypass; the
-        # call executes. (Config default is True; False restores the old
-        # bypass-approves-everything posture.)
+        result = _gate(active_in_bypass=False).after_model(state, runtime)
+        assert result is None
+
+    def test_bypass_permits_all_tool_calls_by_default(self) -> None:
+        """Config default (active_in_bypass=False): all tool calls permitted
+        in bypass mode."""
+        from soothe.config.models import InlineGateConfig
+
+        cfg = InlineGateConfig()
+        assert cfg.active_in_bypass is False
+        state = _state([_tc("run_command", {"command": "apt install foo"})])
+        runtime = _Runtime({"soothe_interaction_mode": "bypass"})
         result = _gate(active_in_bypass=False).after_model(state, runtime)
         assert result is None
 
@@ -521,6 +529,36 @@ class TestClassifierPass:
         gate._classifier_cfg = _classifier_cfg()  # noqa: SLF001
         state = _state([_tc("run_command", {"command": "pytest -xvs"})])
         assert await gate.aafter_model(state, _classifier_runtime()) is None
+
+    @pytest.mark.asyncio
+    async def test_escalate_verdict_interrupts_when_human_attached(self, monkeypatch) -> None:
+        """Classifier escalate with a human: standard action_requests interrupt."""
+        captured = _stub_interrupt(
+            monkeypatch,
+            {"decisions": [{"type": "approve"}]},
+        )
+        gate, _ = self._gate("escalate")
+        state = _state([_tc("run_command", {"command": "pytest -xvs"})])
+        result = await gate.aafter_model(state, _classifier_runtime(human=True))
+        assert len(captured) == 1
+        assert captured[0]["gate_deferred"] is True
+        assert captured[0]["gate_deferred_kind"] == "classifier_escalate"
+        # Approved → tool call kept, no rewrite.
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_escalate_verdict_degrades_to_reject_in_autopilot(self) -> None:
+        """Classifier escalate without a human: instructive reject, no interrupt."""
+        gate, _ = self._gate("escalate")
+        state = _state([_tc("run_command", {"command": "pytest -xvs"})])
+        result = await gate.aafter_model(state, _classifier_runtime(human=False))
+        assert result is not None
+        tool_msg = next(m for m in result["messages"] if isinstance(m, ToolMessage))
+        assert tool_msg.status == "error"
+        assert "classifier" in tool_msg.content
+        # The tool call is stripped from the AI message.
+        ai = result["messages"][0]
+        assert ai.tool_calls == []
 
 
 # ---------------------------------------------------------------------------

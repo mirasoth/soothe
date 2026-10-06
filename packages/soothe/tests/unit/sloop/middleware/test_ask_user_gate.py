@@ -1,4 +1,4 @@
-"""Unit tests for the RFC-635 AskUserGateMiddleware inline veritas fast path."""
+"""Unit tests for the AskUserGateMiddleware inline veritas fast path."""
 
 from __future__ import annotations
 
@@ -619,3 +619,91 @@ class SimpleNamespaceState:
 
     def __init__(self) -> None:
         self.clarification_history: list[dict[str, Any]] = []
+
+
+# ---------------------------------------------------------------------------
+# Bypass mode: ask_human interrupt routed to veritas / retry
+# ---------------------------------------------------------------------------
+
+
+def _bypass_runtime(human: bool = True) -> _Runtime:
+    """Bypass-mode runtime: interaction_mode=bypass overrides clarification_mode."""
+    return _Runtime(
+        {
+            "soothe_interaction_mode": "bypass",
+            "soothe_clarification_mode": "manual",
+            "soothe_human_attached": human,
+            "soothe_veritas_loop_view": _view(),
+            "thread_id": "t1",
+        }
+    )
+
+
+class TestBypassMode:
+    @pytest.mark.asyncio
+    async def test_bypass_activates_gate_regardless_of_clarification_mode(
+        self, monkeypatch
+    ) -> None:
+        """Bypass mode activates the gate even when clarification_mode is manual
+        (the ask_human interrupt is routed to veritas, not the human relay)."""
+        captured = _stub_interrupt(monkeypatch, {"answers": []})
+        _stub_writer(monkeypatch)
+        veritas = _Veritas(_schema(["auto-answer"], confidence=0.9))
+        state = _state([_ask_tc(["Which option?"])])
+        result = await _gate(veritas).aafter_model(state, _bypass_runtime(human=True))
+        # Veritas was called (gate activated despite manual mode).
+        assert len(veritas.requests) == 1
+        # Confident answer inlined — no human interrupt.
+        assert captured == []
+        tool_msg = next(m for m in result["messages"] if isinstance(m, ToolMessage))
+        assert "auto-answer" in tool_msg.content
+
+    @pytest.mark.asyncio
+    async def test_bypass_defer_routes_to_retry_not_human(self, monkeypatch) -> None:
+        """Bypass mode: defer outcome uses the retry sentinel instead of
+        interrupting the human relay."""
+        captured = _stub_interrupt(monkeypatch, {"answers": ["human says X"]})
+        _stub_writer(monkeypatch)
+        veritas = _Veritas(_schema(defer=True, rationale="no evidence"))
+        state = _state([_ask_tc(["What DB?"])])
+        result = await _gate(veritas).aafter_model(state, _bypass_runtime(human=True))
+        # No human interrupt in bypass mode.
+        assert captured == []
+        tool_msg = next(m for m in result["messages"] if isinstance(m, ToolMessage))
+        assert "(retry)" in tool_msg.content
+
+    @pytest.mark.asyncio
+    async def test_bypass_low_confidence_routes_to_retry(self, monkeypatch) -> None:
+        """Bypass mode: low-confidence outcome uses the retry sentinel."""
+        captured = _stub_interrupt(monkeypatch, {"answers": []})
+        _stub_writer(monkeypatch)
+        veritas = _Veritas(_schema(["maybe"], confidence=0.1))
+        state = _state([_ask_tc(["Which option?"])])
+        result = await _gate(veritas).aafter_model(state, _bypass_runtime(human=True))
+        assert captured == []
+        tool_msg = next(m for m in result["messages"] if isinstance(m, ToolMessage))
+        assert "(retry)" in tool_msg.content
+
+    @pytest.mark.asyncio
+    async def test_bypass_veritas_exception_routes_to_retry(self, monkeypatch) -> None:
+        """Bypass mode: veritas exception uses the retry sentinel."""
+        captured = _stub_interrupt(monkeypatch, {"answers": []})
+        _stub_writer(monkeypatch)
+        veritas = _Veritas(RuntimeError("llm down"))
+        state = _state([_ask_tc(["Q?"])])
+        result = await _gate(veritas).aafter_model(state, _bypass_runtime(human=True))
+        assert captured == []
+        tool_msg = next(m for m in result["messages"] if isinstance(m, ToolMessage))
+        assert "(retry)" in tool_msg.content
+
+    @pytest.mark.asyncio
+    async def test_bypass_confident_answer_inlined(self, monkeypatch) -> None:
+        """Bypass mode: confident veritas answer is inlined just like auto mode."""
+        captured = _stub_interrupt(monkeypatch, {"answers": []})
+        _stub_writer(monkeypatch)
+        veritas = _Veritas(_schema(["go with plan B"], confidence=0.95))
+        state = _state([_ask_tc(["Which plan?"])])
+        result = await _gate(veritas).aafter_model(state, _bypass_runtime(human=True))
+        assert captured == []
+        tool_msg = next(m for m in result["messages"] if isinstance(m, ToolMessage))
+        assert "go with plan B" in tool_msg.content
