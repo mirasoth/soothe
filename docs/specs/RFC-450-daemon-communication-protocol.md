@@ -8,7 +8,7 @@
 **Authors**: Soothe Team
 **Updated**: 2026-06-28
 **Dependencies**: RFC-000, RFC-001, RFC-500, RFC-614, RFC-403, RFC-900
-**Related**: RFC-620 (Channel Architecture), RFC-228 (Autopilot Job IPC), RFC-503 (Loop-First UX), RFC-504 (Loop Management CLI Commands), RFC-454 (Slash Command Architecture)
+**Related**: RFC-620 (Channel Architecture), RFC-450 §9 (Job RPC Methods — absorbs legacy RFC-228), RFC-503 (Loop-First UX), RFC-504 (Loop Management CLI Commands), RFC-454 (Slash Command Architecture)
 
 ## Abstract
 
@@ -205,7 +205,7 @@ Pure JSON-RPC would require encoding streaming as repeated `result` objects with
 
 An AsyncAPI-style envelope (`{type, payload, request_id, version}`) merges the operation name into `type` (e.g., `type: "loop_get"`), which is what the previous protocol did. This causes two problems:
 
-1. **Collision**: `type: "command"` was used by both slash commands (`{cmd: "/exit"}`) and RPC commands (`{command: "autopilot_status"}`). There was no way to distinguish them structurally.
+1. **Collision**: `type: "command"` was used by both slash commands (`{cmd: "/exit"}`) and RPC commands (`{command: "job_status"}`). There was no way to distinguish them structurally.
 2. **Flat params**: Operation fields sat at the top level alongside protocol fields (`type`, `request_id`), creating naming collision risk and making schema validation of the operation payload awkward.
 
 The hybrid separates `type` (message class) from `method` (operation name), and nests operation fields in `params`.
@@ -436,7 +436,7 @@ PARAMS_REGISTRY: dict[tuple[str, str | None], type[BaseModel]] = {
     ("request", "auth_refresh"): AuthRefreshParams,
     ("request", "rpc_command"): RpcCommandParams,
     ("notification", "slash_command"): SlashCommandParams,
-    ("subscribe", "autopilot_events"): AutopilotSubscribeParams,
+    ("subscribe", "job_events"): JobEventsSubscribeParams,
     ("notification", "disconnect"): DisconnectParams,
     ("connection_init", None): ConnectionInitParams,
 }
@@ -631,7 +631,7 @@ The protocol SHALL use JSON-RPC's numeric code scheme with reserved ranges:
 |------|------|-------------|----------|
 | -32400 | `SKILL_LOAD_FAILED` | Skill failed to load | Error |
 | -32401 | `RUNNER_UNAVAILABLE` | SootheRunner not available | Fatal |
-| -32402 | `AUTOPILOT_NOT_READY` | Autopilot subsystem not ready | Warn |
+| -32402 | `LOOP_RAIL_NOT_READY` | Loop-rail subsystem not ready | Warn |
 | -32403 | `CARD_MANAGER_UNAVAILABLE` | Card manager not available | Error |
 | -32404 | `CARDS_FETCH_FAILED` | Failed to fetch cards | Error |
 | -32405 | `LOOP_CONTEXT_ERROR` | Loop context operation failed | Error |
@@ -706,7 +706,7 @@ class ErrorCode(IntEnum):
     # Operation failures
     SKILL_LOAD_FAILED = -32400
     RUNNER_UNAVAILABLE = -32401
-    AUTOPILOT_NOT_READY = -32402
+    LOOP_RAIL_NOT_READY = -32402
     CARD_MANAGER_UNAVAILABLE = -32403
     CARDS_FETCH_FAILED = -32404
     LOOP_CONTEXT_ERROR = -32405
@@ -941,7 +941,7 @@ The `method` field (within request/notification/subscribe) carries the operation
 | Method | `type` | Description |
 |--------|--------|-------------|
 | `loop_events` | `subscribe` | Subscribe to loop event stream |
-| `autopilot_events` | `subscribe` | Subscribe to autopilot worker events |
+| `job_events` | `subscribe` | Subscribe to loop-rail worker events |
 
 Subscription lifecycle: `subscribe` (start) → `next` (stream events) → `complete` (explicit termination) or `unsubscribe` (client cancel) or `error` (stream error, terminates).
 
@@ -986,7 +986,7 @@ Subscription lifecycle: `subscribe` (start) → `next` (stream events) → `comp
 | Method | `type` | Description |
 |--------|--------|-------------|
 | `slash_command` | `notification` | Slash command (e.g., `/exit`, `/cancel`, `/plan`) |
-| `rpc_command` | `request` | Structured RPC command (e.g., `autopilot_status`) |
+| `rpc_command` | `request` | Structured RPC command (e.g., `job_status`) |
 
 #### Connection Methods
 
@@ -1004,11 +1004,11 @@ For `invoke_skill`, the daemon MUST send a single `response` (matching `id` when
 
 The previous protocol had two structurally different messages sharing `type: "command"`:
 - **Slash commands** (TUI): `{"type": "command", "cmd": "/exit"}` — enqueues raw slash command to loop dispatcher.
-- **RPC commands** (headless CLI): `{"type": "command", "command": "autopilot_status", "request_id": "cmd_1", "payload": {}}` — structured RPC with correlation.
+- **RPC commands** (headless CLI): `{"type": "command", "command": "job_status", "request_id": "cmd_1", "payload": {}}` — structured RPC with correlation.
 
 In protocol-1, these are structurally separated:
 - `slash_command` (notification, no `id`): `{"method": "slash_command", "params": {"cmd": "/exit"}}`
-- `rpc_command` (request, with `id`): `{"method": "rpc_command", "params": {"command": "autopilot_status", "payload": {}}}`
+- `rpc_command` (request, with `id`): `{"method": "rpc_command", "params": {"command": "job_status", "payload": {}}}`
 
 The `type` field distinguishes notification vs request, and `method` distinguishes the operation. The collision is structurally eliminated.
 
@@ -1180,7 +1180,7 @@ components:
       payload:
         oneOf:
           - $ref: '#/components/schemas/loopEventsSubscribe'
-          - $ref: '#/components/schemas/autopilotEventsSubscribe'
+          - $ref: '#/components/schemas/jobEventsSubscribe'
     next:
       title: Stream event
       correlationId:
@@ -1374,8 +1374,8 @@ This appendix provides an informative mapping from the previous wire format to t
 | `job_cancel` | C→S | `request` | `job_cancel` | |
 | `job_dag` | C→S | `request` | `job_dag` | |
 | `job_guidance` | C→S | `request` | `job_guidance` | |
-| `autopilot_subscribe` | C→S | `subscribe` | `autopilot_events` | Lifecycle change |
-| `autopilot_unsubscribe` | C→S | `unsubscribe` | — | Uses `id` from subscribe |
+| `job_subscribe` | C→S | `subscribe` | `job_events` | Lifecycle change |
+| `job_unsubscribe` | C→S | `unsubscribe` | — | Uses `id` from subscribe |
 | `skills_list` | C→S | `request` | `skills_list` | |
 | `models_list` | C→S | `request` | `models_list` | |
 | `invoke_skill` | C→S | `request` | `invoke_skill` | |
@@ -1419,7 +1419,7 @@ This appendix provides an informative mapping from the previous string error cod
 | `JOB_COMPLETED` | -32302 | `JOB_COMPLETED` | State conflict |
 | `SKILL_LOAD_FAILED` | -32400 | `SKILL_LOAD_FAILED` | Operation failure |
 | `RUNNER_UNAVAILABLE` | -32401 | `RUNNER_UNAVAILABLE` | Operation failure |
-| `AUTOPILOT_NOT_READY` | -32402 | `AUTOPILOT_NOT_READY` | Operation failure |
+| `AUTOPILOT_NOT_READY` | -32402 | `LOOP_RAIL_NOT_READY` | Operation failure |
 | `CARD_MANAGER_UNAVAILABLE` | -32403 | `CARD_MANAGER_UNAVAILABLE` | Operation failure |
 | `CARDS_FETCH_FAILED` | -32404 | `CARDS_FETCH_FAILED` | Operation failure |
 | `LOOP_CONTEXT` | -32405 | `LOOP_CONTEXT_ERROR` | Operation failure |

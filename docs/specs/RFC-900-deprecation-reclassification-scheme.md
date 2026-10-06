@@ -89,12 +89,18 @@ The following RFCs should be marked as **Deprecated**:
 |-----|-----------------|---------------|--------------|-------------------|
 | RFC-200 | Archived | RFC-222 (control flow), RFC-625 (GoalEngine deleted) | 2026-06-19 | Control flow replaced by autopilot push model, GoalEngine deleted |
 | RFC-203 | Archived | RFC-626 | 2026-06-19 | LoopState eliminated, consolidated into ExecutionState |
+| RFC-204 | Archived | RFC-231 (LoopRail + Rail Exec; §4.1 report-commit judgment absorbed) | 2026-10-07 | Legacy `soothe-autopilot` package removed; report-commit pattern absorbed into RFC-231 §4.1; UX surfaces moved to RFC-500/504 + RFC-450; dreaming removed (CE opportunistic dispatch only) |
 | RFC-216 | Archived | RFC-207 | 2026-06-19 | Thread lifecycle and automatic switching incorporated into RFC-207 |
+| RFC-222 | Archived | RFC-231 (LoopRailService runtime §4 + §14 component map) | 2026-10-07 | Legacy `AutopilotService` daemon runtime replaced by `LoopRailService`; worker dispatch + CE integration absorbed into RFC-231 |
+| RFC-228 | Archived | RFC-450 (`job_*` IPC commands), RFC-231 (rail selection §10) | 2026-10-07 | `autopilot_*` IPC prefix dropped; commands renamed `job_*` and live under unified daemon protocol (RFC-450) |
+| RFC-229 | Archived | RFC-231 (§18 cron as external submit path), RFC-450 (cron IPC) | 2026-10-07 | Cron service is no longer autopilot-specific; dispatches due jobs as ordinary loop-rail submissions via RFC-450 |
+| RFC-230 | Archived | RFC-231 (§4 job maturity + §8 maturity predicates) | 2026-10-07 | Job maturity hooks absorbed into RFC-231; no longer autopilot-specific |
 | RFC-300 | Archived | RFC-302, RFC-303 | 2026-06-19 | Combined spec split into separate ContextProtocol and MemoryProtocol specs |
 | RFC-411 | Archived | RFC-413 | 2026-06-19 | Event stream replay replaced by server-owned display card ledger |
 | RFC-505 | Archived | RFC-629 | 2026-06-04 | Desktop client architecture removed from monorepo (separate archival process) |
-| RFC-605 | Archived | RFC-613 | 2026-06-19 | Fixed wave-based search replaced by LLM-orchestrated iterative search |
+| RFC-605 | Archived | — (CoreAgent file tools cover readonly recon) | 2026-08-17 | Explorer/explore subagent removed entirely |
 | RFC-613 | Archived | — (CoreAgent file tools cover readonly recon) | 2026-08-17 | Explorer/explore subagent removed entirely |
+| RFC-625 | Archived | RFC-231 (§17 CE `GoalNode.report` commit), RFC-624 (Context Engine) | 2026-10-07 | `AutopilotMonitor` + dreaming submodule part of removed `soothe-autopilot` package; CE `GoalNode.report` projection + `commit_goal_report` + `goal_report_committed` trigger absorbed into RFC-231 §17; CE itself remains in RFC-624 |
 | RFC-700 | Archived | RFC-629 | 2026-06-04 | Desktop app product redesign removed from monorepo (separate archival process) |
 
 All archived RFCs have been moved to `docs/archive/specs/` with detailed archive documentation.

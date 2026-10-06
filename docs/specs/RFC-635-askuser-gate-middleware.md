@@ -42,20 +42,36 @@ preserving every RFC-622/623 contract including the seven-day
    cannot break it.
 3. **No double LLM.** The marker tells `AutoClarificationPolicy` to skip its
    veritas call and go straight to the fallback ladder (human when attached,
-   autopilot retry sentinel, hard defer).
+   loop-rail retry sentinel, hard defer).
 4. **Wire-shape compatibility.** The gate's interrupt payload matches the
    `ask_user` tool's (`{"type": "ask_user", "questions": [...]}`) so the
    detector, relay, TUI, and resume payload builder are unchanged; its
    synthetic `ToolMessage` uses the tool's own `_format_answers` rendering
    so the model's contract is identical.
 
-## 3. Decision table (per `ask_user` tool call, auto mode only)
+## 3. Decision table (per `ask_user` tool call, auto AND bypass mode)
 
-| Veritas result | Human attached | Autopilot |
-|---|---|---|
-| Confident answer (`classify == None`) | strip + synthetic `ToolMessage` (answers) — **no interrupt** | same |
-| Defer / low confidence / answer-is-question / veritas failure | strip + gate `interrupt()` with `gate_deferred` marker → station → human relay (interactive pause) | retry sentinel inline (`(retry)` per question, no interrupt); retry disabled → gate `interrupt()` + marker → station → `ClarificationDeferredError` → **park** |
-| Gate exception / missing context / manual mode / gate disabled | leave the call — the tool's own interrupt and today's flow run unchanged | same |
+The gate fires in **both** auto clarification mode and bypass interaction
+mode — the design rule is "auto AND bypass both route `ask_user` to veritas
+inline". Manual clarification mode is unchanged (the tool interrupts and the
+station routes to `InteractiveClarificationPolicy` exactly as today).
+
+| Veritas result | Mode | Human attached | Loop-rail headless run |
+|---|---|---|---|
+| Confident answer (`classify == None`) | auto OR bypass | strip + synthetic `ToolMessage` (answers) — **no interrupt** | same |
+| Defer / low confidence / answer-is-question / veritas failure | auto | strip + gate `interrupt()` with `gate_deferred` marker → station → human relay (interactive pause) | retry sentinel inline (`(retry)` per question, no interrupt); retry disabled → gate `interrupt()` + marker → station → `ClarificationDeferredError` → **park** (RFC-622 §13 / RFC-623) |
+| Defer / low confidence / answer-is-question / veritas failure | bypass | same as auto: strip + gate `interrupt()` with `gate_deferred` marker → station → human relay (interactive pause) | retry sentinel inline (`(retry)` per question, no interrupt); retry disabled → gate `interrupt()` + marker → station → `ClarificationDeferredError` → **park**. **Bypass does NOT auto-permit `ask_user` silently** — veritas always runs first. |
+| Gate exception / missing context / manual mode / gate disabled | any | leave the call — the tool's own interrupt and today's flow run unchanged | same |
+
+**Why bypass mode also routes through veritas (rather than silently
+auto-permitting):** the design rule for bypass mode is "all *tool calls*
+permitted" — `ask_user` is special because it is not a mutation but a request
+for information the model needs to proceed. Silently auto-permitting it would
+return an empty answer and spin the model (the original bug RFC-622 was built
+to fix). Routing through veritas in bypass mode gives the model a real answer
+when veritas is confident, and falls back to the retry sentinel / hard defer
+when not — same posture as auto mode, just without the manual-relay
+interruption path when no human is attached.
 
 Fail-safe: any evaluation error leaves the call untouched (today's
 authoritative station path remains fully intact).

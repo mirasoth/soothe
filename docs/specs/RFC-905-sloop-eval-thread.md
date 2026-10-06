@@ -57,7 +57,7 @@ Coverage is not a boolean on leaf status. It needs:
 ## Non-Goals
 
 1. Replacing RFC-219 FINALIZE / goal-completion synthesis.
-2. Autopilot `evaluate_goal_completion` / consensus (outside StrangeLoop).
+2. LoopRail `evaluate_goal_completion` / consensus (outside StrangeLoop).
 3. Reviving per-iteration `EVALUATE` / `PlanGapAnalysis` / `StatusAssessment`.
 4. Keyword or regex judgment of worker prose (RFC-630). Early-exit is a
    **structured** `StepCloseReport`.
@@ -343,7 +343,7 @@ that silently skips Eval when it is required.
 - Fresh `fork_thread_id` for eval (not last action thread).
 - Identical continuation fingerprint → FAIL, not another eval wave.
 - Chitchat and no-CE `terminal_after_execute` never insert eval.
-- Autopilot `apply_llm_subgoals` unaffected.
+- LoopRail `apply_llm_subgoals` unaffected.
 
 Do not weaken tests to treat worker “next steps” prose as early-exit
 without `StepCloseReport`.

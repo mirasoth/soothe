@@ -13,19 +13,6 @@ from soothe_sdk.core.events import (
 )
 
 from .catalog import (
-    AUTOPILOT_CHECKPOINT_SAVED,
-    AUTOPILOT_DREAMING_COMPLETED,
-    AUTOPILOT_DREAMING_STARTED,
-    AUTOPILOT_FEEDBACK_SENT,
-    AUTOPILOT_GOAL_BLOCKED,
-    AUTOPILOT_GOAL_COMPLETED,
-    AUTOPILOT_GOAL_CREATED,
-    AUTOPILOT_GOAL_REPORTED,
-    AUTOPILOT_GOAL_SUSPENDED,
-    AUTOPILOT_GOAL_VALIDATED,
-    AUTOPILOT_MODE_SWITCHED,
-    AUTOPILOT_RELATIONSHIP_DETECTED,
-    AUTOPILOT_STATUS_CHANGED,
     BRANCH_ANALYZED,
     BRANCH_CREATED,
     BRANCH_PRUNED,
@@ -72,7 +59,6 @@ from .catalog import (
     WIRED_SUBAGENT_COMPLETED,
     WIRED_SUBAGENT_FAILED,
     WIRED_SUBAGENT_STARTED,
-    AutopilotModeSwitchedEvent,
     CheckpointSavedEvent,
     ConfigReloadedEvent,
     DaemonHeartbeatEvent,
@@ -179,19 +165,6 @@ __all__ = [
     "POLICY_DENIED",
     "CONFIG_RELOADED",
     "DAEMON_HEARTBEAT",
-    "AUTOPILOT_STATUS_CHANGED",
-    "AUTOPILOT_GOAL_CREATED",
-    "AUTOPILOT_GOAL_REPORTED",
-    "AUTOPILOT_GOAL_COMPLETED",
-    "AUTOPILOT_DREAMING_STARTED",
-    "AUTOPILOT_DREAMING_COMPLETED",
-    "AUTOPILOT_GOAL_VALIDATED",
-    "AUTOPILOT_GOAL_SUSPENDED",
-    "AUTOPILOT_FEEDBACK_SENT",
-    "AUTOPILOT_RELATIONSHIP_DETECTED",
-    "AUTOPILOT_CHECKPOINT_SAVED",
-    "AUTOPILOT_GOAL_BLOCKED",
-    "AUTOPILOT_MODE_SWITCHED",
     "GOAL_DECOMPOSED",
     "GOAL_REMOVED",
     "PLUGIN_LOADED",
@@ -255,7 +228,6 @@ __all__ = [
     "GoalDeferredEvent",
     "GoalDecomposedEvent",
     "GoalRemovedEvent",
-    "AutopilotModeSwitchedEvent",
 ]
 
 
@@ -329,27 +301,5 @@ def __getattr__(name: str) -> object:
         from .internal_events import InternalFileConflictEvent
 
         return InternalFileConflictEvent
-
-    # Internal autopilot events
-    if name == "InternalAutopilotStartedEvent":
-        from .internal_events import InternalAutopilotStartedEvent
-
-        return InternalAutopilotStartedEvent
-    if name == "InternalAutopilotStoppedEvent":
-        from .internal_events import InternalAutopilotStoppedEvent
-
-        return InternalAutopilotStoppedEvent
-    if name == "InternalLoopPoolChangedEvent":
-        from .internal_events import InternalLoopPoolChangedEvent
-
-        return InternalLoopPoolChangedEvent
-    if name == "InternalAutopilotDreamingEvent":
-        from .internal_events import InternalAutopilotDreamingEvent
-
-        return InternalAutopilotDreamingEvent
-    if name == "InternalAutopilotAwakeEvent":
-        from .internal_events import InternalAutopilotAwakeEvent
-
-        return InternalAutopilotAwakeEvent
 
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -48,7 +48,7 @@ class CronService:
         """Initialize CronService.
 
         Args:
-            config: Host configuration (provides cron + autopilot.default_rail).
+            config: Host configuration (provides cron + rail.default_rail).
             loop_input_dispatcher: Daemon LoopInputDispatcher used to enqueue
             loop_input messages carrying `autopilot_rail_id` for the
             loop-native submission path.
@@ -206,17 +206,17 @@ class CronService:
             Created CronJob with id and next_run set.
 
         Raises:
-            AutopilotDisabledError: If autopilot scheduling is disabled or no
+            AutopilotDisabledError: If rail scheduling is disabled or no
             dispatch rail_id is configured.
             ExtractionError: If NL extraction fails.
             DuplicateCronJobError: If an equivalent active job already exists.
             ValueError: If max_jobs limit exceeded.
         """
-        if not self._config.agent.autopilot.enabled or self._resolve_dispatch_rail_id() is None:
+        if self._resolve_dispatch_rail_id() is None:
             logger.warning(
                 "Cron job submission rejected: dispatch path not configured "
-                "(autopilot.enabled=%s, user=%s)",
-                self._config.agent.autopilot.enabled,
+                "(rail.default_rail=%s, user=%s)",
+                self._resolve_dispatch_rail_id(),
                 user_id,
             )
             raise AutopilotDisabledError(AUTOPILOT_REQUIRED_FOR_CRON)
@@ -338,10 +338,10 @@ class CronService:
     def _resolve_dispatch_rail_id(self) -> str | None:
         """Return the rail id to bind for cron-dispatched goals.
 
-        Uses `agent.autopilot.default_rail` from the host config. Returns
+        Uses `agent.rail.default_rail` from the host config. Returns
         `None` when no rail is configured (dispatch is rejected upstream).
         """
-        rail_id = getattr(self._config.agent.autopilot, "default_rail", None)
+        rail_id = getattr(self._config.agent.rail, "default_rail", None)
         if isinstance(rail_id, str) and rail_id.strip():
             return rail_id.strip()
         return None

@@ -2,11 +2,15 @@
 
 **RFC**: 229
 **Title**: Cron Service for Autopilot — Natural Language Scheduled Jobs
-**Status**: Implemented (partial)
+**Status**: Archived
+**Superseded By**: RFC-231 (LoopRail + Rail Exec; §18 cron as external submit path), RFC-450 (Daemon Communication Protocol)
+**Superseded Date**: 2026-10-07
+**Archive Reason**: Cron service is no longer autopilot-specific — it dispatches due jobs through the unified daemon protocol as ordinary loop-rail job submissions (RFC-231 §18). Cron IPC commands fold into RFC-450's `cron_*` namespace. Legacy `soothe-autopilot` package removed.
+**Archive Date**: 2026-10-07
 **Kind**: Architecture Design
 **Created**: 2026-06-24
 **Authors**: Soothe Team
-**Updated**: 2026-07-03
+**Updated**: 2026-10-07
 **Dependencies**: RFC-204 (Autopilot Mode), RFC-222 (Autopilot and Goal Engine Architecture), RFC-802 (Persistence Architecture)
 **Related**: RFC-450 (Daemon Communication Protocol)
 

@@ -5,25 +5,26 @@
 **Status**: Draft
 **Kind**: Architecture Design
 **Created**: 2026-08-07
-**Updated**: 2026-08-08
+**Updated**: 2026-10-07
 **Authors**: Soothe Team
-**Depends on**: RFC-204, RFC-222, RFC-228, RFC-230, RFC-625, RFC-626, RFC-630
-**Related**: RFC-232 (flat WavePlan wire ingest), LoopRail design draft
-(`docs/drafts/2026-07-11-loop-rail-design.md`),
+**Depends on**: RFC-624 (Context Engine), RFC-626 (Entity Model Consolidation), RFC-630 (Start-Phase LLM Intake)
+**Related**: RFC-232 (flat WavePlan wire ingest), RFC-622 (CoreAgent Clarification Relay), RFC-634 (AutoModeMiddleware inline tool-approval gate), RFC-635 (AskUserGateMiddleware), RFC-450 (Daemon Communication Protocol)
+**Supersedes**: RFC-204 (Autopilot Mode — report-commit judgment §1.3 absorbed into §4), RFC-222 (Autopilot Daemon — `LoopRailService` runtime defined here), RFC-228 (Autopilot Job IPC — `job_*` commands live under RFC-450), RFC-229 (Cron Service — §18 external submit path), RFC-230 (Job Maturity — §4 + §8), RFC-625 (AutopilotMonitor + CE unification — §17 CE `GoalNode.report` commit). All six archived 2026-10-07; see `docs/impl/IG-779-rfc-autopilot-cleansing-and-mode-alignment.md` for the cleansing rationale and migration mapping.
+**Promotes / extends**: LoopRail design draft (normative architecture for
+job-scoped rails; this RFC adds Rail Exec and user-defined verb bodies),
+`docs/drafts/2026-07-11-loop-rail-design.md`,
 design draft `docs/drafts/2026-08-08-llm-rail-auto-pick-design.md` (§10 selection),
 design draft `docs/drafts/2026-08-08-streaming-slice-dag-worktree-lifecycle-design.md`
 (§9 streaming slice DAG + host worktrees),
 design draft `docs/archive/drafts/2026-08-08-autopilot-report-commit-judgment-design.md`,
 IG-678, IG-687, IG-691, IG-692, IG-693, IG-700, IG-704, IG-714, IG-715, IG-720,
 IG-728 (LLM rail auto-pick)
-**Promotes / extends**: LoopRail design draft (normative architecture for
-job-scoped rails; this RFC adds Rail Exec and user-defined verb bodies)
 **Amended by**: RFC-232 (§9 — flat wire / nesting reject + optional slice
 `depends_on`); IG-728 implements §10 LLM auto-pick
 
 ## Abstract
 
-LoopRail is the job-scoped, event-driven workflow pattern system for Autopilot:
+LoopRail is the **loop's** job-scoped, event-driven workflow-pattern system:
 YAML rails declare **when** orchestration should act; a rail-agnostic runtime
 applies **what** to the ContextEngine goal DAG. This RFC formalizes that
 architecture and specifies **Rail Exec**: catalog verbs invoked by `flow` /
@@ -33,10 +34,22 @@ per `rail_id`. Custom rails under the three-tier catalog can reach the same
 power as shipped builtins (including **streaming slice fan-out** and host
 worktree merge) without forking the executor.
 
-**Layering (normative):** LoopRail is consumed only by AutopilotService. The
+**Layering (normative):** LoopRail is consumed only by `LoopRailService`
+(the loop-rail-aware service that binds rails, judges
+`goal_report_committed`, schedules workers, and runs job maturity). The
 Context Engine never reads rail YAML. CE goals execute in streaming parallel
 under pool concurrency and `depends_on` readiness — with **no wave or stage
 execution boundary** in CE.
+
+> **Cleansing note (2026-10-07):** This RFC was originally written in legacy
+> `Autopilot` / `AutopilotService` terminology inherited from the now-archived
+> RFC-204 / RFC-222 / RFC-625. The legacy `soothe-autopilot` package has been
+> removed from the monorepo; rails live under `soothe/rails/`. This RFC now
+> uses `LoopRailService` throughout and absorbs the still-normative
+> report-commit judgment (RFC-204 §1.3) and CE `GoalNode.report` commit
+> (RFC-625) into §4 and §17 so it is self-contained. See
+> [IG-779](../impl/IG-779-rfc-autopilot-cleansing-and-mode-alignment.md) for
+> the full migration mapping.
 
 ## 1. Problem
 
@@ -58,15 +71,16 @@ alone.
 
 ## 2. Goals
 
-1. **Promote** LoopRail as the normative Autopilot workflow-pattern layer
-   (event → guard → verb → CE DAG), aligned with RFC-222 / RFC-230 invariants.
+1. **Promote** LoopRail as the normative loop workflow-pattern layer
+   (event → guard → verb → CE DAG), aligned with the CE / `LoopRailService`
+   invariants.
 2. Introduce **Rail Exec**: a rail-agnostic interpreter of catalog verb bodies.
 3. Allow each catalog verb body to be defined as **verbs (L0 primitives)**,
    **NL** (brief / intent), or **hybrid** — data in rail YAML, not `rail_id`
    switches in Python.
 4. Keep **CE primitives closed** and framework-owned (atomicity, resume, trace).
 5. Preserve **fan-out as rail policy** (`fanout:` + flat WavePlan into a
-   **slice catalog** on job state). Autopilot grows the CE DAG by spawning
+   **slice catalog** on job state). LoopRail grows the CE DAG by spawning
    makers when slice deps are satisfied (**streaming spawn**). The engine
    remains wave-/stage-agnostic (deps + capacity clamp only). Wave/stage
    counters MUST NOT gate CE readiness.
@@ -85,33 +99,35 @@ alone.
 ## 3. Non-goals
 
 - Arbitrary Python, shell, or unconstrained scripts inside rail YAML.
-- StrangeLoop learning DAG shape, siblings, or rail recipes (RFC-222).
+- StrangeLoop learning DAG shape, siblings, or rail recipes.
 - Engine-level wave/stage API or submit kwargs for slice lists (IG-715
   boundary). CE MUST NOT grow wave fields on goals.
-- Replacing AutopilotMonitor dreaming / backoff for **no-rail** jobs.
+- Replacing `LoopRailService` dreaming / backoff for **no-rail** jobs (no-rail
+  jobs use CE opportunistic dispatch; dreaming was retired with the legacy
+  `soothe-autopilot` package).
 - Visual rail editor.
 - Per-rail prune-policy overrides beyond composing L0 `prune` / `replant`.
 - Keyword/regex content judgment for guards, NL expand, or **rail selection**
   (RFC-630).
 - LLM choosing next catalog verbs / flow advancement (report-commit judge and
-  LoopRail remain separate — RFC-204).
+  LoopRail remain separate).
 - Re-picking `rail_id` mid-job (resume uses stored id + integrity).
 - Nested WavePlan trees as machine contract (RFC-232).
-- Requiring batch “wave complete → integrate” before other ready slices may
+- Requiring batch "wave complete → integrate" before other ready slices may
   exist in the CE DAG.
 
 ## 4. Architectural invariant
 
 > **StrangeLoop executes one goal and always writes a ledger report. CE commits
-> the report. AutopilotService judges on `goal_report_committed` (RFC-204 §1.3)
-> — accept / send_back / fail + bounded DAG revise. LoopRail decides *when*
+> the report. `LoopRailService` judges on `goal_report_committed` (§17) —
+> accept / send_back / fail + bounded DAG revise. LoopRail decides *when*
 > (deterministic YAML). Rail Exec applies catalog verb recipes as CE
-> primitives. AutopilotService also schedules workers and runs job maturity
-> (RFC-230).**
+> primitives. `LoopRailService` also schedules workers and runs job maturity
+> (§8).**
 
 ```text
 StrangeLoop loop end → CE commit_goal_report → goal_report_committed
-  → Autopilot report-commit judge (accept | send_back | fail [+ bounded dag_ops])
+  → LoopRailService report-commit judge (accept | send_back | fail [+ bounded dag_ops])
   → job event (goal_completed | goal_send_back | goal_failed | dag_idle | …)
   → LoopRailInterpreter: match flow/rules + guards
   → Rail Exec: resolve verb body (rail override ▸ builtin default)
@@ -120,10 +136,106 @@ StrangeLoop loop end → CE commit_goal_report → goal_report_committed
   → append rail_trace (verb + expanded steps + created goals)
 ```
 
-Rail-bound jobs spawn follow-up goals **only** through Rail Exec (RFC-230
-rail exclusivity). Monitor/verifier must not invent phases on rail jobs.
-The report-commit judge MUST NOT select next catalog verbs — only the
-verdict + allowlisted soft DAG ops (pending briefs, deps, priority).
+Rail-bound jobs spawn follow-up goals **only** through Rail Exec (rail
+exclusivity). The report-commit judge MUST NOT select next catalog verbs — only
+the verdict + allowlisted soft DAG ops (pending briefs, deps, priority).
+
+### 4.1 Report-commit judgment (absorbed from RFC-204 §1.3)
+
+`LoopRailService` validates StrangeLoop completions **only after** the goal
+report is committed to ContextEngine. The StrangeLoop ledger report is the
+evidence SoT; the host **projects** `GoalNode.report` into the judge and MUST
+NOT re-collect workspace evidence for this gate. Job-level structural
+acceptance remains the maturity latch (§8), not this loop.
+
+**Control-plane split:**
+
+| Concern | Owner |
+|---------|-------|
+| Decompose / phase order / fan-out | LoopRail (this RFC) — deterministic YAML builtins/guards |
+| Schedule ready goals | `LoopRailService` dispatch + WorkerPool (status/deps only) |
+| Execution + ledger report | StrangeLoop (always write a report on any loop end) |
+| Persist report + emit commit | ContextEngine `commit_goal_report` (§17) |
+| Accept / send_back / fail + bounded DAG revise | `LoopRailService` on `goal_report_committed` |
+
+**Process:**
+
+1. StrangeLoop ends a loop (done / failed / cancelled / crash / max_iter) and
+   persists a report in its ledger (minimal report required if work was thin).
+2. Host upserts CE `GoalNode.report`, bumps `report_revision`, emits
+   **`goal_report_committed`** (sole judgment trigger — §17).
+3. `LoopRailService` handler (idempotent on `(goal_id, report_revision)`):
+   - Project CE report + relevant CE DAG slice (no tools, no workspace open).
+   - Optional deterministic gates from CE/rail state (e.g. WavePlan present).
+   - Structured LLM judge → `accept` | `send_back` | `fail` + `reasoning`,
+     plus optional **bounded DAG ops**.
+4. Apply validated `dag_ops`, then apply verdict; notify LoopRailInterpreter
+   (`goal_completed` / `goal_send_back` / `goal_failed`). Rail builtins remain
+   deterministic — the judge does **not** choose next rail verbs.
+
+**Trigger rules:**
+
+- Judgment fires on **report commit only**.
+- Bare CE status transitions (`pending` / `active`) MUST NOT invoke the judge.
+- Worker completion MUST ensure report commit and MUST NOT invent a second
+  judgment path outside CE.
+- If a report is still missing after loop end → **no `LoopRailService` LLM**;
+  engine recovery / retries only.
+
+**Judge input:** projection of CE-stored goal report (ledger-backed) + goal
+description + CE DAG slice needed for bounded ops. Fields such as
+`evidence_summary` / `full_output` are judge inputs only when already present
+inside that committed report.
+
+**Bounded DAG ops** (same judge reaction; optional):
+
+| Op | Allowed |
+|----|---------|
+| wire / unwire `depends_on` | yes |
+| set priority | yes |
+| update pending briefs / pending-plan fields | yes |
+| spawn / cancel goal | only via existing rail allowlists |
+| free-form decompose / merge / new topology | **no** (LoopRail owns structure) |
+
+**Send-Back Mechanics:**
+
+- Separate send-back budget per goal (default: 3 rounds).
+- Rework brief = the **same judge call's `reasoning`** (no second reactor LLM).
+- Independent from StrangeLoop's Plan-and-Execute iteration budget.
+
+**Budget Exhaustion:**
+
+- Budget is **per subgoal** (`GoalNode.send_back_count` /
+  `max_send_backs`), never the job root's counter.
+- Exhaustion MUST transition the subgoal to **`failed`** and emit
+  `goal_failed` so host recovery can act (LoopRail / backoff / engine health).
+  `LoopRailService` MUST NOT park goals in `suspended` awaiting an operator for
+  judgment.
+- DAG health MUST NOT auto-reset send-back-exhausted *suspended* goals;
+  failed workers use engine recovery when deps allow.
+- `LoopRailService` MUST NOT encode tool- or VCS-specific "done" gates (git
+  commit, cargo, pytest hard-accept) as judgment overrides — those policies
+  live in rails / host maturity probes (§8), never in the per-goal
+  report-commit path.
+
+**Judge decision criteria:**
+
+| Decision | Conditions | Outcome |
+|----------|------------|---------|
+| **Accept** | Goal text satisfied by CE report projection; no unresolved blockers | Goal → `completed`; rail `goal_completed`; apply `dag_ops` |
+| **Send back** | Report incomplete vs goal; minor gaps; retry warranted | `send_back` with `reasoning` as brief; count toward budget; apply `dag_ops` |
+| **Fail** | Unrecoverable blocker; send-back budget exhausted; judge LLM error | Goal → `failed`; host recovery (LoopRail / engine) |
+
+**Implementation Note:** The judge LLM is configured via
+`agentic.reflection_model` (separate from the StrangeLoop planner/executor
+model). Structured output:
+`decision: accept | send_back | fail`, `reasoning`, optional `dag_ops`.
+Prefer **accept** when StrangeLoop Plan-Execute-Eval completed and the CE
+report supports the goal; do **not** reject solely for missing git/file proof
+narrative outside the report, and do **not** re-dispatch a second proof
+mission on the same goal. After accept, LoopRail advances on events. Headless
+clarification / empty terminal MUST still produce a **minimal CE report** then
+map to `send_back` (or `fail` on budget), not operator-wait `suspend`.
 
 ## 5. Layer model
 
@@ -373,11 +485,11 @@ Design source:
 
 | Layer | Owns | Must not |
 |-------|------|----------|
-| Autopilot engine | Pool, CE `depends_on`, report-commit judgment, `max_parallel_goals` clamp | Slice ids, wave/stage phase order, rail YAML |
+| LoopRailService | Pool, CE `depends_on`, report-commit judgment, `max_parallel_goals` clamp | Slice ids, wave/stage phase order, rail YAML |
 | Context Engine | Goal DAG status and edges | Rail documents, wave index, slice catalog |
 | Rail YAML | `flow` / conditions / `fanout` / `verbs` | Submit kwargs for slices; nested WavePlan examples; `fanout.artifact`; wave barriers that withhold ready slices |
 | LLM + transfer | Flat WavePlan (+ optional per-slice `depends_on`) via structured fields, dumps, allowlist, or completion blob | Nested waves/slices |
-| LoopRail / AutopilotService | Ingest catalog; **streaming spawn**; host merge/refresh/land; per-maker review/QA reactions | Store nested wave trees; teach CE about waves |
+| LoopRailService | Ingest catalog; **streaming spawn**; host merge/refresh/land; per-maker review/QA reactions | Store nested wave trees; teach CE about waves |
 
 ### 9.2 Slice catalog SoT
 
@@ -461,7 +573,7 @@ After a successful host merge of maker M:
 
 Three-tier precedence (low → high, last wins), unchanged:
 
-1. `packages/soothe/src/soothe/autopilot/rails/builtin_rails/`
+1. `packages/soothe/src/soothe/rails/builtin_rails/`
 2. `$SOOTHE_HOME/rails/`
 3. `<workspace>/.soothe/rails/`
 
@@ -474,7 +586,7 @@ On job submit (root goal only; `parent_id is None`):
 ```text
 1. Explicit rail_id / --rail
       → must exist in merged catalog; unknown id rejects submit
-2. If agent.autopilot.rail_auto_pick and a picker model is available:
+2. If `agent.loops.rail_auto_pick` and a picker model is available:
       structured light-LLM over filtered catalog candidates
         → rail_id in allowed ∧ confidence ≥ min → bind that rail
         → rail_id null ∧ confidence ≥ min ∧ abstain_overrides_defaults
@@ -482,7 +594,7 @@ On job submit (root goal only; `parent_id is None`):
         → else (low confidence / invalid id / timeout / error)
             → continue to step 3
 3. Workspace <workspace>/.soothe/rails/.rail-default (first non-comment line)
-4. agent.autopilot.default_rail
+4. `agent.loops.default_rail`
 5. No rail — Monitor/CE opportunistic path
 ```
 
@@ -593,16 +705,17 @@ worktree / feedback macro extract; **M4** intent expand.
 
 | Module | Path |
 |--------|------|
-| Catalog + `RailDefinition` | `soothe/autopilot/rails/catalog.py` |
-| Path tiers | `soothe/autopilot/rails/builtins.py` |
-| Builtin / override recipes | `soothe/autopilot/rails/builtin_rails/*.yml` + `verbs:` |
-| Rail selection / auto-pick | `soothe/autopilot/rails/selector.py` (+ picker helper) |
-| Interpreter (L2) | `soothe/autopilot/rails/interpreter.py` |
-| Rail Exec (L1→L0) | `soothe/autopilot/rails/` (evolve `builtins_exec.py` → exec + primitives) |
-| Guards | `soothe/autopilot/rails/guards.py` |
-| WavePlan | `soothe/autopilot/rails/wave_plan.py` |
-| Trace | `soothe/autopilot/rails/trace_store.py` |
-| Submit bind | `soothe/autopilot/service.py` (`submit_goal` → resolve → `_bind_rail_for_job`) |
+| Catalog + `RailDefinition` | `soothe/rails/catalog.py` |
+| Path tiers | `soothe/rails/builtins.py` |
+| Builtin / override recipes | `soothe/rails/builtin_rails/*.yml` + `verbs:` |
+| Rail selection / auto-pick | `soothe/rails/selector.py` (+ picker helper) |
+| Interpreter (L2) | `soothe/rails/interpreter.py` |
+| Rail Exec (L1→L0) | `soothe/rails/` (`recipe_exec.py` + `builtins_exec.py` + `verb_defaults.py` + `l0_schema.py`) |
+| Guards | `soothe/rails/guards.py` |
+| WavePlan | `soothe/rails/wave_plan.py` |
+| Trace | `soothe/rails/trace_store.py` |
+| Worktree ops | `soothe/rails/worktree_ops.py` |
+| Submit bind | `soothe-daemon/runner/` (`submit` → resolve rail id → bind job; runner implementations: thread / process / firecracker / boxlite) |
 | Protocol reference | `soothe_nano` skill `looprail-creator` references |
 
 ## 15. Decision log
@@ -639,7 +752,81 @@ worktree / feedback macro extract; **M4** intent expand.
 - Short vs full job id in `job/<id>` branch names (today often `job_id[:8]`).
 - Opportunistic GC of worktrees for cancelled/completed foreign jobs.
 
-## 17. Suggested implementation routing
+## 17. ContextEngine `GoalNode.report` commit (absorbed from RFC-625)
+
+This section normatively defines the report-commit boundary that triggers the
+§4.1 judge. It is the still-current content of the archived RFC-625.
+
+### 17.1 StrangeLoop report → CE commit
+
+When a StrangeLoop worker ends a loop (done / failed / cancelled / crash /
+`max_iter`), it MUST persist a report in its ledger. The host upserts the CE
+`GoalNode.report` projection, bumps `report_revision`, and emits the
+**`goal_report_committed`** event — the **sole** trigger for the §4.1
+`LoopRailService` report-commit judge.
+
+| Concern | Owner |
+|---------|-------|
+| StrangeLoop ledger report | StrangeLoop worker (always written on any loop end) |
+| CE `GoalNode.report` upsert + `report_revision` bump | ContextEngine (RFC-624) |
+| `commit_goal_report(goal_id, report)` API | ContextEngine (RFC-624) |
+| `goal_report_committed` event emit | ContextEngine on commit |
+| Report-commit judge trigger subscription | `LoopRailService` (§4.1) |
+
+### 17.2 Why CE is the report SoT
+
+- Persistence: the report lives on the persisted `GoalNode` (RFC-624),
+  not in worker process memory or a separate file; survives worker crash /
+  restart / reschedule.
+- Provenance: `report_revision` is monotonic per goal; the judge subscribes
+  to `(goal_id, report_revision)` idempotently — late or replayed commits do
+  not re-fire judgment.
+- Single trigger: bare CE status transitions (`pending` → `active`,
+  `active` → `blocked`) MUST NOT invoke the judge. Worker completion MUST
+  ensure report commit and MUST NOT invent a second judgment path outside CE.
+- Missing report: if a report is still missing after loop end → **no
+  `LoopRailService` LLM**; engine recovery / retries only.
+
+### 17.3 CE → judge projection
+
+The judge receives a *projection* of the CE-stored goal report (ledger-backed)
++ goal description + the CE DAG slice needed for bounded ops (§4.1). The host
+MUST NOT re-collect workspace evidence for this gate — the report is the
+evidence SoT. Fields such as `evidence_summary` / `full_output` are judge inputs
+only when already present inside that committed report.
+
+### 17.4 Hard defer / park semantics (preserved from RFC-622/623)
+
+If the §4.1 judge or any other code path marks a goal
+`awaiting_clarification`, the goal parks for up to
+`agent.clarification.max_defer_age_hours` (default 168h = 7 days) before the
+stale-clarification sweeper surfaces it for operator review. This contract is
+unchanged from RFC-622/623 and applies to all loop-rail runs (headless or
+interactive).
+
+## 18. Cron as external submit path (absorbed from RFC-229)
+
+Scheduled jobs are not autopilot-specific — they are ordinary loop-rail job
+submissions whose submit time is determined by a cron schedule rather than an
+operator or HTTP request. The `CronService` (in `soothe-daemon/cron/`)
+parses cron expressions, persists pending tasks, and dispatches due jobs
+through the unified daemon protocol (RFC-450) as ordinary `job_*` submissions.
+Rail selection (§10) runs identically for cron-submitted jobs.
+
+### 18.1 Configuration
+
+Cron configuration lives under `agent.cron.*` (not `agent.autopilot.*` — that
+prefix is retired with the legacy package). Default `cron_enabled: true` for
+the daemon. Same-cron conflicts execute sequentially by creation time or
+`priority` field; no overlap.
+
+### 18.2 IPC
+
+Cron IPC commands (`cron_list`, `cron_show`, `cron_cancel`, plus the `/cron`
+TUI command and `soothe cron list/show/cancel` CLI) live under RFC-450's
+unified daemon protocol. The `autopilot_*` IPC prefix is retired.
+
+## 19. Suggested implementation routing
 
 1. IG for **M1–M2** (recipe extraction + brief overrides; delete rail_id forks)
    → **IG-716** (implemented: briefs/tags/role; full recipe extract deferred).
@@ -661,6 +848,9 @@ worktree / feedback macro extract; **M4** intent expand.
    refresh / land; greenfield + migration YAML rewrite; per-maker review/QA;
    tests from §13. Design draft:
    `docs/drafts/2026-08-08-streaming-slice-dag-worktree-lifecycle-design.md`.
+10. **IG-779** (this RFC's cleansing): archive RFC-204/222/228/229/230/625;
+    rewrite RFC-231 to absorb normative content; align RFC-634/635 with
+    bypass-mode design; cleanse "autopilot" terminology from RFC-622/623.
 
 ## Appendix A: relation to prior docs
 
@@ -668,13 +858,15 @@ worktree / feedback macro extract; **M4** intent expand.
 |----------|----------|
 | `docs/drafts/2026-07-11-loop-rail-design.md` | Earlier design notes; this RFC is normative for rails + Rail Exec |
 | `docs/drafts/2026-08-08-llm-rail-auto-pick-design.md` | LLM auto-pick design; §10 is normative; IG-728 implements |
-| RFC-230 | Maturity latch + rail exclusivity; consumes Exec outcomes |
-| RFC-204 | Report-commit judgment / send-back; host recovery via catalog verbs |
-| RFC-222 / RFC-625 | Autopilot / CE ownership; StrangeLoop report → CE commit before rail events |
-| `2026-08-08-autopilot-report-commit-judgment-design.md` | Event-centric judgment; bounded DAG revise; deterministic rail |
+| §8 of this RFC | Maturity latch + rail exclusivity (absorbed from RFC-230) |
+| §4.1 of this RFC | Report-commit judgment / send-back / bounded DAG ops (absorbed from RFC-204 §1.3) |
+| §17 of this RFC | CE `GoalNode.report` projection + `commit_goal_report` + `goal_report_committed` trigger (absorbed from RFC-625) |
+| RFC-624 | ContextEngine ownership; StrangeLoop report → CE commit before rail events |
+| `2026-08-08-autopilot-report-commit-judgment-design.md` | Event-centric judgment; bounded DAG revise; deterministic rail (historical design draft; the report-commit pattern is normative in §4.1) |
 | RFC-232 | Flat WavePlan wire; optional slice `depends_on`; nesting forbidden; amends §9 |
 | `2026-08-08-streaming-slice-dag-worktree-lifecycle-design.md` | Streaming spawn + host worktree lifecycle; source for §9 revision |
 | IG-715 | Migration fan-out; planner copy into YAML bodies (M2); wave barriers to remove |
 | IG-720 | Historical findings-only file ban; amended by IG-722 (SoT still rail_state) |
 | IG-722 | Multi-form WavePlan transfer; recommended dumps + structured wave_plan_path |
 | IG-728 | LLM rail auto-pick on submit when `rail_id` omitted |
+| IG-779 | RFC autopilot cleansing + agent-mode alignment (this RFC's rewrite) |

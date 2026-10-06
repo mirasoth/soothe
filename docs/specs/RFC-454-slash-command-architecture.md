@@ -101,7 +101,7 @@ Structured API requests for daemon state/actions via `command_request` message t
 | `/review` | `review` | Query conversation history | `thread_id` (required) |
 | `/thread` | `thread` | Thread operations | `action`, `id` (params) |
 | `/resume` | `resume` | Resume thread | `thread_id` (from params) |
-| `/autopilot` | `autopilot_dashboard` | Show autopilot dashboard | `thread_id` (required) |
+| `/jobs` | `jobs_dashboard` | Show jobs dashboard | `thread_id` (required) |
 
 **Protocol** (RFC-302 extension):
 ```
@@ -119,7 +119,7 @@ Behavior indicators sent as plain text via the existing input path. Daemon input
 | Command | Description | Query Required |
 |---------|-------------|----------------|
 | `/plan` | Trigger plan mode | No |
-| `/autopilot <N> <query>` | Autonomous execution | Yes |
+| `/jobs <N> <query>` | Autonomous execution | Yes |
 | `/research <query>` | Route to Research subagent | Yes |
 | `/explore <query>` | Route to Explore subagent | Yes |
 | `/<subagent_id> <query>` | When `subagents.<subagent_id>` is enabled (including optional plugins), route to that subagent | Yes |
@@ -316,7 +316,7 @@ def show_history(console: Console, data: dict[str, Any]) -> None:
 **Rendering functions for**:
 - `show_commands`, `show_keymaps` (CLI-only)
 - `show_memory`, `show_policy`, `show_history`, `show_config`
-- `show_plan`, `show_review`, `show_autopilot_dashboard`
+- `show_plan`, `show_review`, `show_jobs_dashboard`
 
 ---
 
@@ -435,7 +435,7 @@ async def _handle_command_request(self, client_id: str, msg: dict[str, Any]) -> 
             "review": self._cmd_review,
             "thread": self._cmd_thread,
             "resume": self._cmd_resume,
-            "autopilot_dashboard": self._cmd_autopilot_dashboard,
+            "jobs_dashboard": self._cmd_jobs_dashboard,
         }
         
         handler = handler_map.get(command)
@@ -499,7 +499,7 @@ async def _cmd_thread(self, thread_id: str | None, params: dict) -> dict[str, An
         raise ValueError(f"Unknown thread action: {action}")
 ```
 
-**Handlers for**: clear, exit, quit, detach, cancel, memory, policy, history, config, review, thread, resume, autopilot_dashboard
+**Handlers for**: clear, exit, quit, detach, cancel, memory, policy, history, config, review, thread, resume, jobs_dashboard
 
 ---
 
@@ -518,7 +518,7 @@ async def _handle_input(self, client_id: str, msg: dict[str, Any]) -> None:
         # Route to Research subagent
         query = text.split(maxsplit=1)[1]
         await self._run_query(query, subagent="research")
-    elif text.startswith("/autopilot "):
+    elif text.startswith("/jobs "):
         # Parse autonomous command
         # ... existing logic
     else:

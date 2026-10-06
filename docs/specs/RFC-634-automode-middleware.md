@@ -28,7 +28,7 @@ input is required.
 RFC-634 introduces `AutoModeMiddleware`, a host `AgentMiddleware` installed on
 the CoreAgent graph that becomes the sole tool-approval HITL. It evaluates every
 gated tool call in its `after_model` hook (before tools execute), resolves
-deterministic verdicts inline (deny-rule / autopilot-safety rejects become
+deterministic verdicts inline (deny-rule / loop-rail-safety rejects become
 error `ToolMessage`s without any interrupt; auto-mode approvals execute
 silently), and emits the same `{"action_requests": [...]}` interrupt payload
 HITL used whenever a human decision is genuinely needed. The station-side
@@ -80,7 +80,7 @@ implement `after_model` itself and the builder must stop passing
 |---|---|---|
 | Deny rule match | interrupt → station → static reject → resume reject | inline instructive reject (no interrupt) |
 | Safety hit, human attached | interrupt → station → escalate → human relay | interrupt (same payload shape) → station → human relay |
-| Safety hit, autopilot | interrupt → station → instructive reject | inline instructive reject (no interrupt) |
+| Safety hit, loop-rail headless run | interrupt → station → instructive reject | inline instructive reject (no interrupt) |
 | Safety hit, prior rule-family approval | when_* suppressed / station allowlist override | allowlist override evaluated inline |
 | Ambiguous, auto mode | interrupt → station → default approve → resume approve | allow inline (no interrupt) |
 | Ambiguous, manual mode (`all`) | interrupt → station → human relay | interrupt → station → human relay |
@@ -103,19 +103,19 @@ Ordered; first match wins.
 | # | Condition | Action |
 |---|---|---|
 | 0 | tool not in `inline_gate.tools` / gate disabled | allow (pass through) |
-| 1 | bypass mode and not `active_in_bypass` | skip deny/safety; allow |
+| 1 | bypass mode and not `active_in_bypass` | skip deny/safety; allow — **bypass mode permits ALL tool calls by default** (`active_in_bypass: false`) |
 | 2 | deny rule match | **inline instructive reject** |
 | 3 | allowlist signature match | allow |
 | 4 | safety check hit (nano `OperationSecurity`) | |
 | 4a | ├─ rule-family allowlist override | allow |
-| 4b | ├─ no human attached (autopilot) | **inline instructive reject** |
+| 4b | ├─ no human attached (loop-rail headless run) | **inline instructive reject** |
 | 4c | └─ human attached | **interrupt** (human decides) |
 | 5 | no rule/safety match | |
-| 5a | ├─ bypass mode | allow |
+| 5a | ├─ bypass mode | allow (default; same as row 1 when `active_in_bypass: false`) |
 | 5b | ├─ clarification mode `auto` | allow (default approve) |
 | 5c | ├─ manual mode, scope `ambiguous_only` | allow |
 | 5d | ├─ manual mode, scope `all`, human attached | **interrupt** |
-| 5e | └─ manual scope `all`, autopilot | allow (headless parity: today's retry-sentinel path resolves to execute) |
+| 5e | └─ manual scope `all`, loop-rail headless run | allow (headless parity: today's retry-sentinel path resolves to execute) |
 | 6 | `tool_approval` in `force_manual_origins`, human attached | **interrupt** (every gated call) |
 
 Fail-safe: any evaluation exception → the tool call is kept and a WARNING is
@@ -123,8 +123,8 @@ logged (the downstream FS permission layer and nano operation guard still run
 as backstops). A missing `workspace` configurable makes path deny rules
 unresolvable → treated as no match (absolute patterns like `/etc/**` still
 match); a missing clarification mode falls back to the build-time
-`default_mode`; missing `human_attached` defaults to `False` (autopilot — the
-strict direction for safety hits).
+`default_mode`; missing `human_attached` defaults to `False` (loop-rail
+headless run — the strict direction for safety hits).
 
 ### 3.2 Interrupt protocol (unchanged on the wire)
 
@@ -198,10 +198,18 @@ agent:
       inline_gate:
         enabled: true
         tools: [edit_file, write_file, delete, run_command]
-        active_in_bypass: true   # deny rules still reject in bypass mode
+        active_in_bypass: false   # bypass mode skips deny/safety entirely (default; permits ALL tool calls)
       manual_scope: all          # unchanged semantics, now enforced by the gate
       deny_rules: [...]          # unchanged
 ```
+
+`active_in_bypass` defaults to `False` — bypass mode skips deny/safety
+evaluation entirely and permits all gated tool calls. This matches the design
+rule that bypass mode is the "permit everything" posture; only
+`OperationSecurity` (nano execution-layer backstop) still runs as a final
+guard. Operators MAY set `active_in_bypass: true` to keep deny rules absolute
+in bypass mode (rare; used when an operator wants bypass semantics for
+non-mutating tools but still wants destructive-path rejection).
 
 `veritas_fallback` is removed: with the gate resolving every deterministic
 case inline and routing the rest to the human relay, veritas never sees

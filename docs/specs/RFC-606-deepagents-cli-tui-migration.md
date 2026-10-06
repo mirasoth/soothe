@@ -12,7 +12,7 @@
 
 ## Abstract
 
-This RFC specifies the migration of deepagents-cli's sophisticated Textual TUI into Soothe, replacing Soothe's basic custom TUI (~1053 lines) with deepagents' mature UI implementation (~5069 lines + 20 widget files). The migration uses a **Full Copy & Deep Integration** strategy, copying deepagents TUI code into Soothe's codebase and connecting it to Soothe's backend infrastructure (daemon WebSocket, protocol orchestration, thread persistence) via adapter layers. All Soothe-specific features (protocols, autopilot dashboard, CLI commands) are preserved through integration hooks and custom widgets. This provides immediate access to deepagents' advanced features (thread selector, autocomplete, approval UI, diff viewer) while eliminating maintenance duplication.
+This RFC specifies the migration of deepagents-cli's sophisticated Textual TUI into Soothe, replacing Soothe's basic custom TUI (~1053 lines) with deepagents' mature UI implementation (~5069 lines + 20 widget files). The migration uses a **Full Copy & Deep Integration** strategy, copying deepagents TUI code into Soothe's codebase and connecting it to Soothe's backend infrastructure (daemon WebSocket, protocol orchestration, thread persistence) via adapter layers. All Soothe-specific features (protocols, jobs dashboard, CLI commands) are preserved through integration hooks and custom widgets. This provides immediate access to deepagents' advanced features (thread selector, autocomplete, approval UI, diff viewer) while eliminating maintenance duplication.
 
 ## Problem Statement
 
@@ -37,7 +37,7 @@ Soothe's current TUI has significant limitations compared to upstream deepagents
 2. **Backend integration** - Connect deepagents TUI to Soothe's daemon WebSocket, protocols, and thread persistence
 3. **Protocol event rendering** - Visualize Soothe-specific protocol events (`soothe.*`) in deepagents widgets
 4. **CLI preservation** - Keep Soothe's Typer command structure unchanged
-5. **Autopilot integration** - Preserve Soothe's autopilot dashboard as alternate screen mode
+5. **Jobs integration** - Preserve Soothe's jobs dashboard as alternate screen mode
 6. **Feature parity** - All deepagents TUI features work (autocomplete, approval, diff, thread selector)
 7. **No regression** - Existing Soothe workflows continue unchanged
 8. **Clean integration** - Adapter layers separate concerns, modifications clearly marked
@@ -47,7 +47,7 @@ Soothe's current TUI has significant limitations compared to upstream deepagents
 1. **Copy over Import** - deepagents-cli not designed as library; copying provides control and avoids tight coupling to SDK version
 2. **Adapter Pattern** - Bridge deepagents TUI expectations to Soothe backend realities through clean abstraction layers
 3. **Explicit Modifications** - Mark all changes with `# SOOTHE: ...` comments for future maintenance and upstream sync
-4. **Preserve Soothe Identity** - Keep protocol events, autopilot, daemon architecture; these are Soothe's core value
+4. **Preserve Soothe Identity** - Keep protocol events, loop-rail, daemon architecture; these are Soothe's core value
 5. **Verbosity Alignment** - Apply RFC-501 filtering to protocol events in TUI rendering
 6. **Widget Reuse** - Use deepagents widgets where applicable (status, loading), create Soothe-specific widgets where needed (protocol events)
 
@@ -58,7 +58,7 @@ Soothe's current TUI has significant limitations compared to upstream deepagents
 ```
 CLI Layer (Typer - unchanged)
   src/soothe/ux/cli/main.py
-    └─ soothe, daemon, thread, config, health, status, autopilot commands
+    └─ soothe, daemon, thread, config, health, status, jobs commands
 
 Execution Layer (unchanged)
   src/soothe/ux/cli/execution/
@@ -71,8 +71,8 @@ TUI Layer (MIGRATED from soothe_deepagents)
     ├─ app.py (copied from soothe_deepagents_cli/app.py, modified)
     ├─ widgets/ (copied from soothe_deepagents_cli/widgets/, 20 files)
     ├─ input.py, sessions.py, theme.py (copied supporting modules)
-    ├─ autopilot_screen.py (kept from Soothe)
-    ├─ autopilot_dashboard.py (kept from Soothe)
+    ├─ jobs_screen.py (kept from Soothe)
+    ├─ jobs_dashboard.py (kept from Soothe)
     ├─ soothe_backend_adapter.py (NEW - daemon stream adapter)
     ├─ thread_backend_bridge.py (NEW - thread persistence bridge)
     └─ widgets/protocol_event.py (NEW - protocol visualization)
@@ -186,8 +186,8 @@ Delete from `src/soothe_cli/tui/`:
 Keep from `src/soothe_cli/tui/`:
 | File | Purpose |
 |------|---------|
-| `autopilot_screen.py` | Autopilot dashboard screen (RFC-203) |
-| `autopilot_dashboard.py` | Autopilot widgets (GoalProgressWidget, ExecutionQueueWidget) |
+| `jobs_screen.py` | Jobs dashboard screen (RFC-203) |
+| `jobs_dashboard.py` | Jobs widgets (GoalProgressWidget, ExecutionQueueWidget) |
 | `__init__.py` | Module init (needs update for new imports) |
 
 ### Files to Create (Integration Layer)
@@ -397,8 +397,8 @@ if is_protocol_event:
 | `soothe.plan.created` | goal, steps | Plan tree: show full plan |
 | `soothe.plan.step_started` | step_id, description | Status: "Starting: <description>" |
 | `soothe.plan.step_completed` | step_id, success | Status: "Completed" or "Failed" |
-| `soothe.goal.batch_started` | goal_ids, step_count | Autopilot dashboard: show goals |
-| `soothe.goal.report` | completed, failed, summary | Autopilot dashboard: update progress |
+| `soothe.goal.batch_started` | goal_ids, step_count | Jobs dashboard: show goals |
+| `soothe.goal.report` | completed, failed, summary | Jobs dashboard: update progress |
 | `soothe.policy.checked` | action, verdict | Status (detailed): "Policy: <action> → <verdict>" |
 | `soothe.policy.denied` | action, reason | Alert: "Policy denied: <reason>" |
 
@@ -530,7 +530,7 @@ class StatusBar(Widget):
 
 ### Plan Tree Widget
 
-**File**: Keep existing `PlanTree` widget from Soothe (in `widgets/` or autopilot_dashboard).
+**File**: Keep existing `PlanTree` widget from Soothe (in `widgets/` or jobs_dashboard).
 
 **Integration**: Add to TUI layout as collapsible panel.
 
@@ -811,15 +811,15 @@ def action_edit_tags(self):
     ...
 ```
 
-## Section 5: Autopilot Dashboard Integration Specification
+## Section 5: Jobs Dashboard Integration Specification
 
-### Autopilot Screen Mode
+### Jobs Screen Mode
 
-**Purpose**: Preserve Soothe's autopilot dashboard (RFC-203) as alternate screen in deepagents TUI.
+**Purpose**: Preserve Soothe's jobs dashboard (RFC-203) as alternate screen in deepagents TUI.
 
 **Files**:
-- Keep: `src/soothe_cli/tui/autopilot_screen.py`
-- Keep: `src/soothe_cli/tui/autopilot_dashboard.py`
+- Keep: `src/soothe_cli/tui/jobs_screen.py`
+- Keep: `src/soothe_cli/tui/jobs_dashboard.py`
 - Modify: `src/soothe_cli/tui/app.py` to support screen switching
 
 ### Screen Switching Architecture
@@ -827,45 +827,45 @@ def action_edit_tags(self):
 **Implementation** (in `app.py`):
 
 ```python
-from soothe.ux.tui.autopilot_screen import AutopilotScreen
+from soothe.ux.tui.jobs_screen import JobsScreen
 
 class SootheApp(App):  # Modified from soothe_deepagents App
 
-    # SOOTHE: Add autopilot mode flag
-    _autopilot_mode: bool = False
+    # SOOTHE: Add jobs mode flag
+    _jobs_mode: bool = False
 
-    def __init__(self, autopilot_mode: bool = False, **kwargs):
+    def __init__(self, jobs_mode: bool = False, **kwargs):
         """Initialize app with mode selection."""
         super().__init__(**kwargs)
-        self._autopilot_mode = autopilot_mode
+        self._jobs_mode = jobs_mode
 
     def on_mount(self):
         """Mount app with initial screen.
 
         deepagents original: push ChatScreen
-        SOOTHE: push AutopilotScreen if autopilot mode
+        SOOTHE: push JobsScreen if jobs mode
         """
-        if self._autopilot_mode:
-            # SOOTHE: Launch autopilot dashboard
-            self.push_screen(AutopilotScreen())
+        if self._jobs_mode:
+            # SOOTHE: Launch jobs dashboard
+            self.push_screen(JobsScreen())
         else:
             # deepagents default: chat mode
             self.push_screen(ChatScreen())
 
-    def action_switch_to_autopilot(self):
-        """Switch from chat to autopilot dashboard."""
-        # SOOTHE: Push autopilot screen
-        self.push_screen(AutopilotScreen())
+    def action_switch_to_jobs(self):
+        """Switch from chat to jobs dashboard."""
+        # SOOTHE: Push jobs screen
+        self.push_screen(JobsScreen())
 
     def action_switch_to_chat(self):
-        """Switch from autopilot back to chat."""
+        """Switch from jobs back to chat."""
         # SOOTHE: Pop back to chat screen
         self.pop_screen()
 ```
 
-### Autopilot Screen Composition
+### Jobs Screen Composition
 
-**File**: `src/soothe_cli/tui/autopilot_screen.py` (modified)
+**File**: `src/soothe_cli/tui/jobs_screen.py` (modified)
 
 **Reuse deepagents widgets where applicable**:
 
@@ -876,15 +876,15 @@ from textual.screen import Screen
 from soothe.ux.tui.widgets.status import StatusBar  # deepagents status bar
 from soothe.ux.tui.widgets.loading import LoadingWidget  # deepagents loading
 
-# Keep Soothe-specific autopilot widgets
-from soothe.ux.tui.autopilot_dashboard import (
+# Keep Soothe-specific jobs widgets
+from soothe.ux.tui.jobs_dashboard import (
     GoalProgressWidget,
     PlanTreeWidget,
     ExecutionQueueWidget,
 )
 
-class AutopilotScreen(Screen):
-    """Autopilot dashboard screen.
+class JobsScreen(Screen):
+    """Jobs dashboard screen.
 
     Layout:
     1. GoalProgressWidget (Soothe-specific)
@@ -900,33 +900,33 @@ class AutopilotScreen(Screen):
         yield StatusBar(id="status")  # SOOTHE: reuse deepagents
 ```
 
-### Autopilot Event Stream
+### Job Event Stream
 
-**Modification**: Add autopilot-specific event streaming in `SootheBackendAdapter`.
+**Modification**: Add job-specific event streaming in `SootheBackendAdapter`.
 
 ```python
-async def stream_autopilot_events(self) -> AsyncIterator[Tuple]:
-    """Stream autopilot-specific events.
+async def stream_job_events(self) -> AsyncIterator[Tuple]:
+    """Stream job-specific events.
 
-    Used by: AutopilotScreen instead of chat message stream
-    Source: SootheRunner in autopilot mode (RFC-203)
+    Used by: JobsScreen instead of chat message stream
+    Source: SootheRunner in loop-rail mode (RFC-203)
     """
     async for namespace, mode, data in self.daemon_client.receive_events():
         event_type = data.get("type", "")
 
-        # Route autopilot-specific events
+        # Route job-specific events
         if event_type.startswith("soothe.goal"):
-            yield ("autopilot", "goal_update", data)
+            yield ("jobs", "goal_update", data)
         elif event_type.startswith("soothe.executor"):
-            yield ("autopilot", "queue_update", data)
+            yield ("jobs", "queue_update", data)
         elif event_type.startswith("soothe.plan"):
-            yield ("autopilot", "plan_update", data)
-        # Tool calls still relevant in autopilot
+            yield ("jobs", "plan_update", data)
+        # Tool calls still relevant in jobs mode
         elif mode == "messages" and "tool_call" in str(data):
             yield (namespace, mode, data)
 ```
 
-### Autopilot Dashboard Widgets
+### Jobs Dashboard Widgets
 
 **GoalProgressWidget** (Soothe-specific, kept unchanged):
 - Shows progress bars for executing goal batch
@@ -946,7 +946,7 @@ async def stream_autopilot_events(self) -> AsyncIterator[Tuple]:
 def run_tui(
     cfg: SootheConfig,
     *,
-    autopilot_mode: bool = False,  # SOOTHE: new flag
+    jobs_mode: bool = False,  # SOOTHE: new flag
     thread_id: str | None = None,
     initial_prompt: str | None = None,
 ):
@@ -954,7 +954,7 @@ def run_tui(
 
     Args:
         cfg: Soothe configuration
-        autopilot_mode: Launch autopilot screen instead of chat
+        jobs_mode: Launch jobs screen instead of chat
         thread_id: Resume specific thread
         initial_prompt: Auto-submit prompt on launch
     """
@@ -962,32 +962,32 @@ def run_tui(
 
     app = SootheApp(
         config=cfg,
-        autopilot_mode=autopilot_mode,  # SOOTHE: pass mode flag
+        jobs_mode=jobs_mode,  # SOOTHE: pass mode flag
         thread_id=thread_id,
         initial_prompt=initial_prompt,
     )
     app.run()
 ```
 
-**CLI command integration** (in `src/soothe/ux/cli/commands/autopilot_cmd.py`):
+**CLI command integration** (in `src/soothe/ux/cli/commands/jobs_cmd.py`):
 
 ```python
-@app.command("autopilot")
-def autopilot_cmd(
+@app.command("jobs")
+def jobs_cmd(
     action: str,  # "run"
     task: str,
     headless: bool = False,
 ):
     """Autonomous goal execution mode.
 
-    CLI: 'soothe autopilot run "task"'
-    TUI: Launches AutopilotScreen
+    CLI: 'soothe jobs run "task"'
+    TUI: Launches JobsScreen
     """
     if headless:
-        run_autopilot_headless(task)
+        run_jobs_headless(task)
     else:
-        # SOOTHE: Launch TUI in autopilot mode
-        run_tui(config=cfg, autopilot_mode=True, initial_prompt=task)
+        # SOOTHE: Launch TUI in jobs mode
+        run_tui(config=cfg, jobs_mode=True, initial_prompt=task)
 ```
 
 ## Section 6: CLI Command Structure Specification
@@ -1040,11 +1040,11 @@ def autopilot_cmd(
 | `health` | Check daemon, protocols, backends |
 | `status` | Show system status |
 
-**Autopilot command** (`src/soothe/ux/cli/commands/autopilot_cmd.py`):
+**Jobs command** (`src/soothe/ux/cli/commands/jobs_cmd.py`):
 | Action | Behavior |
 |--------|----------|
-| `autopilot run "task"` | Launch autopilot TUI |
-| `autopilot run "task" --headless` | Run headless |
+| `jobs run "task"` | Launch jobs TUI |
+| `jobs run "task" --headless` | Run headless |
 
 ### Slash Commands in TUI
 
@@ -1130,14 +1130,14 @@ self.command_registry.register("/detach", self.action_detach)
 
 **Duration**: 1-2 days
 **Actions**:
-1. Integrate autopilot screen mode
+1. Integrate jobs screen mode
 2. Add Soothe slash commands to registry
 3. Add thread actions (archive, export, tags)
 4. Complete thread selector bridge
 5. Test all features
 
 **Verification**:
-- Autopilot mode launches correctly
+- Jobs mode launches correctly
 - Thread resume works
 - Slash commands functional
 - All actions operational
@@ -1166,7 +1166,7 @@ self.command_registry.register("/detach", self.action_detach)
 1. ✅ **TUI launches** - All deepagents widgets working
 2. ✅ **Thread resume UI** - Connects to Soothe persistence, displays thread metadata
 3. ✅ **Protocol events render** - Status bar + plan tree display protocol activity
-4. ✅ **Autopilot dashboard** - Works as alternate screen, receives autopilot events
+4. ✅ **Jobs dashboard** - Works as alternate screen, receives job events
 5. ✅ **CLI commands unchanged** - All Soothe subcommands functional
 6. ✅ **Verbosity filtering** - RFC-501 applied to protocol events
 7. ✅ **Daemon connection** - WebSocket streaming seamless
@@ -1209,16 +1209,16 @@ self.command_registry.register("/detach", self.action_detach)
 
 **Testing**: Thread resume tests, thread metadata conversion tests
 
-### Risk 4: Autopilot Screen Integration Issues
+### Risk 4: Jobs Screen Integration Issues
 
-**Risk**: Autopilot screen may not integrate smoothly with deepagents app.
+**Risk**: Jobs screen may not integrate smoothly with deepagents app.
 
 **Mitigation**: Use deepagents screen lifecycle:
 - Same `push_screen()`/`pop_screen()` pattern
 - Same event routing approach
 - Same mode switching mechanism
 
-**Testing**: Autopilot launch tests, screen switch tests
+**Testing**: Jobs launch tests, screen switch tests
 
 ### Risk 5: Breaking Existing Workflows
 
@@ -1273,7 +1273,7 @@ self.command_registry.register("/detach", self.action_detach)
 - **RFC-302**: Daemon Communication Protocol
 - **RFC-500**: CLI TUI Architecture (current)
 - **RFC-501**: VerbosityTier Unification
-- **RFC-203**: Autopilot Mode
+- **RFC-203**: Loop-Rail Mode
 - **RFC-303**: Unified Thread Management
 - **RFC-600**: Plugin Extension System
 - **deepagents-cli source**: `/Users/xiamingchen/Workspace/mirasurf/deepagents/libs/cli/`

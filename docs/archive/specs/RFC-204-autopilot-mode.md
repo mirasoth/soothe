@@ -2,11 +2,15 @@
 
 **RFC**: 204
 **Title**: Autopilot Mode
-**Status**: Implemented
+**Status**: Archived
+**Superseded By**: RFC-231 (LoopRail + Rail Exec; report-commit judgment absorbed into §4)
+**Superseded Date**: 2026-10-07
+**Archive Reason**: Legacy `soothe-autopilot` subsystem replaced by LoopRail (RFC-231) and ContextEngine (RFC-624). The `soothe-autopilot` package no longer exists in the monorepo. Still-normative content (§1.3 report-commit judgment, bounded DAG ops, send-back budget) has been absorbed into RFC-231 §4. UX surfaces moved to RFC-500/504 + RFC-450. Dreaming mode for no-rail jobs removed — CE opportunistic dispatch only.
+**Archive Date**: 2026-10-07
 **Kind**: Architecture Design
 **Created**: 2026-04-03
 **Authors**: Soothe Team
-**Updated**: 2026-08-08
+**Updated**: 2026-10-07
 **Dependencies**: RFC-200, RFC-201, RFC-203, RFC-222, RFC-450, RFC-500
 **Related**: RFC-229 (Cron Service for Autopilot),
 RFC-230 (job maturity; host probes ≠ per-goal report-commit judgment),

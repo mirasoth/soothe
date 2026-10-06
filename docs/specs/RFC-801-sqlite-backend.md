@@ -8,7 +8,7 @@
 **Authors**: Soothe Team
 **Updated**: 2026-07-24
 **Dependencies**: RFC-000, RFC-001, RFC-302, RFC-303, RFC-802
-**Related**: RFC-803, RFC-229, RFC-307, RFC-413, RFC-624
+**Related**: RFC-803, RFC-231 §18 (cron as external submit path — absorbs legacy RFC-229), RFC-307, RFC-413, RFC-624
 **Note**: Moved from 6xx (RFC-801) per RFC-900 reclassification
 **Design draft**: [2026-07-24-sqlite-runtime-isolation-performance-design.md](../drafts/2026-07-24-sqlite-runtime-isolation-performance-design.md)
 

@@ -8,8 +8,8 @@
 **Authors**: Soothe Team
 **Updated**: 2026-04-17
 **Dependencies**: RFC-000, RFC-302
-**Related**: RFC-306 (Durability), RFC-625 (AutopilotMonitor and ContextEngine Unification), RFC-626 (Entity Model and State Management Consolidation)
-**Implemented by**: CE's EpisodicSubmodule (RFC-625, RFC-626)
+**Related**: RFC-306 (Durability), RFC-231 §17 (CE GoalNode.report commit), RFC-624 (Context Engine), RFC-626 (Entity Model and State Management Consolidation)
+**Implemented by**: CE's EpisodicSubmodule (RFC-231 §17, RFC-624, RFC-626)
 **Note**: Moved from 4xx (RFC-303) per RFC-900 reclassification — ContextEngine's episodic memory store implements MemoryProtocol API for persistent cross-thread memory
 
 ---
@@ -191,7 +191,7 @@ class MemUMemory(MemoryProtocol):
 **Persistence**: Files under `protocols.memory.persist_dir` (defaults to `$SOOTHE_HOME/memory/`)
 **Features**: Semantic recall, tags, metadata
 
-### CEEpisodicMemory (RFC-625, RFC-626)
+### CEEpisodicMemory (RFC-231 §17, RFC-624, RFC-626)
 
 ```python
 class CEEpisodicMemory(MemoryProtocol):
@@ -239,7 +239,7 @@ class CEEpisodicMemory(MemoryProtocol):
 **Backend**: CE persistence backend (SQLite default, PostgreSQL optional)
 **Persistence**: Unified with CE GoalStepDAG and LedgerManager
 **Features**: Semantic recall, dreaming distillation, goal lineage integration
-**Integration**: Used by AutopilotMonitor's DreamingCoordinator (RFC-625)
+**Integration**: CE-internal episodic distillation (RFC-231 §17 + RFC-624); the legacy DreamingCoordinator was retired with dreaming.
 
 ---
 

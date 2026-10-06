@@ -9,7 +9,7 @@
 **Last Updated**: 2026-08-08
 **Revised**: 2026-05-28 — sole-child optimization; in-house `copy_thread_via_public_api` (no LangGraph saver implements `acopy_thread` natively).
 **Dependencies**: RFC-201, RFC-214, RFC-207, RFC-218
-**Related**: RFC-222 (Autopilot loop management), RFC-452 (Unified Thread Management), RFC-224 (Context Window Management)
+**Related**: RFC-231 (LoopRail loop management), RFC-452 (Unified Thread Management), RFC-224 (Context Window Management)
 **Implementation**: IG-477 (step isolation + envelope grounding), partial checkpoint forking pending
 
 ---
@@ -489,7 +489,7 @@ Step D (depends on B + C):
 - RFC-214: Unified message ledger; dependent-step `PRIOR STEP EVIDENCE` (§3.1); `prior_loop_execute_messages` for continuation bootstrap
 - RFC-207: StrangeLoop Thread Lifecycle & Goal Context (supersedes RFC-216)
 - RFC-218: StrangeLoop Checkpoint Tree Architecture
-- RFC-222: Autopilot and Goal Engine Architecture (loop_id, loop pool)
+- RFC-231: LoopRail and Goal Engine Architecture (loop_id, loop pool)
 - RFC-452: Unified Thread Management Architecture
 - LangGraph Checkpointer API: `acopy_thread(source_thread_id, target_thread_id)`
 

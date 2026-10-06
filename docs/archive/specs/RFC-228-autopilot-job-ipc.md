@@ -2,11 +2,15 @@
 
 **RFC**: 228
 **Title**: Autopilot Job IPC Commands
-**Status**: Implemented (partial)
+**Status**: Archived
+**Superseded By**: RFC-450 (Daemon Communication Protocol), RFC-231 (LoopRail job lifecycle)
+**Superseded Date**: 2026-10-07
+**Archive Reason**: `autopilot_*` IPC command prefix dropped; commands renamed `job_*` (e.g. `job_create`, `job_status`, `job_pause`, `job_resume`, `job_cancel`, `job_dag`) and live under the unified daemon protocol (RFC-450). Rail selection / auto-pick moved to RFC-231 §10. Legacy `soothe-autopilot` package removed.
+**Archive Date**: 2026-10-07
 **Kind**: Protocol Specification
 **Created**: 2026-06-04
 **Authors**: Soothe Team
-**Updated**: 2026-08-08
+**Updated**: 2026-10-07
 **Dependencies**: RFC-222 (Autopilot and Goal Engine Architecture), RFC-450 (Daemon Communication Protocol)
 **Related**: RFC-204 §1.3 (report-commit judgment), RFC-625 (AutopilotMonitor and ContextEngine Unification), RFC-626 (Entity Model and State Management Consolidation — LoopState Elimination), RFC-229 (Cron Service for Autopilot — cron IPC commands), RFC-230 (Job Maturity Assessment), RFC-231 (§10 rail selection / auto-pick), design draft `docs/archive/drafts/2026-08-08-autopilot-report-commit-judgment-design.md`, IG-677 (Job↔Loop Index), IG-613 (protocol-1 `autopilot_*` RPCs), IG-692, IG-728
 

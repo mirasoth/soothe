@@ -158,7 +158,7 @@ See RFC-302 for full protocol specification.
 
 Pattern: `soothe <subcommand> <action> [options]`
 
-**Main**: `soothe` (TUI), `soothe -p "prompt" --no-tui` (headless), `soothe autopilot run "task"` (autonomous).
+**Main**: `soothe` (TUI), `soothe -p "prompt" --no-tui` (headless), `soothe jobs run "task"` (autonomous).
 
 **Daemon**: `soothed start/stop/status/restart [--foreground]`.
 

@@ -7,7 +7,7 @@
 **Created**: 2026-06-28
 **Authors**: Soothe Team
 **Updated**: 2026-06-28
-**Dependencies**: RFC-101 (tool interface), RFC-102 (security filesystem policy), RFC-222 (autopilot goal engine)
+**Dependencies**: RFC-101 (tool interface), RFC-102 (security filesystem policy), RFC-231 (loop-rail goal engine)
 
 ---
 
@@ -73,7 +73,7 @@ Call A's edit is **silently lost**. No error is raised. The agent has no signal 
 | Scenario | Frequency | Consequence |
 |----------|-----------|-------------|
 | LLM emits 2+ `edit_file` calls to same file in one turn | Common in refactoring tasks | Silent data loss |
-| Subagent + parent edit same file concurrently | Occasional in autopilot mode | One agent's work vanishes |
+| Subagent + parent edit same file concurrently | Occasional in loop-rail mode | One agent's work vanishes |
 | Multiple StrangeLoops edit shared file | Rare (mitigated by cross-loop lock) | Cross-loop clobber |
 
 ### Current State of the Codebase
@@ -82,7 +82,7 @@ Call A's edit is **silently lost**. No error is raised. The agent has no signal 
 |-----------|--------|-----|
 | `LocalFilesystem.aedit()` | Async via aiofiles, but read-modify-write is **not atomic** | No lock between read and write |
 | `LocalFilesystem.aedit_batched()` | Batch primitive exists; applies N ops in one read-modify-write | No concurrency guard — two batches to same file still race |
-| `FileLockMiddleware` | Implemented, tested, **not installed** | Cross-loop lock for autopilot only; not a within-loop concurrency guard |
+| `FileLockMiddleware` | Implemented, tested, **not installed** | Cross-loop lock for loop-rail only; not a within-loop concurrency guard |
 | `apply_diff()` | Shells out to `patch` command | No locking; `patch` itself is not atomic |
 
 ---
@@ -281,18 +281,18 @@ The coalescing middleware groups same-file edits within a 50 ms detection window
 
 ### Relationship to Existing `FileLockMiddleware`
 
-The existing `FileLockMiddleware` is a **cross-loop** lock for autopilot mode (different StrangeLoops editing the same file). It is **complementary** to this design:
+The existing `FileLockMiddleware` is a **cross-loop** lock for loop-rail mode (different StrangeLoops editing the same file). It is **complementary** to this design:
 
 - **This design's Layer 2** (`asyncio.Lock` per file) guards the read-modify-write cycle **within a single process**.
 - **`FileLockMiddleware`** guards **across StrangeLoops** (different goals/loops that may run in separate worker processes).
 
-The recommended action: install `FileLockMiddleware` in autopilot mode (as originally intended) **and** add Layer 2's per-file lock to `LocalFilesystem` for solo mode. They operate at different granularities and do not conflict.
+The recommended action: install `FileLockMiddleware` in loop-rail mode (as originally intended) **and** add Layer 2's per-file lock to `LocalFilesystem` for solo mode. They operate at different granularities and do not conflict.
 
 ---
 
 ## Architectural Constraints
 
-1. **Lock registry is per-`LocalFilesystem` instance** — not global. Each daemon process has one `LocalFilesystem`. Cross-process safety is handled by `FileLockMiddleware` (autopilot) or version stamps (Layer 1).
+1. **Lock registry is per-`LocalFilesystem` instance** — not global. Each daemon process has one `LocalFilesystem`. Cross-process safety is handled by `FileLockMiddleware` (loop-rail) or version stamps (Layer 1).
 2. **`os.replace` is atomic on POSIX and Windows** (Python 3.3+). No platform-specific code needed.
 3. **Temp file naming** — uses `.soothe.tmp` suffix to avoid collisions with user files. Temp file is in the **same directory** as the target (required for `rename` to be atomic — cross-filesystem rename is not atomic).
 4. **`aedit_batched()` is the only write path** — all edit tools (`edit_file`, `edit_lines`, `insert_lines`, `delete_lines`) route through `aedit_batched()` when coalescing is active. Direct `aedit()` calls (bypassing middleware) still benefit from Layer 1+2 if the lock+atomic-write is added to `aedit()` itself.
@@ -845,19 +845,19 @@ When `backend_type == "network"`: re-read and re-hash immediately before every w
 
 **Rollback**: Set `edit_coalescing.enabled: false` in config. Middleware is skipped; edits go directly to `aedit()` / `aedit_batched()` (which still have Layer 1+2 protection).
 
-### Phase 3: Cross-Process Safety (Autopilot)
+### Phase 3: Cross-Process Safety (LoopRail)
 
-**Goal**: Eliminate cross-loop races in autopilot mode.
+**Goal**: Eliminate cross-loop races in loop-rail mode.
 
 | Step | File | Change |
 |------|------|--------|
-| 13 | `middleware/file_lock.py` | Install in autopilot middleware chain (currently not wired) |
-| 14 | `foundation/autopilot/file_lock_registry.py` | Ensure `FileLockRegistry` is in main workspace |
+| 13 | `middleware/file_lock.py` | Install in loop-rail middleware chain (currently not wired) |
+| 14 | `foundation/autopilot/file_lock_registry.py` | Ensure `FileLockRegistry` is in main workspace (legacy path; package removed per IG-779) |
 | 15 | Integration test | Two StrangeLoops edit same file |
 
 **Estimated LOC**: ~20 wiring + test code. Implementation already exists.
 
-**Compatibility**: Autopilot-mode-only change. Solo mode is unaffected.
+**Compatibility**: Loop-rail-mode-only change. Solo mode is unaffected.
 
 ### Phase 4: Staging Buffer (Performance — Turn-Level)
 
@@ -877,7 +877,7 @@ When `backend_type == "network"`: re-read and re-hash immediately before every w
 |-------|------|---------|-------------|
 | 1 | Low (internal, transparent) | Immediate deploy | None (always on) |
 | 2 | Medium (new middleware) | Opt-in, then default | `edit_coalescing.enabled` |
-| 3 | Low (autopilot only) | Autopilot deployments | `autopilot.file_lock.enabled` |
+| 3 | Low (loop-rail only) | Loop-rail deployments | `loop_rail.file_lock.enabled` |
 | 4 | Medium (turn-level state) | Opt-in | `edit_coalescing.enable_staging_buffer` |
 
 ---
@@ -1004,8 +1004,8 @@ Two edit calls use different paths that resolve to the same file (e.g., `./confi
 | `middleware/skill_activation.py` | 2 | Fast-path check |
 | `middleware/rate_limit.py` | 2 | Fast-path check |
 | `middleware/tool_concurrency.py` | 2 | Fast-path check |
-| `middleware/file_lock.py` | 3 | Wire into autopilot middleware chain |
-| `foundation/autopilot/file_lock_registry.py` | 3 | Ensure present in main workspace |
+| `middleware/file_lock.py` | 3 | Wire into loop-rail middleware chain |
+| `foundation/autopilot/file_lock_registry.py` | 3 | Ensure present in main workspace (legacy path; package removed per IG-779) |
 | `tests/integration/test_parallel_edits.py` | 1-3 | Race, crash, external-modification tests |
 | `tests/unit/middleware/test_edit_coalescing.py` | 2 | Coalescing unit tests |
 | `config/models.py` | 1-2 | Add `FilesystemConfig` and `EditCoalescingConfig` fields |
@@ -1018,5 +1018,5 @@ Two edit calls use different paths that resolve to the same file (e.g., `./confi
 - [RFC Index](./rfc-index.md)
 - RFC-101: Tool interface (middleware chain structure)
 - RFC-102: Security filesystem policy (path validation, permissions)
-- RFC-222: Autopilot goal engine architecture (cross-loop locking)
+- RFC-231: LoopRail goal engine architecture (cross-loop locking)
 - Prior design draft: `docs/archive/drafts/2026-06-27-edit-coalescing-async-io-design.md` (Layer 3 origin)

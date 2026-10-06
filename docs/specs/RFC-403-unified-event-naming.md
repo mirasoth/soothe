@@ -108,7 +108,7 @@ This RFC does **not** define:
 | `cognition` | Cognitive reasoning and decision-making | `plan.creating`, `goal.creating`, `strange_loop.completed`, `reason.running` |
 | `capability` | External capability naming (draft taxonomy; not used for built-in subagent wire) | Hypothetical `soothe.capability.*` names—**obsolete for built-ins** (IG-339 uses `soothe.subagent.*`) |
 | `output` | User-facing content delivery | `final_report.reporting`, `autonomous.displaying` (duplicate `soothe.output.*` assistant bodies removed; use `messages` + `phase` per RFC-614) |
-| `system` | System-level operations (daemon, autopilot) | `daemon.heartbeat`, `autopilot.status_changed` |
+| `system` | System-level operations (daemon, loop-rail) | `daemon.heartbeat`, `loop_rail.status_changed` |
 | `error` | Error and exception events | `general.failed`, `protocol.violated` |
 | `plugin` | Plugin lifecycle (core-managed) | `plugin.loaded`, `plugin.failed`, `plugin.health_checked` |
 | `plugin.<vendor>` | Third-party plugin extension namespace | `plugin.acme.collector.started`, `plugin.dataflow.pipeline.running` |
@@ -429,10 +429,10 @@ The following table recorded an abandoned rename toward `soothe.capability.*`. *
 
 | Old Type | New Type | Notes |
 |----------|----------|-------|
-| `soothe.autopilot.*` | `soothe.system.autopilot.*` | Domain migration |
-| `soothe.autopilot.goal_created` | `soothe.system.autopilot.goal.creating` | Domain + hierarchical |
-| `soothe.autopilot.dreaming_entered` | `soothe.system.autopilot.dreaming.started` | Domain + present progressive |
-| `soothe.autopilot.relationship_detected` | `soothe.system.autopilot.relationship.detecting` | Domain + present progressive |
+| legacy `autopilot.*` events | `soothe.system.loop_rail.*` | Domain migration + autopilot→loop_rail rename |
+| legacy `autopilot.goal_created` | `soothe.system.loop_rail.goal.creating` | Domain + hierarchical + present progressive |
+| legacy `autopilot.dreaming_entered` | *(retired — dreaming was removed, IG-779)* | Dreaming subsystem retired |
+| legacy `autopilot.relationship_detected` | `soothe.system.loop_rail.relationship.detecting` | Domain + present progressive |
 
 ### 8.6 Output domain (ancillary naming only)
 

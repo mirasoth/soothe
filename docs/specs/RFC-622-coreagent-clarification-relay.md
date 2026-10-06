@@ -7,9 +7,9 @@
 **Created**: 2026-06-02
 **Authors**: Soothe Team
 **Updated**: 2026-08-27
-**Depends on**: RFC-220 (Agentic Goal Execution / StrangeLoop), RFC-222 (Autopilot Mode), RFC-600 (Plugin Extension System), RFC-601 (Built-in Agents), RFC-403 (Unified Event Naming)
+**Depends on**: RFC-220 (Agentic Goal Execution / StrangeLoop), RFC-231 (LoopRail + Rail Exec), RFC-600 (Plugin Extension System), RFC-601 (Built-in Agents), RFC-403 (Unified Event Naming)
 **Supersedes**: Empty-answer auto-resume behavior currently encoded in `sloop/engine/graph_interrupt.py::build_auto_resume_payload` for `type=="ask_user"` interrupts.
-**Revisions**: [2026-08-27](#changelog) — §9b.5a Manual-mode pipeline pre-filter + `manual_scope`; force-manual `tool_approval` skips allow rules; §9b.5, §9b.8, §12 updated. | [2026-08-27](#changelog) — §9c Structured ask_user schema + `StructuredAskUserWidget`; §2.1, §4.2, §4.3, §5.1, §6, §10, §15, §17 updated. | [2026-08-27](#changelog) — §9b Multi-stage tool-approval pipeline; §2.1, §4.2, §4.3, §6, §12 updated.
+**Revisions**: [2026-10-07](#changelog) — terminology cleanse: "autopilot" → "loop-rail runs" / "headless runs" / "LoopRailService" throughout; semantics unchanged. RFC-222 dependency replaced by RFC-231 (RFC-222 archived 2026-10-07; CE report-commit boundary now normative in RFC-231 §4/§17). | [2026-08-27](#changelog) — §9b.5a Manual-mode pipeline pre-filter + `manual_scope`; force-manual `tool_approval` skips allow rules; §9b.5, §9b.8, §12 updated. | [2026-08-27](#changelog) — §9c Structured ask_user schema + `StructuredAskUserWidget`; §2.1, §4.2, §4.3, §5.1, §6, §10, §15, §17 updated. | [2026-08-27](#changelog) — §9b Multi-stage tool-approval pipeline; §2.1, §4.2, §4.3, §6, §12 updated.
 
 ---
 
@@ -19,7 +19,7 @@ When the **CoreAgent** (deepagents-based LangGraph) emits a clarification — e.
 
 This RFC introduces a **clarification relay**: a `ClarificationPolicy` protocol, a dedicated `await_clarification` graph node in the StrangeLoop, two built-in policies (interactive TUI relay and auto-answer), a new `veritas` subagent that answers clarifications as the originating user would, and a TUI Manual/Auto mode toggle. The pause-on-human path is durable via the existing LangGraph checkpointer.
 
-The relay works identically in solo StrangeLoop and autopilot runs **without** forcing `GoalEngine` into solo mode: policy is injected through `LoopRuntimeContext`.
+The relay works identically in solo StrangeLoop and loop-rail runs **without** forcing the ContextEngine into solo mode: policy is injected through `LoopRuntimeContext`.
 
 ---
 
@@ -57,7 +57,7 @@ The relay works identically in solo StrangeLoop and autopilot runs **without** f
 |--------------------------|----------------|
 | `ask_user` interrupts auto-resumed with `""` answers (`graph_interrupt.py:47`) | Policy-driven payload from real human or auto-answerer |
 | StrangeLoop has no graph state for "paused on human" | First-class `pending_clarification` state + dedicated node |
-| Solo StrangeLoop has no GoalEngine; autopilot does | `ClarificationPolicy` protocol injected via `LoopRuntimeContext`; runtimes pick their implementation |
+| Solo StrangeLoop has no ContextEngine; loop-rail runs do | `ClarificationPolicy` protocol injected via `LoopRuntimeContext`; runtimes pick their implementation |
 | No way for an operator to see/answer questions out-of-band | `awaiting_clarification` goal status + `soothe goal answer` CLI |
 | Plain-text clarifications (no tool call, no `interrupt`) silently end turns | Heuristic detector synthesizes an equivalent request |
 
@@ -184,7 +184,7 @@ Steps 1–3 identical to Flow 1.
    - If `defer == True` or `confidence < auto_min_confidence`, raises `ClarificationDeferred(reason)`.
    - Otherwise returns `ClarificationAnswer(source="veritas", ...)`.
 5. On success, steps 6–9 identical to Flow 1.
-6. On `ClarificationDeferred`: `await_clarification` calls `ctx.mark_goal_status("awaiting_clarification", reason=…)`, emits `soothe.loop.clarification_deferred`, returns `terminate=True`. Loop stops. Goal is later resumed by `soothe goal answer <id> "..."` or autopilot scheduler when an answer arrives.
+6. On `ClarificationDeferred`: `await_clarification` calls `ctx.mark_goal_status("awaiting_clarification", reason=…)`, emits `soothe.loop.clarification_deferred`, returns `terminate=True`. Loop stops. Goal is later resumed by `soothe goal answer <id> "..."` or the loop-rail scheduler when an answer arrives.
 
 ### 5.3 No plain-text fallback
 
@@ -295,7 +295,7 @@ GoalStatus = Enum(
 
 ## 7. Architectural Constraints
 
-1. **Solo and autopilot share one policy abstraction.** `GoalEngine` is not introduced into the solo loop. `LoopRuntimeContext.clarification_policy` is the single injection point.
+1. **Solo and loop-rail runs share one policy abstraction.** The ContextEngine is not introduced into the solo loop. `LoopRuntimeContext.clarification_policy` is the single injection point.
 2. **Pause-on-human is checkpointable.** `InteractiveClarificationPolicy` uses LangGraph `interrupt(...)` at the loop graph level so the loop's existing checkpointer captures it. TUI restart / daemon restart resumes cleanly.
 3. **Veritas never asks back.** Its system prompt forbids emitting clarifications; any clarification-shaped output is coerced to `defer=True`. No recursive clarification.
 4. **Confidence floor is a safety net.** Even if veritas omits `defer`, `AutoClarificationPolicy` enforces `auto_min_confidence` and defers on low-confidence answers.
@@ -372,7 +372,7 @@ up to 2 retries. Most decisions are trivially safe (in-workspace `edit_file`)
 or trivially dangerous (`rm -rf /`, editing `.git/config`). An LLM is not
 needed for these. The cost is both latency (round-trip per tool call) and
 token spend (huge prompt × every interrupt × every goal), especially severe
-in autopilot runs.
+in loop-rail runs.
 
 ### 9b.2 Pipeline
 
@@ -538,7 +538,7 @@ allow rules do not fire — everything reaches veritas (fail-safe).
 
 ### 9b.9 Expected impact
 
-For a typical autopilot goal with 20 tool calls (mostly in-workspace
+For a typical loop-rail goal with 20 tool calls (mostly in-workspace
 `edit_file` + safe `run_command` like `pytest`):
 
 | Stage | Calls | LLM? | Cost |
@@ -776,7 +776,7 @@ dead.
 | Keybind | `ctrl+m` toggles Manual ↔ Auto. Shift+Tab is retained for the loop selector. |
 | Status badge | `[manual]` (green) or `[auto]` (yellow) on the persistent status line. |
 | CLI flag | `soothe --mode {manual,auto}` for one-shot runs. Default: `manual` when stdin is a TTY, `auto` otherwise. |
-| Autopilot | Ignores the flag. Always Auto. |
+| Loop-rail runs | Ignores the flag. Always Auto. |
 | Hot swap | Replaces `LoopRuntimeContext.clarification_policy` for future requests. In-flight requests complete under the prior policy. |
 | Modal | Manual mode shows a modal with the question(s); submit sends `Command(resume=…)` to the loop graph. |
 | Structured widget (§9c) | Generic (execute) `ask_user` renders as `StructuredAskUserWidget`: tabs for multi-question navigation (←/→), ↑/↓ highlight, Enter selects, long desc shown inline below each label, 4th custom free-text row, persistent footer with Submit/Abandon + inline recap before final submit. HITL plan-review and tool-approval keep their existing 3-button selector. |
@@ -805,7 +805,7 @@ agent:
   clarification:
     auto_policy: veritas              # only built-in for now
     auto_min_confidence: 0.4          # below this, treat as defer
-    max_defer_age_hours: 168          # autopilot: scrub stale awaiting_clarification goals
+    max_defer_age_hours: 168          # loop-rail headless runs: scrub stale awaiting_clarification goals
     default_mode: auto                # wire may override per turn (auto|manual)
     force_manual_origins:             # never veritas-auto these origins
       - planner_subagent_review       # planner *subagent* gate only (RFC-633)
@@ -860,7 +860,7 @@ TUI relay even when the turn's clarification mode is `auto`. The default is
 **planner subagent review only** (`planner_subagent_review`). That gate is
 unrelated to StrangeLoop planning-stage nodes `plan_generate` /
 `plan_assess`. Other wired specialists (`browser_use`, `deep_research`, …)
-are not listed and can still use veritas under auto mode. Headless / autopilot
+are not listed and can still use veritas under auto mode. Headless / loop-rail
 runs (no human attached) defer forced origins instead of auto-answering. Empty
 the list to allow veritas to answer every origin under auto mode.
 
@@ -887,10 +887,10 @@ Per project rule, `config/templates/soothe.yml` (symlink to the packaged
 
 ## 13. Persistence and Out-of-Band Answers
 
-- `awaiting_clarification` goal status is persisted by the goal-engine backend (autopilot) and by `StrangeLoopStateManager` (solo).
+- `awaiting_clarification` goal status is persisted by the ContextEngine backend (loop-rail runs) and by `StrangeLoopStateManager` (solo).
 - New CLI: `soothe goal answer <goal_id> [--question-index N] "answer text"` writes the answer into the goal's pending-clarification record and clears `awaiting_clarification`.
-- Autopilot scheduler treats `awaiting_clarification` as blocked: it does not count toward active-goal concurrency and is not selected for execution until cleared.
-- TTL: goals stuck in `awaiting_clarification` longer than `max_defer_age_hours` are surfaced for operator review (autopilot only).
+- The loop-rail scheduler treats `awaiting_clarification` as blocked: it does not count toward active-goal concurrency and is not selected for execution until cleared.
+- TTL: goals stuck in `awaiting_clarification` longer than `max_defer_age_hours` are surfaced for operator review (loop-rail headless runs only).
 
 ---
 
@@ -900,7 +900,7 @@ Per project rule, `config/templates/soothe.yml` (symlink to the packaged
 |-----------------|------------------|----------------|
 | LangGraph checkpointer | API | Loop-level `interrupt(...)` snapshots loop state including pending clarification |
 | TUI client | Event + Command | `clarification_requested` event → modal → `Command(resume=…)` |
-| GoalEngine (autopilot) | API | `mark_goal_status("awaiting_clarification", …)`, `answer_clarification(...)` |
+| ContextEngine (loop-rail runs) | API | `mark_goal_status("awaiting_clarification", …)`, `answer_clarification(...)` |
 | `soothe` CLI | New command | `soothe goal answer <id> "..."` |
 | Langfuse / observability | Events | All `clarification_*` and `veritas.*` events flow through the standard event bus |
 
@@ -936,14 +936,14 @@ Integration:
 - **Test impact**: `build_auto_resume_payload` tests rewritten. Action-approval auto-approve is preserved.
 - **Veritas wrongness**: every answer emits an audit event with question + answer + source + confidence + rationale; below-threshold confidence forces defer.
 - **Durability**: relies on StrangeLoop checkpointer (default-on); doctor check confirms presence.
-- **Autopilot scheduler**: must recognize `awaiting_clarification` as blocked, not active — one-line change in concurrency accounting.
+- **Loop-rail scheduler**: must recognize `awaiting_clarification` as blocked, not active — one-line change in concurrency accounting.
 
 ---
 
 ## 17. Open Items (deferred to Implementation Guide)
 
 - ~~Concrete shape of the structured `ask_clarification` marker / tool (vs. relying on the existing `interrupt` shape only).~~ **Resolved by §9c**: the `ask_user` tool now accepts `list[QuestionSpec]` with title, description, 3 options (short + long), and recommended index. The CLI renders `StructuredAskUserWidget`.
-- Migration of persisted goal-status enums for already-running autopilot instances.
+- Migration of persisted goal-status enums for already-running loop-rail instances.
 - Whether `--mode auto` should fall back to TUI relay if `veritas` is not configured, or error out at startup.
 - Exact workspace-trust interaction for veritas's filesystem summarization (RFC-621).
 - Unifying HITL plan-review and tool-approval modes under `StructuredAskUserWidget` (future RFC; the host decoder must map selected options back to HITL `decision` types).
@@ -955,7 +955,7 @@ Integration:
 - [RFC Standard](./templates/rfc-standard.md)
 - [RFC Index](./rfc-index.md)
 - [RFC-220](./RFC-220-langgraph-agent-loop-orchestrator.md) — StrangeLoop topology that this RFC extends
-- [RFC-222](./RFC-222-autopilot-goal-engine-architecture.md) — Autopilot scheduler whose status enum gains `awaiting_clarification`
+- [RFC-231](./RFC-231-looprail-rail-exec.md) — LoopRail + `LoopRailService`; the loop-rail scheduler whose status enum gains `awaiting_clarification` (RFC-222 archived; CE report-commit boundary absorbed into RFC-231 §4/§17)
 - [RFC-600](./RFC-600-plugin-extension-system.md) — `register_event` used for new event types
 - [RFC-601](./RFC-601-built-in-agents.md) — Built-in subagent registry that gains `veritas`
 - [RFC-403](./RFC-403-unified-event-naming.md) — Event naming for `soothe.loop.clarification_*` and `soothe.subagent.veritas.*`
