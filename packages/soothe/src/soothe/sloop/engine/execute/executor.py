@@ -257,7 +257,12 @@ def _capture_interrupts(
             if request.origin_node == ORIGIN_TOOL_APPROVAL:
                 logger.info("[executor] captured tool_approval interrupt id=%s", iid)
             ticket = resume_ticket or ResumeTicket()
-            capture.enqueue(request, resume_ticket=ticket, step_id=step_id)
+            capture.enqueue(
+                request,
+                resume_ticket=ticket,
+                step_id=step_id,
+                goal_id=loop_state_view.goal_id,
+            )
             captured = True
         elif is_clarification_interrupt_payload(value):
             # A recognized shape that failed to parse (e.g. empty questions) —

@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Scale the StrangeLoop graph `recursion_limit` with `agent.loop.max_iterations` so clarification rounds and plan reviews don't exhaust LangGraph's default budget and abort the loop mid-goal.
 - Deduplicate manual clarification cards on late re-emits: a submitted widget is reused instead of mounting a second question card after the user has already answered.
+- Tag captured interrupts with `goal_id` and drop relay-inbox entries lacking a matching `goal_id`, fixing the approve-tool infinite-loop where a stale interrupt from a cancelled prior goal leaked into the newly submitted goal.
+- Route `ask_user` defer / failure outcomes to the retry sentinel in bypass mode (instead of the human relay), so bypass runs stay autonomous instead of stalling on an unanswered clarification interrupt.
+- Degrade classifier `escalate` verdicts to instructive rejects in autopilot (no human attached), matching the deterministic escalate path and preventing indefinite interrupts with no one to answer them.
+
+### Changed
+- Default `InlineGateConfig.active_in_bypass` to `False`: bypass mode now permits all gated tool calls by default. Set `True` to keep deny rules absolute even in bypass.
+- Strip RFC references from middleware / config docstrings (no behavior change).
 
 ## [v1.0.16] - 2026-09-27
 

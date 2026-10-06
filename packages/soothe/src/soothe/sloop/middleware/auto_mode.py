@@ -1,14 +1,10 @@
-"""RFC-634: inline tool-approval gate for the four mutating tools.
+"""Inline tool-approval gate for mutating tools.
 
-`AutoModeMiddleware` is the sole tool-approval human-in-the-loop: it
-evaluates every gated tool call in its ``after_model`` hook (host middleware
-runs before the deepagents HITL hook would, and the builder no longer wires
-``interrupt_on`` for these tools). Deterministic verdicts resolve inline —
-deny-rule and autopilot-safety rejects become instructive error
-``ToolMessage``s with no interrupt and no graph round trip; auto-mode
-approvals execute silently. Only genuinely human decisions emit the standard
-``{"action_requests": [...]}`` interrupt the executor, relay, and TUI
-already understand.
+`AutoModeMiddleware` evaluates every gated tool call in its `after_model`
+hook. Deterministic verdicts resolve inline — deny-rule and safety rejects
+become instructive error `ToolMessage`s with no interrupt; auto-mode
+approvals execute silently. Only human-decision cases emit the standard
+`action_requests` interrupt.
 """
 
 from __future__ import annotations
@@ -66,14 +62,14 @@ def _loop_view(ctx: AutoModeContext) -> Any | None:
 
 
 class AutoModeMiddleware(AgentMiddleware):
-    """Inline tool-approval gate (RFC-634). See module docstring."""
+    """Inline tool-approval gate. See module docstring."""
 
     def __init__(
         self,
         pipeline: ToolApprovalPipeline,
         *,
         tools: tuple[str, ...] | list[str] = ("edit_file", "write_file", "delete", "run_command"),
-        active_in_bypass: bool = True,
+        active_in_bypass: bool = False,
         default_clarification_mode: str = "auto",
         manual_scope: str = "all",
         force_manual_tool_approval: bool = False,
@@ -83,19 +79,20 @@ class AutoModeMiddleware(AgentMiddleware):
         """Wire the evaluator and gate posture.
 
         Args:
-            pipeline: Shared ``ToolApprovalPipeline`` (deny rules + safety).
+            pipeline: Shared `ToolApprovalPipeline` (deny rules + safety).
             tools: Gated tool names; all other tools pass through untouched.
-            active_in_bypass: Keep deny rules absolute in bypass mode.
+            active_in_bypass: Keep deny rules absolute in bypass mode. Defaults
+                to `False` — all tool calls are permitted in bypass mode.
             default_clarification_mode: Fallback when the per-run
-                clarification mode is absent from ``configurable``.
-            manual_scope: ``manual_scope`` from ``ToolApprovalConfig`` —
-                ``all`` routes every unresolved gated call to the human,
-                ``ambiguous_only`` auto-approves rule-unresolved calls.
-            force_manual_tool_approval: ``tool_approval`` listed in
-                ``force_manual_origins`` — every gated call goes to the human.
-            classifier: Optional ``RiskClassifier`` consulted for rule-unresolved
-                (ambiguous) calls. ``None`` keeps the deterministic behaviour.
-            classifier_config: nano ``ClassifierConfig`` supplying strict /
+                clarification mode is absent from `configurable`.
+            manual_scope: `manual_scope` from `ToolApprovalConfig` —
+                `all` routes every unresolved gated call to the human,
+                `ambiguous_only` auto-approves rule-unresolved calls.
+            force_manual_tool_approval: `tool_approval` listed in
+                `force_manual_origins` — every gated call goes to the human.
+            classifier: Optional `RiskClassifier` consulted for rule-unresolved
+                (ambiguous) calls. `None` keeps the deterministic behaviour.
+            classifier_config: nano `ClassifierConfig` supplying strict /
                 per-turn limits for the classifier path.
         """
         super().__init__()
@@ -107,10 +104,6 @@ class AutoModeMiddleware(AgentMiddleware):
         self._default_mode = default_clarification_mode
         self._manual_scope = manual_scope
         self._force_manual_tool_approval = force_manual_tool_approval
-
-    # ------------------------------------------------------------------
-    # after_model hook
-    # ------------------------------------------------------------------
 
     def after_model(self, state: Any, runtime: Any) -> dict[str, Any] | None:
         """Gate the last AIMessage's tool calls before they execute."""
@@ -152,7 +145,7 @@ class AutoModeMiddleware(AgentMiddleware):
             resumed = interrupt(payload)
             decisions = self._extract_decisions(resumed, expected=len(pending))
 
-        # Rewrite the tool-call list: strip rejects, apply human decisions.
+        # Strip rejects, apply human decisions to escalated calls.
         revised: list[ToolCall] = []
         artificial: list[ToolMessage] = []
         changed = False
@@ -197,10 +190,6 @@ class AutoModeMiddleware(AgentMiddleware):
         if not self._classifier_cfg.enabled:
             return result
         return await self._apply_classification(state, runtime)
-
-    # ------------------------------------------------------------------
-    # Optional classifier pass (rule-unresolved calls only)
-    # ------------------------------------------------------------------
 
     async def _apply_classification(self, state: Any, runtime: Any) -> dict[str, Any] | None:
         """Classify ambiguous gated calls and act on trusted verdicts.
@@ -266,6 +255,12 @@ class AutoModeMiddleware(AgentMiddleware):
                 revised.append(tc)
                 continue
             if verdict.band == "reject":
+                artificial.append(self._classifier_reject_message(tc, verdict))
+                changed = True
+                continue
+            if not ctx.human_attached:
+                # Autopilot: no human to decide — degrade to instructive reject
+                # (parity with the deterministic escalate path in `_evaluate`).
                 artificial.append(self._classifier_reject_message(tc, verdict))
                 changed = True
                 continue
@@ -345,18 +340,14 @@ class AutoModeMiddleware(AgentMiddleware):
             status="error",
         )
 
-    # ------------------------------------------------------------------
-    # Evaluation
-    # ------------------------------------------------------------------
-
     def _evaluate(self, tool_call: ToolCall, ctx: AutoModeContext) -> _Verdict:
-        """Resolve one gated tool call per the RFC-634 decision table."""
+        """Resolve one gated tool call per the decision table."""
         name = str(tool_call.get("name") or "")
         args = tool_call.get("args") or {}
         if not isinstance(args, dict):
             args = {}
 
-        # Bypass with the gate deactivated → no evaluation at all.
+        # Bypass with gate deactivated → skip all evaluation.
         if ctx.bypass and not self._active_in_bypass:
             return _Verdict("allow")
 
@@ -410,10 +401,6 @@ class AutoModeMiddleware(AgentMiddleware):
         if ctx.clarification_mode == "manual":
             return ctx.human_attached and self._manual_scope == "all"
         return False
-
-    # ------------------------------------------------------------------
-    # Interrupt payload + decision processing (HITL protocol parity)
-    # ------------------------------------------------------------------
 
     @staticmethod
     def _action_request(tool_call: ToolCall) -> dict[str, Any]:
@@ -495,10 +482,6 @@ class AutoModeMiddleware(AgentMiddleware):
                     id=tool_call["id"],
                 )
         return tool_call  # approve (and malformed decisions) → keep
-
-    # ------------------------------------------------------------------
-    # Inline reject
-    # ------------------------------------------------------------------
 
     @staticmethod
     def _reject_message(tool_call: ToolCall, result: ApprovalResult | None) -> ToolMessage:

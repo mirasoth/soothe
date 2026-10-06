@@ -1,15 +1,11 @@
-"""RFC-635: inline veritas fast path for `ask_user` tool calls.
+"""Inline veritas fast path for `ask_user` tool calls.
 
-`AskUserGateMiddleware` calls veritas in its ``aafter_model`` hook — before
-the tool executes — and answers confident questions with a synthetic
-``ToolMessage`` rendered by the tool's own ``_format_answers`` (zero
-interrupts, zero graph hops, identical model contract). The gate only ever
-inlines "I have an answer": defer / low-confidence / failure questions are
-stripped and re-emitted as the gate's own ``ask_user``-shaped interrupt
-carrying a ``gate_deferred`` marker, so the station skips its veritas call
-(no double LLM) and routes straight to the human relay, the autopilot
-retry sentinel, or the hard defer — preserving the RFC-623 seven-day
-``awaiting_clarification`` park semantics untouched.
+`AskUserGateMiddleware` runs veritas in ``aafter_model`` and answers
+confident questions with a synthetic `ToolMessage` (zero interrupts).
+Defer / failure outcomes are re-emitted as a ``gate_deferred`` interrupt
+so the station skips its own veritas call. In bypass mode the gate
+activates regardless of clarification mode and routes all defer / failure
+outcomes to the retry sentinel instead of the human relay.
 """
 
 from __future__ import annotations
@@ -86,12 +82,12 @@ class AskUserGateMiddleware(AgentMiddleware):
         """Wire the veritas callable and gate posture.
 
         Args:
-            veritas_answer: Async callable taking a ``ClarificationRequest``
-                and returning a ``VeritasAnswerSchema`` (the subagent's
-                ``answer``, model-bound at build time).
+            veritas_answer: Async callable taking a `ClarificationRequest`
+                and returning a `VeritasAnswerSchema` (the subagent's
+                `answer`, model-bound at build time).
             min_confidence: Confidence threshold (mirrors the station policy).
             default_clarification_mode: Fallback when the per-run mode is
-                absent from ``configurable``.
+                absent from `configurable`.
             autopilot_retry_on_fail: Return the retry sentinel inline when no
                 human is attached and veritas fails (station parity).
         """
@@ -100,10 +96,6 @@ class AskUserGateMiddleware(AgentMiddleware):
         self._min_confidence = min_confidence
         self._default_mode = default_clarification_mode
         self._autopilot_retry_on_fail = autopilot_retry_on_fail
-
-    # ------------------------------------------------------------------
-    # after_model hook (async-only: the veritas call is an LLM round trip)
-    # ------------------------------------------------------------------
 
     async def aafter_model(self, state: Any, runtime: Any) -> dict[str, Any] | None:
         """Answer confident ask_user calls inline; defer the rest."""
@@ -127,8 +119,11 @@ class AskUserGateMiddleware(AgentMiddleware):
 
         ctx = AutoModeContext.from_runtime(runtime, default_mode=self._default_mode)
         view = self._loop_view(ctx)
-        # Fail-safes: gate only acts in auto mode with a context view.
-        if view is None or ctx.clarification_mode != "auto":
+        if view is None:
+            return None
+        # Gate activates in auto mode, or in bypass mode (defer routes to
+        # the retry sentinel instead of the human relay).
+        if not ctx.bypass and ctx.clarification_mode != "auto":
             return None
 
         outcomes: list[tuple[int, Any, _GateOutcome]] = []
@@ -136,16 +131,16 @@ class AskUserGateMiddleware(AgentMiddleware):
             outcome = await self._evaluate(tc, ctx, view)
             outcomes.append((idx, tc, outcome))
 
-        # Confident outcomes resolve inline; the rest (defer or failure)
-        # bundle into one gate interrupt. Inline-retry outcomes (autopilot)
-        # never reach the interrupt.
+        # Confident outcomes resolve inline; inline-retry outcomes never reach
+        # the interrupt. Remaining deferred outcomes bundle into one gate
+        # interrupt — unless bypass mode routes them to the retry sentinel.
         deferred = [
             (idx, tc, o)
             for idx, tc, o in outcomes
             if not o.confident and not o.inline_retry and o.questions
         ]
         answers_by_idx: dict[int, str] = {}
-        if deferred:
+        if deferred and not ctx.bypass:
             payload = {
                 "type": INTERRUPT_TYPE_ASK_USER,
                 "questions": [q for _, _, o in deferred for q in o.questions],
@@ -178,7 +173,6 @@ class AskUserGateMiddleware(AgentMiddleware):
                 changed = True
                 continue
             if outcome.inline_retry:
-                # Autopilot: synthetic retry sentinel per question (station parity).
                 content = self._render_answers(
                     outcome.questions, [_RETRY_SENTINEL] * len(outcome.questions)
                 )
@@ -201,9 +195,8 @@ class AskUserGateMiddleware(AgentMiddleware):
                 )
                 changed = True
                 continue
-            # No questions parsed (malformed call) → leave untouched.
+            # Interrupted but no answer slice — treat as dismissal.
             if outcome.questions:
-                # Defensive: interrupted but no answer slice — treat as dismissal.
                 artificial.append(
                     ToolMessage(
                         content="Clarification dismissed without an answer. Decide how to proceed.",
@@ -219,10 +212,6 @@ class AskUserGateMiddleware(AgentMiddleware):
             return None
         last_ai_msg.tool_calls = revised
         return {"messages": [last_ai_msg, *artificial]}
-
-    # ------------------------------------------------------------------
-    # Evaluation
-    # ------------------------------------------------------------------
 
     async def _evaluate(
         self, tool_call: Any, ctx: AutoModeContext, view: LoopStateView
@@ -249,9 +238,8 @@ class AskUserGateMiddleware(AgentMiddleware):
                 "[ask_user_gate] veritas call failed; falling back to station path",
                 exc_info=True,
             )
-            # Autopilot retry ladder parity: inline sentinel when no human
-            # is attached and retry is enabled, else interrupt for the human.
-            if not ctx.human_attached and self._autopilot_retry_on_fail:
+            # Bypass or autopilot: inline retry sentinel; else interrupt for the human.
+            if ctx.bypass or (not ctx.human_attached and self._autopilot_retry_on_fail):
                 return _GateOutcome(
                     questions,
                     None,
@@ -268,8 +256,8 @@ class AskUserGateMiddleware(AgentMiddleware):
                 return _GateOutcome(questions, None, "explicit")
             return _GateOutcome(questions, result, None)
 
-        # Defer / failure kinds: autopilot retry resolves inline (station parity).
-        if not ctx.human_attached and self._autopilot_retry_on_fail:
+        # Defer / failure: bypass or autopilot routes to inline retry sentinel.
+        if ctx.bypass or (not ctx.human_attached and self._autopilot_retry_on_fail):
             return _GateOutcome(
                 questions,
                 None,
@@ -349,10 +337,6 @@ class AskUserGateMiddleware(AgentMiddleware):
                     slice_.append(flat[-1])
             pos += n
             answers_by_idx[idx] = self._render_answers(outcome.questions, slice_)
-
-    # ------------------------------------------------------------------
-    # Observability
-    # ------------------------------------------------------------------
 
     def _notify_answered(self, outcome: _GateOutcome) -> None:
         """Log and stream-emit an inline answer for history accounting."""
