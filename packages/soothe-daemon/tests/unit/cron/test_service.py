@@ -22,8 +22,7 @@ from soothe_daemon.cron.store import CronJobStore
 
 def _mock_config(*, max_jobs: int = 100, poll_interval: int = 60) -> MagicMock:
     cfg = MagicMock()
-    cfg.agent.autopilot.enabled = True
-    cfg.agent.autopilot.default_rail = "feature-dev"
+    cfg.agent.rail.default_rail = "feature-dev"
     cfg.cron.max_jobs = max_jobs
     cfg.cron.poll_interval = poll_interval
     cfg.cron.extraction_model = "fast"
@@ -58,7 +57,7 @@ def temp_store(tmp_path) -> CronJobStore:
 async def test_add_job_rejects_when_autopilot_disabled(temp_store: CronJobStore) -> None:
     """Pending jobs must not be created when the loop-native path is disabled."""
     svc = CronService(config=_mock_config(), store=temp_store)
-    svc._config.agent.autopilot.enabled = False
+    svc._config.agent.rail.default_rail = None
     svc._extraction_service.extract = AsyncMock(return_value=_extraction())
 
     with pytest.raises(AutopilotDisabledError, match="Cron dispatch is unavailable"):

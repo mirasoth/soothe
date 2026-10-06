@@ -39,7 +39,7 @@ The mechanism mirrors the existing per-turn `/model` path: client session memory
 * Switching process-wide embedding model or dimensions for the override (indexes stay on the process embedding profile).
 * Writing `active_router_profile` back to `config.yml` (no `--default` in this RFC).
 * Changing how `router_profiles` are declared or how load-time `_apply_active_router_profile` works.
-* Requiring autopilot / Discord / other channels to pass the field (optional for them).
+* Requiring loop-rail / Discord / other channels to pass the field (optional for them).
 
 ---
 

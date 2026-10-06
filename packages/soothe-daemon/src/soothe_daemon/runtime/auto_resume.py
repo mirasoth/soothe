@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any, Literal
 
-from soothe_daemon.runner.worker_loop_ids import is_autopilot_worker_loop_id
+from soothe_daemon.runner.worker_loop_ids import _AUTOPILOT_WORKER_PREFIX
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +92,9 @@ def classify_incomplete_loop(
         return AutoResumeClassification("", AutoResumeDecision.SKIP, "empty_loop_id")
 
     owned = (
-        bool(autopilot_owned) if autopilot_owned is not None else is_autopilot_worker_loop_id(lid)
+        bool(autopilot_owned)
+        if autopilot_owned is not None
+        else bool(lid.startswith(_AUTOPILOT_WORKER_PREFIX))
     )
     if owned:
         return AutoResumeClassification(lid, AutoResumeDecision.SKIP, "autopilot_owned")
@@ -273,7 +275,7 @@ async def recover_incomplete_loops(daemon: Any) -> list[AutoResumeClassification
             updated_at_raw=row.get("updated_at"),
             checkpoint=checkpoint,
             active_runner=_loop_has_active_runner(daemon, loop_id),
-            autopilot_owned=is_autopilot_worker_loop_id(loop_id),
+            autopilot_owned=loop_id.startswith(_AUTOPILOT_WORKER_PREFIX),
             clarification_pending=bool(clar_pending) if clar_pending is not None else False,
             clarifications_policy=clar_policy,
             auto_cancel=auto_cancel,

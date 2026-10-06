@@ -68,7 +68,6 @@ async def _handle_command_request(self, msg: dict[str, Any]) -> None:
             "plan": self._cmd_plan,
             "thread": self._cmd_thread,
             "resume": self._cmd_resume,
-            "autopilot_dashboard": self._cmd_autopilot_dashboard,
             "cron_add": self._cmd_cron_add,
         }
 
@@ -475,25 +474,6 @@ async def _cmd_resume(
     return {"resumed": True, "loop_id": target_loop}
 
 
-async def _cmd_autopilot_dashboard(
-    self, checkpoint_thread_id: str | None, params: dict, *, loop_id: str | None = None
-) -> dict[str, Any]:
-    """Show autopilot dashboard for the bound loop/checkpoint."""
-    if not checkpoint_thread_id:
-        raise ValueError("Active loop required")
-
-    # TODO: Get autopilot state from runner
-    dashboard = {
-        "status": "idle",
-        "iterations": 0,
-        "goals_completed": 0,
-        "goals_active": 0,
-        "active_goals": [],
-    }
-
-    return {"autopilot_dashboard": dashboard}
-
-
 # Cron command handlers (RFC-229)
 
 
@@ -583,6 +563,5 @@ __all__ = [
     "_cmd_plan",
     "_cmd_thread",
     "_cmd_resume",
-    "_cmd_autopilot_dashboard",
     "_cmd_cron_add",
 ]

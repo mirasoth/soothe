@@ -62,12 +62,6 @@ PLAN_BATCH_STARTED = "soothe.internal.plan.batch.started"
 BRANCH_ANALYZED = "soothe.internal.branch.analyzed"
 BRANCH_PRUNED = "soothe.internal.branch.pruned"
 
-# Autopilot internals (DETAILED)
-AUTOPILOT_GOAL_VALIDATED = "soothe.internal.autopilot.goal.validated"
-AUTOPILOT_FEEDBACK_SENT = "soothe.internal.autopilot.feedback.sent"
-AUTOPILOT_RELATIONSHIP_DETECTED = "soothe.internal.autopilot.relationship.detected"
-AUTOPILOT_CHECKPOINT_SAVED = "soothe.internal.autopilot.checkpoint.saved"
-
 # Tool-approval inline gate (RFC-634) — emitted via the agent node
 # stream_writer as a custom chunk whenever AutoModeMiddleware rejects a
 # gated tool call inline (deny rule or autopilot safety degrade).
@@ -93,9 +87,6 @@ GOAL_BATCH_STARTED = "soothe.cognition.goal.batch.started"
 GOAL_REPORT = "soothe.cognition.goal.reported"
 GOAL_DIRECTIVES_APPLIED = "soothe.cognition.goal.directives.applied"
 GOAL_DEFERRED = "soothe.cognition.goal.deferred"
-
-# Autopilot mode switching
-AUTOPILOT_MODE_SWITCHED = "soothe.cognition.autopilot.mode_switched"
 
 # Intent classification
 INTENT_CLASSIFIED = "soothe.cognition.intent.classified"
@@ -134,16 +125,6 @@ WIRED_SUBAGENT_CANCELLED = "soothe.cognition.wired_subagent.cancelled"
 # Branch cognition (client UX)
 BRANCH_CREATED = "soothe.cognition.branch.created"
 BRANCH_RETRY_STARTED = "soothe.cognition.branch.retry.started"
-
-# Autopilot system (client UX)
-AUTOPILOT_STATUS_CHANGED = "soothe.system.autopilot.status.changed"
-AUTOPILOT_GOAL_CREATED = "soothe.system.autopilot.goal.created"
-AUTOPILOT_GOAL_REPORTED = "soothe.system.autopilot.goal.reported"
-AUTOPILOT_GOAL_COMPLETED = "soothe.system.autopilot.goal.completed"
-AUTOPILOT_DREAMING_STARTED = "soothe.system.autopilot.dreaming.started"
-AUTOPILOT_DREAMING_COMPLETED = "soothe.system.autopilot.dreaming.completed"
-AUTOPILOT_GOAL_SUSPENDED = "soothe.system.autopilot.goal.suspended"
-AUTOPILOT_GOAL_BLOCKED = "soothe.system.autopilot.goal.blocked"
 
 # ---------------------------------------------------------------------------
 # Type aliases and helpers
@@ -668,20 +649,6 @@ class GoalDeferredEvent(ProtocolEvent):
     plan_preserved: bool = False
 
 
-class AutopilotModeSwitchedEvent(ProtocolEvent):
-    """Autopilot mode switched.
-
-    Emitted when autopilot mode is toggled on/off for a loop.
-    Used by TUI and other subscribers to update their state.
-    """
-
-    type: Literal["soothe.cognition.autopilot.mode_switched"] = (
-        "soothe.cognition.autopilot.mode_switched"
-    )
-    loop_id: str = ""
-    enabled: bool = False
-
-
 # ---------------------------------------------------------------------------
 # Registry — re-exported from soothe_sdk.core.registry (canonical owner)
 # ---------------------------------------------------------------------------
@@ -910,13 +877,8 @@ _reg(
     GoalDecomposedEvent,
     summary_template="Goal {parent_goal_id} decomposed into {len(child_goal_ids)} sub-goals",
 )
-_reg(
-    AUTOPILOT_MODE_SWITCHED,
-    AutopilotModeSwitchedEvent,
-    summary_template="Autopilot mode {'enabled' if enabled else 'disabled'} for loop {loop_id}",
-)
 
-# -- Autopilot (RFC-204) -------------------------------------------------
+# -- Branch cognition ----------------------------------------------------
 
 
 class _BranchCreatedEvent(SootheEvent):
@@ -950,96 +912,6 @@ _reg(BRANCH_CREATED, _BranchCreatedEvent, verbosity=VerbosityTier.NORMAL)
 _reg(BRANCH_ANALYZED, _BranchAnalyzedEvent, verbosity=VerbosityTier.INTERNAL)
 _reg(BRANCH_RETRY_STARTED, _BranchRetryStartedEvent, verbosity=VerbosityTier.NORMAL)
 _reg(BRANCH_PRUNED, _BranchPrunedEvent, verbosity=VerbosityTier.INTERNAL)
-
-
-class _AutopilotStatusChanged(SootheEvent):
-    type: str = "soothe.system.autopilot.status.changed"
-    state: str
-
-
-class _AutopilotGoalCreated(SootheEvent):
-    type: str = "soothe.system.autopilot.goal.created"
-    goal_id: str
-    description: str = ""
-
-
-class _AutopilotGoalReported(SootheEvent):
-    type: str = "soothe.system.autopilot.goal.reported"
-    goal_id: str
-    status: str = ""
-
-
-class _AutopilotGoalCompleted(SootheEvent):
-    type: str = "soothe.system.autopilot.goal.completed"
-    goal_id: str
-
-
-class _AutopilotDreamingStarted(SootheEvent):
-    type: str = "soothe.system.autopilot.dreaming.started"
-    timestamp: str = ""
-
-
-class _AutopilotDreamingCompleted(SootheEvent):
-    type: str = "soothe.system.autopilot.dreaming.completed"
-    timestamp: str = ""
-    trigger: str = ""
-
-
-class _AutopilotGoalValidated(SootheEvent):
-    type: str = "soothe.internal.autopilot.goal.validated"
-    goal_id: str
-    confidence: float = 1.0
-
-
-class _AutopilotGoalSuspended(SootheEvent):
-    type: str = "soothe.system.autopilot.goal.suspended"
-    goal_id: str
-    reason: str = ""
-
-
-class _AutopilotFeedbackSent(SootheEvent):
-    type: str = "soothe.internal.autopilot.feedback.sent"
-    goal_id: str
-    remaining_budget: int = 0
-    feedback: str = ""
-
-
-class _AutopilotRelationshipDetected(SootheEvent):
-    type: str = "soothe.internal.autopilot.relationship.detected"
-    from_goal: str
-    to_goal: str
-    relationship_type: str
-    confidence: float = 0.0
-
-
-class _AutopilotCheckpointSaved(SootheEvent):
-    type: str = "soothe.internal.autopilot.checkpoint.saved"
-    thread_id: str
-    trigger: str = ""
-
-
-class _AutopilotGoalBlocked(SootheEvent):
-    type: str = "soothe.system.autopilot.goal.blocked"
-    goal_id: str
-    reason: str = ""
-
-
-_reg(AUTOPILOT_STATUS_CHANGED, _AutopilotStatusChanged, verbosity=VerbosityTier.NORMAL)
-_reg(AUTOPILOT_GOAL_CREATED, _AutopilotGoalCreated, verbosity=VerbosityTier.NORMAL)
-_reg(AUTOPILOT_GOAL_REPORTED, _AutopilotGoalReported, verbosity=VerbosityTier.NORMAL)
-_reg(AUTOPILOT_GOAL_COMPLETED, _AutopilotGoalCompleted, verbosity=VerbosityTier.NORMAL)
-_reg(AUTOPILOT_DREAMING_STARTED, _AutopilotDreamingStarted, verbosity=VerbosityTier.NORMAL)
-_reg(AUTOPILOT_DREAMING_COMPLETED, _AutopilotDreamingCompleted, verbosity=VerbosityTier.NORMAL)
-_reg(AUTOPILOT_GOAL_VALIDATED, _AutopilotGoalValidated, verbosity=VerbosityTier.INTERNAL)
-_reg(AUTOPILOT_GOAL_SUSPENDED, _AutopilotGoalSuspended, verbosity=VerbosityTier.NORMAL)
-_reg(AUTOPILOT_FEEDBACK_SENT, _AutopilotFeedbackSent, verbosity=VerbosityTier.INTERNAL)
-_reg(
-    AUTOPILOT_RELATIONSHIP_DETECTED,
-    _AutopilotRelationshipDetected,
-    verbosity=VerbosityTier.INTERNAL,
-)
-_reg(AUTOPILOT_CHECKPOINT_SAVED, _AutopilotCheckpointSaved, verbosity=VerbosityTier.INTERNAL)
-_reg(AUTOPILOT_GOAL_BLOCKED, _AutopilotGoalBlocked, verbosity=VerbosityTier.NORMAL)
 
 
 # ---------------------------------------------------------------------------

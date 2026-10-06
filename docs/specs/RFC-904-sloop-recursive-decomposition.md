@@ -9,7 +9,7 @@
 **Updated**: 2026-08-29
 **Dependencies**: RFC-220, RFC-624, RFC-630, RFC-903, RFC-622, RFC-219, RFC-803
 **Revises**: RFC-220 §Loop Graph Topology (plan/eval/execute stations); RFC-201 §Plan-Execute structure (upfront plan waves); RFC-213 (per-iteration assess+generate pair); RFC-624 §StepDAG / Step Anchor Registry; RFC-630 §Pass 2 scope classification and complexity-tiered planning routes
-**Related**: RFC-207, RFC-214, RFC-625 (goal-level decompose remains separate), RFC-206, RFC-905
+**Related**: RFC-207, RFC-214, RFC-231 §17 (goal-level decompose remains separate), RFC-206, RFC-905
 **Partially Superseded By**: RFC-905 (§ROOT_EVAL assess-only / MUST NOT `decompose_task`; GapResult new-root continuation)
 **Design draft**: `docs/archive/drafts/2026-08-19-sloop-recursive-decomposition-design.md`
 
@@ -63,7 +63,7 @@ in-scope continuation is Eval `decompose_task`, not GapResult new-root.
 
 **Pass2** (trivial/simple/complex) is **removed**. **Pass1** is **retained**.
 CoreAgent **`write_todos`** remains intra-step UX and **must not** create
-StepDAG nodes. Autopilot goal-level decomposition (`apply_llm_subgoals`) is
+StepDAG nodes. LoopRail goal-level decomposition (`apply_llm_subgoals`) is
 unchanged and unmerged.
 
 ---
@@ -74,7 +74,7 @@ unchanged and unmerged.
    `stations.py` changes; the loop cannot adapt structure at runtime.
 2. **Upfront planning** — Full plan waves commit before evidence; correction
    waits for iteration boundaries.
-3. **Disconnected decomposition** — Autopilot goal trees and sloop step
+3. **Disconnected decomposition** — LoopRail goal trees and sloop step
    plans do not recurse into each other; step recursion was never wired.
 4. **Pass2 pre-classifies scope** — Complexity is guessed before execution;
    pass1 chitchat gating remains valuable and is kept.
@@ -85,7 +85,7 @@ unchanged and unmerged.
 
 ## Non-Goals
 
-1. Merging goal-level and step-level decomposition (RFC-625 stays separate).
+1. Merging goal-level and step-level decomposition (RFC-231 §17 stays separate).
 2. Replacing CoreAgent.
 3. Wholesale Wire/TUI event schema rewrites (additive events only).
 4. Implementing goal-directive `"decompose"` as step children.
@@ -240,7 +240,7 @@ ENTER_LOOP **MUST** create a root `StepNode`:
 | `parent_step_id` | `None` (wave 0); prior root on gap re-dispatch |
 | `plan_iteration` | 0, then N+1 on gap waves |
 
-Goal-level `depends_on` remains autopilot-owned.
+Goal-level `depends_on` remains loop-rail-owned.
 
 ### Step status extensions
 
@@ -441,7 +441,7 @@ On child failure:
 | Branch root/inner | 5 / 3 | `max_branch_root` / `max_branch_inner` |
 | Reconcile model | verifier tier | `reconcile_model_role` |
 
-Depth = longest `parent_step_id` chain. Exhaustion → FAIL up to autopilot/parent.
+Depth = longest `parent_step_id` chain. Exhaustion → FAIL up to loop-rail/parent.
 
 ---
 
@@ -487,7 +487,7 @@ unchanged.
 - Reconcile LLM skipped when disjoint.
 - Identical Eval continuation fingerprint → FAIL (RFC-905; replaces gap fingerprint).
 - Clarification park/resume; checkpoint after reconcile.
-- Autopilot `apply_llm_subgoals` unaffected.
+- LoopRail `apply_llm_subgoals` unaffected.
 
 Do not weaken tests to match a broken `tree_green`.
 

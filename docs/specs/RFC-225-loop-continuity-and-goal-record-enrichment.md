@@ -40,7 +40,7 @@ This RFC does **not** define:
 - Per-thread tracking inside `thread_health_metrics` for forked threads.
 - New event types; existing event taxonomy is unchanged.
 - A storage cap for `step_results` or `evidence_ledger`; size policy is a future config knob.
-- The autonomous / autopilot path's use of `GoalEngine` (RFC-222); only the agentic solo-mode runner is corrected here.
+- The autonomous / loop-rail path's use of `GoalEngine` (RFC-231); only the agentic solo-mode runner is corrected here.
 
 ---
 
@@ -49,7 +49,7 @@ This RFC does **not** define:
 Commit `184bf0e1` collapsed the LLM intent classifier's structured output to `quiz | agentic`. However, the runtime still resolves "agentic" into `continue_thread` / `new_goal` strings via a `GoalEngine.list_goals()` check in the agentic runner (`runner/_runner_strange_loop.py:324-337`). This produces two defects:
 
 1. **Semantic mismatch.** Whether a query continues an existing conversation is structural — does the loop have prior goals? — not a property of the user's intent. The classifier should not encode loop topology.
-2. **Functional regression.** `GoalEngine` is recreated per request in solo mode (the daemon binds it only in autopilot flows), so `list_goals()` is always empty and `continue_thread` is always `False`. The entire same-loop continuation pathway is dead code in non-autopilot use.
+2. **Functional regression.** `GoalEngine` is recreated per request in solo mode (the daemon binds it only in loop-rail flows), so `list_goals()` is always empty and `continue_thread` is always `False`. The entire same-loop continuation pathway is dead code in non-loop-rail use.
 
 Meanwhile, `StrangeLoopCheckpoint` already persists `goal_history` across requests within the same `loop_id` (PostgreSQL or SQLite), so the correct signal exists — it is being read from the wrong place. And while the per-goal record (`GoalExecutionRecord`) holds the conversation ledger (`loop_messages`), it does not retain the plan DAG, per-step results, or evidence — so cross-goal context within a loop must be reconstructed from the conversation alone, and post-mortem inspection of completed goals has no structured artifact.
 
@@ -402,7 +402,7 @@ StrangeLoop.run_with_progress(loop_id=L1):
 - **RFC-217 (Goal Context Management)** — Unchanged. `thread_switch_pending` and `GoalContextManager` continue to operate as specified.
 - **RFC-218 (StrangeLoop Checkpoint Tree Architecture)** — Schema layout follows RFC-218 conventions; the schema bump to `3.2` is recorded here.
 - **RFC-220 (LangGraph StrangeLoop Orchestrator)** — The Plan / Execute orchestration nodes consume the new `continue_loop_mode` state key; node graph topology is unchanged.
-- **RFC-222 (Autopilot Goal Engine Architecture)** — Out of scope; autopilot's `GoalEngine` usage is unaffected. This RFC only removes a broken solo-mode consumer of `GoalEngine` inside the agentic runner.
+- **RFC-231 (LoopRail Goal Engine Architecture)** — Out of scope; loop-rail's `GoalEngine` usage is unaffected. This RFC only removes a broken solo-mode consumer of `GoalEngine` inside the agentic runner.
 - **RFC-223 (Thread Inheritance with Checkpoint Forking)** — Authoritative for the LangChain thread model. This RFC reaffirms the boundary between StrangeLoop checkpoint and LangChain checkpointer.
 - **RFC-224 (Automatic Context Window Management)** — Independent; context-window policies operate per LangChain thread and are unaffected by this RFC.
 

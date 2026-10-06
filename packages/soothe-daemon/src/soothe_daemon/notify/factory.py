@@ -57,7 +57,7 @@ def build_notify_dispatcher_from_config(
 ) -> NotifyDispatcher:
     """Build a NotifyDispatcher from the daemon notify config.
 
-    Callers pass the notify config (`config.agent.autopilot.notify`) and
-    optional legacy webhooks (`config.agent.autopilot.webhooks`) directly.
+    Callers pass the notify config (`config.agent.rail.notify`) and
+    optional legacy webhooks (`config.agent.rail.webhooks`) directly.
     """
     return build_notify_dispatcher(notify, legacy_webhooks=legacy_webhooks)

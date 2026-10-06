@@ -9,15 +9,21 @@ Import/placement rules: see [package-boundaries.md](package-boundaries.md). Do n
 ```
 packages/
 ├── soothe-sdk/        # OWNED — shared contracts (events, wire, display, protocols)
-├── soothe/             # OWNED — StrangeLoop, CE, runner
-├── soothe-autopilot/   # OWNED — Autopilot, rails, verify, dispatch
-├── soothe-daemon/      # OWNED — soothed process, cron
+├── soothe/             # OWNED — StrangeLoop, CE, runner, rails (LoopRail + Rail Exec)
+├── soothe-daemon/      # OWNED — soothed process, cron, runner implementations
 └── soothe-cli/         # OWNED — Typer CLI + Textual TUI
 
 # Submodules (consume only — format/lint/test/release in their own repos):
 #   client/{python,go,typescript,rust}
 # PyPI-only (not vendored here): soothe-nano, soothe-deepagents
 ```
+
+> **Cleansing note (2026-10-07):** The legacy `packages/soothe-autopilot/`
+> package has been removed. Rails (LoopRail + Rail Exec) live under
+> `packages/soothe/src/soothe/rails/`; the report-commit judgment pattern
+> and `LoopRailService` runtime are normative in RFC-231. See
+> [IG-779](../../docs/impl/IG-779-rfc-autopilot-cleansing-and-mode-alignment.md)
+> for the full migration mapping.
 
 Do **not** run monorepo format/lint/test/publish against submodule trees. Bump submodule pins / PyPI floors when consuming new upstream versions; release those packages from their repositories.
 

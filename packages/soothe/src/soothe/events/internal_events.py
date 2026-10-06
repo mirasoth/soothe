@@ -215,73 +215,6 @@ class InternalFileConflictEvent(SootheEvent):
 
 
 # ============================================================================
-# soothe.internal.autopilot.* - AP lifecycle, worker pool
-# ============================================================================
-
-
-class InternalAutopilotStartedEvent(SootheEvent):
-    """Autopilot started.
-
-    Emitted by the daemon scheduler when entering autopilot mode.
-    """
-
-    type: str = "soothe.internal.autopilot.started"
-    max_loops: int
-    config: dict[str, Any] | None = None
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
-
-
-class InternalAutopilotStoppedEvent(SootheEvent):
-    """Autopilot stopped.
-
-    Emitted by the daemon scheduler when exiting autopilot mode.
-    """
-
-    type: str = "soothe.internal.autopilot.stopped"
-    reason: Literal["user_request", "error", "shutdown", "all_goals_complete"]
-    active_loops: int = 0
-    goals_completed: int = 0
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
-
-
-class InternalLoopPoolChangedEvent(SootheEvent):
-    """Loop pool state changed.
-
-    Emitted by the daemon scheduler when loop pool composition changes.
-    """
-
-    type: str = "soothe.internal.autopilot.pool_changed"
-    active_count: int
-    idle_count: int
-    total_count: int
-    change_type: Literal["spawn", "release", "assign", "idle"]
-    loop_id: str | None = None
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
-
-
-class InternalAutopilotDreamingEvent(SootheEvent):
-    """Autopilot entered dreaming mode.
-
-    Emitted by the daemon scheduler when no goals active and dreaming enabled.
-    """
-
-    type: str = "soothe.internal.autopilot.dreaming"
-    trigger: Literal["all_goals_complete", "no_ready_goals"]
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
-
-
-class InternalAutopilotAwakeEvent(SootheEvent):
-    """Autopilot woke from dreaming.
-
-    Emitted by the daemon scheduler when exiting dreaming mode.
-    """
-
-    type: str = "soothe.internal.autopilot.awake"
-    trigger: Literal["new_task", "wake_signal", "scheduled_task"]
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
-
-
-# ============================================================================
 # Event type constants for subscription
 # ============================================================================
 
@@ -302,12 +235,6 @@ INTERNAL_FILE_LOCKED = "soothe.internal.file.locked"
 INTERNAL_FILE_RELEASED = "soothe.internal.file.released"
 INTERNAL_FILE_CONFLICT = "soothe.internal.file.conflict"
 
-INTERNAL_AUTOPILOT_STARTED = "soothe.internal.autopilot.started"
-INTERNAL_AUTOPILOT_STOPPED = "soothe.internal.autopilot.stopped"
-INTERNAL_LOOP_POOL_CHANGED = "soothe.internal.autopilot.pool_changed"
-INTERNAL_AUTOPILOT_DREAMING = "soothe.internal.autopilot.dreaming"
-INTERNAL_AUTOPILOT_AWAKE = "soothe.internal.autopilot.awake"
-
 
 # All internal event types for iteration
 INTERNAL_EVENT_TYPES: frozenset[str] = frozenset(
@@ -326,11 +253,6 @@ INTERNAL_EVENT_TYPES: frozenset[str] = frozenset(
         INTERNAL_FILE_LOCKED,
         INTERNAL_FILE_RELEASED,
         INTERNAL_FILE_CONFLICT,
-        INTERNAL_AUTOPILOT_STARTED,
-        INTERNAL_AUTOPILOT_STOPPED,
-        INTERNAL_LOOP_POOL_CHANGED,
-        INTERNAL_AUTOPILOT_DREAMING,
-        INTERNAL_AUTOPILOT_AWAKE,
     }
 )
 
@@ -348,133 +270,3 @@ def is_internal_event_type(event_type: str) -> bool:
         True if internal event type.
     """
     return event_type.startswith("soothe.internal.") or event_type in INTERNAL_EVENT_TYPES
-
-
-# ============================================================================
-# soothe.autopilot.* - Client-visible autopilot events (RFC-228)
-# ============================================================================
-
-
-class GoalStatusEvent(SootheEvent):
-    """Goal status transition for autopilot subscribers.
-
-    Emitted when goal status changes. Clients use this for DAG node updates.
-    """
-
-    type: str = "soothe.autopilot.goal.status"
-    goal_id: str
-    status: str
-    previous_status: str | None = None
-    reason: str | None = None
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
-
-
-class GoalProgressEvent(SootheEvent):
-    """Goal progress update for autopilot subscribers.
-
-    Emitted when goal step count or tool call count changes.
-    """
-
-    type: str = "soothe.autopilot.goal.progress"
-    goal_id: str
-    steps_completed: int = 0
-    steps_total: int = 0
-    tool_calls: int = 0
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
-
-
-class GoalCreatedEvent(SootheEvent):
-    """Goal added to DAG for autopilot subscribers.
-
-    Emitted when a new goal is created.
-    """
-
-    type: str = "soothe.autopilot.goal.created"
-    goal_id: str
-    parent_id: str | None = None
-    description: str
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
-
-
-class GoalCompletedEvent(SootheEvent):
-    """Goal completed with summary for autopilot subscribers.
-
-    Emitted when a goal finishes successfully with a result summary.
-    """
-
-    type: str = "soothe.autopilot.goal.completed"
-    goal_id: str
-    summary: str | None = None
-    findings: list[str] = Field(default_factory=list)
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
-
-
-class WorkerAssignedEvent(SootheEvent):
-    """Worker assigned to goal for autopilot subscribers.
-
-    Emitted when an autopilot worker is assigned to a goal.
-    """
-
-    type: str = "soothe.autopilot.worker.assigned"
-    goal_id: str
-    loop_id: str
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
-
-
-class WorkerUnassignedEvent(SootheEvent):
-    """Worker released from goal for autopilot subscribers.
-
-    Emitted when an autopilot worker finishes or is reassigned.
-    """
-
-    type: str = "soothe.autopilot.worker.unassigned"
-    goal_id: str
-    loop_id: str | None = None
-    reason: str | None = None
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
-
-
-def internal_to_client_event(internal_event: SootheEvent) -> SootheEvent | None:
-    """Convert internal event to client-visible event.
-
-    Used by daemon to bridge internal events for sessions with
-    `autopilot_subscribed=True`.
-
-    Args:
-        internal_event: Internal event to convert.
-
-    Returns:
-        Client-visible event, or None if no mapping exists.
-    """
-    if isinstance(internal_event, InternalGoalStateChangedEvent):
-        return GoalStatusEvent(
-            goal_id=internal_event.goal_id,
-            status=internal_event.new_status,
-            previous_status=internal_event.old_status,
-            reason=internal_event.reason,
-        )
-    if isinstance(internal_event, InternalGoalProgressEvent):
-        return GoalProgressEvent(
-            goal_id=internal_event.goal_id,
-            steps_completed=internal_event.iteration,  # Approximate mapping
-            steps_total=0,
-            tool_calls=0,
-        )
-    if isinstance(internal_event, InternalLoopAssignedEvent):
-        return WorkerAssignedEvent(
-            goal_id=internal_event.goal_id,
-            loop_id=internal_event.loop_id,
-        )
-    if isinstance(internal_event, InternalLoopIdleEvent):
-        return WorkerUnassignedEvent(
-            goal_id=internal_event.last_goal_id,
-            loop_id=internal_event.loop_id,
-            reason="goal_completed",
-        )
-    if isinstance(internal_event, InternalLoopReleasedEvent):
-        return WorkerUnassignedEvent(
-            goal_id="",  # No specific goal
-            loop_id=internal_event.loop_id,
-            reason=internal_event.reason,
-        )
-    return None

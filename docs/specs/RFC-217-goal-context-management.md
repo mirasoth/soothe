@@ -181,7 +181,7 @@ class ThreadRelationshipModule:
 
         # Level 3: Dependency relationship (future - requires GoalEngine DAG traversal)
         # Future work: check if goals share dependency path (deferred; requires
-        # autopilot DAG traversal not yet available at this layer).
+        # loop-rail DAG traversal not yet available at this layer).
 
         return semantic_sim
 ```

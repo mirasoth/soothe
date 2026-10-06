@@ -2,10 +2,14 @@
 
 **RFC**: 230
 **Title**: Job Maturity Assessment for Autopilot Rails
-**Status**: Draft
+**Status**: Archived
+**Superseded By**: RFC-231 (LoopRail + Rail Exec; §4 job maturity runs in LoopRailService)
+**Superseded Date**: 2026-10-07
+**Archive Reason**: Job maturity hooks (acceptance latch, rail exclusivity, per-job counters) absorbed into RFC-231 §4 (LoopRailService runs job maturity) and §8 (maturity fields feed `needs_feedback` / `job_complete` predicates). No longer autopilot-specific.
+**Archive Date**: 2026-10-07
 **Kind**: Architecture Design
 **Created**: 2026-08-05
-**Updated**: 2026-08-08
+**Updated**: 2026-10-07
 **Authors**: Soothe Team
 **Depends on**: RFC-204, RFC-222, RFC-228, RFC-624, RFC-625, RFC-630
 **Related**: [RFC-231](RFC-231-looprail-rail-exec.md) (LoopRail + Rail Exec;

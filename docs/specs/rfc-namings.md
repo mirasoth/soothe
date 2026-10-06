@@ -15,7 +15,7 @@ This document defines the terminology and naming conventions used in this projec
 |------|------------|---------------|
 | CoreAgent | Foundation runtime for Soothe's execution architecture. Handles tool/subagent execution via LangGraph CompiledStateGraph, created by `create_soothe_agent()`. Operates at the lowest level with Model → Tools → Model loop. | RFC-100 |
 | StrangeLoop | Single-goal execution through iterative Plan-Execute cycles. Agentic goal execution for single-goal completion via iterative refinement. Operates at the middle level with Plan → Execute → Assess loop (max ~8 iterations). | RFC-201 |
-| GoalEngine | Autonomous goal management with multi-goal DAGs, scheduling, and long-running workflows. Operates at the highest level with Goal → PLAN → PERFORM → REFLECT loop. Daemon-owned singleton service. | RFC-222 |
+| GoalEngine | Autonomous goal management with multi-goal DAGs, scheduling, and long-running workflows. Operates at the highest level with Goal → PLAN → PERFORM → REFLECT loop. Daemon-owned singleton service. | RFC-231 |
 | LoopState | Persistent execution state across plan-execute cycles in StrangeLoop. Contains plan, progress, metrics, and execution context. LangGraph state schema. | RFC-201 |
 
 **Naming Convention**: Use concrete module names (CoreAgent, StrangeLoop, GoalEngine) instead of abstract "Layer N" terminology. This improves clarity and follows AGENTS.md terminology rules.
@@ -101,15 +101,15 @@ This document defines the terminology and naming conventions used in this projec
 | Session Manager | Singleton managing Python sessions with thread_id isolation, cleanup, and thread-safe execution. | RFC-101 |
 | Structured Error | Error response with standardized format: error, details, suggestions, recoverable, auto_retry_hint. Provides actionable guidance for LLM recovery. | RFC-101 |
 
-### Autopilot Terms (RFC-203)
+### Loop-Rail Terms (RFC-203)
 
 | Term | Definition | Introduced In |
 |------|------------|---------------|
-| Autopilot Mode | Layer 3 extension enabling long-running autonomous operation with dreaming mode and continuous improvement. | RFC-203 |
-| Dreaming Mode | Persistent idle state where Soothe performs memory consolidation, indexing, goal anticipation, and health monitoring. | RFC-203 |
+| Loop-Rail Mode | Job-scoped, event-driven autonomous operation (dreaming retired; no-rail jobs use CE opportunistic dispatch). | RFC-203, RFC-231 |
+| Dreaming Mode | *(Retired — IG-779)* Legacy idle state for memory consolidation, indexing, goal anticipation, and health monitoring. No-rail jobs now use CE opportunistic dispatch. | RFC-203 |
 | Consensus Loop | Layer 3 validation of Layer 2 completion judgment with send-back capability and budget. | RFC-203 |
 | Send-Back Budget | Per-goal limit on Layer 3 rejections (default: 3 rounds). Independent from Layer 2 iteration budget. | RFC-203 |
-| Channel Protocol | Message-centric protocol for user ↔ Soothe communication. Autopilot control uses HTTP REST; platform channels use RFC-620. | RFC-203 |
+| Channel Protocol | Message-centric protocol for user ↔ Soothe communication. Loop-rail control uses HTTP REST; platform channels use RFC-620. | RFC-203 |
 | CriticalityEvaluator | Module in GoalEngine that determines if a proposed goal requires user confirmation (MUST status). | RFC-203 |
 | SchedulerService | Independent service in `core/goal_engine/scheduled_tasks.py` for time-based task execution (delay, cron, recurrence). | RFC-203 |
 | Goal Relationship | Connection between goals: `depends_on` (hard), `informs` (soft), `conflicts_with` (mutual exclusion). | RFC-203 |
@@ -122,11 +122,11 @@ This document defines the terminology and naming conventions used in this projec
 | Term | Definition | Introduced In |
 |------|------------|---------------|
 | ExecutionState | Thin facade holding execution-only runtime fields (iteration, max_iterations, wave metrics, context window stats) with CE-backed properties for goal/step data. Replaces LoopState. | RFC-626 |
-| Job | Root GoalNode with `parent_id=None` submitted to AutopilotService. Single entry point for DAG visualization and status queries. | RFC-626, RFC-228 |
-| GoalNode | Unified entity model combining goal lifecycle, retry/backoff semantics, workspace metadata, and dreaming fields. CE's atomic unit of persistence. | RFC-624, RFC-625, RFC-626 |
-| LoopRail | Job-scoped, event-driven workflow pattern consumed only by AutopilotService; mutates the CE DAG via catalog verbs. CE never reads rail YAML. | RFC-231 |
+| Job | Root GoalNode with `parent_id=None` submitted to LoopRailService. Single entry point for DAG visualization and status queries. | RFC-626, RFC-450 |
+| GoalNode | Unified entity model combining goal lifecycle, retry/backoff semantics, workspace metadata, and dreaming fields. CE's atomic unit of persistence. | RFC-624, RFC-231 §17, RFC-626 |
+| LoopRail | Job-scoped, event-driven workflow pattern consumed only by LoopRailService; mutates the CE DAG via catalog verbs. CE never reads rail YAML. | RFC-231 |
 | Slice catalog | Flat SoT of leaf slice specs on `RailJobState` after WavePlan ingest (`wave_slices` / rich `slices` / `decompose_plan`). | RFC-231 §9, RFC-232 |
-| Streaming spawn | Autopilot creates maker goals for unspawned catalog slices whose slice `depends_on` are satisfied; pool fills under concurrency with no wave/stage CE barrier. | RFC-231 §9 |
+| Streaming spawn | Loop-rail creates maker goals for unspawned catalog slices whose slice `depends_on` are satisfied; pool fills under concurrency with no wave/stage CE barrier. | RFC-231 §9 |
 | Spawn-ready | Predicate / verb semantics (`spawn_wave_makers` / `slices_ready_to_spawn`): materialize only currently ready slices. | RFC-231 §8–§9 |
 | Job branch | Per-job integration git branch (`job/<id>`); host merges maker branches here; land on `main`/`master` only at job complete. | RFC-231 §9 |
 | WavePlan | Flat planner deliverable: leaf slice ids and/or rich `slices[]` with optional peer-slice `depends_on`; nested wave trees forbidden. | RFC-232 |
@@ -250,7 +250,7 @@ This document defines the terminology and naming conventions used in this projec
 | `Client` / `WebSocketClient` | The core WebSocket transport for the protocol-1 daemon (Python: `WebSocketClient`; Go/TS: `Client`). Owns handshake, envelope codec, RPC, streaming, control frames, heartbeat, reconnect/reattach, multiplexing, and `delivery_ack`. | RFC-629 |
 | `appkit` | Sibling package over the core client: `DaemonSession`, connection pooling, single-flight query gating, turn execution, event classification, and SSE fan-out. Product decisions via configuration and interfaces. | RFC-629 |
 | `DaemonSession` | Dual-socket `appkit` session for one conversation: subscribed stream socket + RPC sidecar; `SendTurn` / `IterTurnChunks` / `EnsureConnected`. Primary happy-path entry for streamed turns. | RFC-629 |
-| `CommandClient` | Ephemeral one-shot RPC client for jobs/cron/autopilot: connect → handshake → single request → close. Distinct from the long-lived streaming client. | RFC-629 |
+| `CommandClient` | Ephemeral one-shot RPC client for jobs/cron: connect → handshake → single request → close. Distinct from the long-lived streaming client. | RFC-629 |
 | `delivery_ack` | Client notification carrying monotonic per-loop `seq` after terminal stream frames so the daemon can gate drain correctly under load. | RFC-629 |
 | `ConnectionPool` | `appkit` component that acquires/releases/health-checks/reuses a core client per logical session, delegating bootstrap (`loop_new` + `subscribe`) or reattach (`loop_reattach` + `ReattachAndProbe`). | RFC-629 |
 | `QueryGate` | `appkit` component enforcing single-flight query execution per session (`ErrQueryBusy`) and the cancel-before-context ordering (daemon `cancel` before local context cancel, on a detached timeout). | RFC-629 |

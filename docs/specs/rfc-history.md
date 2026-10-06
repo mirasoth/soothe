@@ -2,12 +2,68 @@
 
 This document tracks the chronological evolution of RFCs in the Soothe project.
 
-**Last Updated**: 2026-08-20
-**Total RFCs**: 93 (84 active + 9 archived)
+**Last Updated**: 2026-10-07
+**Total RFCs**: 93 (78 active + 15 archived)
 
 > Summary statistics (by status and kind) live in [rfc-index.md](rfc-index.md).
 
 ## Recent Changes
+
+### 2026-10-07 (autopilot cleansing + agent-mode alignment)
+
+- **RFC-204, RFC-222, RFC-228, RFC-229, RFC-230, RFC-625 — Archived**
+  - Reason: Legacy `soothe-autopilot` subsystem replaced in code by LoopRail
+    (RFC-231) + ContextEngine (RFC-624). The `packages/soothe-autopilot/`
+    package no longer exists in the monorepo.
+  - Migration: Still-normative content absorbed into RFC-231:
+    - RFC-204 §1.3 (report-commit judgment) → RFC-231 §4.1
+    - RFC-222 (AutopilotService runtime) → RFC-231 §4 + §14 (`LoopRailService`)
+    - RFC-228 (`autopilot_*` IPC) → RFC-450 (`job_*` IPC)
+    - RFC-229 (cron) → RFC-231 §18 (cron as external submit path)
+    - RFC-230 (job maturity) → RFC-231 §4 + §8
+    - RFC-625 (CE `GoalNode.report` commit) → RFC-231 §17
+  - All six RFCs moved to `docs/archive/specs/` with supersession notices.
+  - Design doc: [IG-779](../impl/IG-779-rfc-autopilot-cleansing-and-mode-alignment.md)
+
+- **RFC-231 — LoopRail rewrite**
+  - `AutopilotService` → `LoopRailService` throughout.
+  - `soothe/autopilot/rails/` → `soothe/rails/` (matches actual code).
+  - `agent.autopilot.*` config keys → `agent.loops.*`.
+  - New §4.1 (report-commit judgment), §17 (CE GoalNode.report commit),
+    §18 (cron as external submit path) — absorbs normative content from
+    archived RFCs.
+  - Header `Supersedes:` lists all six archived RFCs.
+
+- **RFC-634 — AutoModeMiddleware bypass-mode fix**
+  - §3.5 config default `active_in_bypass: true` → `false` (matches code:
+    `auto_mode.py:72`, `config/models.py:1330`).
+  - §3.1 decision table row 1 clarified: "bypass mode permits ALL tool calls
+    by default".
+  - "autopilot" terminology → "loop-rail headless run" (semantics unchanged).
+
+- **RFC-635 — AskUserGateMiddleware bypass-mode extension**
+  - §3 decision table extended to cover bypass mode (gate fires in auto AND
+    bypass per design rule "all ask_human routed to veritas"). Matches code:
+    `ask_user_gate.py:124-126`, `:143`, `:242`, `:259-260`.
+  - Bypass mode does NOT silently auto-permit `ask_user` — veritas always
+    runs first to avoid the empty-answer spin bug (RFC-622 §1).
+
+- **RFC-622 + RFC-623 — terminology cleanse (semantics unchanged)**
+  - "autopilot runs" → "loop-rail runs" / "headless runs" throughout.
+  - `GoalEngine.answer_clarification` → `ContextEngine.answer_clarification`.
+  - RFC-622 `Depends on`: RFC-222 → RFC-231 (with revision note).
+  - RFC-623 §7: RFC-222 reference → RFC-231 (with note about archival).
+
+- **RFC-900 — deprecation list updated**
+  - Added all 6 newly-archived RFCs to the archived table with `Superseded By`
+    and archive reasons.
+
+- **rfc-index.md — refreshed**
+  - Total: 78 active + 15 archived (was 84 + 9).
+  - All 6 archived RFCs marked `⚠️ ARCHIVED` and linked to archive paths.
+  - RFC-231 / RFC-622 / RFC-623 / RFC-634 / RFC-635 catalog entries show the
+    2026-10-07 update note.
+  - Top-of-file cleansing notice with link to IG-779.
 
 ### 2026-08-20
 

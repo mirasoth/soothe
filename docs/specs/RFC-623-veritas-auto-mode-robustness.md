@@ -39,7 +39,7 @@ This RFC does **not** redefine:
 - Per-request `clarification_mode` resolution (`auto`/`manual`/config default).
 - Retries against the LLM (the structured-output helper retries methods, not full inference).
 - Any change to the `VeritasAnswerSchema` Pydantic field set (added behavior is additive at the policy layer).
-- Autopilot's contract that headless runs cannot relay to a human — autopilot's behavior on veritas failure is unchanged (hard defer).
+- Loop-rail headless contract that headless runs cannot relay to a human — loop-rail behavior on veritas failure is unchanged (hard defer).
 
 ---
 
@@ -62,7 +62,7 @@ Defer is a **terminal action**:
 1. `await_clarification` returns `last_outcome="deferred"` → `routing.route_after_clarification` routes to `END`.
 2. `GoalEngine.mark_awaiting_clarification` sets `goal.status = "awaiting_clarification"`, persists `pending_clarification` on the Goal, clears `assigned_loop_id`.
 3. `awaiting_clarification` is in `BLOCKED_STATES` — the scheduler will not pick the goal up again on its own.
-4. Resumption requires `GoalEngine.answer_clarification(goal_id, answers)` from a human relay (TUI / API), or expiry by autopilot's stale-clarification sweeper after `agent.clarification.max_defer_age_hours` (default 168h = 7 days).
+4. Resumption requires `ContextEngine.answer_clarification(goal_id, answers)` from a human relay (TUI / API), or expiry by the loop-rail stale-clarification sweeper after `agent.clarification.max_defer_age_hours` (default 168h = 7 days).
 
 The empty-answer payload was not veritas legitimately saying "I don't know." It was a malformed model response that should have been rejected at the structured-output boundary. Every false defer caused by such a glitch is a goal that did not need to block.
 
@@ -86,7 +86,7 @@ Commit `d6f41f07` ("improve structured output compatibility for thinking models 
 1. **Structural enforcement over post-hoc coercion.** A constraint the model sees up front via JSON Schema beats a post-parse Python guard.
 2. **Reuse the shared structured-output helper.** Veritas is one of three LLM-driven structured-output callers in soothe; they should share `invoke_structured_chat` so model-compatibility fixes land for all of them at once.
 3. **Distinguish system failure from policy decision.** "Veritas was broken" and "veritas legitimately doesn't know" produce the same hard defer today; operators need to tell them apart.
-4. **Headless contracts are preserved.** Autopilot has no human at the other end; its behavior on veritas failure must remain a clean hard defer. Only interactive runs may fall back to a TUI prompt.
+4. **Headless contracts are preserved.** Loop-rail headless runs have no human at the other end; their behavior on veritas failure must remain a clean hard defer. Only interactive runs may fall back to a TUI prompt.
 5. **Backward compatibility on the public surface.** `VeritasAnswerSchema` field set, `ClarificationPolicy` protocol, `await_clarification` node, and goal-engine states are unchanged. New behaviors are additive.
 
 ---
@@ -297,7 +297,7 @@ def build_clarification_policy_for_runner(config, *, mode=None, emit=None):
     )
 ```
 
-`build_default_clarification_policy` is extended with an optional `interactive_fallback` keyword that it forwards to `AutoClarificationPolicy`. Autopilot worker (which constructs the policy with `emit=None`) gets `interactive_fallback=None` — the fallback is silently disabled and behavior on veritas failure is identical to today (hard defer). Interactive callers (`_runner_strange_loop`) wire `emit`, getting the fallback automatically.
+`build_default_clarification_policy` is extended with an optional `interactive_fallback` keyword that it forwards to `AutoClarificationPolicy`. The loop-rail worker (which constructs the policy with `emit=None`) gets `interactive_fallback=None` — the fallback is silently disabled and behavior on veritas failure is identical to today (hard defer). Interactive callers (`_runner_strange_loop`) wire `emit`, getting the fallback automatically.
 
 ### 5.6 `await_clarification` event payload
 
@@ -321,7 +321,7 @@ The "no policy configured" branch keeps the original payload (no `defer_kind`) �
 
 ### 5.7 Behavior matrix
 
-| Scenario | Today (auto mode) | After RFC-623 (auto mode, interactive run) | After RFC-623 (auto mode, autopilot run) |
+| Scenario | Today (auto mode) | After RFC-623 (auto mode, interactive run) | After RFC-623 (auto mode, loop-rail headless run) |
 |---|---|---|---|
 | Veritas returns N valid answers | continue | continue (identical) | continue (identical) |
 | Veritas returns `defer=true` confidently | hard defer | hard defer, `defer_kind="explicit"` | hard defer, `defer_kind="explicit"` |
@@ -351,9 +351,9 @@ Veritas LLM, given the dynamic schema, returns:
 
 `invoke_structured_chat` validates against the schema. `AutoClarificationPolicy._classify` returns `None` (not deferred, confidence above threshold). Policy returns `ClarificationAnswer(source="veritas", confidence=0.86, ...)`. The originating step resumes; loop continues.
 
-### 6.2 Forced defer in autopilot
+### 6.2 Forced defer in a loop-rail headless run
 
-Same call, but the model returns malformed JSON. `invoke_structured_chat` exhausts methods, raises `StructuredOutputError`. Veritas catches, returns `VeritasAnswerSchema(defer=True, rationale="structured_output_failed: ...", confidence=0.0)`. Policy classifies kind as `"structured_output_failed"`. Autopilot wired `emit=None` → no `interactive_fallback`. Policy raises `ClarificationDeferredError(kind="structured_output_failed")`. `await_clarification` logs `WARNING`, emits `LOOP_CLARIFICATION_DEFERRED` with `defer_kind="structured_output_failed"`, marks goal `awaiting_clarification`, returns `last_outcome="deferred"`. Loop ends.
+Same call, but the model returns malformed JSON. `invoke_structured_chat` exhausts methods, raises `StructuredOutputError`. Veritas catches, returns `VeritasAnswerSchema(defer=True, rationale="structured_output_failed: ...", confidence=0.0)`. Policy classifies kind as `"structured_output_failed"`. The loop-rail worker wired `emit=None` → no `interactive_fallback`. Policy raises `ClarificationDeferredError(kind="structured_output_failed")`. `await_clarification` logs `WARNING`, emits `LOOP_CLARIFICATION_DEFERRED` with `defer_kind="structured_output_failed"`, marks goal `awaiting_clarification`, returns `last_outcome="deferred"`. Loop ends.
 
 ### 6.3 Forced defer in interactive run
 
@@ -366,7 +366,7 @@ Same scenario but a TUI is attached: `_runner_strange_loop` wired `emit`, so `in
 - **RFC-622 (CoreAgent Clarification Relay)**: RFC-623 strengthens the auto-mode policy introduced by RFC-622 without changing its protocol or surface area. `ClarificationPolicy`, `await_clarification`, `awaiting_clarification`, and the `veritas` subagent are all defined by RFC-622 and consumed verbatim here.
 - **RFC-220 (Agentic Goal Execution / StrangeLoop)**: The defer terminal path (`last_outcome="deferred"` → `END` via `route_after_clarification`) is RFC-220's. Unchanged.
 - **RFC-403 (Unified Event Naming)**: The `LOOP_CLARIFICATION_DEFERRED` event keeps its `soothe.loop.clarification_deferred` type; the `defer_kind` field is an additive payload extension.
-- **RFC-222 (Autopilot Mode)**: The autopilot worker's contract — headless, always auto, no human at the other end — is preserved. RFC-623's interactive fallback is statically disabled when `emit is None`.
+- **RFC-231 (LoopRail + Rail Exec)**: The loop-rail worker's contract — headless, always auto, no human at the other end — is preserved. RFC-623's interactive fallback is statically disabled when `emit is None`. (Replaces the prior reference to RFC-222, archived 2026-10-07.)
 
 ---
 
@@ -374,7 +374,7 @@ Same scenario but a TUI is attached: `_runner_strange_loop` wired `emit`, so `in
 
 - Should `VeritasAnswerSchema` eventually expose `defer_kind: DeferKind | None` as a typed field, replacing the rationale-prefix discriminator? Deferring this until a fifth defer kind appears.
 - Should the `defer_kind` value also propagate onto `Goal.pending_clarification` so an operator inspecting a stuck goal sees the original failure category? Likely yes; not required by the current relay flow and out of scope here.
-- Should autopilot's stale-clarification sweep treat `structured_output_failed` defers differently (e.g. shorter TTL, automatic retry after backoff)? Out of scope; revisit if production data shows a meaningful share of defers come from this kind.
+- Should the loop-rail stale-clarification sweep treat `structured_output_failed` defers differently (e.g. shorter TTL, automatic retry after backoff)? Out of scope; revisit if production data shows a meaningful share of defers come from this kind.
 
 ---
 

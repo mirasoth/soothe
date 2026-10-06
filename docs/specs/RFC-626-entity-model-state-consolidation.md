@@ -7,27 +7,27 @@
 **Created**: 2026-06-16
 **Authors**: Soothe Team
 **Updated**: 2026-08-11
-**Dependencies**: RFC-624 (Context Engine), RFC-625 (AutopilotMonitor and ContextEngine Unification), RFC-203 (StrangeLoop State & Memory), RFC-201 (StrangeLoop Plan-Execute Loop)
-**Related**: RFC-228 (Autopilot Job IPC), RFC-222 (Autopilot Architecture), RFC-207 (Thread Lifecycle & Goal Context)
-**Extends**: RFC-625 — entity model consolidation, LoopState elimination, job abstraction refinement
+**Dependencies**: RFC-624 (Context Engine), RFC-231 §17 (CE GoalNode.report commit — absorbs legacy RFC-625), RFC-203 (StrangeLoop State & Memory), RFC-201 (StrangeLoop Plan-Execute Loop)
+**Related**: RFC-450 (Job RPC Methods — absorbs legacy RFC-228), RFC-231 §4 + §14 (LoopRailService — absorbs legacy RFC-222), RFC-207 (Thread Lifecycle & Goal Context)
+**Extends**: RFC-231 §17 — entity model consolidation, LoopState elimination, job abstraction refinement
 
 ---
 
 ## Abstract
 
-This RFC consolidates all entity models under ContextEngine, eliminates the `LoopState` model, unifies ledger management, and refines the Job abstraction to operate directly on CE GoalNode entities. It completes the state management unification started in RFC-625 by (1) replacing `LoopState` with a thin `ExecutionState` facade backed by CE properties, (2) eliminating the split between GoalEngine goal storage and ContextEngine DAG, (3) making Job operate directly on GoalNode without intermediate containers, and (4) trimming StrangeLoop checkpoint schema to execution-only fields.
+This RFC consolidates all entity models under ContextEngine, eliminates the `LoopState` model, unifies ledger management, and refines the Job abstraction to operate directly on CE GoalNode entities. It completes the state management unification started in RFC-231 §17 by (1) replacing `LoopState` with a thin `ExecutionState` facade backed by CE properties, (2) eliminating the split between GoalEngine goal storage and ContextEngine DAG, (3) making Job operate directly on GoalNode without intermediate containers, and (4) trimming StrangeLoop checkpoint schema to execution-only fields.
 
-> **Implementation Note (2026-08-11):** This RFC has **not been implemented**. `class LoopState(BaseModel)` persists at `packages/soothe/src/soothe/sloop/state/schemas.py:1106` with its full field set, referenced across 49 source files and 102 test files (667 total references). The proposed `ExecutionState` replacement class does not exist anywhere in the codebase. RFC-624 §Phase 4 Stage 2 and RFC-625 §11 reference this RFC as "in progress" or "future" — the actual migration has not begun.
+> **Implementation Note (2026-08-11):** This RFC has **not been implemented**. `class LoopState(BaseModel)` persists at `packages/soothe/src/soothe/sloop/state/schemas.py:1106` with its full field set, referenced across 49 source files and 102 test files (667 total references). The proposed `ExecutionState` replacement class does not exist anywhere in the codebase. RFC-624 §Phase 4 Stage 2 and RFC-231 §17 reference this RFC as "in progress" or "future" — the actual migration has not begun.
 
 ---
 
 ## Problem Statement
 
-### Current State (Post RFC-625)
+### Current State (Post RFC-231 §17)
 
 1. **LoopState persists as execution-only container**: StrangeLoop still maintains `LoopState` (RFC-203) with wave metrics, iteration tracking, and plan history. These fields duplicate ContextEngine properties (`total_tokens_used`, `iteration`, `previous_plan`) and create two sources of truth.
 
-2. **Job abstraction uses intermediate Goal model**: RFC-228 defines Job as "root Goal" but autopilot engine still has a `Goal` model (`autopilot/models.py`) that wraps GoalNode. The wrapper adds retry/backoff fields that RFC-625 already migrated to GoalNode.
+2. **Job abstraction uses intermediate Goal model**: RFC-450 defines Job as "root Goal" but the legacy loop-rail engine still has a `Goal` model (`autopilot/models.py`, removed per IG-779) that wraps GoalNode. The wrapper adds retry/backoff fields that RFC-231 §17 already migrated to GoalNode.
 
 3. **Ledger split between LedgerManager and loop_messages**: StrangeLoop writes to both `LoopState.loop_messages` (prompt pipeline) and `LedgerManager` (persistence). The dual-write is fragile and the adapter pattern (RFC-624 §9) adds complexity.
 
@@ -44,7 +44,7 @@ This RFC consolidates all entity models under ContextEngine, eliminates the `Loo
 
 2. **LoopState elimination**: Replace with thin `ExecutionState` facade that (a) holds only execution-only fields not in CE (wave metrics, max_iterations), and (b) provides property accessors backed by CE for shared fields.
 
-3. **Job operates on GoalNode directly**: Job abstraction (RFC-228) queries ContextEngine for root goals (`parent_id=None`). No `Goal` wrapper model, no `GoalEngine` flat dict.
+3. **Job operates on GoalNode directly**: Job abstraction (RFC-450) queries ContextEngine for root goals (`parent_id=None`). No `Goal` wrapper model, no `GoalEngine` flat dict.
 
 4. **Single ledger path**: StrangeLoop writes ONLY to `LedgerManager`. Prompt pipeline reads from `LedgerManager`. No `loop_messages` list in ExecutionState.
 
@@ -91,7 +91,7 @@ class ExecutionState(BaseModel):
     """Thread identifier for this goal execution."""
 
     assigned_worker_id: str | None = None
-    """Worker assignment from AutopilotService (RFC-222)."""
+    """Worker assignment from LoopRailService (RFC-231 §4)."""
     
     # Properties backed by ContextEngine
     @property
@@ -161,18 +161,18 @@ class WaveMetrics(BaseModel):
 
 ### §2 Job Abstraction Refinement
 
-**Definition (from RFC-228 §44)**: A Job is a **root GoalNode** with `parent_id=None`.
+**Definition (from RFC-450)**: A Job is a **root GoalNode** with `parent_id=None`.
 
 **Job operations operate directly on CE GoalNode**:
 
 | Operation | Implementation | Source |
 |-----------|----------------|---------|
-| `create_job(goal_text)` | `ce.create_goal(description, parent_id=None)` | AutopilotService.submit_task |
-| `job_status(job_id)` | `ce.get_goal(job_id).model_dump()` | RFC-228 IPC |
-| `job_pause(job_id)` | `ce.suspend_goal(job_id)` | RFC-228 IPC |
-| `job_resume(job_id)` | `ce.activate_goal(job_id)` | RFC-228 IPC |
-| `job_cancel(job_id)` | `ce.cancel_goal(job_id)` + cancel all descendants | RFC-228 IPC |
-| `job_dag(job_id)` | `ce.goal_subtree(job_id)` (new method) | RFC-228 IPC |
+| `create_job(goal_text)` | `ce.create_goal(description, parent_id=None)` | LoopRailService.submit_task |
+| `job_status(job_id)` | `ce.get_goal(job_id).model_dump()` | RFC-450 IPC |
+| `job_pause(job_id)` | `ce.suspend_goal(job_id)` | RFC-450 IPC |
+| `job_resume(job_id)` | `ce.activate_goal(job_id)` | RFC-450 IPC |
+| `job_cancel(job_id)` | `ce.cancel_goal(job_id)` + cancel all descendants | RFC-450 IPC |
+| `job_dag(job_id)` | `ce.goal_subtree(job_id)` (new method) | RFC-450 IPC |
 | `list_jobs()` | `ce.list_goals(parent_id=None)` | CLI, Desktop app |
 
 **New ContextEngine method**:
@@ -191,11 +191,11 @@ def goal_subtree(self, root_goal_id: str) -> dict[str, Any]:
     """
 ```
 
-**No Goal wrapper model**: The `Goal` class in `autopilot/models.py` is deleted. All fields already migrated to GoalNode per RFC-625 §2.
+**No Goal wrapper model**: The `Goal` class in `autopilot/models.py` (legacy path, removed per IG-779) is deleted. All fields already migrated to GoalNode per RFC-231 §17.
 
 **Job-to-Worker mapping**: While a goal is active, `GoalNode.assigned_loop_id`
 points at its current assignment loop
-(`autopilot__{job_id}__{uuid}`, IG-677). A job (root goal) may span many
+(`loop_rail__{job_id}__{uuid}`, IG-677). A job (root goal) may span many
 assignments over time; durable membership is `JobLoopIndex`, not a single
 worker pinned to the whole job DAG. Each assignment runs one StrangeLoop
 session for that goal.
@@ -312,7 +312,7 @@ class ExecutionCheckpoint(BaseModel):
 
 | Path | Reason |
 |------|--------|
-| `autopilot/models.py:Goal` | Fields migrated to GoalNode (RFC-625) |
+| `autopilot/models.py:Goal` (legacy, removed per IG-779) | Fields migrated to GoalNode (RFC-231 §17) |
 | `loop/state/schemas.py:LoopState` | Replaced by ExecutionState facade |
 | `loop/state/adapters/*` | Adapter pattern eliminated (RFC-624 §9) |
 
@@ -330,7 +330,7 @@ class ExecutionCheckpoint(BaseModel):
 | `foundation/context/models.py:GoalNode` | Add `max_iterations` field (from LoopState) |
 | `foundation/sloop/orchestrator/state.py` | Replace LoopState → ExecutionState |
 | `foundation/sloop/orchestrator/strange_loop.py` | Remove loop_messages list, use LedgerManager |
-| `foundation/autopilot/monitor.py` | Job operations → CE goal APIs |
+| `foundation/autopilot/monitor.py` (legacy path) | Job operations → CE goal APIs |
 
 ---
 
@@ -381,7 +381,7 @@ class ExecutionCheckpoint(BaseModel):
 ```
 1. Daemon startup:
    - ContextEngine.load() → GoalStepDAG + LedgerManager restored
-   - AutopilotMonitor.start() → verification loop
+   - ContextEngine monitor start() → verification loop
    - WorkerPool.init() → subprocess workers
 
 2. StrangeLoop recovery:
@@ -440,8 +440,8 @@ class ExecutionCheckpoint(BaseModel):
 **Scope**: Delete Goal wrapper, direct CE operations
 
 **Changes**:
-- Delete `autopilot/models.py:Goal` (already migrated fields)
-- AutopilotService.submit_task → ce.create_goal()
+- Delete `autopilot/models.py:Goal` (legacy; already migrated fields, package removed per IG-779)
+- LoopRailService.submit_task → ce.create_goal()
 - IPC handlers → ce.get_goal(), ce.goal_subtree()
 - CLI/Desktop → ce.list_goals(parent_id=None)
 
@@ -485,7 +485,7 @@ class ExecutionCheckpoint(BaseModel):
 
 1. **Solo mode execution**: StrangeLoop with ExecutionState completes goal.
 
-2. **Autopilot mode**: Job operations on CE GoalNode.
+2. **Loop-rail mode**: Job operations on CE GoalNode.
 
 3. **Crash recovery**: Daemon restart → CE.load() → resume execution.
 
@@ -498,11 +498,11 @@ class ExecutionCheckpoint(BaseModel):
 | RFC | Relationship |
 |-----|--------------|
 | RFC-624 | ContextEngine base design |
-| RFC-625 | GoalEngine deletion, Goal field migration |
+| RFC-231 §17 | GoalEngine deletion, Goal field migration |
 | RFC-203 | LoopState origin (replaced by ExecutionState) |
 | RFC-207 | Checkpoint tree origin (trimmed to ExecutionCheckpoint) |
-| RFC-228 | Job IPC commands (operate on CE GoalNode) |
-| RFC-222 | Autopilot architecture (Job = root GoalNode) |
+| RFC-450 | Job IPC commands (operate on CE GoalNode) |
+| RFC-231 | LoopRail architecture (Job = root GoalNode) |
 | RFC-221 | LoopRunner protocol (checkpoint recovery) |
 
 ---
@@ -513,7 +513,7 @@ class ExecutionCheckpoint(BaseModel):
 |------|------------|--------|
 | **ExecutionState** | Thin facade holding execution-only fields, backed by CE GoalNode properties | RFC-626 §1 |
 | **WaveMetrics** | Last wave execution metrics for Plan decisions | RFC-626 §1 |
-| **Job** | Root GoalNode with parent_id=None, operated on directly by CE | RFC-228 §44, RFC-626 §2 |
+| **Job** | Root GoalNode with parent_id=None, operated on directly by CE | RFC-450, RFC-626 §2 |
 | **ExecutionCheckpoint** | Trimmed checkpoint (schema 5.0) for execution recovery, goal/step state in CE | RFC-626 §4 |
 | **LedgerManager** | Sole ledger write target, phase-filtered message retrieval | RFC-624 §4 |
 | **ContextBundle** | Structured projection output from CE | RFC-624 §3 |

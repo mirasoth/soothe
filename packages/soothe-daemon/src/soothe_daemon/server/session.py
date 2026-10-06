@@ -229,7 +229,6 @@ class ClientSession:
     send_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     wire_tier: str = "full"
     detach_requested: bool = False  # RFC-0013: client explicitly requested detach
-    autopilot_subscribed: bool = False  # RFC-228: receives autopilot__* worker events
     config: SootheConfig | None = None  # RFC-614: daemon config reference
     stream_delivery: StreamDeliveryMode = "adaptive"  # §3.2: per-client preference
     # Subscription correlation ids for protocol-1 `next` envelopes (RFC-450).
@@ -337,40 +336,7 @@ class ClientSessionManager:
         For strict isolation, also unsubscribes from the `global` topic when
         subscribing to a specific loop. Loop-scoped clients should only receive
         events from their subscribed loop, not daemon-wide broadcasts.
-
-        refuses subscriptions to `autopilot__*` worker
-        loop_ids. Those are internal autopilot subprocess workers and must
-        never be exposed as user-facing sessions.
-
-        : If client has `autopilot_subscribed=True`, bypass the
-        worker filter so subscribed clients can observe autopilot assignment
-        loops (`subscribe_thread` on `autopilot__*` ids).
         """
-        try:
-            from soothe_daemon.runner.worker_loop_ids import is_autopilot_worker_loop_id
-
-            if is_autopilot_worker_loop_id(loop_id):
-                # RFC-228: Check if client has autopilot subscription bypass
-                async with self._lock:
-                    session = self._sessions.get(client_id)
-                if session is None or not session.autopilot_subscribed:
-                    logger.warning(
-                        "[Session] rejected subscribe to autopilot worker loop %s by client %s "
-                        "(autopilot_subscribe required)",
-                        loop_id,
-                        client_id,
-                    )
-                    return False
-                # Client has autopilot_subscribed=True, allow subscription
-                logger.info(
-                    "[Session] allowing autopilot worker subscription %s for client %s (bypass)",
-                    loop_id,
-                    client_id,
-                )
-        except Exception:
-            # Helper unavailable — fall through; this is purely a defensive gate.
-            logger.debug("autopilot worker loop_id check unavailable", exc_info=True)
-
         async with self._lock:
             session = self._sessions.get(client_id)
 

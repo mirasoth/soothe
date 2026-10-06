@@ -5,10 +5,10 @@
 **Status**: Draft
 **Kind**: Architecture Design
 **Created**: 2026-08-07
-**Updated**: 2026-08-08
+**Updated**: 2026-10-07
 **Authors**: Soothe Team
-**Depends on**: RFC-231, RFC-204, RFC-222, RFC-625, RFC-630
-**Related**: RFC-230,
+**Depends on**: RFC-231, RFC-624, RFC-630
+**Related**: RFC-231 §8 (maturity predicates — formerly RFC-230),
 design draft `docs/drafts/2026-08-08-streaming-slice-dag-worktree-lifecycle-design.md`,
 design draft `docs/archive/drafts/2026-08-08-autopilot-report-commit-judgment-design.md`,
 IG-704, IG-714, IG-718, IG-720, IG-722
@@ -22,7 +22,7 @@ the host applies into `RailJobState` as a **slice catalog** (flattened
 **wire contract**: completion evidence MAY be semi-structured (markdown prose
 plus one JSON block), but the **canonical plan is always a flat list of leaf
 slice specs** — never nested waves, never nested slices. Rich leaves MAY
-declare optional `depends_on: [slice_id, …]` so Autopilot can **stream-spawn**
+declare optional `depends_on: [slice_id, …]` so LoopRailService can **stream-spawn**
 makers into the CE DAG as deps clear (RFC-231 §9). Transfer may also use
 recommended dumps or structured `wave_plan_path` (IG-722); SoT after apply
 remains job rail state.
@@ -75,7 +75,7 @@ stages as nested objects inside the plan. Optional expansion budget
 ## 3. Non-goals
 
 - Restoring filesystem WavePlan SoT (`fanout.artifact`, workspace scrape).
-- Nano/agent tools that call Autopilot `record_wave_plan` (host-owned ingest).
+- Nano/agent tools that call LoopRailService `record_wave_plan` (host-owned ingest).
 - Nested wave schedules, milestone DAGs, or multi-level slice trees as machine
   contract (prose markdown may *describe* phases; job state must not store them).
 - Replacing the deterministic architecture gate with free-form LLM consensus
@@ -115,7 +115,7 @@ Architecture / planner completion
 | Layer | Owns | Must not |
 |-------|------|----------|
 | LLM + transfer | Flat WavePlan via wire fields, dumps, allowlist, or findings blob | Nested wave trees; treating dumps as SoT after apply |
-| Autopilot gate | Extract, reject nesting, optional flat coerce, validate, send_back text | Accept architecture without slices when `require_plan` |
+| LoopRailService architecture gate | Extract, reject nesting, optional flat coerce, validate, send_back text | Accept architecture without slices when `require_plan` |
 | LoopRail | `record_wave_plan` → slice catalog; streaming spawn (RFC-231 §9) | Persist nested wave objects; wave-stage spawn gates |
 | Rail YAML | `fanout.require_plan` and planner briefs (flat examples + optional deps) | `fanout.artifact`; nested WavePlan examples in briefs |
 
@@ -221,7 +221,7 @@ RFC-231 §9.2 and MAY persist alongside the catalog.
 
 ## 6. Architecture gate and report-commit judgment
 
-When `_is_architecture_planner_goal` and job `require_plan`, the Autopilot
+When `_is_architecture_planner_goal` and job `require_plan`, the LoopRailService
 **deterministic gate** (RFC-204 §1.3) runs as part of / before the report-commit
 handler using CE + rail state (not a workspace re-probe):
 
@@ -298,7 +298,7 @@ Builtin `plan_milestones` (and rail `verbs:` overrides) MUST:
 ## 11. Open questions
 
 - Max length / slice-count caps surfaced in send_back vs silent clamp only.
-- Operator CLI (`soothe autopilot wave-plan set`) vs rail_state edit for recovery.
+- Operator CLI (`soothe loop wave-plan set`) vs rail_state edit for recovery.
 
 ## 12. Suggested implementation routing
 

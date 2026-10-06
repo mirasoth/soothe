@@ -2,11 +2,15 @@
 
 **RFC**: 222
 **Title**: Autopilot Daemon Architecture (Worker Dispatch)
-**Status**: Implemented
+**Status**: Archived
+**Superseded By**: RFC-231 (LoopRail + Rail Exec; LoopRailService component map §14)
+**Superseded Date**: 2026-10-07
+**Archive Reason**: Legacy `AutopilotService` daemon runtime replaced by `LoopRailService` (RFC-231 §4, §14). Worker dispatch, workspace reservation, and CE integration semantics absorbed into RFC-231. The `soothe-autopilot` package no longer exists in the monorepo.
+**Archive Date**: 2026-10-07
 **Kind**: Architecture Design
 **Created**: 2026-05-27
 **Authors**: Soothe Team
-**Updated**: 2026-08-16
+**Updated**: 2026-10-07
 **Dependencies**: RFC-000, RFC-201, RFC-204, RFC-221 (Loop Runner Protocol), RFC-625, RFC-626, RFC-214 (Loop Message Surface)
 **Related**: RFC-200 (Goal Lifecycle), RFC-220 (Loop Orchestrator), RFC-403 (Events), RFC-229 (Cron Service for Autopilot), RFC-204 §1.3 (report-commit judgment), RFC-231 (LoopRail), RFC-214 (loop message ledger), design draft `docs/drafts/2026-08-16-autopilot-goal-dag-pair-projection-design.md`, `docs/archive/drafts/2026-08-08-autopilot-report-commit-judgment-design.md`
 

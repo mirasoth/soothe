@@ -1,7 +1,7 @@
 # RFC Index
 
-**Last Updated**: 2026-08-20
-**Total RFCs**: 93 (84 active, 9 archived)
+**Last Updated**: 2026-10-07
+**Total RFCs**: 93 (78 active, 15 archived)
 
 This index provides a comprehensive catalog of all RFCs in the Soothe project.
 
@@ -9,6 +9,15 @@ This index provides a comprehensive catalog of all RFCs in the Soothe project.
 > status, consult the
 > [RFC Methodology Guide](../rfc-methodology-guide.md) — a reusable playbook
 > synthesizing lifecycle rules and gap-triage scoring.
+
+> **⚠️ Autopilot Cleansing (2026-10-07)**: The legacy `soothe-autopilot`
+> subsystem has been replaced in code by **LoopRail** (RFC-231) +
+> **ContextEngine** (RFC-624). Six RFCs were archived with their still-normative
+> content absorbed into RFC-231: RFC-204, RFC-222, RFC-228, RFC-229, RFC-230,
+> RFC-625. See
+> [IG-779](../impl/IG-779-rfc-autopilot-cleansing-and-mode-alignment.md)
+> for the full migration mapping. Active RFCs that previously referenced these
+> archived RFCs now point to RFC-231 / RFC-624 / RFC-450 as appropriate.
 
 > **⚠️ Path Restructure Notice (2026-08)**: RFCs written before the 2026-07
 > `core/` → flat package restructure retain original design-time paths as
@@ -37,19 +46,21 @@ This index provides a comprehensive catalog of all RFCs in the Soothe project.
 
 | Status | Count |
 |--------|-------|
-| Draft | 39 |
+| Draft | 38 |
 | Proposed | 2 |
 | Accepted | 1 |
-| Implemented | 31 |
-| Implemented (partial) | 10 |
+| Implemented | 30 |
+| Implemented (partial) | 6 |
 | Implemented (Partially Superseded) | 1 |
-| Archived | 9 |
+| Archived | 15 |
 
 > **Note**: Status values follow the lifecycle in `templates/rfc-standard.md`
 > (Draft → Proposed → Accepted → Implemented → Deprecated → Archived).
 > "Implemented (partial)" and "Implemented (Partially Superseded)" are
 > project-specific variants documenting in-progress or partially superseded
 > implementations. See individual RFC headers for authoritative per-RFC status.
+> Counts updated 2026-10-07 to reflect the autopilot cleansing (6 RFCs
+> archived).
 
 ## RFC Kind Summary
 
@@ -149,12 +160,12 @@ This index provides a comprehensive catalog of all RFCs in the Soothe project.
   - Superseded By: RFC-626
   - Archived Date: 2026-06-16
   - Created: 2026-04-17
-- **RFC-204**: [Autopilot Mode](RFC-204-autopilot-mode.md)
+- **RFC-204**: [Autopilot Mode](../archive/specs/RFC-204-autopilot-mode.md) ⚠️ **ARCHIVED**
   - Kind: Architecture Design
-  - Status: Implemented
+  - Status: Archived
+  - Superseded By: RFC-231 (report-commit judgment §4.1); UX surfaces moved to RFC-500/504 + RFC-450
+  - Archived Date: 2026-10-07
   - Created: 2026-04-03
-  - Depends on: RFC-200, RFC-201, RFC-203, RFC-222, RFC-450, RFC-500
-  - Updated: 2026-08-08
 - **RFC-206**: [Hierarchical Prompt Architecture](RFC-206-prompt-architecture.md)
   - Kind: Architecture Design
   - Status: Draft
@@ -222,12 +233,12 @@ This index provides a comprehensive catalog of all RFCs in the Soothe project.
   - Status: Implemented
   - Created: 2026-05-09
   - Depends on: RFC-001, RFC-220, RFC-450, RFC-452
-- **RFC-222**: [Autopilot Daemon Architecture](RFC-222-autopilot-goal-engine-architecture.md)
+- **RFC-222**: [Autopilot Daemon Architecture](../archive/specs/RFC-222-autopilot-goal-engine-architecture.md) ⚠️ **ARCHIVED**
   - Kind: Architecture Design
-  - Status: Implemented
+  - Status: Archived
+  - Superseded By: RFC-231 (LoopRailService runtime §4 + §14 component map)
+  - Archived Date: 2026-10-07
   - Created: 2026-05-27
-  - Depends on: RFC-000, RFC-201, RFC-204, RFC-221 (Loop Runner Protocol), RFC-625, RFC-626, RFC-214 (Loop Message Surface)
-  - Updated: 2026-08-16
 - **RFC-223**: [Thread Inheritance with LangGraph Checkpoint Forking](RFC-223-thread-inheritance-checkpoint-forking.md)
   - Kind: Architecture Design
   - Status: Implemented (partial)
@@ -264,32 +275,31 @@ This index provides a comprehensive catalog of all RFCs in the Soothe project.
   - Supersedes: ---
   - Authors: xiaming
   - Updated: 2026-06-01
-- **RFC-228**: [Autopilot Job IPC Commands](RFC-228-autopilot-job-ipc.md)
+- **RFC-228**: [Autopilot Job IPC Commands](../archive/specs/RFC-228-autopilot-job-ipc.md) ⚠️ **ARCHIVED**
   - Kind: Protocol Specification
-  - Status: Implemented (partial)
+  - Status: Archived
+  - Superseded By: RFC-450 (`job_*` IPC commands), RFC-231 (§10 rail selection)
+  - Archived Date: 2026-10-07
   - Created: 2026-06-04
-  - Depends on: RFC-222 (Autopilot and Goal Engine Architecture), RFC-450 (Daemon Communication Protocol)
-  - Updated: 2026-08-08
-- **RFC-229**: [Cron Service for Autopilot](RFC-229-cron-service.md)
+- **RFC-229**: [Cron Service for Autopilot](../archive/specs/RFC-229-cron-service.md) ⚠️ **ARCHIVED**
   - Kind: Architecture Design
-  - Status: Implemented (partial)
+  - Status: Archived
+  - Superseded By: RFC-231 (§18 cron as external submit path), RFC-450 (cron IPC)
+  - Archived Date: 2026-10-07
   - Created: 2026-06-24
-  - Depends on: RFC-204 (Autopilot Mode), RFC-222 (Autopilot and Goal Engine Architecture), RFC-802 (Persistence Architecture)
-  - Updated: 2026-07-03
-- **RFC-230**: [Job Maturity Assessment for Autopilot Rails](RFC-230-job-maturity-assessment.md)
+- **RFC-230**: [Job Maturity Assessment for Autopilot Rails](../archive/specs/RFC-230-job-maturity-assessment.md) ⚠️ **ARCHIVED**
   - Kind: Architecture Design
-  - Status: Draft
+  - Status: Archived
+  - Superseded By: RFC-231 (§4 job maturity + §8 maturity predicates)
+  - Archived Date: 2026-10-07
   - Created: 2026-08-05
-  - Depends on: RFC-204, RFC-222, RFC-228, RFC-624, RFC-625, RFC-630
-  - Authors: Soothe Team
-  - Updated: 2026-08-08
 - **RFC-231**: [LoopRail and Rail Exec (Composable Verb Bodies)](RFC-231-looprail-rail-exec.md)
   - Kind: Architecture Design
   - Status: Draft
   - Created: 2026-08-07
-  - Depends on: RFC-204, RFC-222, RFC-228, RFC-230, RFC-625, RFC-626, RFC-630
+  - Depends on: RFC-624 (Context Engine), RFC-626 (Entity Model Consolidation), RFC-630 (Start-Phase LLM Intake)
   - Authors: Soothe Team
-  - Updated: 2026-08-08
+  - Updated: 2026-10-07 (autopilot cleansing — supersedes RFC-204/222/228/229/230/625; absorbs report-commit §4.1 + CE §17 + cron §18; `LoopRailService` replaces `AutopilotService`; `soothe/rails/` replaces `soothe/autopilot/rails/`)
 - **RFC-232**: [Flat WavePlan Wire Ingest (Semi-Structured, No Nesting)](RFC-232-waveplan-flat-semistructured-ingest.md)
   - Kind: Architecture Design
   - Status: Draft
@@ -536,10 +546,10 @@ This index provides a comprehensive catalog of all RFCs in the Soothe project.
   - Kind: Architecture Design
   - Status: Implemented
   - Created: 2026-06-02
-  - Depends on: RFC-220 (Agentic Goal Execution / StrangeLoop), RFC-222 (Autopilot Mode), RFC-600 (Plugin Extension System), RFC-601 (Built-in Agents), RFC-403 (Unified Event Naming)
+  - Depends on: RFC-220 (Agentic Goal Execution / StrangeLoop), RFC-231 (LoopRail + Rail Exec), RFC-600 (Plugin Extension System), RFC-601 (Built-in Agents), RFC-403 (Unified Event Naming)
   - Supersedes: Empty-answer auto-resume behavior currently encoded in `sloop/engine/graph_interrupt.py::build_auto_resume_payload` for `type=="ask_user"` interrupts.
   - Authors: Soothe Team
-  - Updated: 2026-08-27 (§9b multi-stage tool-approval pipeline)
+  - Updated: 2026-10-07 (terminology cleanse: "autopilot" → "loop-rail runs" / "headless runs"; RFC-222 dependency replaced by RFC-231; semantics unchanged)
 - **RFC-623**: [Veritas Auto-Mode Robustness](RFC-623-veritas-auto-mode-robustness.md)
   - Kind: Implementation Interface Design
   - Status: Implemented
@@ -547,7 +557,7 @@ This index provides a comprehensive catalog of all RFCs in the Soothe project.
   - Depends on: RFC-622 (CoreAgent Clarification Relay), RFC-220 (Agentic Goal Execution / StrangeLoop), RFC-403 (Unified Event Naming)
   - Supersedes: ---
   - Authors: Soothe Team
-  - Updated: 2026-08-19
+  - Updated: 2026-10-07 (terminology cleanse: "autopilot" → "loop-rail runs" / "headless runs"; RFC-222 reference replaced by RFC-231; semantics unchanged)
 - **RFC-634**: [AutoModeMiddleware — Inline Tool-Approval Gate](RFC-634-automode-middleware.md)
   - Kind: Implementation Interface Design
   - Status: Implemented
@@ -555,7 +565,7 @@ This index provides a comprehensive catalog of all RFCs in the Soothe project.
   - Depends on: RFC-622 (CoreAgent Clarification Relay), RFC-623 (Veritas Auto-Mode Robustness), Tool-Approval Pipeline draft (2026-08-27)
   - Supersedes: Station-side tool-approval pipeline evaluation (`AutoClarificationPolicy._answer_tool_approval`, `InteractiveClarificationPolicy` pre-filter, `interrupt_rules.py` `when_*` predicates)
   - Authors: Soothe Team
-  - Updated: 2026-09-20
+  - Updated: 2026-10-07 (`active_in_bypass` default true→false to match "bypass mode permits ALL tool calls" design rule; "autopilot" → "loop-rail headless run" terminology)
 - **RFC-635**: [AskUserGateMiddleware — Inline Veritas Fast Path for `ask_user`](RFC-635-askuser-gate-middleware.md)
   - Kind: Implementation Interface Design
   - Status: Implemented
@@ -563,20 +573,19 @@ This index provides a comprehensive catalog of all RFCs in the Soothe project.
   - Depends on: RFC-622 (CoreAgent Clarification Relay), RFC-623 (Veritas Auto-Mode Robustness), RFC-634 (AutoModeMiddleware)
   - Supersedes: ---
   - Authors: Soothe Team
-  - Updated: 2026-09-20
+  - Updated: 2026-10-07 (§3 decision table extended to bypass mode — gate fires in auto AND bypass per design rule "all ask_human routed to veritas"; "autopilot retry sentinel" → "loop-rail retry sentinel")
 - **RFC-624**: [Context Engine](RFC-624-context-engine.md)
   - Kind: Architecture Design
   - Status: Implemented (partial)
   - Created: 2026-06-12
   - Depends on: RFC-000 (System Conceptual Design), RFC-200 (Autonomous Goal Management), RFC-201 (StrangeLoop Plan-Execute Loop), RFC-214 (Loop Message Surface), RFC-803 (Persistence Backend)
   - Updated: 2026-08-24 (reentrant state — awaiting_clarification matching, IG-760)
-- **RFC-625**: [AutopilotMonitor and ContextEngine Unification](RFC-625-autopilot-monitor-context-engine-unification.md)
+- **RFC-625**: [AutopilotMonitor and ContextEngine Unification](../archive/specs/RFC-625-autopilot-monitor-context-engine-unification.md) ⚠️ **ARCHIVED**
   - Kind: Architecture Design
-  - Status: Implemented
+  - Status: Archived
+  - Superseded By: RFC-231 (§17 CE `GoalNode.report` commit + `goal_report_committed`), RFC-624 (Context Engine)
+  - Archived Date: 2026-10-07
   - Created: 2026-06-15
-  - Depends on: RFC-624 (Context Engine), RFC-222 (Autopilot and Goal Engine Architecture), RFC-200 (Autonomous Goal Management)
-  - Supersedes: RFC-200 (Goal Management) — GoalEngine deleted, features migrated to ContextEngine
-  - Updated: 2026-08-11
 - **RFC-626**: [Entity Model and State Management Consolidation](RFC-626-entity-model-state-consolidation.md)
   - Kind: Architecture Design
   - Status: Draft

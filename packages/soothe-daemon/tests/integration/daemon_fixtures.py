@@ -314,7 +314,7 @@ def build_daemon_config(
                     "persist_dir": str(tmp_path / "durability"),
                 },
             },
-            "autopilot": {"enabled": True},
+            "rail": {"default_rail": "feature-dev"},
             "loop": {
                 "max_iterations": 3,
                 "limits": {

@@ -18,7 +18,7 @@
 | Section | Status | Superseded By |
 |---------|--------|---------------|
 | §Loop driver | Deprecated | RFC-220 (LangGraph orchestrator) |
-| §GoalEngine integration | Modified | RFC-222 (daemon-ownership model) |
+| §GoalEngine integration | Modified | RFC-231 (loop-rail daemon-ownership model; absorbs legacy RFC-222) |
 | §Thread continuation | Replaced | RFC-225 (loop-centric derivation) |
 | §Goal completion flow | Extracted | RFC-219 (GoalCompletionModule) |
 | §Plan assessment | Enhanced | RFC-213 (two-phase reasoning) |

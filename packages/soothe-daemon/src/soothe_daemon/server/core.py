@@ -656,8 +656,8 @@ class SootheDaemon(DaemonHandlersMixin):
                 from soothe_daemon.notify import build_notify_dispatcher_from_config
 
                 self._notify_dispatcher = build_notify_dispatcher_from_config(
-                    self._config.agent.autopilot.notify,
-                    legacy_webhooks=self._config.agent.autopilot.webhooks,
+                    self._config.agent.rail.notify,
+                    legacy_webhooks=self._config.agent.rail.webhooks,
                 )
             except Exception:
                 logger.exception("[Notify] failed to wire NotifyDispatcher")

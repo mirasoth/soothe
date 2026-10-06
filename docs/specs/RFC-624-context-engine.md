@@ -8,7 +8,7 @@
 **Authors**: Soothe Team
 **Updated**: 2026-08-24 (reentrant state — awaiting_clarification matching, IG-760)
 **Dependencies**: RFC-000 (System Conceptual Design), RFC-200 (Autonomous Goal Management), RFC-201 (StrangeLoop Plan-Execute Loop), RFC-214 (Loop Message Surface), RFC-803 (Persistence Backend)
-**Related**: RFC-217 (Goal Context Management), RFC-224 (Automatic Context Window Management), RFC-222 (Autopilot GoalEngine Architecture), RFC-204 §1.3 (report-commit judgment), RFC-625 (AutopilotMonitor and ContextEngine Unification — `commit_goal_report`), RFC-626 (Entity Model and State Management Consolidation), RFC-904 (recursive step decomposition), [IG-760](../impl/IG-760-reentrant-loop-state-management.md) (reentrant loop state)
+**Related**: RFC-217 (Goal Context Management), RFC-224 (Automatic Context Window Management), RFC-231 §4 + §14 (LoopRailService component map), RFC-231 §4.1 (report-commit judgment), RFC-231 §17 + RFC-624 (CE GoalNode.report commit — `commit_goal_report`), RFC-626 (Entity Model and State Management Consolidation), RFC-904 (recursive step decomposition), [IG-760](../impl/IG-760-reentrant-loop-state-management.md) (reentrant loop state)
 **Amended by**: RFC-904 (§StepDAG statuses/fields, proposal reconcile, Step Context Registry)
 **Amended by**: RFC-904 (§StepDAG statuses/fields, proposal reconcile, Step Context Registry)
 
@@ -18,11 +18,11 @@
 
 This RFC introduces `ContextEngine`, a unified interface for context management across Soothe's GoalEngine (goal-level) and StrangeLoop (execution-level). ContextEngine consolidates scattered context handling — goal DAG, step DAG, message ledger, working memory, and project instructions — into a single module with clear ownership boundaries. It provides a unified Goal+Step DAG data structure with lineage tracking, a bounded projection mechanism that outputs structured data for prompt templates, and pluggable persistence.
 
-> **Amendment note (RFC-904):** Recursive step decomposition extends `StepNode` / `StepStatus` (`decomposed`, `superseded`, lineage fields, `replacement_of`), makes CE the active **proposal reconciler** for in-goal StepDAG growth, and retires Step Anchor Registry in favor of a THREAD **Step Context Registry**. Goal-level `apply_llm_subgoals` / goal-directive `"decompose"` remain separate (RFC-625); RFC-904's `decompose_task` is step-scoped only.
+> **Amendment note (RFC-904):** Recursive step decomposition extends `StepNode` / `StepStatus` (`decomposed`, `superseded`, lineage fields, `replacement_of`), makes CE the active **proposal reconciler** for in-goal StepDAG growth, and retires Step Anchor Registry in favor of a THREAD **Step Context Registry**. Goal-level `apply_llm_subgoals` / goal-directive `"decompose"` remain separate (RFC-231 §17); RFC-904's `decompose_task` is step-scoped only.
 
 Phase 1 delivers ContextEngine as a standalone module in `soothe.context` with no changes to existing code. Phase 2 wires it into GoalEngine. Phase 3 wires it into StrangeLoop via an adapter pattern that guarantees behavioral equivalence with the existing Plan-Exec loop. Phase 4 makes CE the sole data source for goal/step/ledger state, deleting all adapters and trimming LoopState to a thin `ExecutionState` facade holding only execution-only fields.
 
-> **Implementation Note (2026-08-11):** Phase 2 is moot — RFC-625 deleted `GoalEngine` entirely; `ContextEngine` is now the sole source of truth for goal/step/ledger state. Phase 4 Stage 2 (LoopState → `ExecutionState` elimination per RFC-626) has **not yet started**: `class LoopState` persists at `sloop/state/schemas.py:1106` across 49 source files; `ExecutionState` does not exist in the codebase. Five files retain stale `GoalEngine` docstring references (see RFC-625 implementation note).
+> **Implementation Note (2026-08-11):** Phase 2 is moot — RFC-231 §17 deleted `GoalEngine` entirely; `ContextEngine` is now the sole source of truth for goal/step/ledger state. Phase 4 Stage 2 (LoopState → `ExecutionState` elimination per RFC-626) has **not yet started**: `class LoopState` persists at `sloop/state/schemas.py:1106` across 49 source files; `ExecutionState` does not exist in the codebase. Five files retain stale `GoalEngine` docstring references (see RFC-231 §17 implementation note).
 
 ---
 
@@ -32,11 +32,11 @@ Phase 1 delivers ContextEngine as a standalone module in `soothe.context` with n
 
 Soothe's context handling is scattered across multiple modules with overlapping responsibilities:
 
-1. **GoalEngine** (`autopilot/engine.py`) owns a flat `dict[str, Goal]` for goal DAG management — scheduling, status transitions, dependencies. Goals carry no lineage and no execution records.
+1. **GoalEngine** (legacy `autopilot/engine.py`, removed per IG-779) owned a flat `dict[str, Goal]` for goal DAG management — scheduling, status transitions, dependencies. Goals carry no lineage and no execution records.
 
 2. **StrangeLoop** maintains `PlanDAG` (step-level DAG), `LoopWorkingMemory` (step outcome summaries), and `loop_messages` (full message ledger). These are separate data structures with no unified model.
 
-3. **Autopilot Context** has `GoalDispatchContextStore` + `ContextProjector` for parent goal contributions — a partial context projection mechanism limited to autopilot mode.
+3. **Loop-Rail Context** has `GoalDispatchContextStore` + `ContextProjector` for parent goal contributions — a partial context projection mechanism limited to loop-rail mode.
 
 4. **No lineage tracking**: Neither goals nor steps record the reasoning that created them. After crash recovery, the "why" behind decisions is lost.
 
@@ -65,7 +65,7 @@ Soothe's context handling is scattered across multiple modules with overlapping 
 | Phase | Scope | Existing code changes | Status |
 |-------|-------|-----------------------|--------|
 | 1 | Standalone `soothe.context` module | None | Done |
-| 2 | GoalEngine reads/writes through ContextEngine | GoalEngine internal storage replaced | Moot (GoalEngine deleted by RFC-625) |
+| 2 | GoalEngine reads/writes through ContextEngine | GoalEngine internal storage replaced | Moot (GoalEngine deleted by RFC-231 §17) |
 | 3a | CE Engine Completeness (Sub-project 1) | CE internal: public API, state transitions, callbacks, lossless persistence, compaction | Done |
 | 3b | Adapter Hardening + Projection Wiring (Sub-project 2) | Adapters use public API; ContextBundle wired into prompts | Done |
 | 3c | CE Planning Submodule (Sub-project 3) | `soothe.context` submodule: StepPlanningSubengine, GoalPlanningSubengine, GoalScheduler, PlanningFacade; eliminates adapter heuristic duplication | Done |
@@ -75,9 +75,9 @@ Soothe's context handling is scattered across multiple modules with overlapping 
 
 ### StrangeLoop Context Integration Philosophy
 
-RFC-222 established the invariant: **"StrangeLoop is the pure execution unit. Autopilot is the orchestrator."** StrangeLoop must not know about the DAG, sibling goals, scheduling, or cross-loop conflicts. ContextEngine integration in Phase 3–4 introduced a tension between this invariant and the need for context-aware execution.
+RFC-231 established the invariant: **"StrangeLoop is the pure execution unit. LoopRail is the orchestrator."** StrangeLoop must not know about the DAG, sibling goals, scheduling, or cross-loop conflicts. ContextEngine integration in Phase 3–4 introduced a tension between this invariant and the need for context-aware execution.
 
-**Resolution principle**: StrangeLoop receives context through a **value-typed contract** — the `GoalDispatchContextBundle` (RFC-222) or `ContextBundle` (RFC-624). This preserves the invariant:
+**Resolution principle**: StrangeLoop receives context through a **value-typed contract** — the `GoalDispatchContextBundle` (RFC-231) or `ContextBundle` (RFC-624). This preserves the invariant:
 
 1. **StrangeLoop pulls context, never pushes state**: StrangeLoop reads from CE via property accessors backed by GoalNode. It never writes to CE's DAG directly — only through `LedgerManager` (prompt pipeline) and `PlanManager` adapter (step creation). Phase 4 eliminates adapters but retains the pull-only pattern: StrangeLoop calls `ce.planning.create_step()` and `ce.ledger.record_message()`, never `ce.dag.add_goal()`.
 
@@ -146,7 +146,7 @@ RFC-222 established the invariant: **"StrangeLoop is the pure execution unit. Au
 
 The core data model is a two-level DAG: `GoalStepDAG` contains `GoalNode` entries, each embedding a `StepDAG` of `StepNode` entries.
 
-**GoalNode** represents a goal with: status, priority, nesting (`parent_id`), hard dependencies (`depends_on`), soft dependencies (`informs`), conflicts (`conflicts_with`), an embedded `StepDAG`, lineage fields (`generating_reasoning`, `source`), observability fields (`total_tokens_used`, `thread_id`, `assigned_loop_id`), and Autopilot completion fields (`report`, `report_revision`, send-back budgets) per RFC-625. Autopilot judgment SoT is the committed `report` (StrangeLoop ledger projection); CE MUST support `commit_goal_report` emitting `goal_report_committed` (RFC-204 §1.3 / RFC-625).
+**GoalNode** represents a goal with: status, priority, nesting (`parent_id`), hard dependencies (`depends_on`), soft dependencies (`informs`), conflicts (`conflicts_with`), an embedded `StepDAG`, lineage fields (`generating_reasoning`, `source`), observability fields (`total_tokens_used`, `thread_id`, `assigned_loop_id`), and LoopRail completion fields (`report`, `report_revision`, send-back budgets) per RFC-231 §17. LoopRail judgment SoT is the committed `report` (StrangeLoop ledger projection); CE MUST support `commit_goal_report` emitting `goal_report_committed` (RFC-231 §4.1 / §17).
 
 **StepNode** represents a step within a goal with: status, intra-goal dependencies, lineage (`plan_iteration`, `reasoning_trace`), and an optional `StepExecution` record.
 
@@ -648,7 +648,7 @@ class StepPlanManagerAdapter:
 
 - `PlanWave`: Record of a single plan ingestion wave
 - `SubGoalSpec`: Specification for a subgoal to be created during decomposition
-- `DecompositionRequest` / `DecompositionResult`: Goal decomposition request/result models. LLM-driven decomposition is wired through the AutopilotMonitor verifier path (`apply_llm_subgoals`), not a `decompose_goal()` entry point.
+- `DecompositionRequest` / `DecompositionResult`: Goal decomposition request/result models. LLM-driven decomposition is wired through the ContextEngine monitor verifier path (`apply_llm_subgoals`), not a `decompose_goal()` entry point.
 - `OrchestrationStrategy`: Multi-goal orchestration strategy
 - `CompletionStrategy` (StrEnum): `ledger_direct`, `synthesize`, `summary` — moved from `manager.py` to break circular imports
 - `DagPlanningContext` (dataclass): 9-attribute structured DAG summary — moved from `manager.py` to break circular imports
@@ -667,15 +667,15 @@ class PlanningFacade:
 
 `ContextEngine.planning` property returns `PlanningFacade`.
 
-**GoalPlanningSubengine**: LLM-driven decomposition flows through the AutopilotMonitor verifier (`apply_llm_subgoals()` → `create_subgoals()`); `compute_orchestration_strategy()` computes from goal DAG.
+**GoalPlanningSubengine**: LLM-driven decomposition flows through the ContextEngine monitor verifier (`apply_llm_subgoals()` → `create_subgoals()`); `compute_orchestration_strategy()` computes from goal DAG.
 
 **Workspace inheritance (normative addendum, 2026-08-04):** When creating
 children via `create_subgoals` / `apply_llm_subgoals`, each child `GoalNode`
 MUST inherit `parent.workspace` unless the decomposition payload explicitly
-sets another workspace. Without this, autopilot dispatch falls back to
+sets another workspace. Without this, loop-rail dispatch falls back to
 per-loop anonymous workspaces and consensus cannot ground on the job path.
 Tracked in [IG-680](../archive/impl/IG-680-autopilot-dag-health-evidence-deps.md) AH-2 /
-RFC-625 errata.
+RFC-231 §17 errata.
 
 **GoalScheduler**: Extracts scheduling logic from `GoalEngine._filter_ready_candidates` — `ready_goals()`, `claim_goal()`, `is_complete()`.
 

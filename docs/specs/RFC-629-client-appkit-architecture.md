@@ -22,7 +22,7 @@ This RFC defines a three-layer architecture shared by all four clients:
 - **Layer 1 (`appkit`)**: reusable application mechanics — `DaemonSession`, `ConnectionPool`, `QueryGate`, `TurnRunner`, `EventClassifier`, `SSEBroadcaster`, `LoopSessionStore`.
 - **Layer 2 (application)**: product decisions — deliverable phases, persistence, chat modes, error copy.
 
-A fourth **ephemeral RPC** entry point (`CommandClient` / `AsyncCommandClient`) sits beside Layer 0 for jobs/cron/autopilot one-shots that must not share a streaming socket.
+A fourth **ephemeral RPC** entry point (`CommandClient` / `AsyncCommandClient`) sits beside Layer 0 for jobs/cron one-shots that must not share a streaming socket.
 
 ## Problem Statement
 
@@ -59,7 +59,7 @@ Every client documents and implements these four entry points with matching sema
 | Need | Entry point | Notes |
 |------|-------------|-------|
 | One conversation, stream turns | `appkit.DaemonSession` | Dual-socket: stream + RPC sidecar; `SendTurn` / `IterTurnChunks`; `EnsureConnected` |
-| Jobs / cron / autopilot one-shots | `CommandClient` (+ async variant in Python/TS) | Ephemeral connect → handshake → one RPC → close |
+| Jobs / cron one-shots | `CommandClient` (+ async variant in Python/TS) | Ephemeral connect → handshake → one RPC → close |
 | Raw protocol / custom RPCs | `WebSocketClient` (Python) / `Client` (Go, TS) | Long-lived transport; advanced |
 | Multi-user HTTP backend | `ConnectionPool` + `TurnRunner` | Session-scoped pool; product supplies `LoopSessionStore` |
 
@@ -158,7 +158,7 @@ graph TB
 
 ### `CommandClient` (ephemeral RPC)
 
-**Purpose**: One-shot jobs/cron/autopilot RPCs without holding a streaming subscription.
+**Purpose**: One-shot jobs/cron RPCs without holding a streaming subscription.
 
 **Capabilities**: Open WebSocket → `connection_init` handshake → single correlated `request`/`response` → close. Sync and async wrappers as language-appropriate.
 
