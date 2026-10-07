@@ -7,42 +7,17 @@
 **Created**: 2026-06-04
 **Updated**: 2026-08-08
 **Authors**: xiaming (with Claude)
-**Dependencies**: RFC-225 (Goal Record Enrichment), RFC-401 (Event Processing), RFC-403 (Unified Event Naming), RFC-411 (Event Stream Replay), RFC-503 (Loop-First UX), RFC-631 (Goal Display Snapshots)
+**Depends on**: RFC-225, RFC-401, RFC-403, RFC-503
 **Supersedes**: RFC-411 (history reconstruction model)
-**Amended by**: [RFC-631](RFC-631-goal-display-snapshots.md) (goal-bound display snapshots; live-only ledger scope); 2026-07-19 persistence backend follows `persistence.default_backend` (PostgreSQL `soothe_metadata` when configured); 2026-07-27 Phase 4 completion (live `soothe.card.*` cutover, append-oriented ledger, DisplayCardStore as SoT — see §11 / §16 and [design draft](../drafts/2026-07-27-tui-card-replay-source-of-truth-design.md))
-**Implemented by**: IG-655 (Phase 4 cutover), IG-577 (resume card rendering)
+**Amended by**: RFC-631 (goal-bound display snapshots; live-only ledger scope)
 
 ---
 
 ## Implementation Status
 
-### Completed Phases
-
-| Phase | Description | Status |
-|-------|-------------|--------|
-| Phase 1 | LoopCardLedger + LoopCardManager core | ✅ Shipped |
-| Phase 2 | `soothe.card.*` wire frames | ✅ Shipped |
-| Phase 3 | Persistence backend integration | ✅ Shipped |
-| Phase 4 | Live `soothe.card.*` cutover | ✅ Shipped (IG-655) |
+All four phases shipped (Phase 1: `LoopCardLedger` + `LoopCardManager` core; Phase 2: `soothe.card.*` wire frames; Phase 3: persistence backend integration; Phase 4: live `soothe.card.*` cutover via IG-655). Resume card rendering fixed via IG-577; persistence backend follows `persistence.default_backend` (PostgreSQL `soothe_metadata` when configured).
 
 > **Implementation Note (2026-08-11):** The design names `CardBinder` and `DisplayCardLedger` in the RFC body map to the shipped classes `LoopCardLedger` (`display/loop_card_ledger.py`) and `LoopCardManager` (`display/loop_card_manager.py`) respectively. The `DisplayCardStore` persistence layer ships at `display/display_store.py` (not `store.py`).
-
-### Key Components Delivered
-
-| Component | Location | Status |
-|-----------|----------|--------|
-| `LoopCardLedger` | `soothe_daemon/display/loop_card_ledger.py` | ✅ Implemented |
-| `LoopCardManager` | `soothe_daemon/display/loop_card_manager.py` | ✅ Implemented |
-| `soothe.card.*` wire | `soothe_sdk/wire/cards.py` | ✅ Implemented |
-| `DisplayCardStore` | `soothe_daemon/display/display_store.py` | ✅ Implemented |
-| `DisplayCardStore` (PostgreSQL) | `soothe_daemon/display/display_store_postgres.py` | ✅ Implemented |
-| Goal snapshots | RFC-631 integration | ✅ Implemented |
-| Resume card rendering | IG-577 | ✅ Fixed |
-
-### Testing Coverage
-
-- Unit tests: `tests/unit/display/test_loop_card_ledger.py`, `test_loop_card_manager.py`
-- Integration: `tests/integration/test_display_card_flow.py`
 
 ---
 
@@ -382,27 +357,12 @@ RFC-413 replaces this approach: instead of reconstructing events on demand, reco
 
 ## 11. Phased Migration
 
-**Phase 1 — `/loops`-switch history load.** ✅ Shipped.
-Wire switch/resume paths to load history after successful loop switch.
+All four phases shipped:
 
-**Phase 2 — Extract `CardBinder` as a pure module.** ✅ Shipped.
-`soothe_sdk.display.card_binder` owns conversion rules; unit-tested.
-
-**Phase 3 — Daemon owns binder + ledger; `soothe.card.*` + `loop_history_fetch`.** ✅ Largely shipped.
-* `LoopCardManager` ingests stream tuples off the hot path; persists via DisplayCardStore (SQLite/Postgres).
-* RFC-631 goal snapshots + `loop_history_fetch` for resume.
-* `loop_reattach` streams `soothe.card.replay.*` for the live tail.
-* Resume policy IG-577 (`sanitize_resume_display_cards`).
-* **Gap:** live TUI still binds from raw stream events; ledger often `replace_with` full rebind on debounce rather than append mutations + live `soothe.card.*` emit.
-
-**Phase 4 — Live cutover + decommission (IG-655).** ✅ Shipped (2026-07-27):
-
-| Stage | Work | Status |
-|---|---|---|
-| **4.1** | Structural parity audit for resume/attach vs catalogue (§8 / §15) | Done |
-| **4.2** | Append-oriented mutations; emit live `soothe.card.*` as `event`/`custom` | Done |
-| **4.3** | TUI consumes `soothe.card.*`; suppress duplicate raw user/assistant mounts | Done |
-| **4.4** | Always-on daemon projection; skip raw cognition/assistant mounts; step cards from ledger register into tool router; keep raw tool-row updates on step widgets | Done |
+- **Phase 1** — `/loops`-switch history load (✅ shipped).
+- **Phase 2** — Extract `CardBinder` as a pure module in `soothe_sdk.display.card_binder` (✅ shipped, unit-tested).
+- **Phase 3** — Daemon owns binder + ledger; `soothe.card.*` + `loop_history_fetch`; RFC-631 goal snapshots; `loop_reattach` streams `soothe.card.replay.*` for the live tail; resume policy IG-577 (`sanitize_resume_display_cards`) (✅ largely shipped; gap: live TUI still binds from raw stream events).
+- **Phase 4** — Live cutover + decommission (IG-655, shipped 2026-07-27): structural parity audit (§8 / §15), append-oriented mutations emit live `soothe.card.*` as `event`/`custom`, TUI consumes `soothe.card.*` and suppresses duplicate raw user/assistant mounts, always-on daemon projection skips raw cognition/assistant mounts; step cards from ledger register into the tool router; raw tool-row updates stay on step widgets.
 
 **Fidelity locked for Phase 4:** structural parity only (user, cognition/plan/reason, step + tool **counts**, assistant text, subagent rollups, error, system notice). Inline tool rows remain live-only via raw tool wire onto ledger-mounted step cards (§15).
 
@@ -476,7 +436,6 @@ Design draft: [`docs/drafts/2026-07-27-tui-card-replay-source-of-truth-design.md
 * RFC-503 — Loop-First User Experience
 * RFC-631 — Goal Display Snapshots
 * RFC-612 / RFC-801 — Persistence backends (DisplayCardStore placement)
-* RFC-631 — Goal Display Snapshots
 * Design draft (2026-06-04): `docs/archive/drafts/2026-06-04-resume-loop-display-design.md`
 * Design draft (2026-07-27): `docs/drafts/2026-07-27-tui-card-replay-source-of-truth-design.md`
 * IG-655 — Phase 4 live cutover

@@ -7,15 +7,10 @@
 **Created**: 2026-03-12
 **Authors**: Soothe Team
 **Updated**: 2026-05-26
-**Dependencies**: -
 
 ## Abstract
 
-This document defines the conceptual design for Soothe, a Goal-driven orchestration framework for building 24/7 long-running autonomous agents. Soothe extends deepagents with planning, context engineering, security policy, durability, and remote agent interop while remaining runtime-agnostic and langchain-ecosystem-friendly. The architecture is organized into three distinct execution levels: GoalEngine for autonomous goal management, StrangeLoop for agentic goal execution, and CoreAgent for the foundational runtime.
-
-## Overview
-
-This document defines the conceptual design for **Soothe**, a Goal-driven orchestration framework for building 24/7 long-running autonomous agents. Soothe sits at the same abstraction level as deepagents -- above langchain and langgraph -- and extends deepagents with planning, context engineering, security policy, durability, and remote agent interop.
+Soothe is a goal-driven orchestration framework for 24/7 long-running autonomous agents. It extends deepagents with planning, context engineering, security policy, durability, and remote agent interop while remaining runtime-agnostic and langchain-ecosystem-friendly. The architecture is organized into three execution levels: GoalEngine for autonomous goal management, StrangeLoop for agentic goal execution, and CoreAgent for the foundational runtime.
 
 ## Vision
 
@@ -215,8 +210,7 @@ This is the foundational Conceptual Design spec. All subsequent Architecture Des
 
 - [RFC Standard](./templates/rfc-standard.md) - Specification kinds and process
 - [RFC Index](./rfc-index.md) - All RFCs
-- [RFC-200](../archive/specs/RFC-200-autonomous-goal-management.md) - GoalEngine: Autonomous Goal Management
-- [RFC-201](./RFC-201-strangeloop-plan-execute-loop.md) - StrangeLoop: Agentic Goal ExecutionExecute Loop
+- [RFC-201](./RFC-201-strangeloop-plan-execute-loop.md) - StrangeLoop agentic goal execution
 - [RFC-302](./RFC-302-context-protocol-architecture.md) through [RFC-306](./RFC-306-durability-protocol-architecture.md) - Core protocol architecture set
 
 **Note**: RFC consolidation completed 2026-04-17. Canonical merged RFCs are maintained in `docs/specs/`; legacy files are retained for historical context with explicit redirects.

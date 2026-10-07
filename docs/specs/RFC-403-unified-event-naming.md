@@ -296,76 +296,7 @@ Add validation script to CI pipeline:
 
 ## 7. Migration Strategy
 
-### 7.1 Migration Approach
-
-**Direct migration with no backward compatibility**. Forces immediate adoption of unified semantics and eliminates maintenance burden.
-
-### 7.2 Migration Phases
-
-#### Phase 1: Event Catalog Migration (1-2 days)
-
-**Tasks**:
-1. Update `events/catalog.py` type string constants
-2. Update event class `type` field default values
-3. Update `_reg()` calls with new type strings
-4. Update `register_event()` calls in module event files:
-   - `packages/soothe/src/soothe/events/catalog.py` (core registry)
-   - `packages/soothe/src/soothe/sloop/utils/events.py` (StrangeLoop typed events)
-Optional community plugin event modules (see `community/src/soothe_plugins/`)
-   - `packages/soothe/src/soothe/subagents/research/events.py` (note: only `subagents/veritas/` exists today)
-   - `soothe-nano` PyPI package (`soothe_nano.plugin.events`)
-5. Delete old type string constants completely
-
-**Files**:
-- `packages/soothe/src/soothe/events/catalog.py`
-- `packages/soothe-daemon/src/soothe_daemon/events/constants.py`
-- `packages/soothe/src/soothe/sloop/utils/events.py`
-- `packages/soothe/src/soothe/subagents/*/events.py`
-- `soothe-nano` PyPI package (`soothe_nano.plugin.events`)
-
-#### Phase 2: Emitter Code Migration (1-2 days)
-
-**Tasks**:
-1. Update all `yield custom_event()` calls with new event types
-2. Update all event constant references in emitter code
-3. Search for all event type string literals and replace
-
-**Files**:
-- All files that emit events using `custom_event()`
-- All files that import event constants from `soothe.events` / `soothe.events.catalog`
-
-#### Phase 3: Test Migration (1 day)
-
-**Tasks**:
-1. Update test assertions that check event types
-2. Update mock event data in tests
-3. Update test fixtures
-4. Run unit tests and fix failures
-
-#### Phase 4: Documentation & Verification (1 day)
-
-**Tasks**:
-1. Update RFC-302 references to RFC-303
-2. Update CLAUDE.md event naming examples
-3. Update event-catalog.md with new naming
-4. Run full verification suite: `./scripts/verify_finally.sh`
-5. Ensure all 900+ tests pass
-
-### 7.3 Migration Tools
-
-#### Tool 1: Automated Migration Script
-
-Create `scripts/migrate_event_names.py`:
-- Find-and-replace event type strings across all Python files
-- Generate migration report showing all changes
-- Support dry-run mode to preview changes
-
-#### Tool 2: Validation Script
-
-Create `scripts/validate_event_names.py`:
-- Check all events follow new grammar rules
-- Validate domains, components, actions
-- Run as CI check and pre-commit hook
+**Direct migration with no backward compatibility.** Forces immediate adoption of unified semantics and eliminates maintenance burden. Migration tooling: `scripts/migrate_event_names.py` (find-and-replace across Python files, dry-run supported) and `scripts/validate_event_names.py` (grammar/domain/action validation, run as CI check and pre-commit hook).
 
 ---
 
@@ -429,7 +360,7 @@ The following table recorded an abandoned rename toward `soothe.capability.*`. *
 
 | Old Type | New Type | Notes |
 |----------|----------|-------|
-| legacy `autopilot.*` events | `soothe.system.loop_rail.*` | Domain migration + autopilot→loop_rail rename |
+| legacy `autopilot.*` events | `soothe.system.loop_rail.*` | Domain migration + legacy naming retired (IG-779) |
 | legacy `autopilot.goal_created` | `soothe.system.loop_rail.goal.creating` | Domain + hierarchical + present progressive |
 | legacy `autopilot.dreaming_entered` | *(retired — dreaming was removed, IG-779)* | Dreaming subsystem retired |
 | legacy `autopilot.relationship_detected` | `soothe.system.loop_rail.relationship.detecting` | Domain + present progressive |
@@ -447,69 +378,11 @@ The following table recorded an abandoned rename toward `soothe.capability.*`. *
 
 ## 9. Implementation Checklist
 
-### 9.1 Pre-Migration
-
-- [ ] Create `scripts/migrate_event_names.py` migration script
-- [ ] Create `scripts/validate_event_names.py` validation script
-- [ ] Test migration script on sample files
-- [ ] Create clean feature branch for migration
-
-### 9.2 Phase 1: Event Catalog
-
-- [ ] Migrate `events/catalog.py` core events
-- [ ] Migrate `events/catalog.py` and per-module `register_event()` sites (e.g. `sloop/utils/events.py`)
-- [x] Migrate community plugin event modules under `soothe_plugins/` (IG-415)
-- [ ] Migrate `subagents/research/events.py`
-- [ ] Migrate `plugin/events.py`
-- [ ] Run `make lint` and fix errors
-- [ ] Run unit tests and fix failures
-
-### 9.3 Phase 2: Emitter Code
-
-- [ ] Update all `custom_event()` calls
-- [ ] Update all event constant imports
-- [ ] Update all hardcoded event type strings
-- [ ] Run `make lint` and fix errors
-- [ ] Run unit tests and fix failures
-
-### 9.4 Phase 3: Tests
-
-- [ ] Update test assertions
-- [ ] Update mock event data
-- [ ] Update test fixtures
-- [ ] Run all unit tests
-- [ ] Ensure 900+ tests pass
-
-### 9.5 Phase 4: Documentation & Verification
-
-- [ ] Update RFC-302 references
-- [ ] Update CLAUDE.md
-- [ ] Update event-catalog.md
-- [ ] Run `./scripts/verify_finally.sh`
-- [ ] Run manual daemon tests
-- [ ] Run TUI tests
-- [ ] Run CLI tests
-- [ ] Add validation script to CI
-- [ ] Add validation script to pre-commit hooks
+Migration is complete when the validation script finds no violations, the daemon produces correct event streams, TUI/CLI render all new event types, and plugin developers can register events following the new guidelines. Pre-commit hook runs `validate_event_names.py` to prevent drift.
 
 ---
 
-## 10. Success Criteria
-
-Migration is successful when:
-
-1. ✅ All 900+ unit tests pass
-2. ✅ Linting passes with zero errors
-3. ✅ Validation script finds no violations
-4. ✅ Manual daemon execution produces correct event streams
-5. ✅ TUI renders all new event types correctly
-6. ✅ CLI event stream handling works
-7. ✅ Plugin developers can register events following new guidelines
-8. ✅ Documentation updated with clear rules
-
----
-
-## 11. Relationship to Other RFCs
+## 10. Relationship to Other RFCs
 
 * **RFC-401 (Event Processing)**: Architecture and registry implementation; RFC-403 defines naming semantics
 * **RFC-501 (Display & Verbosity)**: VerbosityTier classification for events
@@ -518,7 +391,7 @@ Migration is successful when:
 
 ---
 
-## 12. Open Questions
+## 11. Open Questions
 
 1. **Policy events**: Should `soothe.protocol.policy.checked` become `checking` (action) or keep `checked` (state)? **Resolution**: Use `checking` as present progressive action.
 
@@ -532,7 +405,7 @@ Migration is successful when:
 
 ---
 
-## 13. Conclusion
+## 12. Conclusion
 
 This RFC establishes unified semantics for Soothe's event naming:
 
@@ -547,7 +420,7 @@ This RFC establishes unified semantics for Soothe's event naming:
 
 ---
 
-## 14. References
+## 13. References
 
 * Design draft: `docs/archive/drafts/2026-04-15-event-naming-semantics-unification-design.md`
 * Event catalog: `docs/specs/event-catalog.md`

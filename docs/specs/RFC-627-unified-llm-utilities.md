@@ -7,9 +7,8 @@
 **Created**: 2026-06-17
 **Authors**: Soothe Team
 **Updated**: 2026-06-17
-**Dependencies**: RFC-000 (System Conceptual Design), RFC-104 (Model Knowledge Cutoff)
-**Related**: RFC-412 (Plugin Extension System), RFC-203 (StrangeLoop State & Memory)
-**Extends**: None
+**Depends on**: RFC-000, RFC-104
+**Related**: RFC-412, RFC-203
 
 ---
 

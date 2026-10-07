@@ -7,15 +7,15 @@
 **Created**: 2026-04-17
 **Authors**: Soothe Team
 **Updated**: 2026-04-17
-**Dependencies**: RFC-000, RFC-001
-**Related**: RFC-203 (Checkpoint), RFC-303 (Memory)
-**Note**: Moved from 4xx (RFC-306) per RFC-900 reclassification
+**Depends on**: RFC-000, RFC-001
+**Related**: RFC-303, RFC-803
+**Note**: Reclassified from 4xx to 3xx segment (protocol specs consolidation).
 
 ---
 
 ## Abstract
 
-This RFC defines DurabilityProtocol, Soothe's thread lifecycle persistence interface for durability-by-default design. DurabilityProtocol provides thread creation, resume, suspend, archive, and metadata management operations. This protocol manages thread lifecycle state, while StrangeLoop checkpoint persistence (CheckpointEnvelope) is handled separately in RFC-203 (Layer 2 implementation).
+Defines DurabilityProtocol, Soothe's thread lifecycle persistence interface for durability-by-default design. Provides thread creation, resume, suspend, archive, and metadata management operations. Manages thread lifecycle state; StrangeLoop checkpoint persistence (CheckpointEnvelope) is handled separately in RFC-803.
 
 ---
 
@@ -125,7 +125,7 @@ class ThreadFilter(BaseModel):
 All agent state persistable and resumable:
 - Thread lifecycle managed by DurabilityProtocol
 - Conversation state managed by langgraph checkpointer
-- StrangeLoop checkpoint managed by CheckpointEnvelope (RFC-203)
+- StrangeLoop checkpoint managed by CheckpointEnvelope (RFC-803)
 - Context ledger managed by ContextProtocol (RFC-302)
 
 **Separation**: DurabilityProtocol manages thread metadata + lifecycle, NOT execution state (which is CheckpointEnvelope in Layer 2).
@@ -248,7 +248,7 @@ async def _pre_stream(thread_id: str | None):
         # Resume existing thread
         thread_info = await durability.resume_thread(thread_id)
         context.restore(thread_id)
-        # StrangeLoop checkpoint loaded separately (RFC-203)
+        # StrangeLoop checkpoint loaded separately (RFC-803)
     else:
         # Create new thread
         thread_info = await durability.create_thread(
@@ -262,7 +262,7 @@ async def _post_stream(thread_id: str):
         metadata={"plan_summary": plan.summary},
     )
     context.persist(thread_id)
-    # StrangeLoop checkpoint saved separately (RFC-203)
+    # StrangeLoop checkpoint saved separately (RFC-803)
 ```
 
 ---
@@ -283,7 +283,7 @@ async def _post_stream(thread_id: str):
 ## References
 
 - RFC-000: System Conceptual Design (§5 Durable by default)
-- RFC-203: StrangeLoop State & Memory (CheckpointEnvelope - Layer 2 implementation)
+- RFC-803: StrangeLoop Checkpoint Backend (CheckpointEnvelope — Layer 2 implementation)
 - RFC-302: ContextProtocol (context persistence)
 - RFC-001: Core Modules Architecture (original Module 5)
 
@@ -293,11 +293,11 @@ async def _post_stream(thread_id: str):
 
 ### 2026-04-17
 - Consolidated RFC-001 Module 5 (DurabilityProtocol) with thread lifecycle management
-- Separated from CheckpointEnvelope (Layer 2 implementation in RFC-203) to avoid overlap
+- Separated from CheckpointEnvelope (Layer 2 implementation in RFC-803) to avoid overlap
 - Defined thread lifecycle states (active/suspended/archived) and metadata persistence
 - Clarified separation: DurabilityProtocol = thread metadata + lifecycle, CheckpointEnvelope = StrangeLoop execution state
 - Maintained durable-by-default design principle
 
 ---
 
-*DurabilityProtocol thread lifecycle persistence interface for metadata management and lifecycle states. Execution checkpoint persistence handled separately in RFC-203 (CheckpointEnvelope).*
+*DurabilityProtocol thread lifecycle persistence interface for metadata management and lifecycle states. Execution checkpoint persistence handled separately in RFC-803 (CheckpointEnvelope).*

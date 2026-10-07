@@ -7,7 +7,7 @@
 **Created**: 2026-04-02
 **Authors**: Soothe Team
 **Updated**: 2026-04-02
-**Depends on**: RFC-401 (Event Processing), RFC-501 (Display & Verbosity), RFC-500 (CLI/TUI Architecture)
+**Depends on**: RFC-401, RFC-501, RFC-500
 
 ---
 

@@ -7,7 +7,7 @@
 **Created**: 2026-06-02
 **Updated**: 2026-06-02
 **Authors**: Platonic Coding Workflow
-**Dependencies**: RFC-103, RFC-450
+**Depends on**: RFC-103, RFC-450
 
 ---
 

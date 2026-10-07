@@ -7,8 +7,8 @@
 **Created**: 2026-06-30
 **Updated**: 2026-07-29
 **Authors**: Xiaming Chen
-**Dependencies**: RFC-450, RFC-614, RFC-403
-**Related**: RFC-610 (SDK Module Structure), IG-525 (Go/TS Clients RFC-450), IG-612 (Python client), IG-619 (cross-client API parity), IG-620 (Rust client)
+**Depends on**: RFC-450, RFC-614, RFC-403
+**Related**: RFC-610, IG-525, IG-612, IG-619, IG-620
 
 ## Abstract
 

@@ -5,9 +5,9 @@
 **Status**: Draft
 **Kind**: Architecture Design
 **Created**: 2026-04-22
-**Dependencies**: RFC-207 (Thread Lifecycle & Goal Context), RFC-803 (StrangeLoop Checkpoint Backend)
-**Author**: Soothe contributors
+**Authors**: Soothe contributors
 **Updated**: 2026-04-22
+**Depends on**: RFC-207, RFC-803
 
 ---
 
@@ -500,33 +500,9 @@ async def prune_old_branches(loop_id: str, policy: BranchPruningPolicy):
 
 ---
 
-## Implementation Tasks
+## Implementation Status
 
-### Phase 1: Schema Migration
-- Add `CheckpointAnchor` model
-- Add `FailedBranchRecord` model
-- Add `CoreAgentCheckpointTreeRef` model
-- Update `StrangeLoopCheckpoint` schema to v3.1
-
-### Phase 2: Checkpoint Anchor Management
-- Implement `save_checkpoint_anchor()` in persistence manager
-- Implement `get_checkpoint_anchors_for_range()` for failure analysis
-- Integrate with StrangeLoop iteration boundaries
-
-### Phase 3: Failed Branch Management
-- Implement `detect_iteration_failure()` and branch creation
-- Implement `analyze_failure()` with LLM analysis
-- Implement `save_failed_branch()` and `update_branch_analysis()`
-
-### Phase 4: Smart Retry Integration
-- Implement `restore_coreagent_checkpoint()` rewinding
-- Implement learning injection into Plan phase
-- Integrate with StrangeLoop retry logic
-
-### Phase 5: Pruning & Cleanup
-- Implement branch pruning policy
-- Implement `prune_old_branches()` cleanup
-- Add CLI command for manual pruning
+Schema migration adds `CheckpointAnchor`, `FailedBranchRecord`, `CoreAgentCheckpointTreeRef`, and bumps `StrangeLoopCheckpoint` to v3.1. Checkpoint anchor management lands in the persistence manager with `save_checkpoint_anchor()` / `get_checkpoint_anchors_for_range()`. Failed branch management implements `detect_iteration_failure()`, `analyze_failure()` (LLM), and `save_failed_branch()` / `update_branch_analysis()`. Smart retry wires `restore_coreagent_checkpoint()` and learning injection into Plan. Pruning & cleanup implement `BranchPruningPolicy` and `prune_old_branches()` with optional CLI.
 
 ---
 

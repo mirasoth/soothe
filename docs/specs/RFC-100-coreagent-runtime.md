@@ -7,11 +7,11 @@
 **Created**: 2026-03-29
 **Authors**: Soothe Team
 **Updated**: 2026-05-26
-**Dependencies**: RFC-000, RFC-001
+**Depends on**: RFC-000, RFC-001
 
 ## Abstract
 
-This RFC defines CoreAgent, the foundational runtime of Soothe's execution architecture. Built on the `create_soothe_agent()` factory, CoreAgent provides a CompiledStateGraph with built-in tools, subagents, and middlewares, executing through LangGraph's Model → Tools → Model loop. It serves as the execution foundation for StrangeLoop's ACT phase and direct CLI/daemon usage.
+CoreAgent is the foundational runtime of Soothe's execution architecture. Built on the `create_soothe_agent()` factory, CoreAgent provides a CompiledStateGraph with built-in tools, subagents, and middlewares, executing through LangGraph's Model → Tools → Model loop. It serves as the execution foundation for StrangeLoop's ACT phase and direct CLI/daemon usage.
 
 ## Architecture Position
 
@@ -213,12 +213,9 @@ mcp_servers:
 
 - RFC-000: System conceptual design
 - RFC-001: Core modules architecture
-- RFC-200: GoalEngine autonomous goal management
-- RFC-200: StrangeLoop agentic goal execution
-- RFC-601: Skillify subagent
-- RFC-601: Weaver subagent
 - RFC-101: Tool interface
-- RFC-601: Research tools
+- RFC-201: StrangeLoop agentic goal execution
+- RFC-601: Skillify / Weaver subagents
 
 ---
 

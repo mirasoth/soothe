@@ -7,7 +7,7 @@
 **Created**: 2026-04-11
 **Updated**: 2026-05-05
 **Authors**: Claude Sonnet 4.6
-**Depends on**: RFC-201 (StrangeLoop Plan-Execute Loop)
+**Depends on**: RFC-201
 
 ---
 
@@ -653,24 +653,19 @@ This RFC defines a robust three-layer defense strategy to prevent JSON truncatio
 
 ---
 
-## Appendix B: Implementation Scope Estimate
+## Appendix B: Implementation Scope
 
-| Phase | Component | Lines Changed |
-|-------|-----------|---------------|
-| Layer 1 | Schema + downstream changes | ~60 lines |
-| Layer 2 | Schemas + refactor + helpers | ~180 lines |
-| Layer 3 | Fallback (unchanged) | ~0 lines |
-| Tests | Unit + integration tests | ~120 lines |
-| **Total** | | **~360 lines** |
-
-**Timeline**: 1-2 days implementation + testing.
+Layer 1 (schema + downstream): ~60 lines. Layer 2 (schemas + refactor + helpers): ~180 lines. Layer 3 (fallback, unchanged): ~0 lines. Tests: ~120 lines. Total ~360 lines; 1-2 days implementation + testing.
 
 ---
 
-## Document history
+## Document History
 
-- **2026-05-04 (IG-329)**: `StatusAssessment` / `PlanGeneration` schema snippets and §7.2 merge example aligned with code; plan-generate prompt uses `plan_generate_instructions.xml`; §12 open questions updated where superseded by implementation.
+- 2026-05-04 (IG-329): `StatusAssessment` / `PlanGeneration` schema snippets and §7.2 merge example aligned with code; plan-generate prompt uses `plan_generate_instructions.xml`; §12 open questions updated where superseded by implementation.
 
 ---
 
-**RFC Status**: Draft - Ready for Implementation Guide Creation
+## Changelog
+
+- 2026-05-04: IG-329 alignment — `StatusAssessment`/`PlanGeneration` schema snippets and §7.2 merge example brought in sync with code; plan-generate prompt uses `plan_generate_instructions.xml`; §12 open questions updated where superseded.
+- Initial: Three-layer defense (schema diet, query splitting, fallback integration) specified.

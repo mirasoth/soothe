@@ -5,9 +5,9 @@
 **Status**: Implemented
 **Kind**: Implementation Interface Design
 **Created**: 2026-06-03
-**Last Updated**: 2026-08-19
+**Updated**: 2026-08-19
 **Authors**: Soothe Team
-**Depends on**: RFC-622 (CoreAgent Clarification Relay), RFC-220 (Agentic Goal Execution / StrangeLoop), RFC-403 (Unified Event Naming)
+**Depends on**: RFC-622, RFC-220, RFC-403
 **Supersedes**: ---
 
 ---

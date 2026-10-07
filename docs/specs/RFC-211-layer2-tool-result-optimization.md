@@ -6,10 +6,9 @@
 **Kind**: Architecture Design
 **Created**: 2026-04-10
 **Authors**: Soothe Team
-**Last Updated**: 2026-08-08
-**Dependencies**: RFC-200, RFC-100, RFC-203, RFC-207
-**Related**: RFC-214 (Loop Message Surface), RFC-219 (Goal Completion)
-**Implementation**: IG-355 (delegate finals), StepResult truncation implemented
+**Updated**: 2026-08-08
+**Depends on**: RFC-200, RFC-100, RFC-203, RFC-207
+**Related**: RFC-214, RFC-219
 
 ## Abstract
 
@@ -239,29 +238,13 @@ execution:
 3. **Unique identification**: tool_call_id guarantees no collisions
 4. **Easy cleanup**: Cache directory per thread
 
+## Implementation Status
+
+StepResult truncation and delegate-finals sourcing (IG-355) are implemented. `ToolResultCache` and `generate_outcome_metadata()` are proposed but not yet shipped; Layer 1 final-report-from-checkpoint generation remains future work.
+
 ## Migration Strategy
 
-### Phase 1: Add New Components (Non-Breaking)
-1. Implement `ToolResultCache` class
-2. Implement `generate_outcome_metadata()` function
-3. Add `outcome` field to `StepResult` (with default for backward compat)
-4. Update `to_evidence_string()` to use outcome when available
-
-### Phase 2: Update Executor (Non-Breaking)
-1. Modify `_stream_and_collect()` to extract tool_call_id and generate metadata
-2. Cache large results to file system
-3. Populate `outcome` field in StepResult
-4. Keep `output` field temporarily for backward compatibility
-
-### Phase 3: Remove Deprecated Fields (Breaking)
-1. Remove `output` field from StepResult
-2. Update all StepResult consumers to use `outcome`
-3. Remove output string handling from executor
-
-### Phase 4: Layer 1 Final Report Generation
-1. Implement `generate_final_report_from_checkpoint()`
-2. Update Layer 2 loop completion to use Layer 1 report
-3. Remove synthesis phase from Layer 2
+Phased rollout: add `ToolResultCache` + `generate_outcome_metadata()` + `outcome` field (non-breaking) → wire executor to populate `outcome` and cache large results (non-breaking, `output` kept for compat) → drop `output` field (breaking) → move final-report synthesis to Layer 1.
 
 ## Testing Requirements
 
@@ -305,11 +288,7 @@ execution:
 
 ## Future Enhancements
 
-1. **Adaptive caching**: Predict which results will be needed
-2. **Compression**: Compress cached results for storage savings
-3. **Outcome schema standardization**: Formal JSON Schema per tool type
-4. **Cross-thread caching**: Share common results across threads
-5. **Streaming outcomes**: Generate metadata incrementally for long-running tools
+Adaptive caching, compression, per-tool JSON schema standardization, cross-thread caching, and streaming outcomes are future directions not in the initial implementation.
 
 ## Middleware-Level Optimization (IG-517)
 
@@ -384,20 +363,14 @@ async def awrap_tool_call(self, request, handler):
 ## Changelog
 
 ### 2026-04-10
-- Initial RFC draft from design brainstorming
-- Defined minimal data contract with outcome metadata
-- Specified tool_call_id uniqueness mechanism
-- Designed dual storage strategy (checkpoint + file cache)
-- Shifted final report generation to Layer 1
+- Initial draft: minimal data contract with outcome metadata, tool_call_id uniqueness, dual storage strategy (checkpoint + file cache), final report generation shifted to Layer 1.
 
 ## References
 
 - RFC-200: Layer 2 Agentic Goal Execution
 - RFC-100: Layer 1 CoreAgent Runtime
 - RFC-203: Layer 2 Unified State Checkpoint
-- RFC-207: Message Type Separation
-- RFC-207: Executor Thread Isolation Simplification
-- RFC-207: Dynamic Tool System Context
+- RFC-207: Thread Lifecycle & Goal Context (executor thread isolation, dynamic tool system context)
 
 ---
 

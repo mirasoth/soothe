@@ -7,9 +7,9 @@
 **Created**: 2026-04-17
 **Authors**: Soothe Team
 **Updated**: 2026-06-19
-**Dependencies**: RFC-201, RFC-203
-**Supersedes**: RFC-216 (Multi-Thread Infinite Lifecycle)
-**Related**: RFC-213 (Reasoning), RFC-217 (Goal Context Management)
+**Depends on**: RFC-201, RFC-203
+**Supersedes**: RFC-216
+**Related**: RFC-213, RFC-217
 
 ---
 
@@ -788,29 +788,7 @@ agentic:
 
 ## Implementation Tasks
 
-### Phase 1: Schema & State Manager
-- Add new models (ThreadHealthMetrics, ThreadSwitchPolicy, GoalThreadRelevanceAnalysis)
-- Extend StrangeLoopCheckpoint schema
-- Update state_manager methods (initialize, load, save, thread switch logic)
-
-### Phase 2: Thread Switching Policy
-- Create thread_switch_policy.py
-- Implement policy evaluation logic
-- Add custom trigger extensibility
-
-### Phase 3: StrangeLoop Integration
-- Modify run_with_progress() for multi-thread execution
-- Add thread health monitoring
-- Add goal-thread relevance analysis integration
-
-### Phase 4: /recall Command
-- Add /recall command handler
-- Implement checkpoint discovery and vector search
-
-### Phase 5: Testing
-- Unit tests for multi-thread logic
-- Integration tests for thread switching scenarios
-- Goal-thread relevance analysis tests
+Schema/state-manager, thread-switch policy, StrangeLoop integration, `/recall` command, and test coverage land in that order. Multi-thread execution, thread health monitoring, and goal-thread relevance analysis are integrated into `run_with_progress()`; custom trigger extensibility follows under `ThreadSwitchPolicy`.
 
 ---
 
@@ -862,22 +840,10 @@ agentic:
 ## Changelog
 
 ### 2026-06-19
-- **Superseded RFC-216**: Consolidated RFC-216 (StrangeLoop Multi-Thread Infinite Lifecycle) into this specification
-- Added comprehensive motivation section explaining goal-scoped checkpoint problems
-- Integrated complete data models: StrangeLoopCheckpoint v2.0, GoalExecutionRecord, ThreadHealthMetrics, ThreadSwitchPolicy, GoalThreadRelevanceAnalysis
-- Added detailed state transitions: Loop initialization, goal execution start, thread switch execution, goal completion
-- Integrated thread health monitoring with metrics collection and policy evaluation
-- Added knowledge transfer mechanisms: Auto /recall on thread switch and cross-thread /recall command
-- Added storage location specification with loop_id indexing
-- Added module organization and implementation tasks from RFC-216
-- Added verification criteria and open questions
+- Superseded RFC-216; consolidated multi-thread lifecycle, data models, state transitions, thread health monitoring, knowledge transfer, storage layout, and module organization into this specification.
 
 ### 2026-04-17
-- Consolidated RFC-207 (Thread Lifecycle), RFC-207 (Goal Context Manager), RFC-207 (Thread Relationship Module), RFC-207 (Executor Coordination) into unified thread management architecture
-- Combined thread lifecycle with goal context integration
-- Unified similarity-based context construction with thread switching
-- Maintained architectural isolation (loop history vs thread history)
-- Added thread health metrics and switch detection logic
+- Consolidated thread lifecycle, goal context manager, thread relationship module, and executor coordination into unified thread management architecture.
 
 ---
 

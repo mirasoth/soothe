@@ -7,8 +7,7 @@
 **Created**: 2026-03-22
 **Authors**: Soothe Team
 **Updated**: 2026-03-22
-**Dependencies**: RFC-000, RFC-001, RFC-201, RFC-450, RFC-101
-**Implements**: Thread lifecycle management, multi-threading support, unified transport APIs
+**Depends on**: RFC-000, RFC-001, RFC-201, RFC-450, RFC-101
 
 ## Abstract
 

@@ -6,11 +6,9 @@
 **Kind**: Architecture Design
 **Created**: 2026-05-27
 **Authors**: Soothe Team
-**Last Updated**: 2026-08-08
-**Revised**: 2026-05-28 — sole-child optimization; in-house `copy_thread_via_public_api` (no LangGraph saver implements `acopy_thread` natively).
-**Dependencies**: RFC-201, RFC-214, RFC-207, RFC-218
-**Related**: RFC-231 (LoopRail loop management), RFC-452 (Unified Thread Management), RFC-224 (Context Window Management)
-**Implementation**: IG-477 (step isolation + envelope grounding), partial checkpoint forking pending
+**Updated**: 2026-08-08
+**Depends on**: RFC-201, RFC-214, RFC-207, RFC-218
+**Related**: RFC-231, RFC-452, RFC-224
 
 ---
 
@@ -451,24 +449,7 @@ Step D (depends on B + C):
 
 ## Migration Path
 
-### Phase 1: Add ThreadForkManager
-- Create `thread_fork_manager.py`
-- Add `step_thread_ids`, `thread_fork_sources` to LoopState
-- Unit tests
-
-### Phase 2: Modify Executor
-- Add checkpointer parameter to Executor
-- Call ThreadForkManager in `_execute_step_collecting_events`
-- Thread naming: `__p{step_id}` → `__step_{step_id}`
-- Integration tests
-
-### Phase 3: Thread ID Alignment
-- Ensure main thread_id equals loop_id throughout StrangeLoop
-- Verify existing tests pass
-
-### Phase 4: Cleanup
-- `predecessor_branch_context.py`: `prior_loop_execute_messages()` for continuation bootstrap; `predecessor_execute_messages_for_branch()` retained for helpers/tests — not used for same-goal DAG dependents (envelope-only grounding)
-- Singleton checkpoint inheritance remains future work
+Phase 1 adds `ThreadForkManager` + `step_thread_ids` / `thread_fork_sources` on `LoopState` + unit tests. Phase 2 modifies the executor: add checkpointer parameter, call `ThreadForkManager` in `_execute_step_collecting_events`, rename threads `__p{step_id}` → `__step_{step_id}`, integration tests. Phase 3 aligns main `thread_id = loop_id` throughout StrangeLoop. Phase 4 cleans up `predecessor_branch_context.py` (`prior_loop_execute_messages()` for continuation bootstrap; `predecessor_execute_messages_for_branch()` retained for helpers/tests, not used for same-goal DAG dependents). Singleton checkpoint inheritance remains future work.
 
 ---
 
@@ -498,34 +479,13 @@ Step D (depends on B + C):
 ## Changelog
 
 ### 2026-05-27 (Draft)
-- Initial RFC draft defining checkpoint-based thread inheritance
-- Hybrid fork strategy: singleton deps fork from predecessor, multi-dep fork from main
-- Thread naming scheme: `{loop_id}` for main, `{loop_id}__step_{step_id}` for steps
-- ThreadForkManager component specification
-- LoopState extension with fork tracking fields
+- Initial RFC defining checkpoint-based thread inheritance; hybrid fork strategy (singleton deps fork from predecessor, multi-dep fork from main); thread naming scheme `{loop_id}` / `{loop_id}__step_{step_id}`; `ThreadForkManager` component; `LoopState` extension with fork tracking fields.
 
 ### 2026-05-28 (Revised)
-- **Sole-child optimization**: singleton-dependency step that is the only
-  dependent of its predecessor reuses the predecessor's thread directly
-  with no copy. Linear chains (A→B→C with no branches) skip every fork
-  cost. Siblings of the same predecessor still fork to keep histories
-  independent.
-- `select_fork_source` return type changed from `str` to
-  `tuple[str, bool]` so the caller can distinguish reuse from fork.
-- **In-house `copy_thread_via_public_api`** helper added in
-  `sloop/engine/checkpoint_copy.py`. Implements `acopy_thread`
-  semantics on top of any `BaseCheckpointSaver` via `alist` + `aput`
-  + `aput_writes` because no concrete saver in the current LangGraph
-  release implements `acopy_thread` natively. ThreadForkManager calls
-  the helper instead of the saver's stub.
-- Tests added: `test_checkpoint_copy.py` (helper unit tests against
-  `InMemorySaver`), expanded `test_thread_fork_manager.py` for the
-  sole-child / siblings split, updated executor integration tests.
+- Sole-child optimization: singleton-dependency step that is the only dependent of its predecessor reuses the predecessor's thread directly (no copy); siblings of the same predecessor still fork. `select_fork_source` return type changed to `tuple[str, bool]`. In-house `copy_thread_via_public_api` helper added in `sloop/engine/checkpoint_copy.py` (no concrete LangGraph saver implements `acopy_thread` natively).
 
 ### 2026-07-01 (Implementation alignment)
-- **Shipped:** Per-step `__step_<id>` isolation with empty checkpoints (IG-477); dependent steps ground predecessors via `PRIOR STEP EVIDENCE` in the execute envelope only — predecessor Human/AI ledger replay removed from CoreAgent input to eliminate duplicate AI bodies (RFC-214 §3.1).
-- **Shipped:** `continue_loop` bootstrap still uses `prior_loop_execute_messages()` (RFC-225).
-- **Unchanged target:** Checkpoint fork / sole-child reuse / `ThreadForkManager` remain future work; document marked with implementation-status section at top.
+- Shipped: per-step `__step_<id>` isolation with empty checkpoints (IG-477); dependent steps ground predecessors via `PRIOR STEP EVIDENCE` in the execute envelope only — predecessor Human/AI ledger replay removed from CoreAgent input (RFC-214 §3.1). `continue_loop` bootstrap still uses `prior_loop_execute_messages()` (RFC-225). Checkpoint fork / sole-child reuse / `ThreadForkManager` remain future work.
 
 ---
 

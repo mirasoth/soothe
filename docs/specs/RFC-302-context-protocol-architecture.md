@@ -7,15 +7,15 @@
 **Created**: 2026-04-17
 **Authors**: Soothe Team
 **Updated**: 2026-04-17
-**Dependencies**: RFC-000, RFC-001
-**Related**: RFC-303 (Memory), RFC-306 (Durability)
-**Note**: Moved from 4xx (RFC-302) per RFC-900 reclassification
+**Depends on**: RFC-000, RFC-001
+**Related**: RFC-303, RFC-306
+**Note**: Reclassified from 4xx to 3xx segment (protocol specs consolidation).
 
 ---
 
 ## Abstract
 
-This RFC defines ContextProtocol, Soothe's unbounded knowledge accumulator for cognitive context engineering. ContextProtocol provides append-only knowledge ingestion, relevance-based projection for bounded token windows, and goal-centric retrieval through self-contained retrieval module with stable API boundary. ContextProtocol serves as StrangeLoop's "consciousness" layer, maintaining complete execution knowledge across threads.
+Defines ContextProtocol, Soothe's unbounded knowledge accumulator for cognitive context engineering. Provides append-only knowledge ingestion, relevance-based projection for bounded token windows, and goal-centric retrieval via a self-contained retrieval module with a stable API boundary. ContextProtocol serves as StrangeLoop's "consciousness" layer, maintaining complete execution knowledge across threads.
 
 ---
 

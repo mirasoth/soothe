@@ -7,7 +7,7 @@
 **Created**: 2026-04-13
 **Authors**: Soothe Team
 **Updated**: 2026-04-13
-**Dependencies**: RFC-000, RFC-001, RFC-302, RFC-500, RFC-501, RFC-203, RFC-303
+**Depends on**: RFC-302, RFC-500, RFC-501, RFC-203, RFC-303
 **Related**: RFC-600
 
 ## Abstract
@@ -1080,169 +1080,15 @@ self.command_registry.register("/detach", self.action_detach)
 
 ## Implementation Phases
 
-### Phase 1: File Copy (Day 1)
-
-**Duration**: 1 day
-**Actions**:
-1. Copy 25-30 files from soothe_deepagents-cli to `src/soothe_cli/tui/`
-2. Delete 7 old Soothe TUI files
-3. Update `__init__.py` imports
-4. Verify imports resolve
-
-**Verification**:
-- No syntax errors
-- Imports resolve correctly
-- Files copied successfully
-
-### Phase 2: Backend Integration (Day 2-3)
-
-**Duration**: 2 days
-**Actions**:
-1. Create `soothe_backend_adapter.py`
-2. Create `thread_backend_bridge.py`
-3. Modify `app.py` backend connections (5 locations)
-4. Modify thread selector backend connection
-5. Test daemon streaming
-
-**Verification**:
-- TUI launches without errors
-- Daemon connection works
-- WebSocket stream received
-- Thread list loads
-
-### Phase 3: Protocol Rendering (Day 3-4)
-
-**Duration**: 1-2 days
-**Actions**:
-1. Create `widgets/protocol_event.py`
-2. Modify `widgets/status.py` to add protocol queue
-3. Add `_handle_protocol_event()` to app.py
-4. Integrate plan tree widget into layout
-5. Test protocol event visualization
-
-**Verification**:
-- Protocol events render in status bar
-- Plan tree toggles with Ctrl+T
-- Verbosity filtering works
-- Events display correctly
-
-### Phase 4: Feature Integration (Day 4-5)
-
-**Duration**: 1-2 days
-**Actions**:
-1. Integrate jobs screen mode
-2. Add Soothe slash commands to registry
-3. Add thread actions (archive, export, tags)
-4. Complete thread selector bridge
-5. Test all features
-
-**Verification**:
-- Jobs mode launches correctly
-- Thread resume works
-- Slash commands functional
-- All actions operational
-
-### Phase 5: Testing & Polish (Day 5-6)
-
-**Duration**: 1 day
-**Actions**:
-1. Run verification suite (`./scripts/verify_finally.sh`)
-2. Fix lint errors (zero errors required)
-3. Add integration tests for new components
-4. Create IG documentation (RFC-606 implementation)
-5. Manual testing all workflows
-
-**Verification**:
-- All lint checks pass
-- 900+ unit tests pass
-- Integration tests pass
-- No regressions found
-- IG documentation complete
-
-**Total Duration**: 5-6 days
+Five-day migration: (1) File copy — copy 25-30 files from soothe_deepagents-cli to `src/soothe_cli/tui/`, delete 7 old Soothe TUI files, update `__init__.py` imports; (2) Backend integration — create `soothe_backend_adapter.py` and `thread_backend_bridge.py`, modify `app.py` backend connections (5 locations), modify thread selector backend; (3) Protocol rendering — create `widgets/protocol_event.py`, modify `widgets/status.py` for protocol queue, add `_handle_protocol_event()` to `app.py`, integrate plan tree widget; (4) Feature integration — integrate jobs screen mode, register Soothe slash commands, add thread actions (archive, export, tags); (5) Testing & polish — `./scripts/verify_finally.sh`, lint, integration tests, IG documentation.
 
 ## Success Criteria
 
-1. ✅ **TUI launches** - All deepagents widgets working
-2. ✅ **Thread resume UI** - Connects to Soothe persistence, displays thread metadata
-3. ✅ **Protocol events render** - Status bar + plan tree display protocol activity
-4. ✅ **Jobs dashboard** - Works as alternate screen, receives job events
-5. ✅ **CLI commands unchanged** - All Soothe subcommands functional
-6. ✅ **Verbosity filtering** - RFC-501 applied to protocol events
-7. ✅ **Daemon connection** - WebSocket streaming seamless
-8. ✅ **Verification suite passes** - Lint (zero errors) + 900+ tests
-9. ✅ **Feature parity** - Autocomplete, approval UI, diff viewer functional
-10. ✅ **No regression** - Existing Soothe workflows unchanged
+TUI launches with all deepagents widgets; thread resume UI connects to Soothe persistence and displays thread metadata; protocol events render in status bar + plan tree; jobs dashboard works as alternate screen receiving job events; CLI commands unchanged; RFC-501 verbosity filtering applied to protocol events; daemon WebSocket streaming seamless; `verify_finally.sh` passes; deepagents feature parity (autocomplete, approval UI, diff viewer); no regression in existing Soothe workflows.
 
 ## Risks and Mitigations
 
-### Risk 1: deepagents Runtime Assumptions
-
-**Risk**: deepagents TUI assumes direct agent.astream(), may break with Soothe backend.
-
-**Mitigation**: SootheBackendAdapter mimics interface precisely:
-- Same stream format `(namespace, mode, data)`
-- Same method signatures (`stream_messages()`, `list_threads()`)
-- Event conversion internal to adapter
-
-**Testing**: Stream format compatibility tests, daemon connection tests
-
-### Risk 2: Protocol Event Rendering Issues
-
-**Risk**: Protocol events may not display correctly in deepagents widgets.
-
-**Mitigation**: ProtocolEventWidget follows deepagents patterns:
-- Same one-liner indicator style
-- Same status bar integration approach
-- Same event queue mechanism
-
-**Testing**: Visual protocol event tests, verbosity filtering tests
-
-### Risk 3: Thread Selector Incompatibility
-
-**Risk**: Thread selector may not work with Soothe thread persistence.
-
-**Mitigation**: ThreadBackendBridge converts metadata cleanly:
-- Precise field mapping
-- Graceful handling of missing fields
-- Thread ID compatibility preserved
-
-**Testing**: Thread resume tests, thread metadata conversion tests
-
-### Risk 4: Jobs Screen Integration Issues
-
-**Risk**: Jobs screen may not integrate smoothly with deepagents app.
-
-**Mitigation**: Use deepagents screen lifecycle:
-- Same `push_screen()`/`pop_screen()` pattern
-- Same event routing approach
-- Same mode switching mechanism
-
-**Testing**: Jobs launch tests, screen switch tests
-
-### Risk 5: Breaking Existing Workflows
-
-**Risk**: Migration may break existing Soothe user workflows.
-
-**Mitigation**: CLI commands unchanged:
-- Same Typer structure
-- Same subcommand behaviors
-- Same flags and options
-- Same daemon lifecycle
-
-**Testing**: Full regression test suite, CLI command tests
-
-### Risk 6: Future deepagents Updates Sync
-
-**Risk**: Divergence from upstream makes future sync difficult.
-
-**Mitigation**: Clear modification marking:
-- All changes marked `# SOOTHE: ...`
-- Document fork point (deepagents-cli version X.Y.Z)
-- Keep original logic intact where possible
-- Plan selective cherry-pick of useful improvements
-
-**Plan**: Track deepagents-cli releases, sync improvements manually via modification markers
+deepagents runtime assumptions (mitigated by `SootheBackendAdapter` mimicking `(namespace, mode, data)` stream format); protocol event rendering (mitigated by `ProtocolEventWidget` following deepagents one-liner indicator style); thread selector incompatibility (mitigated by `ThreadBackendBridge` field mapping with graceful missing-field handling); jobs screen integration (mitigated by deepagents `push_screen`/`pop_screen` lifecycle); breaking existing workflows (mitigated by unchanged CLI Typer structure, subcommands, flags, daemon lifecycle); future deepagents updates sync (mitigated by `# SOOTHE:` modification markers and documented fork point).
 
 ## Dependencies
 
@@ -1268,18 +1114,12 @@ self.command_registry.register("/detach", self.action_detach)
 
 ## References
 
-- **RFC-000**: System Conceptual Design
-- **RFC-001**: Core Modules Architecture
-- **RFC-302**: Daemon Communication Protocol
-- **RFC-500**: CLI TUI Architecture (current)
-- **RFC-501**: VerbosityTier Unification
-- **RFC-203**: Loop-Rail Mode
-- **RFC-303**: Unified Thread Management
-- **RFC-600**: Plugin Extension System
-- **deepagents-cli source**: `/Users/xiamingchen/Workspace/mirasurf/deepagents/libs/cli/`
-- **Design draft**: `docs/archive/drafts/2026-04-13-deepagents-cli-migration-design.md`
-
----
-
-**Status**: Draft RFC ready for `specs-refine` phase
-**Next**: Run Platonic Coding `specs-refine` to validate RFC, then proceed to implementation (Phase 2)
+- RFC-000: System Conceptual Design
+- RFC-001: Core Modules Architecture
+- RFC-302: Daemon Communication Protocol
+- RFC-500: CLI TUI Architecture (current)
+- RFC-501: VerbosityTier Unification
+- RFC-203: Loop-Rail Mode
+- RFC-303: Unified Thread Management
+- RFC-600: Plugin Extension System
+- Design draft: `docs/archive/drafts/2026-04-13-deepagents-cli-migration-design.md`

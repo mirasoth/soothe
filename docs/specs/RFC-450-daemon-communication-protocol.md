@@ -7,8 +7,8 @@
 **Created**: 2026-03-19
 **Authors**: Soothe Team
 **Updated**: 2026-06-28
-**Dependencies**: RFC-000, RFC-001, RFC-500, RFC-614, RFC-403, RFC-900
-**Related**: RFC-620 (Channel Architecture), RFC-450 §9 (Job RPC Methods — absorbs legacy RFC-228), RFC-503 (Loop-First UX), RFC-504 (Loop Management CLI Commands), RFC-454 (Slash Command Architecture)
+**Depends on**: RFC-000, RFC-001, RFC-500, RFC-614, RFC-403
+**Related**: RFC-620, RFC-503, RFC-504, RFC-454
 
 ## Abstract
 
@@ -17,15 +17,6 @@ This RFC defines a WebSocket-based daemon communication protocol serving all cli
 This is a **clean-break protocol design**. The protocol-1 wire contract is defined as a complete replacement for the previous ad-hoc wire format. There is no legacy compatibility layer, no dual-path dispatch, and no gradual migration window. The daemon and SDK are updated simultaneously; clients connecting with the old format are rejected at the handshake stage.
 
 The design draws on standards research documented in `docs/analysis/ws-api-standards-comparison.md` (AsyncAPI 3.0, JSON-RPC 2.0, graphql-ws, STOMP) and the current-state review in `docs/analysis/ws-request-submit-api-design-review.md`. The protocol adopts the structural pattern — not the ecosystem — from each standard: JSON-RPC's `method`/`params`/`id` structure, graphql-ws's connection lifecycle and subscription semantics, and AsyncAPI's machine-readable specification format.
-
-**Updates**:
-- **2026-06-28**: RFC rewritten to incorporate the unified protocol-1 wire contract. New sections added: message envelope format (§5), schema validation (§6), error standardization (§7), versioning and capability negotiation (§8), message type taxonomy (§9), naming conventions (§10), and AsyncAPI documentation strategy (§11). The previous ad-hoc message format, error codes, and connection sequence are replaced. RFC-460 (the standalone specification RFC) is deleted; this RFC is now the single source of truth for the daemon WebSocket protocol.
-- **2026-04-29**: Clarified stream-event payload semantics for StrangeLoop: daemon forwards tool telemetry and explicit goal-completion output events; execute-phase assistant prose suppression is enforced at emission boundary (see RFC-401 §6.6, RFC-614).
-- **2026-04-14**: Added `models_list` / `models_list_response` so clients list models from the daemon host `SootheConfig`; `input` may carry optional `model` and `model_params` for a per-turn override resolved on the daemon.
-- **2026-04-14**: Added `skills_list` / `skills_list_response` and `invoke_skill` / `invoke_skill_response` RPCs for remote-safe skill metadata and invocation; ordering rule for `invoke_skill` (response before stream events for that turn).
-- **2026-03-29**: Simplified to WebSocket-only bidirectional streaming, removed Unix socket (stability issues)
-- **2026-03-29**: Merged RFC-100 daemon readiness, added lifecycle phases and readiness handshake
-- **2026-03-28**: Added daemon lifecycle semantics, client detachment behavior
 
 ---
 
@@ -879,7 +870,7 @@ The protocol SHALL adopt bidirectional `ping`/`pong` heartbeat:
 
 ### 8.4 Deprecation Strategy
 
-The protocol SHALL use a two-tier deprecation model (aligned with RFC-900):
+The protocol SHALL use a two-tier deprecation model:
 
 | Tier | Meaning | Wire Signal | Duration |
 |------|---------|-------------|----------|
@@ -1315,7 +1306,7 @@ Message size limit: 10MB. Schema validation on required fields (Pydantic models 
 | **Error model** | `{code, message, data}` with numeric codes, reserved ranges, severity taxonomy | JSON-RPC 2.0 |
 | **Versioning** | Per-message `proto` field (mandatory) + `connection_init`/`connection_ack` handshake | JSON-RPC (per-message) + graphql-ws/STOMP (handshake) |
 | **Capability negotiation** | Bidirectional `connection_init`/`connection_ack` with capability intersection | graphql-ws + STOMP |
-| **Deprecation** | Three-tier (active/deprecated/removed) with wire signaling | RFC-900 + custom |
+| **Deprecation** | Three-tier (active/deprecated/removed) with wire signaling | custom |
 | **Message taxonomy** | `command`→`slash_command`, `command_request`→`rpc_command`, `detach`→`disconnect`, `loop_subscribe`→`subscribe`+`loop_events` | — |
 | **Naming** | `loop_id` (not `thread_id`), `content` (not `text`), `workspace` (not `client_workspace`), `id` (not `request_id`) | — |
 | **Documentation** | AsyncAPI 3.0 spec as single source of truth; RFCs for rationale | AsyncAPI |
@@ -1476,11 +1467,22 @@ Delivered as a standard streaming frame (`type: event`, `mode: custom`):
 
 ---
 
+## Changelog
+
+- 2026-06-28: RFC rewritten to incorporate protocol-1 wire contract (§5 envelope, §6 schema validation, §7 errors, §8 versioning, §9 message taxonomy, §10 naming, §11 AsyncAPI strategy); RFC-460 deleted, this RFC is the SoT.
+- 2026-04-29: Clarified stream-event payload semantics for StrangeLoop; execute-phase prose suppression enforced at emission boundary (RFC-401 §6.6, RFC-614).
+- 2026-04-14: Added `models_list` / `models_list_response`; `input` may carry optional `model` and `model_params` for per-turn override.
+- 2026-04-14: Added `skills_list` / `skills_list_response` and `invoke_skill` / `invoke_skill_response` RPCs; ordering rule for `invoke_skill`.
+- 2026-03-29: Simplified to WebSocket-only bidirectional streaming, removed Unix socket (stability issues).
+- 2026-03-29: Merged RFC-100 daemon readiness, added lifecycle phases and readiness handshake.
+- 2026-03-28: Added daemon lifecycle semantics, client detachment behavior.
+
+---
+
 ## References
 
 - `docs/analysis/ws-api-standards-comparison.md` — Standards research (AsyncAPI, JSON-RPC, graphql-ws, STOMP)
 - `docs/analysis/ws-request-submit-api-design-review.md` — Current-state API review
-- `docs/specs/RFC-614-unified-streaming-messaging.md` — Streaming messaging framework
-- `docs/specs/RFC-403-unified-event-naming.md` — Event naming conventions
-- `docs/specs/RFC-900-deprecation-reclassification-scheme.md` — Deprecation framework
-- `docs/specs/RFC-620-channel-architecture.md` — Channel architecture (transport layer)
+- [RFC-614](RFC-614-unified-streaming-messaging.md) — Streaming messaging framework
+- [RFC-403](RFC-403-unified-event-naming.md) — Event naming conventions
+- [RFC-620](RFC-620-channel-architecture.md) — Channel architecture (transport layer)

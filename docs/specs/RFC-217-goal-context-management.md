@@ -6,10 +6,9 @@
 **Kind**: Architecture Design
 **Created**: 2026-04-17
 **Authors**: Soothe Team
-**Last Updated**: 2026-08-08
-**Dependencies**: RFC-201 (Agentic Goal Execution), RFC-207 (Thread Lifecycle & Goal Context), RFC-225 (Loop Continuity)
-**Related**: RFC-219 (Goal Completion Module), RFC-218 (Checkpoint Tree Architecture)
-**Implementation**: IG-477 (partial - execute step grounding), IG-567 (heuristic-to-rules migration)
+**Updated**: 2026-08-08
+**Depends on**: RFC-201, RFC-207, RFC-225
+**Related**: RFC-219, RFC-218
 
 ## Abstract
 
@@ -283,35 +282,10 @@ if checkpoint.thread_switch_pending:
 - Existing loop execution continues unchanged
 - GoalContextManager adds new context injection path
 - No breaking changes to checkpoint schema
-|----------|----------------|----------|
-| `latest` | Most recent thread execution (by timestamp) | Default - focus on recent context |
-| `all` | All matching threads (bounded by limit) | Comprehensive analysis |
-| `best_performing` | Thread with best metrics (duration, success rate) | Performance optimization |
 
-**Selection Implementation Pattern**:
+### GoalContext Construction API
 
-```python
-def _apply_strategy(
-    self,
-    similar_goals: list[tuple[GoalExecutionRecord, float]],
-    strategy: Literal["latest", "all", "best_performing"],
-) -> list[GoalExecutionRecord]:
-    if strategy == "latest":
-        # Sort by timestamp descending, return top N
-        return sorted(similar_goals, key=lambda x: x[0].timestamp, reverse=True)[:limit]
-    elif strategy == "all":
-        # Return all within limit
-        return [r for r, _ in similar_goals][:limit]
-    elif strategy == "best_performing":
-        # Sort by performance metrics (duration + success), return top N
-        return sorted(similar_goals, key=lambda x: x[0].performance_score, reverse=True)[:limit]
-```
-
-### GoalContext Construction Module Architecture
-
-**Design Principle**: Goal context requires **CONSTRUCTION** (not just retrieval) - context is assembled/constructed entity based on policy, not just fetched entity.
-
-**API Contract** (stable API, evolvable construction logic):
+**Design Principle**: Goal context requires **CONSTRUCTION** (not just retrieval) — context is assembled based on policy, not just fetched.
 
 ```python
 def construct_goal_context(
@@ -329,65 +303,7 @@ def construct_goal_context(
     """
 ```
 
-**GoalContext Model**:
-
-```python
-class GoalContext(BaseModel):
-    """Goal context with execution memory and thread ecosystem."""
-
-    goal_id: str
-    execution_memory: list[GoalExecutionRecord] = []
-    thread_ecosystem: dict[str, list[str]] = {}  # {thread_id: [goal_ids]}
-    total_threads: int = 0
-    similarity_scores: dict[str, float] = {}  # {goal_id: similarity}
-```
-
-**Integration with GoalContextManager**:
-
-```python
-# In GoalContextManager.get_execute_briefing()
-options = ContextConstructionOptions(
-    include_similar_goals=self._config.include_similar_goals,
-    thread_selection_strategy=self._config.thread_selection_strategy,
-    similarity_threshold=self._config.similarity_threshold,
-)
-
-goal_context = self._thread_relationship.construct_goal_context(
-    goal_id=checkpoint.current_goal_id,
-    goal_history=checkpoint.goal_history,
-    options=options,
-)
-
-# Format briefing with thread ecosystem metadata
-return self._format_execute_briefing(goal_context)
-```
-
-    def construct_goal_context(
-        self,
-        goal_id: str,
-        goal_history: list[GoalExecutionRecord],
-        options: ContextConstructionOptions,
-    ) -> GoalContext:
-        """
-        Context construction module.
-
-        Handles:
-        - Same goal multiple threads
-        - Similar goal execution history
-
-        Args:
-            goal_id: Target goal for context
-            goal_history: Previous goal records from checkpoint (RFC-207 GoalExecutionRecord)
-            options: Construction configuration
-
-        Returns:
-            GoalContext with execution memory + thread ecosystem
-        """
-```
-
-### GoalContext Data Model (NEW)
-
-Result of context construction containing previous goal execution records and thread relationship metadata.
+### GoalContext Data Model
 
 ```python
 class GoalContext(BaseModel):
@@ -409,145 +325,7 @@ class GoalContext(BaseModel):
     """Similarity scores for included goals: {goal_id: score}."""
 ```
 
-**Integration with GoalExecutionRecord** (RFC-207):
-- `execution_memory` contains `GoalExecutionRecord` instances from checkpoint
-- Thread ecosystem maps thread_ids to goal_ids for relationship awareness
-- Similarity scores enable confidence-based filtering
-
-### Similarity Hierarchy:
-
-1. **Exact Match**: Same goal_id (score: 1.0)
-2. **Semantic Similarity**: Embedding distance on goal descriptions
-3. **Dependency Relationship**: Goals in same DAG dependency chain
-
-**Context Construction Strategies**:
-
-| Strategy | Selection Logic |
-|----------|-----------------|
-| `latest` | Most recent thread execution |
-| `all` | All matching threads (bounded by limit) |
-| `best_performing` | Thread with best performance metrics (duration, success) |
-
-**Integration with GoalContextManager**:
-
-```python
-class GoalContextManager:
-    def __init__(
-        self,
-        state_manager: StrangeLoopStateManager,
-        config: GoalContextConfig,
-        embedding_model: Embeddings,  # NEW parameter
-    ) -> None:
-        self._state_manager = state_manager
-        self._config = config
-        self._thread_relationship = ThreadRelationshipModule(embedding_model)  # NEW
-
-    def get_execute_briefing(self, limit: int | None = None) -> str | None:
-        """Get goal briefing for Execute phase (enhanced with thread ecosystem)."""
-        checkpoint = self._state_manager.load()
-        if not checkpoint or not checkpoint.thread_switch_pending:
-            return None
-
-        # NEW: Use thread relationship module for context construction
-        options = ContextConstructionOptions(
-            include_same_goal_threads=True,
-            include_similar_goals=self._config.include_similar_goals,
-            thread_selection_strategy=self._config.thread_selection_strategy,
-            similarity_threshold=self._config.similarity_threshold,
-        )
-
-        goal_context = self._thread_relationship.construct_goal_context(
-            goal_id=checkpoint.current_goal_id,
-            goal_history=checkpoint.goal_history,
-            options=options,
-        )
-
-        # Use goal_context.execution_memory for briefing
-        return self._format_execute_briefing(goal_context.execution_memory, checkpoint.current_thread_id)
-```
-
-**Wiring in StrangeLoop**:
-
-```python
-# strange_loop.py run_with_progress()
-embedding_model = config.create_embedding_model(config.agentic.goal_context.embedding_role)
-goal_context_manager = GoalContextManager(
-    state_manager,
-    config.agentic.goal_context,
-    embedding_model,  # NEW
-)
-```
-
-**Configuration Extension**:
-
-```yaml
-agentic:
-  goal_context:
-    include_similar_goals: true
-    thread_selection_strategy: latest  # latest | all | best_performing
-    similarity_threshold: 0.7
-    embedding_role: embedding
-```
-
-### Integration Points
-
-#### Plan Phase Integration
-
-Inject previous goal context at StrangeLoop initialization:
-
-```python
-# strange_loop.py
-
-async def run_with_progress(...):
-    state_manager = StrangeLoopStateManager(thread_id, workspace)
-    goal_context_manager = GoalContextManager(state_manager, config.goal_context)
-    
-    # NEW: Inject previous goal context
-    plan_goal_excerpts = goal_context_manager.get_plan_context(limit=config.goal_context.plan_limit)
-    
-    # Combine with step-derived context (if recovering from checkpoint)
-    plan_excerpts = plan_goal_excerpts + list(state_manager.derive_plan_conversation(limit=5))
-    
-    state = LoopState(
-        plan_conversation_excerpts=plan_excerpts,  # Changed from []
-        ...
-    )
-    
-    # Existing: _build_plan_context uses plan_excerpts
-    plan_result = await self.plan_phase.plan(
-        goal=goal,
-        state=state,
-        context=self._build_plan_context(state),  # PlanContext.recent_messages
-    )
-```
-
-#### Execute Phase Integration
-
-Inject goal briefing on thread switch via CoreAgent config:
-
-```python
-# executor.py
-
-async def execute(self, decision, state):
-    goal_context_manager = GoalContextManager(state_manager, config.goal_context)
-    
-    # NEW: Get goal briefing (only on thread switch)
-    goal_briefing = goal_context_manager.get_execute_briefing(limit=config.goal_context.execute_limit)
-    
-    config = {
-        "configurable": {
-            "thread_id": state.thread_id,
-            "workspace": state.workspace,
-            "soothe_goal_briefing": goal_briefing,  # None or markdown string
-            "soothe_step_subagent": step.subagent,
-            "soothe_step_expected_output": step.expected_output,
-        }
-    }
-    
-    # CoreAgent receives briefing in system prompt (existing mechanism)
-    async for chunk in self.core_agent.astream(step.description, config=config):
-        ...
-```
+`execution_memory` contains `GoalExecutionRecord` instances from checkpoint; thread ecosystem maps thread_ids to goal_ids for relationship awareness; similarity scores enable confidence-based filtering.
 
 ### Thread Switch Detection
 
@@ -805,40 +583,6 @@ class GoalContextManager:
         return lines[-1][:100].rstrip() + "..." if lines else "Completed"
 ```
 
-### Checkpoint Modification
-
-```python
-class StrangeLoopCheckpoint(BaseModel):
-    """Complete StrangeLoop state (RFC-207: multi-thread spanning)."""
-    
-    # ... existing fields ...
-    
-    thread_switch_pending: bool = False
-    """Flag indicating thread just switched, Execute phase needs goal briefing.
-    
-    Set by execute_thread_switch(), cleared by get_execute_briefing().
-    Ensures goal context injection only on thread switch (not every iteration).
-    """
-```
-
-### State Manager Modification
-
-```python
-def execute_thread_switch(self, new_thread_id: str) -> None:
-    """Execute thread switch: update checkpoint with new thread."""
-    checkpoint.thread_ids.append(new_thread_id)
-    checkpoint.current_thread_id = new_thread_id
-    checkpoint.thread_switch_pending = True  # NEW
-    checkpoint.total_thread_switches += 1
-    checkpoint.thread_health_metrics = ThreadHealthMetrics(...)
-    self.save(checkpoint)
-    
-    logger.info(
-        "Thread switch executed: loop %s → thread %s (briefing flag set)",
-        self.loop_id, new_thread_id,
-    )
-```
-
 ## Configuration
 
 ```yaml
@@ -916,64 +660,17 @@ def get_execute_briefing(self, limit: int | None = None) -> str | None:
 3. **Flag stuck True**: If save fails after clearing flag, retry on next iteration
 4. **Config disabled**: GoalContextConfig.enabled=False → always return empty context
 
-## Testing Requirements
+## Testing
 
-### Unit Tests
-
-- `test_get_plan_context_filters_same_thread`: Plan context only includes current thread goals
-- `test_get_plan_context_filters_completed_only`: Plan context only includes completed goals
-- `test_get_plan_context_respects_limit`: Plan context respects limit parameter
-- `test_get_execute_briefing_returns_none_without_flag`: Execute briefing requires flag=True
-- `test_get_execute_briefing_clears_flag`: Briefing generation clears flag
-- `test_get_execute_briefing_cross_thread`: Execute briefing includes all thread goals
-- `test_extract_key_findings_bullet_points`: Extraction handles bullet/number formats
-- `test_extract_critical_files`: Extraction finds file.py patterns
-- `test_extract_result_summary_markers`: Extraction finds result markers
-
-### Integration Tests
-
-- `test_plan_phase_receives_previous_goal_context`: StrangeLoop injects goal context into Plan
-- `test_execute_phase_injects_briefing_on_thread_switch`: Thread switch triggers briefing
-- `test_execute_phase_no_briefing_same_thread`: Same thread skips briefing
-- `test_goal_context_manager_thread_switch_flag_flow`: Flag lifecycle from set to clear
+Unit tests cover same-thread filtering, completed-only filtering, limit enforcement, empty history, thread-switch flag lifecycle, and extraction helpers. Integration tests cover plan-phase injection, execute-phase briefing on thread switch, and no-briefing on same-thread continuation.
 
 ## Performance Considerations
 
-### Memory Footprint
-
-- Plan context: ~10 blocks × 500 chars = 5KB per iteration
-- Execute briefing: ~10 goals × 200 chars = 2KB per thread switch
-- Extraction overhead: Regex parsing ~150 chars per goal
-
-### Optimization Strategies
-
-1. **Lazy loading**: Generate Plan context once at initialization (not per iteration)
-2. **Early return**: Skip briefing generation if flag=False
-3. **Bounded results**: Configurable limits prevent unbounded growth
-4. **Simple extraction**: No caching needed (extracted on-demand, results discarded after use)
+Plan context: ~5KB per iteration (10 blocks × 500 chars). Execute briefing: ~2KB per thread switch. Lazy loading, early return on `flag=False`, and bounded limits prevent unbounded growth.
 
 ## Success Criteria
 
-1. **Same-thread continuation**: "translate to chinese" after "analyze performance" correctly translates previous report
-2. **Thread switch recovery**: CoreAgent on new thread receives goal summaries, continues work seamlessly
-3. **No duplication**: Execute phase doesn't receive briefing when CoreAgent already has conversation history
-4. **Architectural isolation**: Goal history stays in loop checkpoint, conversation stays in thread state
-5. **Configuration control**: plan_limit/execute_limit configurable, enabled flag works
-
-## Migration Notes
-
-### Backward Compatibility
-
-- **Existing StrangeLoop executions**: Continue without goal context (no impact, empty history)
-- **Existing checkpoints**: thread_switch_pending defaults to False (no change in behavior)
-- **Existing configuration**: goal_context defaults to enabled with limit=10
-
-### No Breaking Changes
-
-Pure additive feature, opt-in via config. All existing behavior preserved when:
-- goal_history empty (first goal)
-- thread_switch_pending=False (normal execution)
-- goal_context.enabled=False (explicit disable)
+Same-thread continuation works ("translate to chinese" after "analyze performance"), thread switch recovery injects goal summaries, no duplication when CoreAgent has conversation history, goal history stays in loop checkpoint while conversation stays in thread state.
 
 ## Implementation Status
 
@@ -990,7 +687,7 @@ Pure additive feature, opt-in via config. All existing behavior preserved when:
 
 ## References
 
-- RFC-200: Agentic Goal Execution Loop
+- RFC-201: StrangeLoop Plan-Execute Loop Architecture
 - RFC-207: StrangeLoop Thread Lifecycle & Goal Context (supersedes RFC-216)
 - RFC-203: Layer 2 Unified State Model
 - CoreAgent context briefing mechanism (existing)

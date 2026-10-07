@@ -5,15 +5,13 @@
 **Status**: Implemented (partial)
 **Kind**: Implementation Interface Design
 **Created**: 2026-05-29
-**Last Updated**: 2026-07-03
 **Authors**: Platonic brainstorming session
-**Design Draft**: `2026-05-29-progressive-skill-loading-design.md`
-**Revision Draft**: [2026-07-03-skill-runtime-discovery-design.md](../archive/drafts/2026-07-03-skill-runtime-discovery-design.md) (IG-543)
-**Depends On**: RFC-100 (CoreAgent Runtime), RFC-104 (Dynamic System Context), RFC-214 (StrangeLoop Loop Message Surface), RFC-600 (Plugin Extension System)
+**Updated**: 2026-07-03
+**Depends on**: RFC-100 (CoreAgent Runtime), RFC-104 (Dynamic System Context), RFC-214 (StrangeLoop Loop Message Surface), RFC-600 (Plugin Extension System)
 
 ## Abstract
 
-This RFC replaces deepagents' always-emit-all skill listing with a progressive disclosure pipeline modeled on Claude Code and symmetric with `progressive_tools`: (1) a budgeted, delta-only **core-tier** metadata listing on turn 0; (2) **deferred** skills discovered via path hooks or `search_skills`; (3) lazy SKILL.md body injection via `invoke_skill` or `/skill:`. Activation state lives on the agent graph state at runtime and is snapshotted to `LoopState` at each iteration boundary so reconnect, resume, and compaction restore the per-thread view. The change is local to `SystemPromptMiddleware._compose_skills_block` and `SkillActivationMiddleware`; deepagents' `SkillsMiddleware` is suppressed at construction time by passing `skills=None` to `create_deep_agent`.
+Replaces deepagents' always-emit-all skill listing with a progressive disclosure pipeline: (1) a budgeted, delta-only **core-tier** metadata listing on turn 0; (2) **deferred** skills discovered via path hooks or `search_skills`; (3) lazy SKILL.md body injection via `invoke_skill` or `/skill:`. Activation state lives on the agent graph state at runtime and is snapshotted to `LoopState` at each iteration boundary so reconnect, resume, and compaction restore the per-thread view. The change is local to `SystemPromptMiddleware._compose_skills_block` and `SkillActivationMiddleware`; deepagents' `SkillsMiddleware` is suppressed at construction time by passing `skills=None` to `create_deep_agent`.
 
 ### Revision 2026-07-03 — Runtime discovery (IG-543)
 
@@ -34,7 +32,6 @@ This RFC replaces deepagents' always-emit-all skill listing with a progressive d
 1. **`search_skills`** — when `progressive_skills.semantic_search_enabled`, substring results are supplemented by Skillify vector retrieval (`foundation/skillify` daemon-shared service).
 2. **Turn-0 intent prefetch** — when `progressive_skills.intent_prefetch_enabled`, `SkillActivationMiddleware.abefore_agent` matches deferred skill names in the first user message (corpus match) and optionally semantic top-K; sets `intent_prefetched` so prefetch runs once per thread.
 3. **Config** — `semantic_search_enabled`, `semantic_search_min_score`, `intent_prefetch_enabled`, `intent_prefetch_top_k`, `intent_prefetch_min_query_chars`.
-
 
 ### Problem: Linear cost, no filtering, no deltas
 

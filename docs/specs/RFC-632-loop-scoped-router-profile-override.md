@@ -7,10 +7,8 @@
 **Created**: 2026-07-14
 **Authors**: xiaming (with Cursor)
 **Updated**: 2026-07-14
-**Depends on**: RFC-450 (Daemon Protocol — `input` / turn overrides), RFC-454 (Slash Command Architecture), RFC-500 (CLI TUI), RFC-503 (Loop-First UX), RFC-627 (LLM Utilities / ModelRouter)
-**Related**: RFC-450 `model` / `model_params` per-turn override; IG-545 (RoleRoutingMiddleware)
-**Design**: [docs/drafts/2026-07-14-loop-scoped-router-profile-design.md](../drafts/2026-07-14-loop-scoped-router-profile-design.md)
-**Implemented by**: [IG-592](../archive/impl/IG-592-loop-scoped-router-profile-override.md)
+**Depends on**: RFC-450, RFC-454, RFC-500, RFC-503, RFC-627
+**Related**: RFC-450, IG-545
 
 ---
 
@@ -193,10 +191,7 @@ Wiki: document `/model-router` beside `/model`; config docs remain authoritative
 
 ---
 
-## 13. Change History
+## 13. Changelog
 
-| Date | Change |
-|------|--------|
-| 2026-07-14 | Initial Draft from design brainstorm |
-| 2026-07-14 | TUI command renamed `/router-profile` → `/model-router` |
-| 2026-07-14 | Overlay attach moved to loop workers only; removed ineffective parent QueryEngine ContextVar path |
+- 2026-07-14: TUI command renamed `/router-profile` → `/model-router`; overlay attach moved to loop workers only; removed ineffective parent QueryEngine ContextVar path.
+- 2026-07-14: Initial draft from design brainstorm.

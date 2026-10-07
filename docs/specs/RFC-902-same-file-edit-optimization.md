@@ -7,7 +7,7 @@
 **Created**: 2026-06-28
 **Authors**: Soothe Team
 **Updated**: 2026-06-28
-**Dependencies**: RFC-101 (tool interface), RFC-102 (security filesystem policy), RFC-231 (loop-rail goal engine)
+**Depends on**: RFC-101, RFC-102, RFC-231
 
 ---
 

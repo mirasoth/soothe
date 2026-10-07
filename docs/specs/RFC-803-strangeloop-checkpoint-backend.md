@@ -5,10 +5,10 @@
 **Status**: Draft
 **Kind**: Architecture Design
 **Created**: 2026-04-22
-**Last Updated**: 2026-07-24
-**Dependencies**: RFC-207 (Thread Lifecycle & Goal Context), RFC-218 (Checkpoint Tree), RFC-503 (Loop-First UX), RFC-801 (SQLite Runtime), RFC-802 (Persistence Architecture)
-**Author**: Claude Sonnet 4.6
-**Note**: Moved from 2xx (RFC-215) to 8xx persistence series per RFC-900 reclassification
+**Authors**: Claude Sonnet 4.6
+**Updated**: 2026-07-24
+**Depends on**: RFC-207, RFC-218, RFC-503, RFC-801, RFC-802
+**Note**: Reclassified from 2xx (RFC-215) to 8xx persistence series (persistence specs consolidation).
 **Design draft (SQLite flush parity)**: [2026-07-24-sqlite-runtime-isolation-performance-design.md](../drafts/2026-07-24-sqlite-runtime-isolation-performance-design.md)
 
 ---

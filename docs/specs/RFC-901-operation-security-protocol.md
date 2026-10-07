@@ -7,16 +7,14 @@
 **Created**: 2026-04-30
 **Authors**: Soothe Team
 **Updated**: 2026-04-30
-**Dependencies**: RFC-102, RFC-103, RFC-305, RFC-613
-**Note**: Moved from 6xx (RFC-901) per RFC-900 reclassification
+**Depends on**: RFC-102, RFC-103, RFC-305, RFC-613
+**Note**: Reclassified from 6xx to 9xx segment (security/policy specs consolidation).
 
 ---
 
 ## Abstract
 
-This RFC introduces `OperationSecurityProtocol`, a dedicated security protocol for operation-level enforcement across filesystem and execution tools. It centralizes security checks that are currently scattered between policy, workspace backend path normalization, and tool-local command guards.
-
-`OperationSecurityProtocol` evaluates normalized operation intents (path access, shell execution, process management) and returns a structured allow/deny/need-approval decision before permission-profile matching proceeds.
+Introduces `OperationSecurityProtocol`, a dedicated security protocol for operation-level enforcement across filesystem and execution tools. Centralizes security checks currently scattered between policy, workspace backend path normalization, and tool-local command guards. Evaluates normalized operation intents (path access, shell execution, process management) and returns a structured allow/deny/need-approval decision before permission-profile matching proceeds.
 
 ---
 

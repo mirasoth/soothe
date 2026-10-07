@@ -123,7 +123,7 @@ This document defines the terminology and naming conventions used in this projec
 |------|------------|---------------|
 | ExecutionState | Thin facade holding execution-only runtime fields (iteration, max_iterations, wave metrics, context window stats) with CE-backed properties for goal/step data. Replaces LoopState. | RFC-626 |
 | Job | Root GoalNode with `parent_id=None` submitted to LoopRailService. Single entry point for DAG visualization and status queries. | RFC-626, RFC-450 |
-| GoalNode | Unified entity model combining goal lifecycle, retry/backoff semantics, workspace metadata, and dreaming fields. CE's atomic unit of persistence. | RFC-624, RFC-231 §17, RFC-626 |
+| GoalNode | Unified entity model combining goal lifecycle, retry/backoff semantics, and workspace metadata. CE's atomic unit of persistence. | RFC-624, RFC-231 §17, RFC-626 |
 | LoopRail | Job-scoped, event-driven workflow pattern consumed only by LoopRailService; mutates the CE DAG via catalog verbs. CE never reads rail YAML. | RFC-231 |
 | Slice catalog | Flat SoT of leaf slice specs on `RailJobState` after WavePlan ingest (`wave_slices` / rich `slices` / `decompose_plan`). | RFC-231 §9, RFC-232 |
 | Streaming spawn | Loop-rail creates maker goals for unspawned catalog slices whose slice `depends_on` are satisfied; pool fills under concurrency with no wave/stage CE barrier. | RFC-231 §9 |

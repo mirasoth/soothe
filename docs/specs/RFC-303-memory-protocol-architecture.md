@@ -7,16 +7,16 @@
 **Created**: 2026-04-17
 **Authors**: Soothe Team
 **Updated**: 2026-04-17
-**Dependencies**: RFC-000, RFC-302
-**Related**: RFC-306 (Durability), RFC-231 §17 (CE GoalNode.report commit), RFC-624 (Context Engine), RFC-626 (Entity Model and State Management Consolidation)
+**Depends on**: RFC-000, RFC-302
+**Related**: RFC-306, RFC-624
 **Implemented by**: CE's EpisodicSubmodule (RFC-231 §17, RFC-624, RFC-626)
-**Note**: Moved from 4xx (RFC-303) per RFC-900 reclassification — ContextEngine's episodic memory store implements MemoryProtocol API for persistent cross-thread memory
+**Note**: Reclassified from 4xx to 3xx segment (protocol specs consolidation) — ContextEngine's episodic memory store implements MemoryProtocol API for persistent cross-thread memory
 
 ---
 
 ## Abstract
 
-This RFC defines MemoryProtocol, Soothe's cross-thread long-term memory for persistent knowledge surviving beyond single thread execution. MemoryProtocol provides explicit knowledge population through `remember()` operations, semantic recall via query or tags, and clear separation from ContextProtocol (within-thread unbounded accumulator). MemoryProtocol integrates with ContextProtocol at thread lifecycle boundaries.
+Defines MemoryProtocol, Soothe's cross-thread long-term memory for persistent knowledge surviving beyond single thread execution. Provides explicit knowledge population via `remember()`, semantic recall via query or tags, and clear separation from ContextProtocol (within-thread unbounded accumulator). Integrates with ContextProtocol at thread lifecycle boundaries.
 
 ---
 

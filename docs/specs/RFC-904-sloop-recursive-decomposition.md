@@ -7,9 +7,9 @@
 **Created**: 2026-08-19
 **Authors**: Soothe Team
 **Updated**: 2026-08-29
-**Dependencies**: RFC-220, RFC-624, RFC-630, RFC-903, RFC-622, RFC-219, RFC-803
+**Depends on**: RFC-220, RFC-624, RFC-630, RFC-903, RFC-622
 **Revises**: RFC-220 §Loop Graph Topology (plan/eval/execute stations); RFC-201 §Plan-Execute structure (upfront plan waves); RFC-213 (per-iteration assess+generate pair); RFC-624 §StepDAG / Step Anchor Registry; RFC-630 §Pass 2 scope classification and complexity-tiered planning routes
-**Related**: RFC-207, RFC-214, RFC-231 §17 (goal-level decompose remains separate), RFC-206, RFC-905
+**Related**: RFC-207, RFC-214, RFC-206, RFC-905
 **Partially Superseded By**: RFC-905 (§ROOT_EVAL assess-only / MUST NOT `decompose_task`; GapResult new-root continuation)
 **Design draft**: `docs/archive/drafts/2026-08-19-sloop-recursive-decomposition-design.md`
 
@@ -398,11 +398,9 @@ predicate used to insert Eval.
 
 ### ROOT_EVAL
 
-> **Superseded by RFC-905.** The following assess-only / GapResult-new-root
-> contract is **not** the continuation mechanism.
-
-Historical (obsolete) contract: assess only; **MUST NOT** `decompose_task`;
-recoverable gaps → new root + `GapResult`.
+> **Removed 2026-10-07 — superseded by RFC-905.** The historical assess-only
+> ROOT_EVAL contract (`MUST NOT` `decompose_task`; recoverable gaps → new root
+> via `GapResult`) is withdrawn; it is **not** the continuation mechanism.
 
 **Normative (RFC-905):** ROOT_EVAL is the **gate** that inserts `kind=eval`
 or routes FINALIZE. The Eval **thread** **MAY** call `decompose_task`.
@@ -493,7 +491,7 @@ Do not weaken tests to match a broken `tree_green`.
 
 ---
 
-## Deprecation and Future Archival (RFC-900)
+## Deprecation and Future Archival
 
 RFC-904 **partially supersedes** sections of several active RFCs. Those RFCs
 **MUST remain** in `docs/specs/` until their *entire* normative surface is
@@ -516,7 +514,7 @@ formalization (historical reference; RFC-904 is normative).
 
 1. Add/confirm supersession notices on each row above (already started).
 2. Optionally set status `Deprecated` on a RFC **only** if no active norms remain.
-3. After ≥90 days Deprecated → move to `docs/archive/specs/` per RFC-900.
+3. After ≥90 days Deprecated → move to `docs/archive/specs/`.
 4. Update `rfc-index.md` and referencing docs/IGs.
 
 ---
@@ -539,3 +537,4 @@ formalization (historical reference; RFC-904 is normative).
 | 2026-08-19 | Intake planner Approve → DISPATCH root grounding (approved plan → root THREAD) |
 | 2026-08-19 | Added Partial Implementation Note: deletion portion landed via IG-752/IG-753; recursive decomposition topology remains Proposed |
 | 2026-08-29 | Simplify `decompose_task`: tool body is pure validation+enqueue (no LLM calls, no evidence collection). Branch cap: reject → truncate. `subtasks` required. Grounding guided by prompts, not enforced by gate. Per `docs/drafts/2026-08-29-decompose-task-simplification-design.md` |
+| 2026-10-07 | Removed superseded ROOT_EVAL/GapResult historical contract (per RFC-905). |

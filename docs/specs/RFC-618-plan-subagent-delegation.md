@@ -8,9 +8,7 @@
 **Updated**: 2026-07-28
 **Authors**: Soothe Team
 **Depends on**: RFC-000, RFC-001, RFC-100, RFC-600, RFC-601
-**Related**: RFC-201 (StrangeLoop plan-execute loop), RFC-214 (plan context),
-  RFC-633 (planner plan artifact + human review; readonly tools replace explore collection),
-  RFC-613 (archived — explore subagent delegation pattern)
+**Related**: RFC-201, RFC-214, RFC-633, RFC-613
 
 ## Abstract
 

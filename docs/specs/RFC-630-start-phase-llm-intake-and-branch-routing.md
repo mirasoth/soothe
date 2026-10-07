@@ -6,14 +6,10 @@
 **Kind**: Architecture Design
 **Authors**: Xiaming Chen
 **Created**: 2026-06-30
-**Last Updated**: 2026-08-19
+**Updated**: 2026-08-19
 **Depends on**: RFC-220, RFC-225, RFC-226, RFC-503
-**Extends**: RFC-225 (intent classification taxonomy), RFC-220 (orchestrator topology)
-**Supersedes**: The `_is_likely_agentic` heuristic bypass and `simple_bypass` string-prefix detection introduced by IG-518
-**Partially Superseded By**: RFC-904 (Pass 2 scope classification and complexity-tiered plan routes removed; Pass 1 retained)
-**Related**: RFC-214 (loop-message surface), RFC-604 (reason-phase robustness), RFC-624 (Context Engine), RFC-628 (SubAgent / orphan wired card display), RFC-904
-**Amended by**: IG-599 (wired-subagent direct route after Pass 2), IG-600 (intake-only exposure), IG-601 (intake-only dual registry / direct invoke), IG-602 (orphan wired-subagent card / stream bridge), IG-656 (`planner` intake-only)
-**Design draft (orphan card UX)**: `docs/drafts/2026-07-15-orphan-wired-subagent-card-design.md`
+**Supersedes**: The `_is_likely_agentic` heuristic bypass and `simple_bypass` string-prefix detection introduced by IG-518.
+**Related**: RFC-214, RFC-604, RFC-624, RFC-628, RFC-904
 
 ---
 
@@ -163,58 +159,11 @@ Examples:
 
 ### 6.2 Pass 2 Classifier (IntakePass2)
 
-**Purpose**: Scope classification for work requests — trivial, simple, or complex.
-
-**Capabilities**:
-- Returns `{scope: trivial|simple|complex, goal_description, reasoning}`.
-- Prior-goal projection included for reference resolution.
-- Prompt streamlined to 3-label (no `chitchat` option).
-
-**Interfaces**:
-- Provides: `IntakePass2Classifier.classify(query, prior_projection) -> IntakePass2Result`.
-- Requires: fast chat model, prior projection from IG-540.
-
-**Prompt**:
-
-```xml
-<INTAKE_PASS2>
-Classify work scope: trivial, simple, or complex?
-
-trivial: one obvious action, no planning (e.g., single file read, simple query, math).
-simple: one focused deliverable CoreAgent can finish in a single execute
-  (tools + todos inside one step). Multi-file OK when it is one coherent change.
-complex: durable phase gates, parallel independent workstreams, architecture /
-  migration spanning ordered phases, or explicit multi-phase wording.
-
-Rules:
-- Prefer simple when one CoreAgent run can discover + edit + verify.
-- Multiple files alone ≠ complex if there is one coherent deliverable.
-- Uncertain with a clear single deliverable → simple (not complex).
-- Architecture / system migration with ordered phases → complex.
-
-JSON only:
-{"scope":"trivial"|"simple"|"complex","reasoning":"≤15 words, first person","multi_phase":bool,...}
-
-Examples:
-"list the files in src/" → scope:trivial
-"fix the type error in auth.py" → scope:simple
-"fix the null check across LoopSessionStore callers" → scope:simple
-"first scan the repo and then run tests" → scope:complex, multi_phase:true
-"migrate the auth system to OAuth2" → scope:complex
-</INTAKE_PASS2>
-```
-
-Fail-safe on classification failure: `simple` (lightweight plan), not `complex`
-(IG-654 CoreAgent-first granularity).
-
-**Context packaging**:
-
-```
-[System]     Pass 2 prompt (above)
-[Context]    PRIOR_GOAL_SUMMARY (from IG-540 projection)
-[Human]      CURRENT_GOAL: <verbatim user text>
-             TASK: classify scope only
-```
+> **Removed 2026-10-07 — superseded by RFC-904.** The Pass 2 scope classifier
+> (trivial / simple / complex), its prompt, schema, and prior-projection
+> context packaging are removed. Task scope is discovered via do-or-decompose
+> inside StrangeLoop (RFC-904 §Guiding Principles). Wired-subagent specialist
+> selection remains slash/daemon `preferred_subagent` only (IG-669).
 
 ### 6.3 `route_by_intent`
 
@@ -295,11 +244,10 @@ Intake-only specialists do **not** enter CoreAgent execute, so they never emit a
 
 ### 6.5 `plan_phase.generate_lightweight`
 
-**Purpose**: Cheaper plan call for `simple` branch.
-
-**Capabilities**:
-- Reuses structured-output path with reduced context window.
-- Same schema as full plan; smaller prompt.
+> **Removed 2026-10-07 — superseded by RFC-904.** The lightweight plan call for
+> the `simple` Pass 2 branch only existed to support complexity-tiered planning
+> routes, which are removed. Plan generation folds into `decompose_task`
+> (RFC-904).
 
 ### 6.6 `_run_strange_loop` (restructured)
 
@@ -373,26 +321,11 @@ IntakePass1Result {
 
 ### 8.2 IntakePass2Result
 
-```
-IntakePass2Result {
-  scope: "trivial" | "simple" | "complex"
-  goal_description: string         // imperative summary
-  reasoning: string                // ≤15 words
-  multi_phase: bool
-  requires_tool_use: bool          // IG-569: external/live data needs tools
-}
-```
-
-`requires_tool_use` is set by Pass 2 when answering needs tool execution or
-external/live data (weather, web lookup, file contents). Pure reasoning/math
-sets `false`. The field propagates to trivial `StepAction.requires_tool_use`
-for the execute deliverable gate.
-
-Pass 2 does **not** choose a specialist (IG-669). A wired specialist is
-requested only by slash/daemon `preferred_subagent`; when that resolves to an
-allowlisted name, IG-599 routes through `invoke_wired_subagent` instead of the
-plan spine. A `/skill:` submission suppresses the hint entirely so the skill
-body owns execution.
+> **Removed 2026-10-07 — superseded by RFC-904.** The Pass 2 result schema
+> (`scope: trivial|simple|complex`, `goal_description`, `reasoning`,
+> `multi_phase`, `requires_tool_use`) is removed; scope classification no
+> longer runs at intake. Task scope is discovered via do-or-decompose
+> (RFC-904).
 
 ### 8.3 Derived fields at routing
 
@@ -413,18 +346,11 @@ LoopGraphState += {
 
 ### 8.5 Trivial-branch plan shape
 
-```
-PlanResult {
-  status: "execute"
-  next_action: <goal_description>
-  plan_reasoning: null
-  expected_output: TRIVIAL_DIRECT_EXPECTED_OUTPUT  // soft direct-answer hint
-  steps: [ {
-    description: <goal_description>
-    requires_tool_use: <from Pass 2>
-  } ]
-}
-```
+> **Removed 2026-10-07 — superseded by RFC-904.** The synthetic trivial-branch
+> 1-step plan shape (`status: "execute"`, single `StepAction` with
+> `requires_tool_use`) only existed to support the Pass 2 `trivial` scope label.
+> Under recursive decomposition, trivial work is discovered inside THREAD
+> do-or-decompose (RFC-904), not pre-classified at intake.
 
 ### 8.6 Execute step deliverable gate (IG-569)
 
@@ -526,9 +452,10 @@ Budget: relaxed (<300ms acceptable). Pass 1 ultra-lean (~50-80 tokens input, ~12
 
 ## 16. Open Questions
 
-1. **Pass 2 prompt tuning** — Confirm scope definitions match planner tier expectations.
-2. **Prior projection truncation** — Optimal summary length before Pass 2 quality degrades?
-3. **Pass 2 retry policy** — Single retry on low confidence, or fail-safe immediately?
+> **Removed 2026-10-07 — superseded by RFC-904.** All three open questions
+> (Pass 2 prompt tuning, prior projection truncation for Pass 2 quality,
+> Pass 2 retry policy) only applied to the Pass 2 scope classifier, which is
+> removed.
 
 ---
 
@@ -549,6 +476,7 @@ Budget: relaxed (<300ms acceptable). Pass 1 ultra-lean (~50-80 tokens input, ~12
 
 | Date | Change |
 |------|--------|
+| 2026-10-07 | Removed superseded Pass 2 classifier, generate_lightweight, IntakePass2Result schema, trivial-branch plan shape, and Pass 2 open questions (per RFC-904). Pass 1 chitchat-vs-task gate and wired-subagent/continuation overlays retained. |
 | 2026-06-30 | Initial Draft |
 | 2026-07-14 | Wired-subagent direct route + intake-only dual registry (IG-599/651/652) |
 | 2026-07-15 | §6.3.3 intake-only stream bridge + orphan SubAgent card contract; IG-602 implemented |

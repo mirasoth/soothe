@@ -301,79 +301,13 @@ def get_recent_actions(self, n: int = 3) -> list[str]
 
 ## Implementation Plan
 
-### Phase 1: Progressive Actions (1 day)
-
-**Files**:
-- `schemas.py`: Add action history
-- `output_format.xml`: Add progressive action guidance
-- ~~`action_quality.py`: NEW, implement post-processing~~ **REMOVED**
-- `planning.py`: Track actions in history (no enhancement)
-
-**Tests**:
-- Unit: Specificity detection, repetition checking, enhancement
-- Integration: Multi-step actions become progressive
-
-### Phase 2: Quality Improvements (0.5 days)
-
-**Files**:
-- `packages/soothe/src/soothe/sloop/cognition/planner.py`: Evidence-based confidence (`goal_progress` is assess-only per IG-376)
-- `output_format.xml`: Add reasoning quality guidance
-
-**Tests**:
-- Unit: Confidence and progress calculations
-
-### Phase 3: Synthesis Phase (1.5 days)
-
-**Files**:
-- `schemas.py`: Add synthesis fields
-- `synthesis_format.xml`: NEW, synthesis template
-- `synthesis.py`: NEW, implement SynthesisPhase
-- `loop_agent.py`: Integrate synthesis trigger
-
-**Tests**:
-- Unit: Trigger logic, output structure
-- Integration: Architecture analysis produces comprehensive report
-
-### Phase 4: Benchmarks (1 day)
-
-**Files**:
-- `benchmarks/reasoning-quality/`: 10 benchmark files
-- `run-benchmarks.py`: Benchmark runner
-
-**Test Cases**:
-1. Architecture analysis (synthesis expected)
-2. Code investigation (synthesis expected)
-3. Simple lookup (synthesis NOT expected)
-4. Research task (synthesis expected)
-5. Structure analysis (synthesis expected)
-6. Error investigation (synthesis expected)
-7. Comparison task (synthesis expected)
-8. Documentation generation (synthesis expected)
-9. Performance analysis (synthesis expected)
-10. Quick summary (synthesis NOT expected)
-
-### Phase 5: Testing & Documentation (1 day)
-
-**Activities**:
-- Run real-world test: `soothe --no-tui -p "analyze this project arch"`
-- Verify progressive actions improve
-- Verify comprehensive reports
-- Update documentation
-
-**Total Time**: 5 days
+Five work-streams (~5 days total): (1) Progressive Actions — `action_history` schema field + `<PROGRESSIVE_ACTIONS>` prompt section (`action_quality.py` post-processing was removed 2026-04-10 due to integration issues and hardcoded keyword patterns; rely on the prompt section + history tracking); (2) Quality Improvements — evidence-based confidence in `LLMPlanner` (`goal_progress` is assess-only per IG-376) + reasoning-quality prompt section; (3) Synthesis Phase — `SynthesisPhase` class, `synthesis_format.xml` prompt, trigger logic on step count/success rate/evidence volume; (4) Benchmarks — 10 reasoning-quality benchmark files under `benchmarks/reasoning-quality/`; (5) Testing & Documentation — `./scripts/verify_finally.sh` and real-world verification.
 
 ---
 
 ## Breaking Changes
 
-No backward compatibility maintained.
-
-**Changes**:
-- Remove `full_output` fallback (always synthesize or fail)
-- Replace confidence/progress calculations entirely
-- Require specific actions (enhance if needed)
-
-**Rationale**: Cleaner code, consistent quality, easier testing.
+No backward compatibility maintained. Remove `full_output` fallback (always synthesize or fail); replace confidence/progress calculations entirely; require specific actions (enhance if needed). Rationale: cleaner code, consistent quality, easier testing.
 
 ---
 
@@ -483,20 +417,10 @@ benchmarks/reasoning-quality/
 
 ---
 
-## Appendix B: File Change Summary
+## References
 
-| File | Change Type | Lines Changed |
-|------|-------------|----------------|
-| ~~`action_quality.py`~~ | ~~NEW~~ **REMOVED** | ~~~150~~ **0** |
-| `synthesis.py` | NEW | ~200 |
-| `reason.py` | MODIFY | ~10 |
-| `loop_agent.py` | MODIFY | ~30 |
-| `schemas.py` | MODIFY | ~40 |
-| `simple.py` | MODIFY | ~80 |
-| `output_format.xml` | MODIFY | ~50 |
-| `synthesis_format.xml` | NEW | ~100 |
-| **Total** | | **~510 lines** |
-
----
-
-**RFC Status**: Draft - Ready for Implementation Guide
+- IG-143: CLI Display Architecture Refactoring
+- RFC-0008: Layer 2 Agentic Loop
+- RFC-000: System Conceptual Design
+- `packages/soothe/src/soothe/sloop/` — StrangeLoop implementation (planner, executor, state, analysis)
+- Planning (`LLMPlanner`, RFC-604) lives under `sloop/engine/`, not a separate `cognition/planning` package

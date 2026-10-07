@@ -6,17 +6,17 @@
 **Kind**: Architecture Design
 **Created**: 2026-04-17
 **Authors**: Soothe Team
-**Last Updated**: 2026-08-19
-**Dependencies**: RFC-000, RFC-302
-**Related**: RFC-201 (StrangeLoop), RFC-213 (Two-Phase Plan Assessment)
-**Note**: Moved from 4xx (RFC-304) per RFC-900 reclassification
-**Implementation**: The host `LLMPlanner` implementation was removed by IG-752 (Delete Legacy Plan Spine) and IG-753 (Delete LLMPlanner / PlanPhase); this RFC is now interface-only. The `PlannerProtocol` interface survives in `soothe_sdk.protocols.planner` and remains the SDK contract for plan creation/revision. Prior references to IG-372 (LLMPlanner two-phase) and IG-329 (PlanResult consolidation) are stale — no such IGs exist in `docs/impl/`. The protocol interface spec body below is retained as the live SDK contract description.
+**Updated**: 2026-08-19
+**Depends on**: RFC-000, RFC-302
+**Related**: RFC-201, RFC-213
+**Note**: Reclassified from 4xx to 3xx segment (protocol specs consolidation).
+**Implementation**: The host `LLMPlanner` implementation was removed by IG-752 / IG-753; this RFC is now interface-only. The `PlannerProtocol` interface survives in `soothe_sdk.protocols.planner` and remains the SDK contract for plan creation/revision.
 
 ---
 
 ## Abstract
 
-This RFC defines PlannerProtocol, Soothe's plan creation and revision interface for complex goal decomposition. PlannerProtocol provides plan creation, revision, and reflection methods with LLMPlanner default implementation using two-phase architecture (`StatusAssessment` then conditional `PlanGeneration`, merged into `PlanResult`; RFC-604, IG-372/IG-329) for token efficiency. This protocol serves StrangeLoop and autonomous goal management planning needs.
+Defines PlannerProtocol, Soothe's plan creation and revision interface for complex goal decomposition. Provides plan creation, revision, and reflection methods. The host `LLMPlanner` default implementation was removed by IG-752 / IG-753; the protocol interface survives in `soothe_sdk.protocols.planner` as the live SDK contract.
 
 ---
 

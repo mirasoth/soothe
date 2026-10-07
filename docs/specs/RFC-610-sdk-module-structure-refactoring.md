@@ -7,8 +7,8 @@
 **Created**: 2026-04-17
 **Authors**: Soothe Team
 **Updated**: 2026-04-17
-**Dependencies**: RFC-600, RFC-302
-**Related**: RFC-174 (IG-174 CLI Import Violations Fix), RFC-175 (IG-175 WebSocket Migration)
+**Depends on**: RFC-600, RFC-302
+**Related**: RFC-174, RFC-175
 
 ## Abstract
 
@@ -366,167 +366,45 @@ __all__ = [
 
 ### Breaking Change Policy
 
-**No backward compatibility layer provided.** This is a direct breaking change requiring immediate import path updates across all dependent packages.
+**No backward compatibility layer provided.** Direct breaking change requiring immediate import path updates across all dependent packages. Rationale: cleaner architecture (no maintenance burden), faster migration (1-2 weeks vs 7 months), clear breaking signal (v0.4.0 version bump), all internal packages updated simultaneously.
 
-**Rationale:**
-- Cleaner architecture (no maintenance burden)
-- Faster migration (1-2 weeks vs 7 months)
-- Clear breaking signal (v0.4.0 version bump)
-- All internal packages updated simultaneously
+### Migration Sequence
 
-### Migration Phases
-
-#### Phase 1: SDK Structure Refactoring (Days 1-3)
-
-1. Create new directory structure (plugin/, ux/, utils/)
-2. Move files to new locations (batch operations)
-3. Merge files (decorators → plugin/decorators.py, config → client/config.py)
-4. Split files (utils.py → utils/display.py + utils/parsing.py)
-5. Create package __init__.py files with exports
-6. Update SDK internal imports (~15 statements)
-7. Run SDK unit tests
-
-#### Phase 2: soothe-cli Imports (Day 4)
-
-- Update ~20-25 import statements in 10-15 files
-- Affected: config, TUI, headless, commands modules
-- Run CLI tests + integration tests
-
-#### Phase 3: soothe (daemon) Imports (Day 5)
-
-- Update ~30-40 import statements in 20-30 files
-- Affected: core, protocols, backends, tools, subagents, middleware, daemon
-- Run daemon tests + integration tests
-
-#### Phase 4: Full Test Suite (Day 6)
-
-- Run `./scripts/verify_finally.sh` (900+ tests)
-- Import timing verification
-- Circular import detection
-- Package isolation tests
-
-#### Phase 5: Documentation (Day 7)
-
-- Update docs/cli-entry-points-architecture.md
-- Update docs/migration-guide-v0.3.md (add v0.4 section)
-- Update CLAUDE.md with new import patterns
-- Update all markdown code examples
-
-#### Phase 6: Version Bump (Week 2)
-
-- soothe-sdk: v0.3.0 → v0.4.0
-- soothe-cli: v0.1.0 → v0.2.0
-- soothe (daemon): v0.3.0 → v0.4.0
-- Publish migration guide + release notes
-
-**Total timeline: 1-2 weeks**
+1. **SDK structure refactoring** — create new directory structure (`plugin/`, `ux/`, `utils/`); move/merge/split files; create package `__init__.py` exports; update SDK internal imports (~15 statements).
+2. **soothe-cli imports** — update ~20-25 import statements across 10-15 files (config, TUI, headless, commands modules).
+3. **soothe (daemon) imports** — update ~30-40 import statements across 20-30 files (core, protocols, backends, tools, subagents, middleware, daemon).
+4. **Full test suite** — `./scripts/verify_finally.sh`; import timing verification; circular import detection; package isolation tests.
+5. **Documentation** — update `docs/cli-entry-points-architecture.md`, `docs/migration-guide-v0.3.md` (add v0.4 section), CLAUDE.md with new import patterns.
+6. **Version bump** — soothe-sdk v0.3.0 → v0.4.0; soothe-cli v0.1.0 → v0.2.0; soothe (daemon) v0.3.0 → v0.4.0; publish migration guide + release notes.
 
 ### Import Count by Package
 
-| Package | Import Statements | Affected Files | Est. Time |
-|---------|-------------------|----------------|-----------|
-| soothe-sdk (internal) | ~15 | 5 files | 0.5 day |
-| soothe-cli | ~20-25 | 10-15 files | 1 day |
-| soothe (daemon) | ~30-40 | 20-30 files | 1 day |
-| soothe-sdk tests | ~40-50 | 10-15 files | 0.5 day |
-| **Total** | **~110-130** | **~45-65 files** | **3 days** |
+| Package | Import Statements | Affected Files |
+|---------|-------------------|----------------|
+| soothe-sdk (internal) | ~15 | 5 files |
+| soothe-cli | ~20-25 | 10-15 files |
+| soothe (daemon) | ~30-40 | 20-30 files |
+| soothe-sdk tests | ~40-50 | 10-15 files |
 
 ### Third-Party Plugin Migration
 
-**Impact:** All community plugins break
-**Action required:** Manual import path updates
-**Mitigation:**
-- Complete import mapping table in migration guide
-- Version bump to v0.4.0 signals breaking change
-- Release notes highlight required updates
-- Documentation examples show new imports
-- GitHub issue template for migration support
+All community plugins break and require manual import path updates. Mitigations: complete import mapping table in migration guide; version bump to v0.4.0 signals breaking change; release notes highlight required updates; documentation examples show new imports.
 
 ## Testing Strategy
 
-### Pre-Refactor Baseline
-
-- All 900+ tests pass with current structure
-- Import analysis: no circular imports
-- Current import paths verified working
-
-### Post-Refactor Validation
-
-- All 900+ tests pass with new imports
-- `./scripts/verify_finally.sh` passes (format, lint, tests)
-- Import timing: measure __init__.py load (should be faster)
-- Package isolation: each package imports successfully
-- Circular import check: dependency graph analysis
-- Import completeness: grep verifies all imports updated
-
-### Integration Tests
-
-- CLI commands: `soothe --help`, `soothe thread list`, `soothe -p "test"`
-- Daemon commands: `soothed start`, `soothed doctor`
-- WebSocket connection: CLI connects to daemon
-- Plugin loading: daemon loads plugins with new structure
+Pre-refactor baseline: 900+ tests pass, no circular imports, current import paths verified working. Post-refactor validation: 900+ tests pass with new imports; `./scripts/verify_finally.sh` passes; import timing improved (minimal `__init__.py`); package isolation (each package imports successfully); circular import check via dependency graph analysis; import completeness verified by grep. Integration tests: CLI commands (`soothe --help`, `soothe thread list`, `soothe -p "test"`); daemon commands (`soothed start`, `soothed doctor`); WebSocket connection (CLI ↔ daemon); plugin loading with new structure.
 
 ## Risks and Mitigation
 
-### Risk 1: Breaking Third-Party Plugins
-
-**Impact:** High - all community plugins require manual updates
-**Mitigation:**
-- Complete import mapping table (50+ entries)
-- Version bump to v0.4.0 (breaking signal)
-- Comprehensive migration guide
-- Release notes with required actions
-- GitHub issue template for support
-
-### Risk 2: Import Errors During Migration
-
-**Impact:** Medium - tests catch errors but time-consuming
-**Mitigation:**
-- Batch-by-batch execution (SDK → CLI → Daemon → Tests)
-- Run tests after each batch
-- Pre-refactor grep search: find all imports
-- Import linting tools
-- Fix batch before proceeding
-
-### Risk 3: Missed Imports
-
-**Impact:** Medium - could cause runtime failures
-**Mitigation:**
-- Multi-layer checking (grep + linting + tests)
-- 900+ test coverage
-- Final verification script
-- Comprehensive code search
-
-### Risk 4: Circular Imports Introduced
-
-**Impact:** High - could break runtime
-**Mitigation:**
-- Pre-refactor analysis: verify clean state
-- Keep protocols/ separate (no SDK imports)
-- Package __init__.py only imports own files
-- Post-refactor graph analysis
-- Package isolation tests
-
-### Risk 5: Performance Regression
-
-**Impact:** Low - but measurable
-**Mitigation:**
-- Benchmark import time before/after
-- Minimal __init__.py should improve performance
-- If regression detected: investigate specific package imports
+- **Breaking third-party plugins (high impact)** — complete import mapping table (50+ entries), v0.4.0 version bump as breaking signal, comprehensive migration guide, release notes with required actions.
+- **Import errors during migration (medium impact)** — batch-by-batch execution (SDK → CLI → Daemon → Tests), run tests after each batch, pre-refactor grep search, import linting tools.
+- **Missed imports (medium impact)** — multi-layer checking (grep + linting + tests), 900+ test coverage, final verification script.
+- **Circular imports introduced (high impact)** — pre-refactor analysis verifies clean state, `protocols/` stays separate (no SDK imports), package `__init__.py` only imports own files, post-refactor graph analysis, package isolation tests.
+- **Performance regression (low impact)** — benchmark import time before/after; minimal `__init__.py` should improve performance.
 
 ## Success Criteria
 
-1. ✓ All 900+ tests pass with new structure
-2. ✓ No circular imports detected (graph analysis)
-3. ✓ soothe-cli imports updated (~20-25 statements)
-4. ✓ soothe (daemon) imports updated (~30-40 statements)
-5. ✓ soothe-sdk tests updated (~40-50 statements)
-6. ✓ Documentation updated (all markdown files)
-7. ✓ Migration guide published (complete mapping)
-8. ✓ `./scripts/verify_finally.sh` passes
-9. ✓ Import time improved (minimal __init__.py)
-10. ✓ Version bumped to v0.4.0
+900+ tests pass with new structure; no circular imports detected (graph analysis); soothe-cli imports updated (~20-25 statements); soothe (daemon) imports updated (~30-40 statements); soothe-sdk tests updated (~40-50 statements); documentation updated; migration guide published; `./scripts/verify_finally.sh` passes; import time improved; version bumped to v0.4.0.
 
 ## Benefits
 

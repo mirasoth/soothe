@@ -5,11 +5,9 @@
 **Status**: Implemented (partial)
 **Kind**: Implementation Interface Design
 **Created**: 2026-05-29
-**Last Updated**: 2026-07-11
+**Updated**: 2026-07-11
 **Authors**: Platonic brainstorming session
-**Design Draft**: `2026-05-29-mcp-management-design.md`
-**Revision Draft**: [2026-07-11-mcp-progressive-loading-design.md](../drafts/2026-07-11-mcp-progressive-loading-design.md)
-**Depends On**: RFC-100 (CoreAgent Runtime), RFC-101 (Tool Interface), RFC-105 (Progressive Skill Loading), RFC-305 (Policy Protocol Architecture), RFC-600 (Plugin Extension System)
+**Depends on**: RFC-100, RFC-101, RFC-105, RFC-305, RFC-600
 
 ## Abstract
 
@@ -841,59 +839,11 @@ For a workspace with 3 MCP servers (50 tools total, 1 server always-loaded with 
 
 ## Verification Plan
 
-### Unit tests (`packages/soothe/tests/unit/mcp/`)
-
-- `test_name_utils.py` — mangling, parsing, collision avoidance, no double-prefixing
-- `test_config_validation.py` — XOR command/url, transport-specific fields, env interpolation, unique names
-- `test_transport_factory.py` — each transport maps to correct `langchain_mcp_adapters` type
-- `test_reconnect_backoff.py` — exponential math, max attempts, jitter
-- `test_tool_filter.py` — fnmatch globs, allowlist semantics, re-application on list_changed
-- `test_cleanup_ladder.py` — SIGINT → SIGTERM → failsafe, no double-close
-- `test_budget_formatter.py` — full/truncated/names_only modes; essential vs non-essential
-- `test_progressive_registry.py` — partition, search_deferred, new_for_thread, bound_tools
-
-### Middleware tests (`packages/soothe/tests/unit/middleware/`)
-
-- `test_mcp_activation.py` — `search_mcp_tools` promotion, `awrap_model_call` binding, invoke-time promotion, disabled-server rejection
-- `test_mcp_resource_attachment.py` — `@server:uri` extraction, `<MCP_RESOURCE>` envelope
-- Extend `test_system_prompt.py` — `_compose_mcp_tools_block` delta, promoted exclusion
-
-### Registry tests
-
-- `test_mcp_registry_initialize.py` — concurrent batched connect, partial-failure handling
-- `test_mcp_registry_list_changed.py` — debounce, cache invalidation, event emission
-- `test_mcp_registry_reconnect.py` — remote retries, stdio no retry
-
-### Integration tests (`packages/soothe/tests/integration/mcp/`)
-
-- `test_stdio_echo_server.py` — fixture stdio echo server; connect → call → result
-- `test_streamable_http_server.py` — fixture HTTP server; bearer auth
-- `test_progressive_mcp_tool_surfacing.py` — 50 deferred tools, search → promote
-
-### Manual smoke
-
-```bash
-cd /Users/xiamingchen/Workspace/mirasurf/soothe
-./scripts/verify_finally.sh
-soothe daemon start --config /tmp/mcp-test.yml
-# /mcp → viewer shows connected server
-# "search MCP tools for file" → search_mcp_tools → mcp__filesystem__read_file
-# Langfuse: <AVAILABLE_MCP_TOOLS> block, soothe.mcp.tool.invoked event
-```
+Unit tests cover name mangling, config validation, transport factory mapping, reconnect backoff, tool filter globs, cleanup ladder, budget formatter, and progressive registry. Middleware tests cover `search_mcp_tools` promotion, `awrap_model_call` binding, invoke-time promotion, disabled-server rejection, resource attachment, and `<AVAILABLE_MCP_TOOLS>` delta. Registry tests cover concurrent batched connect, partial-failure handling, `list_changed` debounce/cache invalidation, and remote/stdio reconnect semantics. Integration tests exercise fixture stdio/HTTP servers and progressive tool surfacing (50 deferred tools, search → promote).
 
 ## Implementation Status (2026-07-11)
 
-| Component | Status |
-|-----------|--------|
-| `MCPRegistry`, transports, reconnect, events | Landed |
-| `ProgressiveMCPRegistry`, `mcp_activation` state | Landed (IG-576) |
-| `MCPActivationMiddleware` + `awrap_model_call` binding | Landed (IG-576) |
-| `search_mcp_tools` (auto when deferred tools exist) | Landed (IG-576) |
-| `format_mcp_tools_within_budget`, `<AVAILABLE_MCP_TOOLS>` | Landed |
-| `mcp_resources_list` / `mcp_resources_read` | Landed |
-| MCP prompts in wire entries | Landed |
-| Policy gating on MCP operations | Partial |
-| `list_changed` notification handling | Partial (placeholder) |
+`MCPRegistry`, transports, reconnect, events, `ProgressiveMCPRegistry` + `mcp_activation` state, `MCPActivationMiddleware` + `awrap_model_call` binding, `search_mcp_tools`, `format_mcp_tools_within_budget` + `<AVAILABLE_MCP_TOOLS>`, `mcp_resources_list` / `mcp_resources_read`, and MCP prompts in wire entries have landed (IG-576). Policy gating on MCP operations and `list_changed` notification handling remain partial.
 
 ## Open Questions
 
@@ -923,10 +873,6 @@ soothe daemon start --config /tmp/mcp-test.yml
 - [RFC-100: CoreAgent Runtime](RFC-100-coreagent-runtime.md)
 - [RFC-101: Tool Interface](RFC-101-tool-interface.md)
 - [RFC-105: Progressive Skill Loading](RFC-105-progressive-skill-loading.md)
-- [RFC-214: StrangeLoop Loop Message Surface](RFC-214-strangeloop-loop-message-surface.md)
 - [RFC-305: Policy Protocol Architecture](RFC-305-policy-protocol-architecture.md)
 - [RFC-600: Plugin Extension System](RFC-600-plugin-extension-system.md)
-- `Design Draft: MCP Management`
 - [Revision Draft: MCP Progressive Loading](../drafts/2026-07-11-mcp-progressive-loading-design.md)
-- [RFC Standard](./templates/rfc-standard.md)
-- [RFC Index](./rfc-index.md)

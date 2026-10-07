@@ -5,9 +5,9 @@
 **Status**: Draft
 **Kind**: Architecture Design
 **Created**: 2026-04-22
-**Dependencies**: RFC-207 (Thread Lifecycle & Goal Context), RFC-450 (Daemon Communication), RFC-500 (CLI/TUI), RFC-454 (Slash Commands)
-**Author**: Claude Sonnet 4.6
 **Updated**: 2026-04-22
+**Authors**: Claude Sonnet 4.6
+**Depends on**: RFC-207, RFC-450, RFC-500, RFC-454
 
 ---
 
@@ -548,56 +548,7 @@ await handle_loop_subscribe(client_id, loop_abc123)
 
 ## Implementation Tasks
 
-### Phase 1: CLI Refactoring
-- Replace `soothe thread` → `soothe loop` commands
-- Replace `--thread` → `--loop` flag
-- Add new loop commands: `tree`, `prune`, `switch`, `new`, `status`
-- Update default execution behavior (active loop)
-
-### Phase 2: TUI Refactoring
-- Replace thread selector → loop selector
-- Replace thread status bar → loop status bar
-- Replace thread history cards → loop history cards
-- Update thread switch notification (internal disclosure)
-- Update welcome banner (loop-based)
-
-### Phase 3: Daemon Protocol Refactoring
-- Remove thread-level WebSocket APIs
-- Add loop-level WebSocket APIs
-- Replace thread subscriptions → loop subscriptions
-- Replace thread input → loop input
-- Update event routing (thread topics → loop topics)
-
-### Phase 4: Slash Commands Refactoring
-- Remove `/thread` commands
-- Add `/loop` commands
-- Update existing commands to loop-scoped
-
-### Phase 5: SootheRunner Refactoring
-- Replace thread-scoped → loop-scoped execution
-- Add loop_manager (primary)
-- Keep thread_manager (internal)
-- Update thread switch logic (internal decision)
-
-### Phase 6: Session Management Refactoring
-- Replace thread sessions → loop sessions
-- Update subscription logic (loop topics)
-- Update reattachment workflow (loop checkpoint reconstruction)
-
----
-
-## Success Criteria
-
-1. Users interact with loops (not threads) ✓
-2. CLI commands are loop-based ✓
-3. TUI displays loops (threads hidden) ✓
-4. Daemon APIs are loop-level ✓
-5. Slash commands are loop-scoped ✓
-6. SootheRunner is loop-scoped ✓
-7. Client sessions are loop-scoped ✓
-8. Thread IDs are internal (not user-facing) ✓
-9. Thread switches are invisible to users ✓
-10. History reconstruction is loop-based ✓
+Migration spans six layers: CLI (`soothe thread` → `soothe loop` commands, `--thread` → `--loop`, new `tree`/`prune`/`switch`/`new`/`status` subcommands); TUI (loop selector, status bar, history cards, internal-only thread switch notification, loop-based welcome banner); daemon protocol (remove thread-level WebSocket APIs, add loop-level APIs, replace thread subscriptions with loop subscriptions, switch event routing to loop topics); slash commands (remove `/thread`, add `/loop`, scope existing commands to loop); SootheRunner (loop-scoped execution with internal thread_manager); and session management (loop-scoped sessions, loop checkpoint reconstruction on reattach).
 
 ---
 
@@ -608,7 +559,6 @@ await handle_loop_subscribe(client_id, loop_abc123)
 - RFC-500: CLI/TUI Architecture
 - RFC-454: Slash Command Architecture
 - RFC-803: StrangeLoop Persistence Backend
-- RFC-411: Event Stream Replay
 
 ---
 
