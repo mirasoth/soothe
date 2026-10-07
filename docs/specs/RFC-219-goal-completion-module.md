@@ -6,9 +6,9 @@
 **Kind**: Architecture Design
 **Created**: 2026-04-28
 **Authors**: Soothe Team
-**Last Updated**: 2026-08-08
-**Dependencies**: RFC-201, RFC-603
-**Related**: IG-199, IG-295, IG-296, IG-355, IG-400, IG-580, IG-567
+**Updated**: 2026-08-08
+**Depends on**: RFC-201, RFC-603
+**Related**: IG-199, IG-295, IG-355, IG-400, IG-580
 
 ---
 
@@ -541,33 +541,7 @@ if should_use_adaptive_summary(state, plan_result):
 
 ## Migration Strategy
 
-**IG-297 Implementation Plan** (original goal completion extraction):
-
-1. Create module structure (`completion/` directory)
-2. Extract ResponseCategorizer (lines 343-377 from strange_loop.py)
-3. Extract SynthesisExecutor (lines 419-489 from strange_loop.py)
-4. Extract CompletionStrategies (lines 391-495 decision tree from strange_loop.py)
-5. Create GoalCompletionModule orchestrator
-6. Simplify strange_loop.py (replace ~200 lines with module call)
-7. Add unit tests for each module
-8. Run verification suite
-
-**IG-400 Implementation Plan** (PlanManager/PlanDAG architecture):
-
-1. Create `plan_dag.py` with PlanDAG dataclass (nodes keyed by step.id)
-2. Create `plan_manager.py` with PlanManager dataclass + CompletionStrategy enum
-3. Move `determine_goal_completion_needs` from `goal_completion_policy.py` into PlanManager
-4. Migrate heuristic checks into PlanManager methods
-5. Delete `goal_completion_policy.py` (functionality fully migrated)
-6. Update imports in `policies/__init__.py` and graph nodes
-7. Align tests with step.id-based keys (not composite IDs)
-8. Verify all 300+ tests pass
-
-**Preservation Guarantees**:
-- ✅ IG-295 fix preserved (planner recommendation honored)
-- ✅ IG-296 refactoring preserved (synthesis_policy module)
-- ✅ No behavior changes (pure refactoring)
-- ✅ All existing tests pass
+IG-297 extracted `ResponseCategorizer`, `SynthesisExecutor`, and `CompletionStrategies` from `strange_loop.py` and created the `GoalCompletionModule` orchestrator, simplifying the main loop from ~200 lines to ~10. IG-400 introduced `PlanManager`/`PlanDAG` and migrated `determine_goal_completion_needs` from `goal_completion_policy.py` (now deleted). IG-580 removed content heuristics (`is_rich_enough`, `overlaps_with_plan_output`) in favor of structural rules. IG-295 (planner recommendation honored) and IG-296 (synthesis_policy module) fixes are preserved.
 
 ---
 

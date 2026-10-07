@@ -5,39 +5,16 @@
 **Status**: Draft
 **Kind**: Architecture Design
 **Created**: 2026-04-16
-**Last Updated**: 2026-08-08
-**Author**: Soothe contributors
-**Extends**: RFC-450 (Daemon Communication Protocol)
-**Related**: RFC-500 (CLI/TUI Architecture), IG-176 (Move Rich to CLI)
-**Implementation**: IG-176 (Rich rendering), command routing in progress
+**Updated**: 2026-08-08
+**Authors**: Soothe contributors
+**Depends on**: RFC-450
+**Related**: RFC-500, IG-176
 
 ---
 
 ## Implementation Status
 
-### Completed
-
-| Component | Status |
-|-----------|--------|
-| Rich rendering moved to CLI | ✅ IG-176 |
-| CLI-only commands (`/help`, `/keymaps`) | ✅ Implemented |
-| Daemon returns structured data | ✅ Implemented |
-
-### In Progress
-
-| Component | Status |
-|-----------|--------|
-| `command_request` message type | ⚠️ Wire protocol pending |
-| CLI rendering wired to daemon events | ⚠️ Integration pending |
-| Command parsing consolidated in CLI | ⚠️ Partial - some parsing in daemon |
-| Command routing (`_handle_command()`) | ⚠️ Needs refactoring |
-
-### Architectural Issues to Resolve
-
-1. **Command parsing split**: Both CLI and daemon parse commands - needs consolidation
-2. **No command registry**: Daemon handles all commands in single `_handle_command()` method
-3. **No API contract**: Commands sent as user input, daemon parses to detect
-4. **Daemon knows CLI-only commands**: Daemon defines `/help`, `/keymaps` locally
+Rich rendering moved to CLI (IG-176); CLI-only commands (`/help`, `/keymaps`) and daemon structured-data responses are implemented. Pending: `command_request` wire protocol, CLI rendering wired to daemon events, command parsing consolidation, and `_handle_command()` routing refactor. Open architectural issues: command parsing split between CLI and daemon, no command registry (daemon handles all commands in single `_handle_command()`), no API contract (commands sent as user input), daemon defines CLI-only commands locally.
 
 ---
 
@@ -568,26 +545,9 @@ async def _handle_input(self, client_id: str, msg: dict[str, Any]) -> None:
 
 ## Implementation Phases
 
-1. **Remove old code** - Delete `_handle_command`, `_SLASH_COMMANDS_HELP`, etc.
-2. **CLI registry/router** - Create `COMMANDS` dict, command_router.py
-3. **Daemon RPC handler** - Implement `_handle_command_request` and individual handlers
-4. **Wire CLI event processor** - Add `command_response` handling
-5. **Update tests** - New tests for registry, router, handlers
-6. **Documentation** - Update RFC-302 spec, user guide
+Cut change: delete `_handle_command`, `_SLASH_COMMANDS_HELP`, etc.; create CLI `COMMANDS` dict + `command_router.py`; implement daemon `_handle_command_request` and individual handlers; wire CLI event processor for `command_response`; update tests and RFC-302 spec / user guide.
 
----
-
-## Verification
-
-**Success criteria**:
-1. ✅ Daemon has NO knowledge of CLI-only commands
-2. ✅ CLI has single unified command registry
-3. ✅ RPC commands use structured protocol (`command_request`/`command_response`)
-4. ✅ Routing commands use plain text input (existing path)
-5. ✅ Zero backward compatibility code
-6. ✅ All tests pass
-7. ✅ Daemon linting: zero errors (no UI imports)
-8. ✅ CLI does not import daemon runtime
+**Success criteria:** daemon has no knowledge of CLI-only commands; CLI has a single unified command registry; RPC commands use structured protocol; routing commands use plain text input; zero backward-compatibility code; daemon linting has zero UI imports; CLI does not import daemon runtime.
 
 ---
 
@@ -601,7 +561,7 @@ async def _handle_input(self, client_id: str, msg: dict[str, Any]) -> None:
 
 ## References
 
-- RFC-302: Daemon Communication Protocol
+- RFC-450: Daemon Communication Protocol
 - RFC-500: CLI/TUI Architecture
 - IG-176: Move Rich to CLI
 - RFC-000: System Conceptual Design

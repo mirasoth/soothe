@@ -7,9 +7,8 @@
 **Created**: 2026-06-02
 **Authors**: Soothe Team
 **Updated**: 2026-08-27
-**Depends on**: RFC-220 (Agentic Goal Execution / StrangeLoop), RFC-231 (LoopRail + Rail Exec), RFC-600 (Plugin Extension System), RFC-601 (Built-in Agents), RFC-403 (Unified Event Naming)
-**Supersedes**: Empty-answer auto-resume behavior currently encoded in `sloop/engine/graph_interrupt.py::build_auto_resume_payload` for `type=="ask_user"` interrupts.
-**Revisions**: [2026-10-07](#changelog) — terminology cleanse: "autopilot" → "loop-rail runs" / "headless runs" / "LoopRailService" throughout; semantics unchanged. RFC-222 dependency replaced by RFC-231 (RFC-222 archived 2026-10-07; CE report-commit boundary now normative in RFC-231 §4/§17). | [2026-08-27](#changelog) — §9b.5a Manual-mode pipeline pre-filter + `manual_scope`; force-manual `tool_approval` skips allow rules; §9b.5, §9b.8, §12 updated. | [2026-08-27](#changelog) — §9c Structured ask_user schema + `StructuredAskUserWidget`; §2.1, §4.2, §4.3, §5.1, §6, §10, §15, §17 updated. | [2026-08-27](#changelog) — §9b Multi-stage tool-approval pipeline; §2.1, §4.2, §4.3, §6, §12 updated.
+**Depends on**: RFC-220, RFC-231, RFC-600, RFC-601, RFC-403
+**Supersedes**: Empty-answer auto-resume behavior previously encoded in `sloop/engine/graph_interrupt.py::build_auto_resume_payload` for `type=="ask_user"` interrupts.
 
 ---
 
@@ -966,44 +965,8 @@ Integration:
 
 ## Changelog
 
-### 2026-08-27 (Revised — §9b.5a Manual-mode pre-filter + force-manual allow-rule skip)
-- **§9b.5a added**: in manual clarification mode the pipeline pre-filters the human relay. Deny/safety stages always auto-reject dangerous actions (no "approve `rm -rf`?" prompts); allow rules auto-approve only under the new `tool_approval.manual_scope: ambiguous_only` (default `all`). Pre-filter skipped on the auto→manual upgrade path and when `tool_approval.enabled: false`.
-- **§9b.5 fixed**: `AutoClarificationPolicy` passes `include_allow_rules=not requires_manual(origin)` — force-manual `tool_approval` now truly routes non-rejected actions to the human instead of allow-rule auto-approvals bypassing the operator's intent. Deny/safety still auto-reject (safety property).
-- **§9b.8 extended**: safety properties 8 (deny/safety mode-independent) and 9 (auto-approval mode-gated).
-- **§12 config**: `manual_scope` added to the `tool_approval` sub-block; prose on manual-mode semantics.
-- `ToolApprovalPipeline.evaluate` gains `include_allow_rules` kwarg; `InteractiveClarificationPolicy` gains `tool_approval_pipeline` / `manual_allow_rules` init args; `runtime_factory` wires the pipeline in manual mode.
-
-### 2026-08-27 (Revised — §9c Structured ask_user schema + widget)
-- **§9c added**: `ask_user` tool args change from `list[str]` to `list[QuestionSpec]` (title ≤3 words, description ≤100 words, exactly 3 options with short+long, recommended index). New `StructuredAskUserWidget` in the CLI with tab navigation (←/→), inline per-option long-desc rendering (↑/↓ + Enter), 4th custom free-text row, persistent Submit/Abandon footer with inline recap. Applies to generic (execute) render path only; HITL plan-review and tool-approval modes untouched.
-- **§2.1 scope** extended: structured schema + widget added to in-scope.
-- **§2.2 non-goals** extended: HITL structured-option support explicitly out of scope (future RFC).
-- **§4.2 components** extended: `StructuredAskUserWidget`, `QuestionSpec`/`OptionSpec` added.
-- **§4.3 changed components** extended: `ask_user.py` (schema + validators), `clarification.py` (generic path deleted), `textual_adapter.py` (routing by payload shape).
-- **§5.1 flow** updated: interrupt payload now carries `QuestionSpec` objects.
-- **§6.1** `ClarificationRequest.questions` now `list[QuestionSpec | Text]`.
-- **§6.1a** `QuestionSpec`/`OptionSpec` schemas added.
-- **§10 TUI** extended: structured widget row added.
-- **§15 testing** extended: `test_ask_user_tool.py` (schema validation), `test_structured_ask_user.py` (widget navigation).
-- **§17 open items**: first item (structured marker shape) resolved by §9c; HITL unification added as future RFC.
-- Design draft: `docs/drafts/2026-08-27-structured-ask-user-widget-design.md`
-
-### 2026-08-24 (Revised — RFC-623 robustness)
-- `veritas` migrated onto `invoke_structured_chat` shared helper.
-- Dynamic per-request JSON Schema (`build_veritas_response_schema`) enforces "exactly N answers or defer" structurally.
-- `DeferKind` taxonomy attached to `ClarificationDeferredError` and event payload.
-- Interactive fallback (`InteractiveClarificationPolicy`) wired when veritas fails (`structured_output_failed`) and a human is attached.
-- `tool_approval` origin added to `CLARIFICATION_ORIGINS`; default `force_manual_origins` excludes it so safe tool calls auto-approve via veritas's security-approver prompt.
-- See RFC-623 for the full robustness specification.
-
-### 2026-08-27 (Revised — §9b Multi-stage tool-approval pipeline)
-- **§9b added**: deterministic deny → safety → allow pipeline for `tool_approval` origin. Stages 1–3 resolve most tool-approval interrupts without an LLM; veritas remains the final guard (Stage 4) with a slim prompt and `fast` model role.
-- **§2.1 scope** extended: pipeline + config added to in-scope.
-- **§2.2 non-goals** extended: rule persistence / TUI "always allow" and sandboxing explicitly out of scope.
-- **§4.2 components** extended: `ToolApprovalPipeline`, `ToolApprovalRule` matcher, `ToolSafetyCheck` added.
-- **§4.3 changed components** extended: `protocol.py` (`metadata`, `"static"`), `detector.py` (populates `metadata`), `auto.py` (pipeline short-circuit), `selector.py`, `runtime_factory.py` (dual-model wiring), `prompts.py` (slim variant), `config/models.py` (`ToolApprovalConfig`).
-- **§6.1** `ClarificationRequest` gains `metadata: Map[Text, Any] = {}` field.
-- **§6.2** `ClarificationAnswer.source` gains `"static"` literal.
-- **§12 config** extended: `agent.clarification.tool_approval.*` sub-block with deny_rules, allow_rules, veritas_fallback, audit.
-- **§15 testing** extended: `test_tool_rule_matcher.py`, `test_tool_safety_check.py`, `test_tool_approval_pipeline.py`, extended `test_tool_approval_bridge.py`.
-- Design draft: `docs/drafts/2026-08-27-tool-approval-pipeline-design.md`
-- Pattern reference: Claude Code `utils/permissions/` (`permissions.ts`, `filesystem.ts`, `shellRuleMatching.ts`, `dangerousPatterns.ts`).
+- 2026-10-07: Terminology cleanse "autopilot" → "loop-rail runs" / "headless runs" / "LoopRailService" throughout; semantics unchanged. RFC-222 dependency replaced by RFC-231 (RFC-222 archived 2026-10-07; CE report-commit boundary now normative in RFC-231 §4/§17).
+- 2026-08-27: §9b.5a Manual-mode pipeline pre-filter + `manual_scope`; force-manual `tool_approval` skips allow rules; §9b.5, §9b.8, §12 updated. `ToolApprovalPipeline.evaluate` gains `include_allow_rules` kwarg; `InteractiveClarificationPolicy` gains `tool_approval_pipeline` / `manual_allow_rules` init args.
+- 2026-08-27: §9c Structured `ask_user` schema + `StructuredAskUserWidget` (tab navigation, inline long-desc per option, 4th custom free-text row, persistent Submit/Abandon footer). Applies to generic execute render path only; HITL plan-review and tool-approval modes untouched.
+- 2026-08-24: §RFC-623 robustness — `veritas` migrated onto `invoke_structured_chat`; dynamic per-request JSON Schema enforces "exactly N answers or defer"; `DeferKind` taxonomy on `ClarificationDeferredError` and event payload; interactive fallback wired when veritas fails; `tool_approval` origin added to `CLARIFICATION_ORIGINS`.
+- 2026-08-27: §9b Multi-stage tool-approval pipeline (deny → safety → allow → veritas) for `tool_approval` origin; `ToolApprovalPipeline`, `ToolApprovalRule` matcher, `ToolSafetyCheck` added; `ClarificationRequest.metadata` field; `ClarificationAnswer.source` gains `"static"` literal; `agent.clarification.tool_approval.*` sub-block in config.

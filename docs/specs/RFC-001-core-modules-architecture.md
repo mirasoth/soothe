@@ -7,11 +7,11 @@
 **Created**: 2026-03-12
 **Authors**: Soothe Team
 **Updated**: 2026-04-17 (RFC consolidation; retrieval module canonical in RFC-302)
-**Related**: RFC-000, RFC-200, RFC-302, RFC-303
+**Related**: RFC-000, RFC-302, RFC-303, RFC-305
 
 ## Abstract
 
-This RFC defines the architecture for eight core protocol modules that Soothe implements beyond what deepagents and the langchain ecosystem provide. Each module follows the pattern: **protocol (abstract) -> data models (Pydantic) -> default implementation (langchain-friendly) -> integration point**.
+Defines the architecture for Soothe's core protocol modules beyond deepagents/langchain: each module follows the pattern *protocol (abstract) → data models (Pydantic) → default implementation (langchain-friendly) → integration point*. Context, Memory, Planner, Policy, and Durability protocols have been extracted into dedicated RFCs (RFC-302–RFC-306); this RFC retains ConcurrencyPolicy, VectorStoreProtocol, and the protocol composition wiring.
 
 ## Module 1: ContextProtocol (Cognitive Context Engineering)
 

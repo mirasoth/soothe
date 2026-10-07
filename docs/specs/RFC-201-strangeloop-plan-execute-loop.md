@@ -7,9 +7,9 @@
 **Kind**: Architecture Design
 **Created**: 2026-04-17
 **Authors**: Soothe Team
-**Last Updated**: 2026-08-19
-**Dependencies**: RFC-000, RFC-001, RFC-100
-**Related**: RFC-203 (State), RFC-207 (Thread), RFC-213 (Reasoning), RFC-219 (Goal Completion), RFC-220 (LangGraph Orchestrator), RFC-904
+**Updated**: 2026-08-19
+**Depends on**: RFC-000, RFC-001, RFC-100
+**Related**: RFC-203, RFC-207, RFC-213, RFC-219, RFC-220
 
 ---
 
@@ -213,139 +213,48 @@ The normative interchange for passing execution hints into CoreAgent today is **
 
 ## Plan-Execute Loop Model
 
-### Execution Flow
-
-```text
-Goal → while iteration < max_iterations:
-  PLAN: Produce PlanResult (plan assessment + progress judgment + next steps)
-  EXECUTE: Execute steps via Layer 1 CoreAgent, collect evidence
-  Decision: "done" (return), "replan" (new plan), "continue" (reuse plan)
-```
-
-**Iteration Semantics**:
-- Max ~8 iterations
-- Decision reuse (skip PLAN if strategy valid)
-- Goal-directed judgment (evaluate progress toward goal, not plan completion)
-
-### Iteration Flow Example
-
-```
-Iteration 1: PLAN (create 4 steps) → EXECUTE (execute 1-2) → "continue"
-Iteration 2: [Skip PLAN] → EXECUTE (execute 3-4) → "replan"
-Iteration 3: PLAN (create 3 new steps) → EXECUTE → "done"
-Return PlanResult
-```
+> **Removed 2026-10-07 — superseded by RFC-220 / RFC-904.** The imperative
+> `while iteration < max_iterations: PLAN → EXECUTE` driver and the upfront
+> plan-wave iteration flow (planner emits full PlanResult waves; reuse/replan
+> decisions across waves) are obsolete. Layer 2 is a compiled LangGraph
+> `StateGraph` keyed by `loop_id` (RFC-220); upfront plan waves are replaced by
+> goal-as-root + recursive `decompose_task` (RFC-904).
 
 ---
 
 ## AgentDecision Model
 
-### Batch Execution Design
-
-```python
-class StepAction(BaseModel):
-    """Single step action within AgentDecision."""
-    description: str
-    """Human-readable step description."""
-    subagent: str | None = None
-    """Subagent suggestion for this step."""
-    expected_output: str
-    """Expected output description."""
-    dependencies: list[str] | None = None
-    """Step dependencies for DAG scheduling."""
-
-class AgentDecision(BaseModel):
-    """LLM decision output for Execute phase."""
-    type: Literal["execute_steps", "final"]
-    """Decision type: execute steps or final result."""
-    steps: list[StepAction]
-    """1 or N steps (hybrid flexibility)."""
-    execution_mode: Literal["parallel", "sequential", "dependency"]
-    """Execution mode for batch steps."""
-    reasoning: str
-    """LLM reasoning for this decision."""
-```
-
-**Batch Execution Properties**:
-- LLM decides 1 or N steps (adaptive granularity)
-- Execution mode (parallel/sequential/dependency)
-- Hybrid flexibility (step-level execution hints: subagent, expected output; no per-step tool allowlist in `StepAction`)
-
-**Cross-wave step DAG (IG-539)**: Each replan wave adds steps to the goal's unified `StepDAG`. New steps declare dependencies on prior-wave composite ids (`KFA-01`) via `dependencies` or `continues_from`. Plan-generate injects a **Step Anchor Registry** listing completed anchors; **Plan DAG Normalizer** validates edges before execute. See RFC-624 §3.1.
-
-**Legacy plan JSON**: A per-step `tools` array may still appear in older model output; the runtime maps known subagent names from that list onto `subagent` and does not pass ordinary tool names through `config.configurable` (IG-382).
-
-### Adaptive Step Granularity
-
-LLM decides step granularity based on goal clarity:
-- **Coarse steps**: Clear goals with semantic subtasks
-- **Fine steps**: Uncertain goals with atomic actions
-
-**Logic**: Goal uncertainty → fine steps (exploratory), Goal clarity → coarse steps (semantic tasks).
+> **Removed 2026-10-07 — superseded by RFC-904.** The batch plan-wave step
+> emission model (`StepAction` / `AgentDecision` with 1-or-N steps,
+> `execution_mode: parallel|sequential|dependency`, adaptive step granularity,
+> cross-wave Step Anchor Registry wiring) is obsolete. Step creation folds into
+> executor-bound `decompose_task` proposals reconciled by CE (RFC-904
+> §`decompose_task` Tool / §CE Reconciliation). Step DAG lineage and
+> `dependencies` continue to be normative under CE (RFC-624).
 
 ---
 
 ## PlanResult Model
 
-### Goal-Directed Evaluation
-
-```python
-class PlanResult(BaseModel):
-    """Single LLM call combining planning + judgment + next steps."""
-    status: Literal["continue", "replan", "done"]
-    """Decision status for iteration continuation."""
-    goal_progress: float = Field(ge=0.0, le=1.0)
-    """Progress toward goal (0.0-1.0)."""
-    confidence: float = Field(ge=0.0, le=1.0, default=0.8)
-    """Confidence in progress assessment."""
-    reasoning: str
-    """Natural language reasoning for decision."""
-    evidence_summary: str
-    """Accumulated evidence from step results."""
-    user_summary: str
-    """Human-readable progress summary."""
-    plan_action: Literal["keep", "new"]
-    """Reuse or replace plan decision."""
-    decision: AgentDecision | None
-    """New plan when plan_action=="new"."""
-    next_steps_hint: str
-    """Guidance for next Execute phase."""
-```
-
-**Planning Logic**:
-- Single LLM call combines: planning + progress assessment + goal-distance estimation
-- Decision criteria: done (goal achieved), continue (strategy valid, partial progress), replan (strategy failed)
+> **Removed 2026-10-07 — superseded by RFC-904 / RFC-213.** The single-LLM-call
+> `PlanResult` schema combining planning + progress assessment + goal-distance
+> estimation + next steps (`status`, `goal_progress`, `confidence`,
+> `plan_action`, `decision: AgentDecision`, `next_steps_hint`) is obsolete.
+> Assessment folds into the RFC-905 Eval thread; plan generation folds into
+> `decompose_task` (RFC-904). Goal-completion synthesis policy survives in
+> RFC-219.
 
 ---
 
 ## PLAN Phase
 
-### Planning Decision Logic
-
-**Iteration-Scoped Planning**: PLAN inside loop (not before loop starts).
-
-**Reuse Logic**:
-- Reuse plan if previous PlanResult.status == "continue" and has remaining steps (skip PLAN phase)
-- Create new plan (initial or replan) when PlanResult.status == "replan" or plan exhausted
-
-**Plan Metrics Enhancement**: Structured wave metrics inform Plan decisions.
-
-### GoalContext Construction for Plan
-
-**Dependency-Driven Retrieval**: Plan phase requires dependency-aware context synthesized from GoalEngine and ContextProtocol.
-
-**Synthesis Components**:
-1. **GoalEngine metadata**: Current goal priority, dependency goal IDs
-2. **ContextProtocol retrieval**:
-   - Dependency goals: retrieve execution history (5 entries per dependency)
-   - Current goal: goal-centric retrieval (10 entries)
-3. **GoalContextManager summaries**: Previous goal summaries (5 entries)
-
-**PlanContext Integration**: StrangeLoop calls `GoalContextConstructor.construct_plan_context(goal_id)` during PULL #1 before Plan phase.
-
-**Architectural Principle**: Goal dependencies define relevant context scope. Prerequisite goal execution history provides constraints and learned patterns for planning.
-
-### Plan Metrics Enhancement
+> **Removed 2026-10-07 — superseded by RFC-220 / RFC-904 / RFC-213.** The
+> iteration-scoped PLAN phase (reuse-vs-new planning logic, GoalContext
+> construction for Plan via dependency-driven retrieval, Plan Metrics
+> Enhancement) is obsolete. Planning folds into DISPATCH / THREAD do-or-decompose
+> with CE-reconciled proposals (RFC-904); the two-phase assess+generate pair is
+> removed (RFC-213). Goal-context construction and dependency-driven retrieval
+> remain normative under CE projection (RFC-624 §3).
 
 ---
 
@@ -565,16 +474,14 @@ agentic:
 
 ## Changelog
 
+### 2026-10-07
+- Removed superseded Plan-Execute Loop Model (imperative while-driver), AgentDecision Model (batch plan-wave emission), PlanResult Model (plan-wave assessment), and PLAN Phase (upfront planning) sections (per RFC-220 / RFC-904 / RFC-213). CoreAgent delegation, evidence handoff, stream events, and Layer 1/3 integration retained as normative.
+
 ### 2026-04-29
-- Aligned stream event table with current event contract (`soothe.cognition.strange_loop.reasoned`).
-- Clarified execute-phase suppression and tool-telemetry visibility semantics.
+- Aligned stream event table with `soothe.cognition.strange_loop.reasoned`; clarified execute-phase suppression and tool-telemetry visibility.
 
 ### 2026-04-17
-- Consolidated legacy Layer 2 loop/decision/result RFC fragments into this unified core loop architecture
-- Unified batch execution model with PlanResult goal-directed evaluation
-- Maintained all implementation status and configuration details
-- Added contamination prevention section (cross-wave, output duplication, premature continue)
-- Preserved stream events and metrics-driven planning logic
+- Consolidated legacy Layer 2 loop/decision/result RFC fragments into this unified core loop architecture with batch execution model, PlanResult goal-directed evaluation, contamination prevention, and metrics-driven planning.
 
 ---
 

@@ -7,9 +7,8 @@
 **Created**: 2026-06-16
 **Authors**: Soothe Team
 **Updated**: 2026-08-11
-**Dependencies**: RFC-624 (Context Engine), RFC-231 §17 (CE GoalNode.report commit — absorbs legacy RFC-625), RFC-203 (StrangeLoop State & Memory), RFC-201 (StrangeLoop Plan-Execute Loop)
-**Related**: RFC-450 (Job RPC Methods — absorbs legacy RFC-228), RFC-231 §4 + §14 (LoopRailService — absorbs legacy RFC-222), RFC-207 (Thread Lifecycle & Goal Context)
-**Extends**: RFC-231 §17 — entity model consolidation, LoopState elimination, job abstraction refinement
+**Depends on**: RFC-624, RFC-231, RFC-203, RFC-201
+**Related**: RFC-450, RFC-231, RFC-207
 
 ---
 
@@ -330,7 +329,7 @@ class ExecutionCheckpoint(BaseModel):
 | `foundation/context/models.py:GoalNode` | Add `max_iterations` field (from LoopState) |
 | `foundation/sloop/orchestrator/state.py` | Replace LoopState → ExecutionState |
 | `foundation/sloop/orchestrator/strange_loop.py` | Remove loop_messages list, use LedgerManager |
-| `foundation/autopilot/monitor.py` (legacy path) | Job operations → CE goal APIs |
+| `foundation/autopilot/monitor.py` (legacy path, removed per IG-779) | Job operations → CE goal APIs |
 
 ---
 

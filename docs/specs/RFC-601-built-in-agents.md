@@ -7,7 +7,7 @@
 **Created**: 2026-03-31
 **Updated**: 2026-04-05
 **Authors**: Soothe Team
-**Depends on**: RFC-600 (Plugin Extension System), RFC-301 (Protocol Registry)
+**Depends on**: RFC-600, RFC-301
 **Supersedes**: RFC-0004, RFC-0005, RFC-0021
 
 ---

@@ -5,11 +5,9 @@
 **Status**: Draft
 **Kind**: Implementation Interface Design
 **Created**: 2026-03-31
-**Last Updated**: 2026-08-08
-**Author**: Design brainstorming session
-**Design Draft**: `2026-03-31-thread-aware-workspace-design.md`
-**Depends On**: RFC-102 (Security Filesystem Policy), RFC-450 (Daemon Communication), RFC-452 (Thread Management)
-**Implementation**: Partial - context variables in place, full flow pending
+**Authors**: Design brainstorming session
+**Updated**: 2026-08-08
+**Depends on**: RFC-102 (Security Filesystem Policy), RFC-450 (Daemon Communication), RFC-452 (Thread Management)
 
 ## Abstract
 
@@ -478,12 +476,9 @@ None. All decisions finalized through design brainstorming session.
 
 ## References
 
-- Design Draft: `2026-03-31-thread-aware-workspace-design.md`
 - RFC-102: Secure Filesystem Path Handling
-- RFC-302: Daemon Communication Protocol
-- RFC-303: Unified Thread Management
-- Python `contextvars` documentation
-- LangGraph `RunnableConfig.configurable` pattern
+- RFC-450: Daemon Communication Protocol
+- RFC-452: Unified Thread Management
 
 ---
 

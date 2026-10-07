@@ -7,10 +7,9 @@
 **Created**: 2026-04-17
 **Updated**: 2026-08-20
 **Authors**: Claude Code
-**Dependencies**: RFC-200, RFC-203
-**Related**: RFC-207 (Thread), RFC-214 (plan-context human), RFC-603, RFC-604, IG-376, RFC-904, RFC-905
+**Depends on**: RFC-200, RFC-203
+**Related**: RFC-207, RFC-214, RFC-603, RFC-604, RFC-904
 **Partially Superseded By**: RFC-904 (per-iteration assess+generate pair → `decompose_task`); RFC-905 (coverage Eval thread; GapResult / assess-only ROOT_EVAL withdrawn)
-**Implementation**: IG-372 (two-phase plan), IG-329 (PlanResult consolidation), IG-376 (reasoning quality)
 
 ---
 
@@ -94,77 +93,24 @@ def evaluate_progressive_decision(
 
 ## Two-Phase Plan Architecture
 
-### StatusAssessment + PlanGeneration
-
-Two-phase Plan architecture improves token efficiency by separating status assessment from plan generation:
-
-**Phase 1: StatusAssessment** (Low token cost; IG-372 assess-only prompt):
-- Evaluate current progress (`goal_progress`, `confidence`)
-- Set `status` to `continue`, `replan`, or `done`
-- Set `require_goal_completion` when `status="done"` and a synthesis pass is still required
-- Output: `StatusAssessment` only (no `next_action` / `brief_reasoning` on this schema)
-
-**Phase 2: PlanGeneration** (Conditional, higher token cost; IG-329 plan-generate prompt):
-- Runs when `status != "done"` (not only on “replan” wording—both `continue` and `replan` may need refreshed steps)
-- Output: `PlanGeneration` with `plan_action`, `decision` (when `plan_action="new"`), `next_action` only
-- Merged with phase 1 in `LLMPlanner._combine_results` into `PlanResult` (RFC-604 §7.2)
-
-### Implementation
-
-Normative field lists and merge behavior: **RFC-604** and `soothe.core.strange_loop.state.schemas` (`StatusAssessment`, `PlanGeneration`, `PlanResult`). Code entry point: `soothe.core.strange_loop.core.planner.LLMPlanner.plan()` (assess then conditional generate; IG-372 prompt split, IG-329 trimmed plan-generate schema).
-
-### Token Efficiency
-
-**Traditional approach**: Single large structured plan+assess payload every iteration (high token cost, truncation risk).
-
-**Two-phase approach**:
-- Phase 1: compact `StatusAssessment` call (~tens to low hundreds of tokens; assess-only instructions)
-- Phase 2: `PlanGeneration` only when execution must continue (~hundreds of tokens; policies + `plan_generate` instructions)
-- When `status="done"` after phase 1, phase 2 is skipped entirely
-
-### LLMPlanner Integration
-
-At a high level: `plan()` builds `plan_phase="assess"` messages, invokes structured `StatusAssessment`, then—if not done—builds `plan_phase="generate"` messages, appends assess summary as an extra `SystemMessage`, invokes structured `PlanGeneration`, and returns `_combine_results(assessment, plan_result)`. See RFC-604 and `planner.py` for retries and evidence adjustments.
+> **Removed 2026-10-07 — superseded by RFC-904.** The per-iteration
+> assess+generate pair (`StatusAssessment` + `PlanGeneration` merged into
+> `PlanResult` via `LLMPlanner._combine_results`) is obsolete; plan generation
+> folds into executor-bound `decompose_task` (RFC-904 §`decompose_task` Tool).
+> Coverage assessment is the RFC-905 **Eval thread**, not assess-only
+> ROOT_EVAL / `PlanGapAnalysis` / `StatusAssessment`. Normative field lists and
+> merge behavior previously documented here now live in RFC-604 and
+> `soothe.core.strange_loop.state.schemas`.
 
 ---
 
 ## Reasoning Flow Integration
 
-### Combined Reasoning Process
-
-```
-StrangeLoop Iteration:
-  ├─ PLAN Phase:
-  │   ├─ Two-Phase Plan Architecture:
-  │   │   ├─ Phase 1: StatusAssessment
-  │   │   │   ├─ Evaluate progress
-  │   │   │   ├─ Assess goal distance
-  │   │   │   └─ Determine replan need
-  │   │   │
-  │   │   ├─ Phase 2: PlanGeneration (if status != done; IG-329 schema)
-  │   │   │   ├─ Structured PlanGeneration (plan_action, decision, next_action)
-  │   │   │   └─ Merge with assess → PlanResult
-  │   │   │
-  │   │   └─ Progressive Action Strategy:
-  │   │       ├─ Evidence-driven decision
-  │   │       ├─ Strategy refinement
-  │   │       └─ Action progression
-  │   │
-  │   └─ Output: PlanResult
-  │
-  ├─ EXECUTE Phase:
-  │   ├─ Execute steps
-  │   ├─ Collect evidence
-  │   └─ Metrics aggregation
-  │
-  └─ Decision:
-      ├─ Progressive decision logic:
-      │   ├─ Evidence evaluation
-      │   ├─ Threshold comparison
-      │   └─ Strategy refinement decision
-      │
-      └─ "done", "continue", "replan"
-```
+> **Removed 2026-10-07 — superseded by RFC-904.** The combined reasoning
+> process diagram (PLAN Phase → Two-Phase Plan Architecture → Progressive
+> Action Strategy → EXECUTE Phase → Progressive decision logic) only existed
+> to support the per-iteration assess+generate pair, which folds into
+> executor-bound `decompose_task` (RFC-904).
 
 ---
 
@@ -183,10 +129,7 @@ agentic:
         error_rate: 0.2
         iteration_progress: 0.1
 
-    two_phase_plan:
-      enabled: true
-      phase1_max_tokens: 150
-      phase2_max_tokens: 500
+    # two_phase_plan: removed 2026-10-07 — superseded by RFC-904 decompose_task.
 ```
 
 ---
@@ -207,23 +150,22 @@ agentic:
 
 - RFC-200: StrangeLoop Plan-Execute Loop Architecture
 - RFC-203: StrangeLoop State & Memory Architecture
-- RFC-603: Reasoning Quality Progressive Actions (original source); **§3.2** documents `goal_progress` as assess-model output only (IG-376)
-- RFC-604: Plan Phase Robustness (original source); abstract notes `goal_progress` / `confidence` post-processing split
+- RFC-603: Reasoning Quality Progressive Actions; §3.2 documents `goal_progress` as assess-model output only (IG-376)
+- RFC-604: Plan Phase Robustness; abstract notes `goal_progress` / `confidence` post-processing split
 - RFC-214: Loop message surface — plan-context `Goal` + `Execute iteration` header for assess
 
 ---
 
 ## Changelog
 
+### 2026-10-07
+- Removed superseded Two-Phase Plan Architecture and Reasoning Flow Integration sections (per RFC-904 / RFC-905). Historical Progressive Action Strategy retained as design-decision record.
+
 ### 2026-05-04
-- Documented alignment with IG-376 / RFC-603 §3.2 / RFC-604 / RFC-214 for StatusAssessment `goal_progress` and plan human formatting.
-- IG-329: two-phase section updated for assess-only `StatusAssessment`, trimmed `PlanGeneration`, and plan-generate instructions (`plan_generate_instructions.xml`).
+- Aligned with IG-376 / RFC-603 §3.2 / RFC-604 / RFC-214 for StatusAssessment `goal_progress` and plan human formatting; IG-329 trimmed `PlanGeneration` schema and added `plan_generate_instructions.xml`.
 
 ### 2026-04-17
-- Consolidated RFC-213 (Progressive Actions) and RFC-213 (Two-Phase Plan) into unified reasoning quality architecture
-- Combined evidence-driven progressive action strategy with two-phase Plan architecture
-- Unified reasoning flow integration with token efficiency optimization
-- Maintained implementation status and configuration details
+- Consolidated progressive-action strategy and two-phase Plan architecture into unified reasoning quality design.
 
 ---
 

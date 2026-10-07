@@ -6,10 +6,9 @@
 **Kind**: Architecture Design
 **Authors**: xiaming
 **Created**: 2026-05-29
-**Last Updated**: 2026-05-29
+**Updated**: 2026-05-29
 **Depends on**: RFC-220, RFC-225
-**Related**: RFC-214 (loop-message surface), RFC-217 (goal-context management), RFC-604 (reason-phase split)
-**Supersedes**: ---
+**Related**: RFC-214, RFC-217, RFC-604
 
 ---
 

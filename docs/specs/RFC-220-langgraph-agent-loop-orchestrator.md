@@ -6,12 +6,11 @@
 **Kind**: Architecture Design
 **Created**: 2026-05-05
 **Authors**: Soothe Team
-**Updated**: 2026-05-05
-**Implemented**: 2026-08-11
-**Dependencies**: RFC-000, RFC-001, RFC-100, RFC-604, RFC-803, RFC-218, RFC-219
+**Updated**: 2026-08-11
+**Depends on**: RFC-000, RFC-001, RFC-100, RFC-604, RFC-218
 **Supersedes**: RFC-201 §loop driver (imperative Plan → Execute driver)
 **Partially Superseded By**: RFC-903 (node lifecycle, node folds, typed route contract); RFC-904 (recursive step decomposition — plan/eval/execute station spine)
-**Related**: RFC-203, RFC-207, RFC-211, RFC-213, RFC-214, RFC-217
+**Related**: RFC-207, RFC-211, RFC-213, RFC-214, RFC-219
 
 ---
 
@@ -89,22 +88,13 @@ Files on disk remain aligned with existing layout: loop runtime under **`$SOOTHE
 
 ## Loop Graph Topology
 
-### Nodes (normative names)
-
-1. **`init_or_resume`** — Load or initialize loop checkpoint via `StrangeLoopStateManager`; construct `LoopState`; run single-shot intent classification for this loop entry; handle thread-continuation bootstrap where applicable.
-2. **`iteration_start`** — Iteration begin hooks; checkpoint anchors “start” (RFC-218).
-3. **`intent_fast_path`** — Terminal branch for intent `quiz`; emits graph event payload for runner to execute direct response flow without entering planning nodes.
-4. **`bounded_evidence_gather`** — Pre-plan placeholder node in current implementation (retained for topology compatibility).
-5. **`plan_assess`** — RFC-604 `StatusAssessment` structured call only.
-6. **`plan_pre_generate`** — Deterministic readonly preflight probe (max three probes) to collect baseline workspace evidence.
-7. **`plan_generate`** — RFC-604 `PlanGeneration` → `PlanResult` fragment merged into loop contract.
-8. **`validate_evidence_bindings`** — Deterministic validation: each step’s evidence references resolve to ledger entries and/or completed prior step ids in scope. On failure: bounded repair loop back to `plan_generate` and/or `bounded_evidence_gather`.
-9. **`execute`** — Existing Executor-style execution (parallel / sequential / dependency); streams CoreAgent; records `StepResult`s.
-10. **`record_iteration`** — Persist iteration, anchors “end”, emit iteration-complete semantics.
-11. **`goal_completion`** — RFC-219 policy branch (skip / direct / synthesize / summary); finalize goal output.
-
-Edges form a directed graph with back-edges only where validation and caps allow (no unbounded cycles).
-`init_or_resume` conditionally routes either to `intent_fast_path` or the normal iteration path.
+> **Removed 2026-10-07 — superseded by RFC-904 / RFC-903.** The historical
+> plan/eval/execute station spine (`init_or_resume`, `iteration_start`,
+> `intent_fast_path`, `bounded_evidence_gather`, `plan_assess`,
+> `plan_pre_generate`, `plan_generate`, `validate_evidence_bindings`,
+> `execute`, `record_iteration`, `goal_completion`) is replaced by the
+> DISPATCH / THREAD / RECONCILE / ROOT_EVAL work-queue (RFC-904) on the
+> `LoopNode` / `RouteDecision` contract (RFC-903). See RFC-904 §Topology.
 
 ---
 
@@ -126,9 +116,10 @@ Validation **rejects** plans where any step violates binding rules.
 
 ## Bounded Evidence Gathering
 
-- **Cap**: Global config for maximum tool invocations per gather phase (small integer).
-- **Allowlist**: Read-biased tools and policy-compliant actions only; exact list is policy- and product-dependent (documented in IG).
-- **Outputs**: Every successful gather produces ≥1 ledger row or explicit negative evidence row where applicable (implementation guide defines failure ledger semantics).
+> **Removed 2026-10-07 — superseded by RFC-904.** The `bounded_evidence_gather`
+> station and its evidence cap / allowlist / gather-output contract are
+> obsolete; evidence grounding folds into THREAD self-hygiene prompts and the
+> executor `read_only_streak_limit` backstop (RFC-904 §`decompose_task` Tool).
 
 ---
 
@@ -172,15 +163,19 @@ New configuration keys are introduced for evidence caps, allowlists, repair boun
 
 ---
 
-## Implementation Sequence
+## Implementation
 
-1. Follow **Implementation Guides** [IG-394](../archive/impl/IG-394-langgraph-agent-loop-orchestrator.md) and [IG-396](../archive/impl/IG-396-rfc-220-loop-graph-topology-langfuse.md).
-2. Implement Loop Graph + delete imperative loop.
-3. Reconcile dependent RFCs and docs in the same merge series.
-4. Run `./scripts/verify_finally.sh`; update RFC status to **Implemented** when complete.
+Follows [IG-394](../archive/impl/IG-394-langgraph-agent-loop-orchestrator.md) and [IG-396](../archive/impl/IG-396-rfc-220-loop-graph-topology-langfuse.md): implement Loop Graph + delete imperative loop, reconcile dependent RFCs and docs in the same merge series, run `./scripts/verify_finally.sh`, and update RFC status to **Implemented**.
 
 ---
 
 ## Summary
 
 RFC-220 normatively defines Layer 2 as a **LangGraph Loop Graph** keyed by **`loop_id`**, strictly isolated from CoreAgent’s **`thread_id`** graph, with **mandatory evidence-bound steps** and **no backward compatibility** with the imperative RFC-201 loop driver.
+
+---
+
+## Changelog
+
+### 2026-10-07
+- Removed superseded Loop Graph Topology (plan/eval/execute station spine) and Bounded Evidence Gathering sections (per RFC-904 / RFC-903). Identity/isolation rules, checkpoint keying, and CoreAgent isolation retained as normative.

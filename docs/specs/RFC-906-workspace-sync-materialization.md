@@ -5,8 +5,8 @@
 **Status**: Draft
 **Kind**: Architecture Design
 **Created**: 2026-09-01
-**Author**: Xiaming Chen
-**Depends On**: RFC-001 (Core Modules), RFC-102 (Security Filesystem Policy), RFC-621 (Workspace Host Convention), RFC-801/802 (Persistence Architecture), RFC-803 (StrangeLoop Checkpoint Backend)
+**Authors**: Xiaming Chen
+**Depends on**: RFC-001, RFC-102, RFC-621, RFC-801, RFC-803
 **Design Draft**: `docs/drafts/2026-09-01-workspace-sync-final-design.md`
 
 ## Abstract

@@ -7,8 +7,7 @@
 **Created**: 2026-04-27
 **Authors**: Soothe Team
 **Updated**: 2026-04-27
-**Dependencies**: RFC-000, RFC-001, RFC-450, RFC-401, RFC-403
-**Extends**: RFC-450 (Daemon Communication), RFC-401 (Event Processing)
+**Depends on**: RFC-000, RFC-001, RFC-450, RFC-401, RFC-403
 
 ## Abstract
 
@@ -251,70 +250,12 @@ CLI/TUI `EventProcessor` paths use these helpers to treat **`mode="messages"`** 
 
 ## Implementation Specification
 
-### Phase 1: Configuration Layer
-
-**Files Modified**:
-1. `packages/soothe/src/soothe/config/models.py` - Add `OutputStreamingConfig` model
-2. `packages/soothe/src/soothe/config/settings.py` - Add `output_streaming` field to `SootheConfig`
-3. `config/config.template.yml` - Add streaming section
-4. `config/develop/nano.yml` - Add streaming defaults (synchronized)
-5. `packages/soothe-cli/src/soothe_cli/config/cli_config.py` - Add override fields
-6. `packages/soothe-cli/src/soothe_cli/cli/main.py` - Add CLI flags
-
-**Config Pattern**: Follow `StrangeLoopConfig` structure (RFC-001 lines 563-646).
-
-**CRITICAL**: Both `config/config.template.yml` and `config/develop/nano.yml` must be updated synchronously per CLAUDE.md rule.
-
-### Phase 2: Runner Layer (Stream Generation)
-
-**Primary modules**:
-1. `packages/soothe/src/soothe/runner/_runner_strange_loop.py` — multiplex `stream_event` into client `mode="messages"` / `custom`, enforce IG-119 / IG-304 suppression, forward loop-tagged assistant chunks for configured phases.
-2. `packages/soothe/src/soothe/sloop/engine/strange_loop.py` — emit `stream_event` tuples consumed by the runner.
-
-**Forwarding contract** (summary): forward **tool UI** `messages` chunks; forward **loop assistant** `messages` chunks when `assistant_output_phase(...)` is non-null; suppress plain execute-phase assistant prose.
-
-### Phase 3: SDK (`soothe-sdk`)
-
-**Module**: `packages/soothe-sdk/src/soothe_sdk/ux/loop_stream.py` — documents allowed `phase` values and provides `assistant_output_phase()`.
-
-### Phase 4: Daemon Layer (Broadcast)
-
-**`query_engine.py`**: forwards runner chunks to WebSocket clients; **full-response** aggregation for persisted transcripts uses **`mode="messages"`** AI text extraction (not custom `soothe.output.*` assistant events).
-
-### Phase 5: Client Layer (Display & Concatenation)
-
-**Primary modules**:
-1. `packages/soothe-cli/src/soothe_cli/runtime/headless/processor.py` — `StreamingTextAccumulator` keyed by internal namespace for **`phase=goal_completion`** message streaming; message handlers use `assistant_output_phase` (`soothe_sdk.ux.loop_stream`).
-2. `packages/soothe-cli/src/soothe_cli/tui/textual_adapter.py` — mirrors the same `messages` + `phase` behavior for the TUI.
-
-**Goal-completion accumulation** (conceptual):
-```python
-# Pseudocode — see EventProcessor for the concrete implementation
-if assistant_output_phase(msg) == "goal_completion":
-    display_text = accumulator.accumulate(internal_key, text, namespace=ns, is_chunk=is_chunk)
-    ...
-```
-
-**Boundary Preservation Pattern**:
-Use existing `DisplayPolicy.filter_content(preserve_boundary_whitespace=True)` pattern (RFC-502):
-```python
-def _clean_assistant_text(self, text: str, is_streaming: bool) -> str:
-    """Clean text with boundary preservation for streaming chunks."""
-    return self._policy.filter_content(
-        text,
-        preserve_boundary_whitespace=is_streaming  # Preserve for chunks
-    )
-```
-
-### Phase 6: Testing & Verification
-
-**Test Coverage**:
-1. **Unit tests**: Accumulator state machine, boundary preservation, namespace isolation
-2. **Integration tests**: Config propagation, event generation, end-to-end streaming
-3. **Manual scenarios**: Config testing, execute-phase suppression + tool telemetry, goal-completion streaming, batch mode
-
-**Verification**:
-Run `./scripts/verify_finally.sh` (formatting + linting + 900+ unit tests).
+- **Configuration layer**: `OutputStreamingConfig` model in `packages/soothe/src/soothe/config/models.py`; `output_streaming` field on `SootheConfig` in `settings.py`; mirrored in `config/config.template.yml` and `config/develop/nano.yml`; CLI override fields in `soothe_cli/config/cli_config.py` and flags in `soothe_cli/cli/main.py`. Pattern follows `StrangeLoopConfig` structure; both YAML files MUST be synchronized per CLAUDE.md.
+- **Runner layer**: `packages/soothe/src/soothe/runner/_runner_strange_loop.py` multiplexes `stream_event` into client `mode="messages"` / `custom`, enforces IG-119 / IG-304 suppression, forwards loop-tagged assistant chunks for configured phases; `packages/soothe/src/soothe/sloop/engine/strange_loop.py` emits `stream_event` tuples.
+- **SDK**: `packages/soothe-sdk/src/soothe_sdk/ux/loop_stream.py` documents allowed `phase` values and provides `assistant_output_phase()`.
+- **Daemon layer**: `query_engine.py` forwards runner chunks to WebSocket clients; full-response aggregation for persisted transcripts uses `mode="messages"` AI text extraction.
+- **Client layer**: `packages/soothe-cli/src/soothe_cli/runtime/headless/processor.py` runs `StreamingTextAccumulator` keyed by internal namespace for `phase=goal_completion` message streaming; message handlers use `assistant_output_phase` (`soothe_sdk.ux.loop_stream`); `packages/soothe-cli/src/soothe_cli/tui/textual_adapter.py` mirrors the same `messages` + `phase` behavior for the TUI.
+- **Testing**: unit tests cover accumulator state machine, boundary preservation, namespace isolation, config propagation; integration tests cover config propagation, event generation, end-to-end streaming; manual scenarios cover config testing, execute-phase suppression + tool telemetry, synthesis streaming, boundary preservation, batch mode. Run `./scripts/verify_finally.sh`.
 
 ## Configuration Schema
 
@@ -654,15 +595,15 @@ Clients should send **`delivery_ack`** notifications after applying terminal fra
 
 ## Document History
 
-**Created**: 2026-04-27
-**Status**: Implemented — OutputStreamingConfig in config/models.py, stream_delivery (batch/adaptive/streaming), phase-based messages streaming, execute-phase suppression all shipped.
+**Created**: 2026-04-27. **Status**: Implemented — `OutputStreamingConfig` in `config/models.py`, `stream_delivery` (batch/adaptive/streaming), phase-based messages streaming, execute-phase suppression all shipped.
 
-**Revision History**:
-- v1.4 (2026-07-07): IG-556 — `stream_terminal`, `soothe.stream.end` scopes, strict ordering, `delivery_ack` drain
-- v1.3 (2026-07-01): IG-534 — goal-completion HIGH priority + block on overflow; per-client `stream_delivery`; user-visible NORMAL block at 90% queue
-- v1.2 (2026-04-29): Consistency polish — aligned examples/config semantics with daemon-side execute-phase suppression and goal-completion streaming contract
-- v1.1 (2026-04-28): IG-304 amendment — daemon-side suppression isolation, tool-only message forwarding, goal-completion output contract
-- v1.0 (2026-04-27): Initial RFC draft for unified streaming framework
+## Changelog
+
+- 2026-07-07: IG-556 — `stream_terminal`, `soothe.stream.end` scopes, strict ordering, `delivery_ack` drain.
+- 2026-07-01: IG-534 — goal-completion HIGH priority + block on overflow; per-client `stream_delivery`; user-visible NORMAL block at 90% queue.
+- 2026-04-29: Consistency polish — aligned examples/config semantics with daemon-side execute-phase suppression and goal-completion streaming contract.
+- 2026-04-28: IG-304 amendment — daemon-side suppression isolation, tool-only message forwarding, goal-completion output contract.
+- 2026-04-27: Initial RFC draft for unified streaming framework.
 
 ---
 

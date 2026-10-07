@@ -7,20 +7,10 @@
 **Created**: 2026-08-07
 **Updated**: 2026-10-07
 **Authors**: Soothe Team
-**Depends on**: RFC-624 (Context Engine), RFC-626 (Entity Model Consolidation), RFC-630 (Start-Phase LLM Intake)
-**Related**: RFC-232 (flat WavePlan wire ingest), RFC-622 (CoreAgent Clarification Relay), RFC-634 (AutoModeMiddleware inline tool-approval gate), RFC-635 (AskUserGateMiddleware), RFC-450 (Daemon Communication Protocol)
-**Supersedes**: RFC-204 (Autopilot Mode — report-commit judgment §1.3 absorbed into §4), RFC-222 (Autopilot Daemon — `LoopRailService` runtime defined here), RFC-228 (Autopilot Job IPC — `job_*` commands live under RFC-450), RFC-229 (Cron Service — §18 external submit path), RFC-230 (Job Maturity — §4 + §8), RFC-625 (AutopilotMonitor + CE unification — §17 CE `GoalNode.report` commit). All six archived 2026-10-07; see `docs/impl/IG-779-rfc-autopilot-cleansing-and-mode-alignment.md` for the cleansing rationale and migration mapping.
-**Promotes / extends**: LoopRail design draft (normative architecture for
-job-scoped rails; this RFC adds Rail Exec and user-defined verb bodies),
-`docs/drafts/2026-07-11-loop-rail-design.md`,
-design draft `docs/drafts/2026-08-08-llm-rail-auto-pick-design.md` (§10 selection),
-design draft `docs/drafts/2026-08-08-streaming-slice-dag-worktree-lifecycle-design.md`
-(§9 streaming slice DAG + host worktrees),
-design draft `docs/archive/drafts/2026-08-08-autopilot-report-commit-judgment-design.md`,
-IG-678, IG-687, IG-691, IG-692, IG-693, IG-700, IG-704, IG-714, IG-715, IG-720,
-IG-728 (LLM rail auto-pick)
-**Amended by**: RFC-232 (§9 — flat wire / nesting reject + optional slice
-`depends_on`); IG-728 implements §10 LLM auto-pick
+**Depends on**: RFC-624, RFC-626, RFC-630
+**Related**: RFC-232, RFC-622, RFC-634, RFC-635, RFC-450
+**Supersedes**: RFC-204 (report-commit judgment §1.3 absorbed into §4), RFC-222 (`LoopRailService` runtime defined here), RFC-228 (`job_*` commands live under RFC-450), RFC-229 (§18 external submit path), RFC-230 (§4 + §8), RFC-625 (§17 CE `GoalNode.report` commit). All six archived 2026-10-07; see [IG-779](../impl/IG-779-rfc-autopilot-cleansing-and-mode-alignment.md) for the cleansing rationale and migration mapping.
+**Amended by**: RFC-232 (§9 — flat wire / nesting reject + optional slice `depends_on`); IG-728 implements §10 LLM auto-pick
 
 ## Abstract
 
@@ -806,7 +796,7 @@ interactive).
 
 ## 18. Cron as external submit path (absorbed from RFC-229)
 
-Scheduled jobs are not autopilot-specific — they are ordinary loop-rail job
+Scheduled jobs are not special — they are ordinary loop-rail job
 submissions whose submit time is determined by a cron schedule rather than an
 operator or HTTP request. The `CronService` (in `soothe-daemon/cron/`)
 parses cron expressions, persists pending tasks, and dispatches due jobs

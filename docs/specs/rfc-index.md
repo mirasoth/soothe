@@ -1,23 +1,21 @@
 # RFC Index
 
 **Last Updated**: 2026-10-07
-**Total RFCs**: 93 (78 active, 15 archived)
+**Total RFCs**: 97 (81 active, 16 archived)
 
-This index provides a comprehensive catalog of all RFCs in the Soothe project.
-
-> **📋 Methodology Guide**: Before authoring a new RFC or transitioning an RFC's
-> status, consult the
-> [RFC Methodology Guide](../rfc-methodology-guide.md) — a reusable playbook
-> synthesizing lifecycle rules and gap-triage scoring.
+This index is the canonical catalog of all RFCs in the Soothe project. It also
+serves as the deprecation list and archived-RFC table.
 
 > **⚠️ Autopilot Cleansing (2026-10-07)**: The legacy `soothe-autopilot`
 > subsystem has been replaced in code by **LoopRail** (RFC-231) +
 > **ContextEngine** (RFC-624). Six RFCs were archived with their still-normative
 > content absorbed into RFC-231: RFC-204, RFC-222, RFC-228, RFC-229, RFC-230,
-> RFC-625. See
+> RFC-625. RFC-900 (process/deprecation scheme) was deleted — its content
+> duplicated this index and `rfc-history.md`. `docs/rfc-methodology-guide.md`
+> was also deleted — RFC templates now come from the platonic-coding skill's
+> shipped assets. See
 > [IG-779](../impl/IG-779-rfc-autopilot-cleansing-and-mode-alignment.md)
-> for the full migration mapping. Active RFCs that previously referenced these
-> archived RFCs now point to RFC-231 / RFC-624 / RFC-450 as appropriate.
+> for the full migration mapping.
 
 > **⚠️ Path Restructure Notice (2026-08)**: RFCs written before the 2026-07
 > `core/` → flat package restructure retain original design-time paths as
@@ -49,33 +47,29 @@ This index provides a comprehensive catalog of all RFCs in the Soothe project.
 | Draft | 38 |
 | Proposed | 2 |
 | Accepted | 1 |
-| Implemented | 30 |
+| Implemented | 29 |
 | Implemented (partial) | 6 |
 | Implemented (Partially Superseded) | 1 |
-| Archived | 15 |
+| Archived | 16 |
 
-> **Note**: Status values follow the lifecycle in `templates/rfc-standard.md`
-> (Draft → Proposed → Accepted → Implemented → Deprecated → Archived).
-> "Implemented (partial)" and "Implemented (Partially Superseded)" are
-> project-specific variants documenting in-progress or partially superseded
-> implementations. See individual RFC headers for authoritative per-RFC status.
-> Counts updated 2026-10-07 to reflect the autopilot cleansing (6 RFCs
-> archived).
+> **Note**: Status values follow the lifecycle: Draft → Proposed → Accepted →
+> Implemented → Deprecated → Archived. "Implemented (partial)" and
+> "Implemented (Partially Superseded)" are project-specific variants documenting
+> in-progress or partially superseded implementations. See individual RFC
+> headers for authoritative per-RFC status. Counts updated 2026-10-07: RFC-900
+> deleted (process spec duplicating this index + rfc-history); the deprecation
+> process is now inline in this index and `rfc-history.md`.
 
 ## RFC Kind Summary
 
 | Kind | Count |
 |------|-------|
-| Architecture Design | 69 |
-| Implementation Interface Design | 15 |
+| Architecture Design | 59 |
+| Implementation Interface Design | 17 |
 | Architecture Design + Implementation Interface Design | 2 |
 | Conceptual Design | 1 |
-| Protocol Specification | 1 |
 | Architecture Design + Protocol Specification | 1 |
-| Architecture Design / Impl Interface | 1 |
 | Feature Enhancement | 1 |
-| Process Specification | 1 |
-| Product Specification | 1 |
 
 ---
 
@@ -397,8 +391,8 @@ This index provides a comprehensive catalog of all RFCs in the Soothe project.
   - Kind: Architecture Design + Protocol Specification
   - Status: Draft
   - Created: 2026-03-19
-  - Depends on: RFC-000, RFC-001, RFC-500, RFC-614, RFC-403, RFC-900
-  - Updated: 2026-06-28
+  - Depends on: RFC-000, RFC-001, RFC-500, RFC-614, RFC-403
+  - Updated: 2026-10-07
 - **RFC-452**: [Unified Thread Management Architecture](RFC-452-unified-thread-management.md)
   - Kind: Architecture Design
   - Status: Implemented (partial)
@@ -672,14 +666,8 @@ This index provides a comprehensive catalog of all RFCs in the Soothe project.
   - Authors: Claude Sonnet 4.6
   - Updated: 2026-07-24
 
-### Process / Deprecation / Sloop (9xx)
+### Security / Sloop (9xx)
 
-- **RFC-900**: [RFC Deprecation List and Number Segment Reclassification Scheme](RFC-900-deprecation-reclassification-scheme.md)
-  - Kind: Process Specification
-  - Status: Implemented
-  - Created: 2026-06-16
-  - Authors: Soothe Team
-  - Implemented: 2026-06-19
 - **RFC-901**: [OperationSecurityProtocol for Workspace and Tool Execution](RFC-901-operation-security-protocol.md)
   - Kind: Architecture Design
   - Status: Implemented
@@ -689,7 +677,7 @@ This index provides a comprehensive catalog of all RFCs in the Soothe project.
   - Kind: Architecture Design
   - Status: Draft
   - Created: 2026-06-28
-  - Depends on: RFC-101 (tool interface), RFC-102 (security filesystem policy), RFC-222 (autopilot goal engine)
+  - Depends on: RFC-101 (tool interface), RFC-102 (security filesystem policy), RFC-231 (loop-rail goal engine)
 - **RFC-903**: [Sloop Graph Topology and Node Lifecycle](RFC-903-sloop-graph-topology.md)
   - Kind: Architecture Design
   - Status: Proposed
@@ -700,7 +688,7 @@ This index provides a comprehensive catalog of all RFCs in the Soothe project.
   - Status: Proposed (deletion portion landed via IG-752/IG-753; recursive topology not yet implemented)
   - Created: 2026-08-19
   - Updated: 2026-08-20 (RFC-905 supersedes ROOT_EVAL assess-only / GapResult)
-  - Depends on: RFC-220, RFC-624, RFC-630, RFC-903, RFC-622, RFC-219, RFC-803
+  - Depends on: RFC-220, RFC-624, RFC-630, RFC-903, RFC-622
   - Partially Superseded By: RFC-905 (§ROOT_EVAL assess-only / GapResult new-root)
 - **RFC-905**: [StrangeLoop Eval Thread](RFC-905-sloop-eval-thread.md)
   - Kind: Architecture Design

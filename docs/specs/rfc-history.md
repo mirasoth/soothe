@@ -3,11 +3,64 @@
 This document tracks the chronological evolution of RFCs in the Soothe project.
 
 **Last Updated**: 2026-10-07
-**Total RFCs**: 93 (78 active + 15 archived)
+**Total RFCs**: 97 (81 active + 16 archived)
 
 > Summary statistics (by status and kind) live in [rfc-index.md](rfc-index.md).
+> The RFC lifecycle (Draft → Proposed → Accepted → Implemented → Deprecated →
+> Archived) and deprecation process are documented inline in this history and
+> `rfc-index.md`.
 
 ## Recent Changes
+
+### 2026-10-07 (RFC-900 + methodology-guide deletion + templates cleanup + specs-refine)
+
+- **RFC-900 — Deleted** (process spec duplicating meta files)
+  - Reason: RFC-900 was the only "Process Specification" kind RFC. Its content
+    (deprecation list, series semantics, renumbering roadmap, lifecycle model)
+    duplicated `rfc-index.md` (deprecation list + archived table) and this
+    file (deprecation timeline). Process scaffolding that duplicates meta
+    files should not occupy an RFC slot.
+  - The file was deleted from `docs/archive/specs/` (it had been archived
+    earlier the same day); no trace remains in the active or archive tree.
+  - References in RFC-304, RFC-306, RFC-801, RFC-302, RFC-303, RFC-305,
+    RFC-802, RFC-803, RFC-901, RFC-904, RFC-450 ("per RFC-900 reclassification"
+    and deprecation-framework links) simplified to drop the RFC-900
+    attribution.
+  - RFC-450 `Depends on` dropped RFC-900.
+  - The 9xx series is now reserved for security/sloop specs (RFC-901+).
+
+- **`docs/rfc-methodology-guide.md` — Deleted**
+  - Reason: The methodology guide was a meta/process document whose content
+    (RFC lifecycle, authoring checklist, gap-triage process) overlapped with
+    `rfc-index.md`, `rfc-history.md`, and the platonic-coding skill's
+    `specs-refine` operation. The RFC lifecycle is now documented inline in
+    `rfc-index.md` and `rfc-history.md`.
+  - References in `rfc-index.md`, `rfc-history.md`, and `RFC-905` updated to
+    remove the link.
+
+- **`docs/specs/templates/` — Removed**
+  - The local templates directory (`rfc-standard.md`, `rfc-template.md`,
+    `architecture-design.md`, `conceptual-design.md`, `impl-guide-template.md`,
+    `impl-interface-design.md`) was removed.
+  - Templates are now sourced from the platonic-coding skill's shipped assets
+    at `~/.agents/skills/platonic-coding/assets/templates/` (which include
+    `template-rfc-standard.md` at 16KB — more comprehensive than the local
+    3.7KB version — plus `template-rfc-index.md`, `template-rfc-history.md`,
+    `template-rfc-namings.md`, `template-impl-readme.md`,
+    `template-drafts-readme.md`, `template-platonic.yml`).
+
+- **Full specs-refine pass** (all active RFCs)
+  - Trimmed verbose cross-reference lists (`Related`/`Depends on` ≤5 items,
+    no annotations).
+  - Removed migration-roadmap boilerplate (Phase N week-by-week tables,
+    aspirational CI YAML stubs, renumbering scripts, rollback plans).
+  - Normalized header fields (`RFC`, `Title`, `Status`, `Kind`, `Created`,
+    `Authors`, `Updated`; optional `Depends on`/`Related`/`Supersedes`/
+    `Superseded By`).
+  - Moved `**Revisions**:` header lines to `## Changelog` sections at end.
+  - Condensed "Implementation Status" / "Gap Analysis" sections that were
+    really project backlogs.
+  - Net reduction: ~1800 lines trimmed across the active RFC corpus.
 
 ### 2026-10-07 (autopilot cleansing + agent-mode alignment)
 
@@ -83,7 +136,7 @@ This document tracks the chronological evolution of RFCs in the Soothe project.
 - **specs-refine** — comprehensive consistency pass across all 83 active RFCs:
   - **Status field normalization (25 RFCs)**: Removed verbose implementation
     notes from `**Status**:` fields, normalizing to lifecycle values defined in
-    `templates/rfc-standard.md` (Draft, Proposed, Accepted, Implemented,
+    `docs/rfc-methodology-guide.md` (Draft, Proposed, Accepted, Implemented,
     Implemented (partial), Implemented (Partially Superseded)). Affected:
     RFC-100, RFC-105, RFC-217, RFC-221, RFC-223, RFC-225, RFC-226, RFC-227,
     RFC-228, RFC-229, RFC-412, RFC-413, RFC-452, RFC-502, RFC-614, RFC-618,

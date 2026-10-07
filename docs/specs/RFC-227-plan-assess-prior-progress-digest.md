@@ -6,10 +6,9 @@
 **Kind**: Architecture Design
 **Authors**: xiaming
 **Created**: 2026-06-01
-**Last Updated**: 2026-06-01
+**Updated**: 2026-06-01
 **Depends on**: RFC-214, RFC-220
-**Related**: RFC-201 (plan-execute loop), RFC-206 (prompt architecture), RFC-219 (goal completion), RFC-604 (reason-phase split), IG-264 (StatusAssessment schema), IG-329 (plan instructions), IG-372 (assess-only fragment), IG-380 (plan ledger projection), IG-399 (descriptive progress)
-**Supersedes**: ---
+**Related**: RFC-201, RFC-206, RFC-219, RFC-604, RFC-226
 
 ---
 

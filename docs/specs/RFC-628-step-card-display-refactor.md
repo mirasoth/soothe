@@ -7,11 +7,8 @@
 **Created**: 2026-06-26
 **Updated**: 2026-07-15
 **Authors**: Xiaming Chen
-**Depends on**: RFC-500 (CLI/TUI Architecture), RFC-501 (Display Verbosity), RFC-607 (Progressive Display Refinements), RFC-630 (intake-only wire stream contract for Part III)
-**Extends**: RFC-500 § Event Rendering (step card), RFC-501 § 7.3 (TUI step card body)
-**Implemented by**: IG-512-step-card-display-refactor.md, IG-513-subagent-card.md, IG-514-execute-namespace-tool-stamping-fix.md, IG-515-step-subagent-card-footer-and-lifecycle-fixes.md, IG-602-orphan-wired-subagent-card.md (Part III)
-**Design draft**: `docs/archive/drafts/2026-06-26-subagent-card-flattened-display.md`
-**Design draft (orphan wired)**: `docs/drafts/2026-07-15-orphan-wired-subagent-card-design.md`
+**Depends on**: RFC-500, RFC-501, RFC-607, RFC-630
+**Implemented by**: IG-512, IG-513, IG-514, IG-515, IG-602 (Part III)
 
 ---
 

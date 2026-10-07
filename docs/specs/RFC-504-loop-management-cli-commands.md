@@ -5,9 +5,9 @@
 **Status**: Draft
 **Kind**: Implementation Interface Design
 **Created**: 2026-04-22
-**Dependencies**: RFC-503 (Loop-First UX), RFC-218 (Checkpoint Tree), RFC-454 (Slash Commands), RFC-450 (Daemon Communication Protocol)
-**Author**: Soothe contributors
 **Updated**: 2026-04-22
+**Authors**: Soothe contributors
+**Depends on**: RFC-503, RFC-218, RFC-454, RFC-450
 
 ---
 
@@ -668,47 +668,24 @@ loop_app.command("status")(show_loop_status)
 
 ## Implementation Tasks
 
-### Phase 1: Basic Commands
-- Implement `list_loops()` command
-- Implement `describe_loop()` command (normal output)
-- Implement `delete_loop()` command with confirmation
-
-### Phase 2: Visualization
-- Implement `visualize_loop_tree()` (ASCII format)
-- Implement `visualize_loop_tree()` (JSON format)
-- Implement `visualize_loop_tree()` (DOT format)
-
-### Phase 3: Advanced Features
-- Implement `describe_loop()` verbose output (branch analysis)
-- Implement `prune_loop_branches()` with dry-run
-- Implement retention policy logic
-
-### Phase 4: Integration
-- Register commands in CLI main
-- Add help text and examples
-- Integrate with persistence manager
+Migration is sequenced: basic commands (`list`, `describe`, `delete`); visualization (`tree` ASCII/JSON/DOT); advanced features (verbose branch analysis, prune with dry-run); and integration with CLI main (registration, help text, persistence manager wiring).
 
 ---
 
 ## Success Criteria
 
-1. Loop commands work (list, describe, tree, prune, delete) ✓
-2. Thread commands removed (thread list, describe, delete) ✓
-3. Tree visualization works (ASCII, JSON, DOT) ✓
-4. Branch analysis displayed in verbose mode ✓
-5. Pruning works with retention policy ✓
-6. Delete requires confirmation (unless --force) ✓
-7. Commands integrated with CLI main ✓
-8. Thread checkpoints preserved on loop delete ✓
+Loop commands work (list, describe, tree, prune, delete); thread commands removed; tree visualization works across ASCII/JSON/DOT; branch analysis displayed in verbose mode; pruning works with retention policy; delete requires confirmation (unless `--force`); commands integrated with CLI main; thread checkpoints preserved on loop delete.
 
 ---
 
 ## Related Specifications
 
-- RFC-802: Loop-First User Experience
+- RFC-503: Loop-First User Experience
 - RFC-218: StrangeLoop Checkpoint Tree Architecture
 - RFC-803: StrangeLoop Persistence Backend
 - RFC-454: Slash Command Architecture
+
+> **Note (2026-10-07):** The abstract opens by claiming alignment with "RFC-802's loop-first user experience." RFC-802 is the persistence-architecture refactor, not the loop-first UX spec — the loop-first UX is RFC-503 (which the header `Depends on` already cites). The body's `## Related Specifications` also lists RFC-802 as "Loop-First User Experience." **This is a design-logic inconsistency flagged for human review** — the abstract and Related Specifications likely meant RFC-503 throughout.
 
 ---
 

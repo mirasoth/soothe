@@ -5,11 +5,9 @@
 **Status**: Implemented
 **Kind**: Implementation Interface Design
 **Created**: 2026-03-31
-**Last Updated**: 2026-08-08
-**Author**: Platonic brainstorming session
-**Design Draft**: `2026-03-31-dynamic-system-context-design.md`
-**Depends On**: RFC-100 (CoreAgent Runtime), RFC-101 (Tool Interface), RFC-103 (Thread-Aware Workspace)
-**Implementation**: IG-117 (prompt-cache ordering), core context injection complete
+**Authors**: Platonic brainstorming session
+**Updated**: 2026-08-08
+**Depends on**: RFC-100 (CoreAgent Runtime), RFC-101 (Tool Interface), RFC-103 (Thread-Aware Workspace)
 
 ## Abstract
 
@@ -682,12 +680,10 @@ None. All decisions finalized through brainstorming session.
 
 ## References
 
-- Design Draft: `2026-03-31-dynamic-system-context-design.md`
-- Claude Code Analysis: `../claude-code/workspace-context-analysis.md`
 - RFC-100: CoreAgent Runtime
 - RFC-101: Tool Interface
 - RFC-103: Thread-Aware Workspace
-- RFC-102: Security Filesystem Policy
+- RFC-214: Volatility-Tiered Prompt Architecture (refines Principle 5)
 
 ---
 

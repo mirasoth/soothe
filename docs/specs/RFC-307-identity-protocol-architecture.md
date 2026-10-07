@@ -7,14 +7,14 @@
 **Created**: 2026-06-25
 **Authors**: Soothe Team
 **Updated**: 2026-06-25
-**Dependencies**: RFC-000, RFC-001, RFC-305
-**Related**: RFC-620 (Channel Architecture), RFC-621 (Workspace Isolation)
+**Depends on**: RFC-000, RFC-001, RFC-305
+**Related**: RFC-620, RFC-621
 
 ---
 
 ## Abstract
 
-This RFC defines IdentityProtocol, Soothe's identity service for AKSK-based authentication and JWT token management. IdentityProtocol provides user creation, AKSK provisioning, token issuance/validation, and external channel identity mapping. When enabled, IdentityMiddleware validates tokens before PolicyMiddleware, ensuring workspace isolation is tied to authenticated user identity rather than message-provided user_id fields.
+Defines IdentityProtocol, Soothe's identity service for AKSK-based authentication and JWT token management. Provides user creation, AKSK provisioning, token issuance/validation, and external channel identity mapping. When enabled, IdentityMiddleware validates tokens before PolicyMiddleware, ensuring workspace isolation is tied to authenticated user identity rather than message-provided user_id fields.
 
 ---
 

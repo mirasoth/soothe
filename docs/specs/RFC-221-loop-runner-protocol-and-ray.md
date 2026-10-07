@@ -7,7 +7,7 @@
 **Created**: 2026-05-09
 **Authors**: Soothe Team
 **Updated**: 2026-05-09
-**Dependencies**: RFC-001, RFC-220, RFC-450, RFC-452
+**Depends on**: RFC-001, RFC-220, RFC-450, RFC-452
 
 ---
 

@@ -5,9 +5,9 @@
 **Status**: Implemented
 **Kind**: Implementation Interface Design
 **Created**: 2026-09-20
-**Last Updated**: 2026-09-20
+**Updated**: 2026-09-20
 **Authors**: Soothe Team
-**Depends on**: RFC-622 (CoreAgent Clarification Relay), RFC-623 (Veritas Auto-Mode Robustness), Multi-Stage Tool-Approval Pipeline draft (2026-08-27)
+**Depends on**: RFC-622, RFC-623
 **Supersedes**: The station-side tool-approval pipeline evaluation (partial)
 
 ---

@@ -7,9 +7,8 @@
 **Created**: 2026-05-03
 **Authors**: Soothe Team
 **Updated**: 2026-08-08
-**Dependencies**: RFC-100 (CoreAgent Runtime), RFC-206 (Prompt Architecture), RFC-104 (Dynamic System Context), RFC-207 (Thread Lifecycle & Goal Context), RFC-203 (StrangeLoop State & Memory), RFC-803 (StrangeLoop Checkpoint Backend), RFC-218 (Checkpoint Tree), RFC-217 (Goal Context Management), RFC-624 (Context Engine)
-**Related**: RFC-211 (Tool Result Shaping), RFC-213 (StrangeLoop Reasoning Quality), RFC-220 (LangGraph Agent Loop Orchestrator), RFC-614 (Streaming Messaging), RFC-225 (Loop Continuation), RFC-226 (Continuation-Aware plan_assess)
-**Implementation**: IG-477 (envelope grounding), prompt-cache ordering complete, ledger consolidation in progress
+**Depends on**: RFC-100, RFC-206, RFC-207, RFC-217, RFC-624
+**Related**: RFC-211, RFC-213, RFC-220, RFC-225, RFC-226
 
 ---
 
@@ -650,34 +649,7 @@ Checkpoint save (complete loop_messages ledger + CoreAgent state)
 
 ## Implementation Order
 
-### Phase 1: Foundation
-
-1. **Add `core_agent_message_id` fields** to `LoopHumanMessage` and `LoopAIMessage`. Backward-compatible — `None` by default.
-2. **Fix serde allowlist** (G6): correct module paths.
-3. **Add `loop_messages` field** to checkpoint schema (G4).
-
-### Phase 2: Complete Ledger
-
-4. **Expand ledger to record plan phases** (G7). After plan-assess and plan-generate LLM calls, record user/AI pairs into `loop_messages` with `phase="plan_assess"` / `phase="plan_generate"`.
-5. **Update ledger projection for CoreAgent**: filter to `phase="execute_step"` only. Plan-phase messages excluded from CoreAgent thread.
-6. **Update plan-phase ledger projection**: include all phases (plan + execute) in `mid_goal` mode; `new_goal` mode filters phases per §4.3.
-7. **Unified planner assembly** (P6, §4): `assemble_planner_prompt` for continuation / assess / generate; remove goal-boundary ledger skip for plan_generate; `PRIOR GOALS` tree in task envelope; dedup completion prose from envelope when in ledger.
-
-### Phase 3: Volatility-Tiered Prompts
-
-8. **Restructure CoreAgent system prompt** in `SystemPromptOptimizationMiddleware._get_prompt_for_complexity()`. Reorder blocks into static → semi-static tiers. Remove date line and execution hints from the system prompt.
-9. **Introduce the user message envelope** in the Executor's `_build_batch_human_messages()`. Move volatile content from the system prompt into the envelope.
-10. **Wire Plan prompt to `assemble_planner_prompt`** (§4.1). Plain-text task envelope per §4.4; replace `<PRIOR_CONVERSATION>` with native ledger turns.
-11. **Move execution hints to envelope** (G10). `ExecutionHintsMiddleware` sets `state['execution_hints']` → `<EXECUTION_HINTS>` in envelope.
-
-### Phase 4: Memory Semantics
-
-12. **Split memory injection** (G11). Long-term persona → `<MEMORY_SUMMARY>` in system prompt. Per-turn recall → `<MEMORY>` in user envelope.
-
-### Phase 5: Dedup and Cleanup
-
-13. **Wire dedup in ledger projection**. Skip messages with `core_agent_message_id` matching CoreAgent thread state.
-14. **Remove legacy fields**: `reason_history`, `act_history`, `StepExecutionRecord.output`, `derive_plan_conversation()`, `CONCRETE EVIDENCE`, `<PRIOR_CONVERSATION>`, `working_memory` sections.
+Foundation: add `core_agent_message_id` fields, fix serde allowlist (G6), add `loop_messages` to checkpoint (G4). Then complete the ledger: record plan-phase pairs (G7), filter execute-step projection for CoreAgent, wire unified planner assembly (P6, §4) including `assemble_planner_prompt` and `PRIOR GOALS` tree. Then volatility-tiered prompts: restructure CoreAgent system prompt into static/semi-static tiers, introduce the user message envelope in the executor, wire `assemble_planner_prompt` for all three call kinds, move execution hints to envelope (G10). Then split memory injection (G11) into long-term `<MEMORY_SUMMARY>` (system) vs per-turn `<MEMORY>` (envelope). Finally: wire ledger dedup via `core_agent_message_id`, remove legacy fields (`reason_history`, `act_history`, `StepExecutionRecord.output`, `derive_plan_conversation()`, `CONCRETE EVIDENCE`, `<PRIOR_CONVERSATION>`, `working_memory`).
 
 ---
 

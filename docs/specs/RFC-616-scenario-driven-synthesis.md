@@ -232,30 +232,7 @@ Delete all tests for:
 
 ## Migration Path
 
-1. **Phase 1: Preparation**
-   - Create `analysis/scenario_classifier.py` with classifier logic
-   - Add `BUILTIN_SCENARIOS` constant
-   - Add `ScenarioClassification` schema
-   - Write unit tests for classifier
-
-2. **Phase 2: Integration**
-   - Modify `SynthesisGenerator` to use classifier
-   - Remove length categorization logic
-   - Update synthesis prompt template
-   - Update `strange_loop.py` to remove length_category
-
-3. **Phase 3: Cleanup**
-   - Delete `policies/response_length_policy.py`
-   - Remove `response_length_category` from `PlanResult`
-   - Remove related tests
-   - Update imports across codebase
-   - Run full verification suite
-
-4. **Phase 4: Validation**
-   - Run integration tests with diverse goals
-   - Validate scenario matching accuracy
-   - Validate synthesis quality (sections + depth)
-   - Compare outputs with current system
+Cut-over is sequenced: (1) Preparation — create `analysis/scenario_classifier.py` with classifier logic, `BUILTIN_SCENARIOS` constant, `ScenarioClassification` schema, unit tests; (2) Integration — modify `SynthesisGenerator` to use classifier, remove length categorization logic, update synthesis prompt template, update `strange_loop.py` to drop `length_category`; (3) Cleanup — delete `policies/response_length_policy.py`, remove `response_length_category` from `PlanResult`, remove related tests, update imports, run verification suite; (4) Validation — integration tests with diverse goals, scenario matching accuracy, synthesis quality, comparison vs current system.
 
 ## Success Criteria
 

@@ -7,15 +7,8 @@
 **Created**: 2026-05-21
 **Updated**: 2026-07-07
 **Authors**: Soothe Team
-**Depends on**: RFC-600 (Plugin Extension System), RFC-601 (Built-in Agents), RFC-403 (Unified Event Naming), RFC-616 (Scenario-Driven Synthesis)
-**Supersedes**: Deep Research subagent identity (prior RFC-619 revision), Research section identity in RFC-601 §4
-
-### Change history
-
-| Date | Change |
-|------|--------|
-| 2026-05-21 | Initial Deep Research subagent (public-domain multi-source research) |
-| 2026-07-07 | **Revised**: Split monolithic research subagent into `deep_research` (web-only, crawl-on-discovery, adaptive report) and `academic_research`. Clean break — no legacy aliases. |
+**Depends on**: RFC-600, RFC-601, RFC-403, RFC-616
+**Supersedes**: Prior RFC-619 revision; Research section in RFC-601 §4
 
 ---
 
@@ -271,3 +264,10 @@ Separate package at `subagents/academic_research/`:
 ## 12. Conclusion
 
 RFC-619 defines **`deep_research`** (public web) and **`academic_research`** (academic literature): iterative research with crawl-on-discovery and adaptive reports. Both replace the prior multi-source Deep Research agent with a clean break. Local repository analysis remains on the main agent file tools.
+
+---
+
+## Changelog
+
+- 2026-07-07: Split monolithic research subagent into `deep_research` (web-only, crawl-on-discovery, adaptive report) and `academic_research` (academic literature). Clean break — no legacy aliases.
+- 2026-05-21: Initial Deep Research subagent (public-domain multi-source research).

@@ -6,10 +6,9 @@
 **Kind**: Architecture Design
 **Created**: 2026-05-27
 **Authors**: Soothe Team
-**Last Updated**: 2026-08-08
-**Dependencies**: RFC-223, RFC-201, RFC-214
-**Related**: RFC-207 (Thread Lifecycle & Goal Context), RFC-218 (Checkpoint Tree)
-**Implementation**: Not started - context tracking exists, compaction pending
+**Updated**: 2026-08-08
+**Depends on**: RFC-223, RFC-201, RFC-214
+**Related**: RFC-207, RFC-218
 
 ---
 
@@ -367,13 +366,7 @@ Step threads (`{loop_id}__step_{step_id}`) are typically short-lived (one execut
 
 ## Migration Path
 
-1. Add configuration fields to `StrangeLoopConfig`
-2. Implement `ContextWindowManager` component
-3. Integrate deepagents SummarizationMiddleware API
-4. Add orchestrator integration point
-5. Register `ContextCompactionEvent`
-6. Unit and integration tests
-7. Update config templates
+Add configuration fields to `StrangeLoopConfig`, implement `ContextWindowManager`, integrate deepagents `SummarizationMiddleware`, add orchestrator integration point, register `ContextCompactionEvent`, write unit and integration tests, update config templates.
 
 ---
 

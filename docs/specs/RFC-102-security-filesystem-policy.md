@@ -5,12 +5,10 @@
 **Status**: Implemented
 **Kind**: Implementation Interface Design
 **Created**: 2026-03-18
-**Implemented**: 2026-03-18
-**Author**: System
+**Authors**: System
 **Updated**: 2026-03-18
-**Design Draft**: `secure-filesystem-path-handling.md`
-**Implementation Guide**: `secure-filesystem-path-handling.md`
-**Depends On**: RFC-001 (Policy System)
+**Implemented**: 2026-03-18
+**Depends on**: RFC-001 (Policy System)
 
 ## Abstract
 

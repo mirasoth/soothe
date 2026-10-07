@@ -5,10 +5,10 @@
 **Status**: Draft
 **Kind**: Architecture Design
 **Created**: 2026-08-20
-**Updated**: 2026-08-20
 **Authors**: Soothe Team
-**Dependencies**: RFC-904, RFC-219, RFC-630, RFC-901, RFC-214
-**Related**: RFC-213, RFC-220, RFC-622, RFC-624, IG-751
+**Updated**: 2026-08-20
+**Depends on**: RFC-904, RFC-219, RFC-630, RFC-901, RFC-214
+**Related**: RFC-213, RFC-220, RFC-622, RFC-624
 **Revises**: RFC-904 §ROOT_EVAL (assess-only / MUST NOT `decompose_task`; GapResult new-root continuation)
 
 ---
@@ -377,5 +377,5 @@ Follow-on IG (not this RFC). Package: `soothe` (`sloop`, `context`,
 - [RFC-630](RFC-630-start-phase-llm-intake-and-branch-routing.md) — no keyword heuristics
 - [RFC-901](RFC-901-operation-security-protocol.md) — operation security
 - [RFC-214](RFC-214-strangeloop-loop-message-surface.md) — ledger / envelopes
-- [RFC Index](rfc-index.md)
-- [RFC Methodology Guide](../rfc-methodology-guide.md)
+- [RFC Index](rfc-index.md) — active catalog + deprecation list
+- [RFC History](rfc-history.md) — chronological evolution + lifecycle model

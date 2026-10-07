@@ -6,8 +6,8 @@
 **Kind**: Architecture Design
 **Created**: 2026-05-29
 **Updated**: 2026-08-11
-**Dependencies**: RFC-450, RFC-403, RFC-000
-**Author**: Xiaming Chen
+**Authors**: Xiaming Chen
+**Depends on**: RFC-450, RFC-403, RFC-000
 
 ## Abstract
 
@@ -287,61 +287,22 @@ def is_allowed(self, sender_id: str) -> bool:
 
 ## Implementation
 
-### Phase 1: Core Infrastructure
-
-| Task | File |
-|------|------|
-| Channel ABC | `soothe_daemon/channels/base.py` |
-| ChannelMessage | `soothe_daemon/channels/message.py` |
-| Event types | `soothe_daemon/channels/events.py` |
-| Registry | `soothe_daemon/channels/registry.py` |
-| OutputEvent subclasses | `soothe_sdk.core.events` |
-
-### Phase 2: Convert Existing Transports
-
-| Task | File |
-|------|------|
-| WebSocketChannel | `soothe_daemon/channels/websocket.py` (from transports/) |
-| HttpRestChannel | `soothe_daemon/channels/http_rest.py` — ⚠️ not yet implemented; only `/healthz` on the WS FastAPI app exists |
-| ChannelManager | `soothe_daemon/channel_manager.py` (rename from transport_manager.py) |
-| Config update | `soothe_daemon/config/` (package: `models.py`, `settings.py`) |
-| Server update | `soothe_daemon/server/` (package: `core.py`, `handlers.py`) |
-
-### Phase 3: External Channels
-
-| Task | Notes |
-|------|-------|
-| Telegram channel | Reference implementation |
-| Plugin test | Mock entry_points |
-| Integration test | Multi-channel routing |
-
-### Phase 4: Streaming and Polish
-
-| Task | Notes |
-|------|-------|
-| Delta coalescing | In ChannelManager |
-| Buffering | For non-streaming channels |
-| Retry policy | Exponential backoff |
-| Documentation | Plugin guide |
+- **Phase 1 — Core infrastructure**: `Channel` ABC, `ChannelMessage`, channel event types, registry, `OutputEvent` subclasses (soothe_sdk core events).
+- **Phase 2 — Convert existing transports**: `WebSocketChannel` (from transports/), `HttpRestChannel` (not yet implemented — only `/healthz` on the WS FastAPI app exists), `ChannelManager` (rename from `transport_manager.py`), config + server updates.
+- **Phase 3 — External channels**: Telegram reference implementation, plugin test (mock entry_points), multi-channel routing integration test.
+- **Phase 4 — Streaming and polish**: delta coalescing in `ChannelManager`, buffering for non-streaming channels, retry policy (exponential backoff), plugin guide.
 
 ## Testing
 
-- **Unit**: Channel ABC compliance, message translation, registry
-- **Integration**: Multi-channel routing, streaming, retry
-- **Existing**: All daemon tests pass with ChannelManager
+Unit: `Channel` ABC compliance, message translation, registry. Integration: multi-channel routing, streaming, retry. Existing daemon tests pass with `ChannelManager`.
 
 ## Backward Compatibility
 
-- Config migration: `transports.websocket` → `channels.websocket`
-- Existing WebSocket client behavior unchanged
-- HTTP REST endpoints unchanged
-- ClientSessionManager continues to work with loop subscriptions
+Config migration: `transports.websocket` → `channels.websocket`. Existing WebSocket client behavior unchanged. HTTP REST endpoints unchanged. `ClientSessionManager` continues to work with loop subscriptions.
 
 ## Security Considerations
 
-- `allow_from` whitelist restricts sender access
-- Optional pairing system for DM approval
-- Channel credentials (API tokens) via environment variables
+`allow_from` whitelist restricts sender access; optional pairing system for DM approval; channel credentials (API tokens) via environment variables.
 
 ## References
 

@@ -6,10 +6,9 @@
 **Kind**: Architecture Design
 **Created**: 2026-06-12
 **Authors**: Soothe Team
-**Updated**: 2026-08-24 (reentrant state — awaiting_clarification matching, IG-760)
-**Dependencies**: RFC-000 (System Conceptual Design), RFC-200 (Autonomous Goal Management), RFC-201 (StrangeLoop Plan-Execute Loop), RFC-214 (Loop Message Surface), RFC-803 (Persistence Backend)
-**Related**: RFC-217 (Goal Context Management), RFC-224 (Automatic Context Window Management), RFC-231 §4 + §14 (LoopRailService component map), RFC-231 §4.1 (report-commit judgment), RFC-231 §17 + RFC-624 (CE GoalNode.report commit — `commit_goal_report`), RFC-626 (Entity Model and State Management Consolidation), RFC-904 (recursive step decomposition), [IG-760](../impl/IG-760-reentrant-loop-state-management.md) (reentrant loop state)
-**Amended by**: RFC-904 (§StepDAG statuses/fields, proposal reconcile, Step Context Registry)
+**Updated**: 2026-08-24
+**Depends on**: RFC-000, RFC-200, RFC-201, RFC-214, RFC-803
+**Related**: RFC-217, RFC-224, RFC-231, RFC-626, RFC-904
 **Amended by**: RFC-904 (§StepDAG statuses/fields, proposal reconcile, Step Context Registry)
 
 ---
@@ -191,10 +190,11 @@ Plan waves accumulate into a single flat `StepDAG` per goal. Cross-wave edges us
 
 **Step Anchor Registry** (plan-generate envelope section):
 
-- Built from `GoalNode.steps` (preferred) or `LoopState.step_results` (fallback).
-- Lists completed / pending / failed steps with composite id, status, description, outcome snippet.
-- Includes next local id range and explicit cross-wave dependency rules.
-- Module: `soothe.sloop.prompts.step_anchor_registry`.
+> **Removed 2026-10-07 — superseded by RFC-904.** Step Anchor Registry retired
+> in favor of the THREAD **Step Context Registry** (RFC-904 §Step Context
+> Registry). The historical contract listed completed/pending/failed steps with
+> composite id, status, description, and outcome snippet for plan-generate
+> envelopes (`soothe.sloop.prompts.step_anchor_registry`).
 
 **Plan DAG Normalizer** (deterministic post-process):
 
@@ -1526,3 +1526,10 @@ goal_completion
 - ContextBundle extended with `prior_goals` and `cross_goal_ledger` for multi-goal projection
 - Big-bang migration (6 steps, single PR)
 - 4-tier error handling: transient → load failure → mutation failure → cache fallback
+
+---
+
+## Changelog
+
+### 2026-10-07
+- Removed superseded Step Anchor Registry section (per RFC-904). Plan DAG Normalizer and remaining StepDAG growth content retained as normative (CE remains SoT).

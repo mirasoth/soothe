@@ -8,11 +8,7 @@
 **Updated**: 2026-10-07
 **Authors**: Soothe Team
 **Depends on**: RFC-231, RFC-624, RFC-630
-**Related**: RFC-231 §8 (maturity predicates — formerly RFC-230),
-design draft `docs/drafts/2026-08-08-streaming-slice-dag-worktree-lifecycle-design.md`,
-design draft `docs/archive/drafts/2026-08-08-autopilot-report-commit-judgment-design.md`,
-IG-704, IG-714, IG-718, IG-720, IG-722
-**Amends**: RFC-231 §9 (Fan-out contract — streaming slice catalog)
+**Related**: RFC-231, IG-704, IG-718, IG-720, IG-722
 
 ## Abstract
 

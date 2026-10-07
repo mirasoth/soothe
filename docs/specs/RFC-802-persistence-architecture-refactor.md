@@ -5,10 +5,10 @@
 **Status**: Draft
 **Kind**: Architecture Design
 **Created**: 2026-04-22
-**Updated**: 2026-07-24
 **Authors**: Platonic Coding Workflow
-**Related**: RFC-801 (SQLite Runtime), RFC-803 (checkpoint write pipeline)
-**Note**: Moved from 6xx (RFC-802) per RFC-900 reclassification
+**Updated**: 2026-07-24
+**Related**: RFC-801, RFC-803
+**Note**: Reclassified from 6xx to 8xx segment (persistence specs consolidation).
 **Design draft (SQLite layout cut)**: [2026-07-24-sqlite-runtime-isolation-performance-design.md](../drafts/2026-07-24-sqlite-runtime-isolation-performance-design.md)
 
 ---
@@ -566,8 +566,7 @@ class PostgreSQLPersistStore:
 ## Related RFCs
 
 - **RFC-803**: StrangeLoop Checkpoint Backend Architecture (loop_checkpoints.db)
-- **RFC-0002**: Core Modules Architecture (DurabilityProtocol, VectorStoreProtocol)
-- **RFC-0013**: Daemon Multi-Transport Configuration (production deployment)
+- **RFC-001**: Core Modules Architecture (DurabilityProtocol, VectorStoreProtocol)
 
 ---
 

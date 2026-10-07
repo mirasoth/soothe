@@ -7,7 +7,7 @@
 **Created**: 2026-03-23
 **Authors**: Soothe Team
 **Updated**: 2026-03-27
-**Dependencies**: RFC-000, RFC-001, RFC-200, RFC-302
+**Depends on**: RFC-000, RFC-001, RFC-200, RFC-302
 **Related**: RFC-302
 
 ## Abstract
@@ -271,53 +271,11 @@ class WidgetPlugin:
 
 ## Implementation Checklist
 
-### Core
-- [ ] `PluginManifest` model (`src/soothe/plugin/manifest.py` — soothe-nano, external PyPI)
-- [ ] `PluginContext` (`src/soothe/plugin/context.py` — soothe-nano, external PyPI)
-- [ ] `PluginRegistry` (`src/soothe/plugin/registry.py` — soothe-nano, external PyPI)
-- [ ] `PluginLoader` (`src/soothe/plugin/loader.py` — soothe-nano, external PyPI)
-- [ ] `PluginLifecycleManager` (`src/soothe/plugin/lifecycle.py` — soothe-nano, external PyPI)
-- [ ] Integrate with `SootheConfig`
-
-### SDK
-- [ ] `@plugin`, `@tool`, `@tool_group`, `@subagent` decorators
-- [ ] `PluginContext` type
-- [ ] Dependency helpers
-
-### Discovery
-- [ ] Entry point, config, filesystem discovery
-- [ ] Priority/conflict resolution
-
-### Integration
-- [ ] Modify `coreagent/core_agent.py`, `resolver/` to use plugin registry
-
-### Migration
-- [x] Migrate optional heavy delegated agents to soothe-plugins (IG-415); Skillify is core `foundation.skillify` (IG-604), weaver is community
-
-### Testing
-- [ ] Unit tests for manifest, decorators, registry, lifecycle
-- [ ] Integration tests for discovery, registration
-
-### Documentation
-- [ ] Plugin developer guide
-- [ ] Migration guide
-- [ ] Examples
+Core: `PluginManifest`, `PluginContext`, `PluginRegistry`, `PluginLoader`, `PluginLifecycleManager` (soothe-nano), integrated with `SootheConfig`. SDK: `@plugin`/`@tool`/`@tool_group`/`@subagent` decorators, `PluginContext` type, dependency helpers. Discovery: entry-point, config, and filesystem discovery with priority/conflict resolution. Integration: `coreagent/core_agent.py` and `resolver/` consume the plugin registry. Migration: optional heavy delegated agents migrated to soothe-plugins (IG-415); Skillify is core `foundation.skillify` (IG-604); weaver is community.
 
 ## Security Considerations
 
-**Threats**: Malicious plugins, dependency confusion, resource exhaustion, data exfiltration
-
-**Mitigations**:
-- Trust levels and permission enforcement
-- Dependency verification
-- Resource limits (timeout, memory/CPU)
-- Audit logging
-
-**Best Practices**:
-- Principle of least privilege
-- Explicit user consent for elevated permissions
-- Code review before installation
-- Future: cryptographic signatures, sandboxing
+**Threats**: Malicious plugins, dependency confusion, resource exhaustion, data exfiltration. **Mitigations**: trust levels and permission enforcement; dependency verification; resource limits (timeout, memory/CPU); audit logging; principle of least privilege; explicit user consent for elevated permissions; code review before installation. Future: cryptographic signatures, sandboxing.
 
 ## Future Enhancements
 
@@ -340,8 +298,3 @@ class WidgetPlugin:
 - RFC-401: Event Processing & Filtering
 - PEP 440: Version Specification
 - PEP 517: Build System Format
-
----
-
-**Status**: Implemented
-**Last Updated**: 2026-03-27

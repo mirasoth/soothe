@@ -6,17 +6,17 @@
 **Kind**: Architecture Design
 **Created**: 2026-04-17
 **Authors**: Soothe Team
-**Last Updated**: 2026-08-08
-**Dependencies**: RFC-000, RFC-001
-**Related**: RFC-100 (CoreAgent), RFC-102 (Security Filesystem Policy)
-**Note**: Moved from 4xx (RFC-305) per RFC-900 reclassification
-**Implementation**: ConfigDrivenPolicy implemented, subagent narrowing in progress
+**Updated**: 2026-08-08
+**Depends on**: RFC-000, RFC-001
+**Related**: RFC-100, RFC-102
+**Note**: Reclassified from 4xx to 3xx segment (protocol specs consolidation).
+**Implementation**: ConfigDrivenPolicy implemented; subagent narrowing in progress
 
 ---
 
 ## Abstract
 
-This RFC defines PolicyProtocol, Soothe's permission checking interface for least-privilege delegation. PolicyProtocol provides action request validation, permission set management, and child permission narrowing for fine-grained security control. Every tool invocation and subagent spawn passes through PolicyProtocol before execution, ensuring controlled access to filesystem, shell commands, network resources, and remote services.
+Defines PolicyProtocol, Soothe's permission checking interface for least-privilege delegation. Provides action request validation, permission set management, and child permission narrowing for fine-grained security control. Every tool invocation and subagent spawn passes through PolicyProtocol before execution.
 
 ---
 

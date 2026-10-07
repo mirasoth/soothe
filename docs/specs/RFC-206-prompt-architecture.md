@@ -7,7 +7,7 @@
 **Created**: 2026-04-08
 **Authors**: Soothe Team
 **Updated**: 2026-04-08
-**Dependencies**: RFC-200, RFC-100, RFC-214 (Volatility-Tiered Prompt Architecture & Unified Message Ledger)
+**Depends on**: RFC-200, RFC-100, RFC-214
 
 ## Abstract
 
@@ -340,18 +340,11 @@ class LLMPlanner:
 
 ## Changelog
 
-**2026-05-13**:
-- Aligned RFC-214 amendment example with execute-step envelope: `<CURRENT_GOAL>` + `<USER_QUERY>` first, then `--- Context ---` + `<DYNAMIC_CONTEXT>`; updated Key Changes item 3 accordingly.
-- Execute-step `<CONTEXT_INFO>` documents timestamp, date, response-language hint, and optional workspace state only (no loop-iteration element in the envelope).
+**2026-05-13**: Aligned RFC-214 amendment example with execute-step envelope ordering; `<CONTEXT_INFO>` documents timestamp, date, response-language hint, and optional workspace state (no loop-iteration element in envelope).
 
-**2026-05-04**:
-- Documented `instructions/` contents for plan phase: `plan_assess_instructions.xml`, `plan_generate_instructions.xml`; `execution_policies.xml` under `system/policies/` (IG-329 / IG-372). Removed obsolete `plan_execute_instructions.xml`.
+**2026-05-04**: Documented `instructions/` contents for plan phase (`plan_assess_instructions.xml`, `plan_generate_instructions.xml`); `execution_policies.xml` under `system/policies/` (IG-329 / IG-372); removed obsolete `plan_execute_instructions.xml`.
 
-**2026-04-08 (created)**:
-- Initial RFC defining hierarchical prompt architecture
-- Three-layer structure: SYSTEM_CONTEXT, USER_TASK, INSTRUCTIONS
-- PromptBuilder API and modular fragment composition
-- Ambiguity handling via explicit container boundaries
+**2026-04-08**: Initial RFC defining hierarchical prompt architecture with three-layer structure (SYSTEM_CONTEXT, USER_TASK, INSTRUCTIONS), PromptBuilder API, modular fragment composition, and ambiguity handling via explicit container boundaries.
 
 ---
 
