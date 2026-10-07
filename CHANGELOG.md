@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.0.17] - 2026-10-07
+
 ### Fixed
 - Scale the StrangeLoop graph `recursion_limit` with `agent.loop.max_iterations` so clarification rounds and plan reviews don't exhaust LangGraph's default budget and abort the loop mid-goal.
 - Deduplicate manual clarification cards on late re-emits: a submitted widget is reused instead of mounting a second question card after the user has already answered.
@@ -17,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Default `InlineGateConfig.active_in_bypass` to `False`: bypass mode now permits all gated tool calls by default. Set `True` to keep deny rules absolute even in bypass.
 - Strip RFC references from middleware / config docstrings (no behavior change).
+
+[Compare with previous version]: https://github.com/mirasoth/soothe/compare/v1.0.16...v1.0.17
 
 ## [v1.0.16] - 2026-09-27
 
