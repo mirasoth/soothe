@@ -89,6 +89,7 @@ class InteractiveClarificationPolicy:
                     "questions": list(request.questions),
                     "origin_node": request.origin_node,
                     "mode": "manual",
+                    "step_id": str((request.metadata or {}).get("step_id") or ""),
                 },
             )
 
