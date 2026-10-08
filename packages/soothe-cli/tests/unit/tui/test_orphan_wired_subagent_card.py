@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 import pytest
 from soothe_sdk.ux.stream_tool_wire import STREAM_TOOL_CALL_UPDATE
 
@@ -438,3 +440,44 @@ async def test_manual_clarification_dedup_after_submit() -> None:
     assert key2 == "execute"
     assert len(adapter._mounted) == 1  # type: ignore[attr-defined]
     assert adapter._clarification_input_by_step[key2] is widget1
+
+
+@pytest.mark.asyncio
+async def test_manual_clarification_different_step_mounts_after_submitted_prior() -> None:
+    """A tool_approval for a new step must mount a fresh card even when a prior
+    same-origin card was already submitted (cross-step dedup regression).
+
+    Previously the dedup keyed by ``origin_node`` alone, so a lingering
+    answered tool_approval card suppressed every subsequent approval prompt —
+    the loop then parked in ``await_clarification`` with no visible prompt.
+    """
+    adapter = _make_adapter()
+    # Make both steps "live" so target_step_id resolves to the wire step_id.
+    adapter._current_step_messages["ACG-01"] = MagicMock()  # type: ignore[index]
+    adapter._current_step_messages["ZZP-01"] = MagicMock()  # type: ignore[index]
+    questions = ["Approve edit_file on common.rs?"]
+
+    key1 = await _mount_manual_clarification_input(
+        adapter,
+        questions=questions,
+        origin_node="tool_approval",
+        step_id="ACG-01",
+    )
+    assert key1 == "ACG-01"
+    widget1 = adapter._clarification_input_by_step[key1]
+    assert len(adapter._mounted) == 1  # type: ignore[attr-defined]
+
+    # Prior approval was answered (submitted) in a previous turn.
+    widget1._submitted = True  # noqa: SLF001
+    widget1.add_class("is-submitted")
+
+    # A new tool_approval for a *different* step arrives with its own step_id.
+    key2 = await _mount_manual_clarification_input(
+        adapter,
+        questions=questions,
+        origin_node="tool_approval",
+        step_id="ZZP-01",
+    )
+    assert key2 == "ZZP-01"
+    assert len(adapter._mounted) == 2  # type: ignore[attr-defined]
+    assert adapter._clarification_input_by_step[key2] is not widget1

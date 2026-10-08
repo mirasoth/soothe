@@ -2948,11 +2948,18 @@ async def _mount_manual_clarification_input(
     if not questions_list:
         return ""
 
-    # Reuse an already-mounted widget for this origin, including one already
-    # submitted, so a late re-emit does not mount a duplicate question card.
+    # Reuse an already-mounted widget for this origin so a late re-emit does
+    # not mount a duplicate. When the wire event carries a step_id, scope reuse
+    # to the same step so a stale (already-answered) card from a prior step
+    # does not suppress a fresh approval prompt for a different step.
+    target_origin = str(origin_node or "").strip()
+    incoming_step = str(step_id or "").strip()
     for _key, _w in adapter._clarification_input_by_step.items():
-        if getattr(_w, "_origin_node", "") == str(origin_node or "").strip():
-            return _key
+        if getattr(_w, "_origin_node", "") != target_origin:
+            continue
+        if incoming_step and getattr(_w, "_step_id", "") != incoming_step:
+            continue
+        return _key
 
     target_step_id = str(step_id or "").strip()
     if target_step_id and target_step_id in adapter._current_step_messages:
@@ -4238,6 +4245,16 @@ async def execute_task_textual(
                             if event_type == LOOP_CLARIFICATION_ANSWERED:
                                 clarification_pending = False
                                 adapter._clarification_pending = False
+                                # Evict already-submitted clarification cards so a
+                                # later approval for a different step is not
+                                # deduped against this answered one (the loop
+                                # would otherwise park in await_clarification
+                                # with no visible prompt).
+                                adapter._clarification_input_by_step = {
+                                    _k: _w
+                                    for _k, _w in adapter._clarification_input_by_step.items()
+                                    if not getattr(_w, "_submitted", False)
+                                }
                                 if adapter._resume_spinner:
                                     await adapter._resume_spinner()
                                 continue

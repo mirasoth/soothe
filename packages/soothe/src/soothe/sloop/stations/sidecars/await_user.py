@@ -101,6 +101,7 @@ async def node_await_clarification(
         )
         if rt_step_id:
             requested_payload["step_id"] = str(rt_step_id)
+            request = replace(request, metadata={**request.metadata, "step_id": str(rt_step_id)})
 
     resume_turn = bool(
         (getattr(ctx, "clarification_resume_answers", None) or [])
