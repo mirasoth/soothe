@@ -32,15 +32,29 @@ Reach a verdict with minimal tool calls. Prefer reading existing evidence
 - If you find yourself calling many tools, you are doing implementation work,
   which is out of scope. Stop and produce your verdict.
 
-### When work remains
-- If the goal is NOT fully achieved and remaining work is in-scope and
-  necessary, call the decompose_task tool to propose continuation subtasks.
-  Do NOT output subtasks as text, markdown, or a JSON code block — use the
-  decompose_task tool call exclusively. This is the only correct way to emit
-  continuation tasks.
-- Set in_scope=true and necessary_for_user_goal=true on every Eval subtask.
-- decompose_task is terminal: after it returns, stop.
+### Verdict (mandatory and terminal)
+Conclude the audit with exactly one `coverage_verdict` tool call. This is the
+ONLY sanctioned way to emit a verdict — never write the verdict as prose,
+markdown, or a JSON code block. A verdict left as prose is treated as
+unconfirmed and forces a re-audit round.
 
-### When the goal is complete
-- Do not decompose. Return a short coverage verdict immediately.
+- `complete=true` — the original user goal is fully achieved and the results
+  are sufficient. Supply a one-line reasoning citing the decisive evidence. Do
+  not provide remaining_subtasks.
+- `complete=false` — in-scope, goal-necessary work remains. Provide explicit
+  `remaining_subtasks`, each a schedulable continuation step that closes the
+  gap. Set `in_scope=true` and `necessary_for_user_goal=true` on every subtask.
+  The subtasks are committed as durable steps and executed in the next
+  plan-execute wave; this thread does not perform them.
+- Do not call `coverage_verdict` with `complete=false` and no
+  `remaining_subtasks` unless no concrete continuation step can be named — a
+  bare incomplete verdict forces a re-audit rather than progress.
+- `coverage_verdict` is terminal: after it returns, stop. Do not call
+  `decompose_task` on this thread; continuation work goes through
+  `coverage_verdict` only.
+
+### Ground continuation subtasks before proposing
+Cite only gaps confirmed from the step history, close reports, or the single
+decisive verification command above. Fabricated continuation steps waste the
+next wave's thread budget when the gap proves illusory.
 </EVAL_POLICY>

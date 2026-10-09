@@ -15,10 +15,10 @@ from langchain.agents.middleware.types import (
 
 from soothe.prompts import EVAL_POLICY_SYSTEM_ADDENDUM
 from soothe.sloop.decompose import runtime as _decompose_runtime
-from soothe.sloop.decompose.tool import build_decompose_task_tool
+from soothe.sloop.eval.verdict_tool import build_coverage_verdict_tool
 from soothe.sloop.utils.config_keys import SOOTHE_EVAL_STEP_ID_KEY
 
-_DECOMPOSE_TOOL = build_decompose_task_tool()
+_COVERAGE_VERDICT_TOOL = build_coverage_verdict_tool()
 
 
 def _tool_name(tool: Any) -> str:
@@ -26,6 +26,10 @@ def _tool_name(tool: Any) -> str:
     if name is None and isinstance(tool, dict):
         name = tool.get("name")
     return str(name or "")
+
+
+def _strip_decompose_tool(tools: list[Any]) -> list[Any]:
+    return [t for t in tools if _tool_name(t) != "decompose_task"]
 
 
 def _append_system_addendum(request: ModelRequest[ContextT]) -> ModelRequest[ContextT]:
@@ -59,22 +63,32 @@ class EvalStepMiddleware(AgentMiddleware):
     Keeps the full tool surface so the auditor can run a decisive verification
     command when coverage cannot be confirmed from step history alone. The
     coverage-audit system addendum anchors the thread's role: assess quickly,
-    run at most one decisive verification, then delegate remaining work via
-    decomposition rather than performing it inline.
+    run at most one decisive verification, then emit a binding structured
+    verdict via the `coverage_verdict` tool rather than performing work inline
+    or writing a prose verdict.
     """
 
-    tools = [_DECOMPOSE_TOOL]
+    tools = [_COVERAGE_VERDICT_TOOL]
 
     def modify_request(self, request: ModelRequest[ContextT]) -> ModelRequest[ContextT]:
-        """Ensure decompose_task tool and coverage-audit addendum for eval steps."""
+        """Inject `coverage_verdict` on Eval threads; strip it elsewhere."""
         configurable = _decompose_runtime.langgraph_configurable()
-        if not configurable.get(SOOTHE_EVAL_STEP_ID_KEY):
-            return request
-        # Keep the full tool surface; only ensure decompose_task is present as the
-        # escape hatch for proposing continuation subtasks when work remains.
+        is_eval = bool(configurable.get(SOOTHE_EVAL_STEP_ID_KEY))
         tools = list(request.tools or [])
-        if "decompose_task" not in {_tool_name(tool) for tool in tools}:
-            tools.append(_DECOMPOSE_TOOL)
+        names = {_tool_name(tool) for tool in tools}
+        if not is_eval:
+            # coverage_verdict is Eval-only; strip any stray instance so action
+            # threads cannot emit a coverage verdict.
+            if "coverage_verdict" in names:
+                tools = [t for t in tools if _tool_name(t) != "coverage_verdict"]
+                return request.override(tools=tools)
+            return request
+        # decompose_task is subsumed by coverage_verdict on Eval threads; strip
+        # any stray instance so the LLM has a single continuation surface.
+        if "decompose_task" in names:
+            tools = _strip_decompose_tool(tools)
+        if "coverage_verdict" not in {_tool_name(tool) for tool in tools}:
+            tools.append(_COVERAGE_VERDICT_TOOL)
         request = (
             request.override(tools=tools) if len(tools) != len(request.tools or []) else request
         )

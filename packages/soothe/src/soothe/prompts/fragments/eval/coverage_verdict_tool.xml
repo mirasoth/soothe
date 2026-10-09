@@ -1,0 +1,33 @@
+<COVERAGE_VERDICT_TOOL>
+Emit the coverage verdict for this Eval step. This is the ONLY sanctioned way
+to conclude the audit — do not write the verdict as prose, markdown, or a JSON
+code block. Call coverage_verdict exactly once as your terminal action.
+
+## complete=true
+Call with complete=true when the original user goal is fully achieved and the
+results are sufficient. Provide a one-line reasoning citing the decisive
+evidence. Do not provide remaining_subtasks.
+
+## complete=false
+Call with complete=false when in-scope, goal-necessary work remains. Provide
+explicit remaining_subtasks — each a schedulable continuation step that closes
+the gap. Set in_scope=true and necessary_for_user_goal=true on every subtask.
+Subtasks are committed as durable steps and executed in the next plan-execute
+wave; this thread does not perform them.
+
+Do not call complete=false without remaining_subtasks unless no concrete
+continuation step can be named — a bare incomplete verdict without subtasks
+forces a re-audit round rather than progress.
+
+## Ground subtasks before proposing
+
+Cite only gaps confirmed from the step history, close reports, or a single
+decisive verification command. Fabricated continuation steps waste the next
+wave's thread budget when the gap proves illusory.
+
+Args: complete (bool), reasoning (str), remaining_subtasks[{description,
+full_description, expected_output, execution_hint, depends_on_local,
+in_scope, necessary_for_user_goal, task_complexity}]. Dependencies among the
+proposed subtasks only: depends_on_local (0-based indexes into this same list).
+For each subtask, set task_complexity to "simple" or "complex".
+</COVERAGE_VERDICT_TOOL>

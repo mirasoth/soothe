@@ -54,20 +54,27 @@ def test_eval_keeps_full_tool_surface_and_injects_policy() -> None:
 
     names = [getattr(tool, "name", None) for tool in forwarded.tools or []]
     # Eval threads keep the full tool surface (verification commands included);
-    # decompose_task is ensured as the continuation-proposal escape hatch.
+    # coverage_verdict is the binding verdict surface (decompose_task is
+    # stripped — coverage_verdict subsumes its continuation role on Eval).
     assert "write_file" in names
     assert "execute" in names
     assert "task" in names
     assert "read_file" in names
-    assert "decompose_task" in names
+    assert "coverage_verdict" in names
+    assert "decompose_task" not in names
     assert "user-goal coverage audit" in forwarded.system_message.content
 
 
-def test_non_eval_request_is_unchanged() -> None:
+def test_non_eval_request_strips_coverage_verdict() -> None:
+    """coverage_verdict is Eval-only; action threads must not see it."""
     request = _request()
+    from soothe.sloop.eval.verdict_tool import build_coverage_verdict_tool
+
+    request = request.override(tools=[*request.tools, build_coverage_verdict_tool()])
     with patch(_CONFIGURABLE, return_value={}):
         forwarded = _forward(request)
-    assert forwarded.tools == request.tools
+    names = [getattr(tool, "name", None) for tool in forwarded.tools or []]
+    assert "coverage_verdict" not in names
 
 
 @pytest.mark.asyncio

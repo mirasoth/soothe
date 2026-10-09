@@ -358,6 +358,8 @@ class Executor:
         self._human_attached = human_attached
         # RFC-904 / IG-751: proposals queued by decompose_task during step THREADS.
         self.decompose_proposals: list[Any] = []
+        # IG-780: structured verdicts queued by coverage_verdict on Eval THREADS.
+        self.coverage_verdicts: list[dict[str, Any]] = []
 
     def _execute_min_answer_chars(self) -> int:
         if self._config is None:
@@ -2486,6 +2488,7 @@ class Executor:
             decompose_tokens = bind_decompose_runtime(
                 step_id=step.id,
                 sink=self.decompose_proposals,
+                verdict_sink=self.coverage_verdicts if step.kind == "eval" else None,
             )
             # Pass current_decision for middleware to inject agent loop output contract
             # when available on `loop_state`; parallel branches
@@ -3065,7 +3068,7 @@ class Executor:
                 )
 
             # RFC-905 fail-safe: when an Eval step's LLM emits decomposition
-            # subtasks as text/JSON instead of calling the decompose_task tool,
+            # subtasks as text/JSON instead of calling the coverage_verdict tool,
             # recover the proposal from the final assistant text so RECONCILE
             # can still commit the children.
             if step.kind == "eval" and not self.decompose_proposals and messages:
@@ -3098,6 +3101,14 @@ class Executor:
                             step.id,
                             len(final_ai_text),
                         )
+
+            # IG-780: drain the structured coverage verdict queued by the
+            # coverage_verdict tool onto the step outcome so ROOT_EVAL can read
+            # it without a StepNode schema change. Last verdict wins; a missing
+            # verdict (prose leakage) forces a re-audit round at ROOT_EVAL.
+            if step.kind == "eval" and self.coverage_verdicts:
+                primary_outcome["coverage_verdict"] = self.coverage_verdicts[-1]
+                self.coverage_verdicts.clear()
 
             # Consecutive-empty-completion watchdog: track steps that "complete"
             # with zero tools and minimal output. After N consecutive empties,

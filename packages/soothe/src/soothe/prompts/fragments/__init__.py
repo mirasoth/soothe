@@ -42,6 +42,7 @@ THREAD_USER_HINT_ROOT_FRAGMENT = _read_xml_body("decompose/user_hint_root.xml")
 THREAD_USER_HINT_CHILD_FRAGMENT = _read_xml_body("decompose/user_hint_child.xml")
 EVAL_POLICY_SYSTEM_ADDENDUM = _read_xml_body("eval/eval_policy_system.xml")
 EVAL_DECISION_SYSTEM = _read_xml_body("eval/eval_decision_system.xml")
+COVERAGE_VERDICT_TOOL_DESCRIPTION = _read_xml_body("eval/coverage_verdict_tool.xml")
 ASK_MODE_ADDENDUM = _read_xml_body("decompose/ask_mode_addendum.xml")
 PLAN_MODE_ADDENDUM = _read_xml_body("decompose/plan_mode_addendum.xml")
 PARALLEL_NUDGE_ADDENDUM = _read_xml_body("decompose/parallel_nudge_addendum.xml")
@@ -51,6 +52,7 @@ WESTWORLD_FANOUT_ADDENDUM = _read_xml_body("decompose/westworld_fanout_addendum.
 __all__ = [
     "APPROVED_PLAN_EXECUTE_HINT",
     "ASK_MODE_ADDENDUM",
+    "COVERAGE_VERDICT_TOOL_DESCRIPTION",
     "DECOMPOSE_TASK_TOOL_DESCRIPTION",
     "EVAL_DECISION_SYSTEM",
     "EVAL_POLICY_SYSTEM_ADDENDUM",
