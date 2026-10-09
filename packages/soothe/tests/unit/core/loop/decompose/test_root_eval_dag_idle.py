@@ -234,11 +234,53 @@ async def test_unlabeled_single_leaf_still_finalizes() -> None:
 
 @pytest.mark.asyncio
 async def test_complex_single_leaf_after_completed_eval_finalizes() -> None:
-    """After the forced Eval runs and completes, the next ROOT_EVAL must
-    finalize via the ``latest_eval`` check — no infinite Eval loop.
+    """After the forced Eval runs and records a complete verdict, the next
+    ROOT_EVAL finalizes via the ``latest_eval`` verdict check — no infinite
+    Eval loop. A complete verdict is the only sanctioned finalize signal.
     """
+    from soothe.context.models import StepExecution
+
     ce = ContextEngine()
     goal = await ce.create_goal("implement all backends", loop_id="L1")
+    await ce.add_step(
+        goal.id,
+        StepNode(id="ROOT", description="root", status="completed"),
+    )
+    await ce.add_step(
+        goal.id,
+        StepNode(
+            id="ROOT-EVAL",
+            description="Evaluate user-goal coverage",
+            status="completed",
+            parent_step_id="ROOT",
+            kind="eval",
+            plan_iteration=1,
+            execution=StepExecution(
+                outcome={"coverage_verdict": {"complete": True, "reasoning": "done"}},
+            ),
+        ),
+    )
+    ctx = _ctx_with_ce(
+        ce,
+        goal.id,
+        rail_interpreter=None,
+        interaction_mode=None,
+        intake_label=IntakeLabel.COMPLEX,
+    )
+
+    result = await RootEvalNode()(ctx, {})
+
+    assert result["root_eval_route"] == "finalize"
+
+
+@pytest.mark.asyncio
+async def test_completed_eval_without_verdict_re_audits() -> None:
+    """An Eval that completed without a binding complete verdict (prose
+    leakage) must NOT finalize — it forces a bounded re-audit instead. This is
+    the loop-548d regression: a prose "incomplete" verdict silently finalized.
+    """
+    ce = ContextEngine()
+    goal = await ce.create_goal("fix G-3", loop_id="L1")
     await ce.add_step(
         goal.id,
         StepNode(id="ROOT", description="root", status="completed"),
@@ -264,4 +306,48 @@ async def test_complex_single_leaf_after_completed_eval_finalizes() -> None:
 
     result = await RootEvalNode()(ctx, {})
 
-    assert result["root_eval_route"] == "finalize"
+    assert result["root_eval_route"] == "dispatch"
+    refreshed = await ce.get_goal(goal.id)
+    assert refreshed is not None
+    eval_nodes = [n for n in refreshed.steps.nodes.values() if n.kind == "eval"]
+    assert len(eval_nodes) == 2
+    assert all(n.status == "pending" or n.id == "ROOT-EVAL" for n in eval_nodes)
+
+
+@pytest.mark.asyncio
+async def test_completed_eval_incomplete_verdict_re_audits() -> None:
+    """An Eval that recorded complete=false with no continuation subtasks
+    forces a re-audit rather than finalizing."""
+    from soothe.context.models import StepExecution
+
+    ce = ContextEngine()
+    goal = await ce.create_goal("fix G-3", loop_id="L1")
+    await ce.add_step(
+        goal.id,
+        StepNode(id="ROOT", description="root", status="completed"),
+    )
+    await ce.add_step(
+        goal.id,
+        StepNode(
+            id="ROOT-EVAL",
+            description="Evaluate user-goal coverage",
+            status="completed",
+            parent_step_id="ROOT",
+            kind="eval",
+            plan_iteration=1,
+            execution=StepExecution(
+                outcome={"coverage_verdict": {"complete": False, "reasoning": "gaps remain"}},
+            ),
+        ),
+    )
+    ctx = _ctx_with_ce(
+        ce,
+        goal.id,
+        rail_interpreter=None,
+        interaction_mode=None,
+        intake_label=IntakeLabel.COMPLEX,
+    )
+
+    result = await RootEvalNode()(ctx, {})
+
+    assert result["root_eval_route"] == "dispatch"

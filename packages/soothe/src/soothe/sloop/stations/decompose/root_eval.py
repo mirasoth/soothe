@@ -121,12 +121,29 @@ def _eval_envelope(goal_text: str, nodes: list[Any]) -> str:
         "based on what you have.\n"
         "4. Do NOT implement, edit files, browse the codebase, or write "
         "reports — those are out of scope for this step.\n"
-        "5. If in-scope work remains, call decompose_task with only subtasks "
-        "where in_scope=true and necessary_for_user_goal=true.\n"
-        "6. Otherwise return a short completed-coverage verdict.\n\n"
+        "5. Conclude with exactly one coverage_verdict tool call: complete=true "
+        "when the goal is fully achieved, or complete=false with explicit "
+        "remaining_subtasks (in_scope=true, necessary_for_user_goal=true) when "
+        "in-scope work remains. Never write the verdict as prose — a prose "
+        "verdict is treated as unconfirmed and forces a re-audit.\n\n"
         f"ORIGINAL USER GOAL:\n{goal_text}\n\n"
         f"INTRA-GOAL STEP HISTORY:\n{history}"
     )
+
+
+def _eval_verdict_complete(latest: Any) -> bool:
+    """Return True when the latest Eval recorded a complete coverage verdict.
+
+    Reads the structured ``coverage_verdict`` dict carried on the Eval step's
+    execution outcome (queued by the coverage_verdict tool). A missing or
+    incomplete verdict is NOT complete — callers must re-audit rather than
+    finalize, so prose-only verdicts cannot silently close a goal.
+    """
+    outcome = latest.execution.outcome if latest.execution is not None else None
+    if not isinstance(outcome, dict):
+        return False
+    verdict = outcome.get("coverage_verdict")
+    return isinstance(verdict, dict) and bool(verdict.get("complete"))
 
 
 async def _emit_dag_idle_rail_event(
@@ -218,64 +235,59 @@ class RootEvalNode(LoopNode):
                     if latest.status in ("pending", "active"):
                         return NodeResult(payload={"root_eval_route": "dispatch"})
                     if latest.status == "completed":
-                        logger.info("[root_eval] latest Eval completed; finalize")
+                        if _eval_verdict_complete(latest):
+                            logger.info("[root_eval] latest Eval verdict=complete; finalize")
+                            return NodeResult(payload={"root_eval_route": "finalize"})
+                        # The Eval finished without a binding complete verdict
+                        # (prose leakage, or incomplete with no continuation
+                        # subtasks). Do not finalize — fall through to a
+                        # bounded re-audit so the next Eval round must emit a
+                        # structured coverage_verdict.
+                        logger.warning(
+                            "[root_eval] latest Eval completed without complete verdict; re-audit"
+                        )
+
+                # Intake-gated Eval insertion decides only whether to run the
+                # FIRST coverage Eval (no prior latest). Once an Eval has run,
+                # a missing complete verdict or a decomposed latest routes
+                # straight to the bounded re-audit below.
+                if latest is None:
+                    intent = getattr(ctx.loop_state, "intent", None)
+                    intake_label = (
+                        getattr(intent, "intake_label", None) if intent is not None else None
+                    )
+                    if intake_label == IntakeLabel.MINIMAL:
+                        logger.info("[root_eval] minimal task; skip Eval; finalize")
                         return NodeResult(payload={"root_eval_route": "finalize"})
 
-                # MINIMAL tasks trust the CoreAgent execute result and skip the
-                # coverage Eval entirely — no LLM call needed.
-                intent = getattr(ctx.loop_state, "intent", None)
-                intake_label = getattr(intent, "intake_label", None) if intent is not None else None
-                if intake_label == IntakeLabel.MINIMAL:
-                    logger.info("[root_eval] minimal task; skip Eval; finalize")
-                    return NodeResult(payload={"root_eval_route": "finalize"})
+                    if intake_label == IntakeLabel.SIMPLE:
+                        from soothe.sloop.eval.eval_decision import decide_eval_required
 
-                # SIMPLE tasks: the LLM decides dynamically whether a coverage
-                # audit is warranted based on the full execution evidence.
-                # The LLM sees the step history, close reports, and outcomes,
-                # and may override the structural `eval_required()` predicate
-                # in either direction.
-                if intake_label == IntakeLabel.SIMPLE:
-                    from soothe.sloop.eval.eval_decision import decide_eval_required
+                        decision = await decide_eval_required(
+                            fast_model=ctx.strange_loop._fast_llm,
+                            user_goal=(resolve_user_request(ctx.loop_state) or goal.description),
+                            step_history=list(goal.steps.nodes.values()),
+                            intake_label=intake_label,
+                            soothe_config=ctx.strange_loop.config,
+                            goal_trace=ctx.goal_trace,
+                        )
+                        logger.info(
+                            "[root_eval] SIMPLE eval decision: should_run=%s reasoning=%s",
+                            decision.should_run_eval,
+                            decision.reasoning,
+                        )
+                        if not decision.should_run_eval:
+                            return NodeResult(payload={"root_eval_route": "finalize"})
+                        # should_run_eval=True → fall through to Eval insertion.
 
-                    decision = await decide_eval_required(
-                        fast_model=ctx.strange_loop._fast_llm,
-                        user_goal=(resolve_user_request(ctx.loop_state) or goal.description),
-                        step_history=list(goal.steps.nodes.values()),
-                        intake_label=intake_label,
-                        soothe_config=ctx.strange_loop.config,
-                        goal_trace=ctx.goal_trace,
-                    )
-                    logger.info(
-                        "[root_eval] SIMPLE eval decision: should_run=%s reasoning=%s",
-                        decision.should_run_eval,
-                        decision.reasoning,
-                    )
-                    if not decision.should_run_eval:
-                        return NodeResult(payload={"root_eval_route": "finalize"})
-                    # should_run_eval=True → fall through to Eval insertion.
-
-                # COMPLEX (and unlabeled) tasks use the structural
-                # `eval_required()` predicate: insert Eval when the action
-                # tree shows decomposition, multi-leaf, or early-exit; skip
-                # otherwise (single-leaf no-decompose no early-exit).
-                elif not goal.steps.eval_required():
-                    # Coverage backstop: a goal classified COMPLEX that ran
-                    # as a single completed leaf without decomposition still
-                    # warrants a coverage audit. Complex work executed
-                    # monolithically in one step (observed: 100+ tools,
-                    # recoverable errors, no fan-out) is exactly where
-                    # unverified gaps hide, and the documented contract is
-                    # that complex goals run the full coverage Eval gate.
-                    # Unlabeled (None) goals continue to trust the structural
-                    # skip, preserving existing behavior for goals that never
-                    # passed through intake classification.
-                    if intake_label != IntakeLabel.COMPLEX:
-                        logger.info("[root_eval] eval skip predicate matched; finalize")
-                        return NodeResult(payload={"root_eval_route": "finalize"})
-                    logger.info(
-                        "[root_eval] complex goal ran as single leaf; force Eval (no decomposition)"
-                    )
-                    # Fall through to Eval insertion below.
+                    elif not goal.steps.eval_required():
+                        if intake_label != IntakeLabel.COMPLEX:
+                            logger.info("[root_eval] eval skip predicate matched; finalize")
+                            return NodeResult(payload={"root_eval_route": "finalize"})
+                        logger.info(
+                            "[root_eval] complex goal ran as single leaf; force Eval (no decomposition)"
+                        )
+                        # Fall through to Eval insertion below.
 
                 eval_cfg = getattr(ctx.strange_loop.config.agent.loop, "eval", None)
                 max_rounds = positive_config_int(
@@ -300,7 +312,7 @@ class RootEvalNode(LoopNode):
                         resolve_user_request(ctx.loop_state) or goal.description,
                         list(goal.steps.nodes.values()),
                     ),
-                    expected_output="Coverage verdict or necessary in-scope continuation tasks",
+                    expected_output="Structured coverage_verdict (complete or continuation subtasks)",
                     status="pending",
                     parent_step_id=root.id if root is not None else None,
                     plan_iteration=eval_round + 1,

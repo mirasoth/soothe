@@ -221,6 +221,8 @@ async def test_root_eval_inserts_eval_step_after_decomposition() -> None:
 
 @pytest.mark.asyncio
 async def test_root_eval_finalizes_after_completed_eval() -> None:
+    from soothe.context.models import StepExecution
+
     ce = ContextEngine()
     goal = await ce.create_goal("do work", loop_id="L1")
     await ce.add_steps(
@@ -239,6 +241,9 @@ async def test_root_eval_finalizes_after_completed_eval() -> None:
                 status="completed",
                 kind="eval",
                 plan_iteration=1,
+                execution=StepExecution(
+                    outcome={"coverage_verdict": {"complete": True, "reasoning": "covered"}},
+                ),
             ),
         ],
     )

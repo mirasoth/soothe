@@ -72,3 +72,16 @@ class DecompositionProposal(BaseModel):
             if len(filtered) != len(deps):
                 sub.depends_on_local = filtered or None
         return subtasks
+
+
+class CoverageVerdict(BaseModel):
+    """Structured verdict emitted by an Eval step via the coverage_verdict tool.
+
+    `complete` is the only sanctioned signal that a goal is fully covered.
+    When false, `remaining_subtasks` are queued as a `DecompositionProposal`
+    so reconcile materializes continuation steps for the next plan-execute wave.
+    """
+
+    complete: bool
+    reasoning: str = ""
+    remaining_subtasks: list[ProposedSubtask] = Field(default_factory=list)

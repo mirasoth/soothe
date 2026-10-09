@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- The ROOT_EVAL coverage gate no longer finalizes a goal when its Eval step merely *executed* successfully. It now finalizes only on a structured `complete=true` `coverage_verdict`, so an Eval that returned an "incomplete" verdict as prose (no continuation subtasks) forces a bounded re-audit instead of silently closing the goal — the loop-548d regression where an incomplete goal stopped without another plan-execute wave.
+
+### Changed
+- Eval steps emit a binding structured `coverage_verdict` tool call (complete or remaining subtasks) instead of a free-prose verdict; `decompose_task` is no longer injected on Eval threads (`coverage_verdict` subsumes its continuation role). The verdict rides the existing step `execution.outcome` dict, with no `StepNode` schema or persistence migration.
+
 ## [v1.0.18] - 2026-10-09
 
 ### Fixed
