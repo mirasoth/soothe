@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.0.18] - 2026-10-09
+
+### Fixed
+- Render a fresh tool-approval prompt for each new step instead of reusing a lingering already-answered card from a prior step, which silently parked loops in awaiting-clarification with no visible prompt.
+
+[Compare with previous version]: https://github.com/mirasoth/soothe/compare/v1.0.17...v1.0.18
+
 ## [v1.0.17] - 2026-10-07
 
 ### Fixed
