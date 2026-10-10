@@ -79,6 +79,21 @@ class RelayInbox:
         )
         return entry
 
+    def re_enqueue(self, entry: RelayInboxEntry) -> None:
+        """Re-insert an entry at the head (rollback after a failed consume).
+
+        When ``consume_answer_batch`` dequeued entries but the caller's
+        downstream parsing failed, this restores FIFO order so the answer
+        is not lost. The entry is inserted at index 0, ahead of any
+        remaining entries.
+        """
+        self._entries.insert(0, entry)
+        logger.info(
+            "[RelayInbox] re-enqueued interrupt_id=%s queue_len=%d",
+            entry.request.origin_interrupt_id[:16],
+            len(self._entries),
+        )
+
     def clear(self) -> None:
         """Drop all entries. Called on goal cancellation so stale interrupts
         from the cancelled goal do not leak into a newly submitted goal."""

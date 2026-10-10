@@ -198,6 +198,39 @@ def _format_ask_user_questions(questions: tuple[str, ...]) -> str:
     return "\n".join(f"{i}. {q}" for i, q in enumerate(questions, 1))
 
 
+def _build_planner_ask_synth_result(
+    step_id: str,
+    *,
+    answers: tuple[str, ...],
+    source: str,
+    questions: tuple[str, ...],
+    confidence: float | None,
+    thread_id: str,
+) -> StepExecutionRecord:
+    """Synthesize a successful StepExecutionRecord for a planner ask_user answer.
+
+    Extracted from the two duplicated construction sites in ``node_execute``
+    (the ``decision is None`` resume path and the Branch 1 continued path)
+    so payload format changes apply in one place.
+    """
+    outcome_payload: dict[str, Any] = {
+        "kind": "ask_user",
+        "answers": list(answers),
+        "source": source,
+        "questions": list(questions),
+    }
+    if confidence is not None:
+        outcome_payload["confidence"] = confidence
+    return StepExecutionRecord(
+        step_id=step_id,
+        success=True,
+        duration_ms=0,
+        thread_id=thread_id,
+        outcome=outcome_payload,
+        tool_call_count=0,
+    )
+
+
 def _format_ask_user_answers(
     questions: tuple[str, ...],
     answers: tuple[str, ...],
@@ -466,6 +499,7 @@ async def node_execute(ctx: LoopRuntimeContext, state_dict: dict[str, Any]) -> d
     pending_request_states: list[dict[str, Any]] = []
     consumed_tickets: list[ResumeTicket] = []
     consumed_ticket: ResumeTicket | None = None
+    consumed_batch: list[tuple[Any, Any, ResumeTicket]] | None = None
     # The relay owns the answer records; consume the batch (pops the head plus
     # its answered same-thread prefix, reading the answers projected by
     # await_user).
@@ -564,7 +598,14 @@ async def node_execute(ctx: LoopRuntimeContext, state_dict: dict[str, Any]) -> d
                             context_engine=ctx.ce,
                         )
         except (ValueError, TypeError):
-            logger.exception("[execute] malformed pending_clarification_answer; ignoring")
+            logger.exception("[execute] malformed pending_clarification_answer; rolling back")
+            if relay is not None and consumed_batch:
+                relay.rollback_consume(consumed_batch)
+                consumed_batch = None
+                pending_answer_states.clear()
+                pending_request_states.clear()
+                consumed_tickets.clear()
+                consumed_ticket = None
 
     # Clarification resume: sync the consumed ticket and hydrated decision onto
     # the live LoopState unconditionally — `_select_thread_for_step` reads both
@@ -688,21 +729,13 @@ async def node_execute(ctx: LoopRuntimeContext, state_dict: dict[str, Any]) -> d
             else:
                 logger.warning("[execute] ask_user resume: no resume_ticket on state")
         elif planner_ask_answered_step_id is not None:
-            outcome_payload: dict[str, Any] = {
-                "kind": "ask_user",
-                "answers": list(planner_ask_answers),
-                "source": planner_ask_source,
-                "questions": list(planner_ask_questions),
-            }
-            if planner_ask_confidence is not None:
-                outcome_payload["confidence"] = planner_ask_confidence
-            synth_result = StepExecutionRecord(
-                step_id=planner_ask_answered_step_id,
-                success=True,
-                duration_ms=0,
+            synth_result = _build_planner_ask_synth_result(
+                planner_ask_answered_step_id,
+                answers=planner_ask_answers,
+                source=planner_ask_source,
+                questions=planner_ask_questions,
+                confidence=planner_ask_confidence,
                 thread_id=state.thread_id,
-                outcome=outcome_payload,
-                tool_call_count=0,
             )
             ask_description = "Ask user clarifying question"
             step_desc_local = {planner_ask_answered_step_id: ask_description}
@@ -809,21 +842,13 @@ async def node_execute(ctx: LoopRuntimeContext, state_dict: dict[str, Any]) -> d
             (s for s in decision.steps if s.id == planner_ask_answered_step_id),
             None,
         )
-        outcome_payload: dict[str, Any] = {
-            "kind": "ask_user",
-            "answers": list(planner_ask_answers),
-            "source": planner_ask_source,
-            "questions": list(planner_ask_questions),
-        }
-        if planner_ask_confidence is not None:
-            outcome_payload["confidence"] = planner_ask_confidence
-        synth_result = StepExecutionRecord(
-            step_id=planner_ask_answered_step_id,
-            success=True,
-            duration_ms=0,
+        synth_result = _build_planner_ask_synth_result(
+            planner_ask_answered_step_id,
+            answers=planner_ask_answers,
+            source=planner_ask_source,
+            questions=planner_ask_questions,
+            confidence=planner_ask_confidence,
             thread_id=state.thread_id,
-            outcome=outcome_payload,
-            tool_call_count=0,
         )
         # Make the description available for the step_completed event even when
         # the answered step is not in decision.steps anymore.
@@ -858,7 +883,11 @@ async def node_execute(ctx: LoopRuntimeContext, state_dict: dict[str, Any]) -> d
     # other steps; we honor that by short-circuiting on the first such ready
     # step. Other ready steps will run on the resumed wave once the answer
     # arrives.
-    if ctx.clarification_policy is not None and planner_ask_answered_step_id is None:
+    if (
+        ctx.clarification_policy is not None
+        and planner_ask_answered_step_id is None
+        and resume_answer_payload is None
+    ):
         ready_steps = decision.get_ready_steps(state.dependency_completion_ids())
         ask_step = next((s for s in ready_steps if s.kind == "ask_user"), None)
         if ask_step is not None and ask_step.questions:
@@ -878,6 +907,15 @@ async def node_execute(ctx: LoopRuntimeContext, state_dict: dict[str, Any]) -> d
             # Emit step_started so live UIs surface the pending question;
             # _record_and_emit_step_completed will fire when the answer lands.
             await _emit_step_started_for_steps([ask_step])
+            await ctx.emit(
+                "clarification_requested",
+                {
+                    "questions": list(ask_step.questions),
+                    "origin_node": ORIGIN_EXECUTE,
+                    "mode": "manual",
+                    "step_id": ask_step.id,
+                },
+            )
             if relay is not None:
                 from soothe.sloop.relay.ticket import ResumeTicket
 
@@ -1086,6 +1124,33 @@ async def node_execute(ctx: LoopRuntimeContext, state_dict: dict[str, Any]) -> d
             result = {}
         if allowlist_dirty:
             result["tool_approval_allowlist"] = current_allowlist
+
+        # Emit clarification_requested early — before the graph routes to
+        # await_clarification where interrupt() parks the stream. The
+        # await_user node also emits (on non-resume turns), but its emit
+        # races with interrupt() and the graph sentinel can end the stream
+        # before the event traverses the worker→pusher→queue→coalescer→
+        # broadcast pipeline. This early emit gives the event a full
+        # graph-node transition to be delivered.
+        #
+        # Always emit here — even on resume turns. When the executor captures
+        # a NEW interrupt during a resume (CoreAgent calls ask_user again
+        # after resuming), the await_user node skips its own emit because
+        # resume_turn=True, leaving this as the sole notification. Skipping
+        # here would silence new clarifications captured mid-resume.
+        step_id_for_card = ""
+        if head_entry.resume_ticket is not None:
+            step_id_for_card = str(getattr(head_entry.resume_ticket, "step_id", "") or "")
+        await ctx.emit(
+            "clarification_requested",
+            {
+                "questions": list(head_request.questions),
+                "origin_node": head_request.origin_node,
+                "mode": "manual",
+                "step_id": step_id_for_card,
+            },
+        )
+
         logger.info(
             "[execute] %d clarification(s) queued; routing to await_clarification "
             "(head interrupt_id=%s)",
