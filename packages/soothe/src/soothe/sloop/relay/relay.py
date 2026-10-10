@@ -507,6 +507,28 @@ class LoopRelay:
             consumed.append((request, answer, ticket))
         return consumed or None
 
+    def rollback_consume(
+        self,
+        consumed: list[tuple[ClarificationRequest, ClarificationAnswer, ResumeTicket]],
+    ) -> None:
+        """Re-enqueue entries dequeued by ``consume_answer_batch`` (parse failure).
+
+        Inserts entries at the inbox head in original order so a downstream
+        ``ValueError`` / ``TypeError`` during state parsing in the caller
+        does not permanently lose the user's answer.
+        """
+        for _req, _ans, ticket in reversed(consumed):
+            from soothe.sloop.relay.inbox import RelayInboxEntry
+
+            entry = RelayInboxEntry(
+                request=_req,
+                resume_ticket=ticket,
+                step_id=ticket.step_id,
+                goal_id=getattr(ticket, "goal_id", None),
+            )
+            self._inbox.re_enqueue(entry)
+            self._audit.append(self._audit_entry("rollback", _req.origin_node, ticket))
+
     def clear_answers(self, *, scratch: LoopPhaseScratch | None = None) -> dict[str, Any]:
         """Clear the answer records and project the dequeued inbox (origin node, post-resume)."""
         return build_relay_state_update(
