@@ -7,11 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.0.19] - 2026-10-11
+
 ### Fixed
 - The ROOT_EVAL coverage gate no longer finalizes a goal when its Eval step merely *executed* successfully. It now finalizes only on a structured `complete=true` `coverage_verdict`, so an Eval that returned an "incomplete" verdict as prose (no continuation subtasks) forces a bounded re-audit instead of silently closing the goal — the loop-548d regression where an incomplete goal stopped without another plan-execute wave.
+- Roll back consumed relay-inbox entries when a malformed `pending_clarification_answer` raises during parsing, so the user's answer is re-enqueued at the inbox head instead of being permanently lost.
+- Emit `clarification_requested` early in the execute node (before routing to `await_clarification`) so the event reliably reaches the broadcast pipeline; also emit on resume turns where the await node skips its own emit.
+- Bump `soothe-nano` floor to 1.3.2.
 
 ### Changed
 - Eval steps emit a binding structured `coverage_verdict` tool call (complete or remaining subtasks) instead of a free-prose verdict; `decompose_task` is no longer injected on Eval threads (`coverage_verdict` subsumes its continuation role). The verdict rides the existing step `execution.outcome` dict, with no `StepNode` schema or persistence migration.
+
+[Compare with previous version]: https://github.com/mirasoth/soothe/compare/v1.0.18...v1.0.19
 
 ## [v1.0.18] - 2026-10-09
 
