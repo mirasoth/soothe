@@ -95,7 +95,7 @@ class SynthesisGenerator:
         Yields:
             LangGraph `messages`-mode stream tuples tagged with `phase=goal_completion`.
         """
-        classification, scratchpad_mode = self._resolve_classification(goal, state)
+        classification, scratchpad_mode = await self._resolve_classification(goal, state)
 
         max_total = self._synthesis_max_chars()
         ledger_cfg = None
@@ -198,24 +198,27 @@ class SynthesisGenerator:
             synthesis_elapsed_ms,
         )
 
-    def _resolve_classification(
+    async def _resolve_classification(
         self,
         goal: str,
         state: LoopState,
     ) -> tuple[ScenarioClassification, bool]:
-        """Run heuristic fast-path; return classification and scratchpad flag.
+        """Run heuristic fast-path, then JEV; return classification and scratchpad flag.
 
         Returns:
             Tuple of (classification, scratchpad_mode). When the heuristic is
             conclusive, scratchpad_mode is False and the classification drives
             the standard message-build path. When the heuristic returns None,
-            a minimal fallback classification is returned with scratchpad_mode=True
-            so the model self-classifies inside `<analysis>` tags.
+            the TypeSafe classifier is consulted: a trusted verdict returns a
+            non-scratchpad classification; otherwise a minimal fallback
+            classification is returned with scratchpad_mode=True so the model
+            self-classifies inside ``<analysis>`` tags.
         """
         intent_type = "agentic"
         execution_summary = _extract_execution_summary(state)
 
         scenario_rules = None
+        task_complexity = None
         if self._soothe_config is not None:
             scenario_rules = getattr(
                 getattr(getattr(self._soothe_config, "agent", None), "loop", None),
@@ -238,6 +241,26 @@ class SynthesisGenerator:
                 execution_summary["total_steps"],
             )
             return heuristic, False
+
+        # Heuristic inconclusive — try TypeSafe before falling back to scratchpad.
+        from soothe.sloop.engine.completion.scenario_typesafe import (
+            classify_scenario_typesafe,
+        )
+
+        typesafe_result = await classify_scenario_typesafe(
+            goal=goal,
+            intent_type=intent_type,
+            task_complexity=task_complexity,
+            execution_summary=execution_summary,
+            soothe_config=self._soothe_config,
+        )
+        if typesafe_result is not None:
+            logger.info(
+                "Synthesis typesafe: scenario=%s steps=%d",
+                typesafe_result.scenario,
+                execution_summary["total_steps"],
+            )
+            return typesafe_result, False
 
         logger.info(
             "Synthesis heuristic inconclusive (steps=%d); using scratchpad mode",

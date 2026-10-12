@@ -2435,9 +2435,18 @@ class Executor:
                 SOOTHE_INTERACTION_MODE_KEY,
                 SOOTHE_IS_DAG_ROOT_KEY,
                 SOOTHE_MAX_BRANCH_ROOT_KEY,
+                SOOTHE_STEP_DESCRIPTION_KEY,
+                SOOTHE_USER_GOAL_KEY,
             )
 
             configurable[SOOTHE_DECOMPOSE_STEP_ID_KEY] = step.id
+            # Step description + user goal for the TypeSafe (JEV) finish-vs-split
+            # decision in DecomposeTaskMiddleware.
+            configurable[SOOTHE_STEP_DESCRIPTION_KEY] = step.full_description or step.description
+            if loop_state is not None:
+                _user_goal_text = resolve_user_request(loop_state)
+                if _user_goal_text:
+                    configurable[SOOTHE_USER_GOAL_KEY] = _user_goal_text
             if self._config is not None:
                 try:
                     configurable[SOOTHE_MAX_BRANCH_ROOT_KEY] = int(

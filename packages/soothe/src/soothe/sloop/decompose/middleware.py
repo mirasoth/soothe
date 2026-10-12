@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
+from contextvars import ContextVar
 from typing import Any
 
 from langchain.agents.middleware.types import (
@@ -30,6 +31,8 @@ from soothe.sloop.utils.config_keys import (
     SOOTHE_INTERACTION_MODE_KEY,
     SOOTHE_IS_DAG_ROOT_KEY,
     SOOTHE_MAX_BRANCH_ROOT_KEY,
+    SOOTHE_STEP_DESCRIPTION_KEY,
+    SOOTHE_USER_GOAL_KEY,
 )
 
 logger = logging.getLogger(__name__)
@@ -44,10 +47,79 @@ _DECOMPOSE_TOOL = build_decompose_task_tool()
 _INJECTION_LOGGED_STEPS: set[str] = set()
 _INJECTION_LOG_CAP = 512
 
+# Per-step cache for the TypeSafe finish-vs-split decision. Set from
+# ``awrap_model_call`` (async) before ``modify_request`` (sync) runs, so the
+# sync hook can read the cached verdict without making its own async call.
+# ``None`` = not yet evaluated; ``"finish"`` = strip decompose; anything else
+# = keep decompose (fail-safe).
+_jev_finish_split: ContextVar[str | None] = ContextVar("jev_finish_split", default=None)
+_jev_finish_split_step: ContextVar[str | None] = ContextVar("jev_finish_split_step", default=None)
+
 
 def reset_decompose_injection_log_state() -> None:
     """Clear per-step injection-log dedup state (test isolation)."""
     _INJECTION_LOGGED_STEPS.clear()
+
+
+async def _try_jev_finish_vs_split(conf: dict[str, Any]) -> str | None:
+    """Run a TypeSafe finish-vs-split decision for the current step.
+
+    Returns ``"finish"`` when JEV says the step should finish in-thread with
+    trusted confidence (decompose_task can be stripped). Returns ``None``
+    for any other verdict, untrusted, or unavailable — callers keep the
+    decompose tool (fail-safe).
+
+    The result is cached in ``_jev_finish_split`` keyed by step id so the
+    sync ``modify_request`` hook can read it without an async call.
+    """
+    step_id = _decompose_runtime.current_step_id() or conf.get(SOOTHE_DECOMPOSE_STEP_ID_KEY)
+    if not step_id:
+        return None
+
+    # Already evaluated for this step — return cached result.
+    cached_step = _jev_finish_split_step.get()
+    if cached_step == step_id:
+        return _jev_finish_split.get()
+
+    # Not yet evaluated — run the JEV decision.
+    _jev_finish_split_step.set(step_id)
+    _jev_finish_split.set(None)
+
+    soothe_config = conf.get("soothe_config")
+    step_description = conf.get(SOOTHE_STEP_DESCRIPTION_KEY, "")
+    user_goal = conf.get(SOOTHE_USER_GOAL_KEY, "")
+    intake_label = conf.get(SOOTHE_INTAKE_LABEL_KEY)
+
+    if not step_description:
+        return None
+
+    try:
+        from soothe.sloop.decompose.decompose_typesafe import (
+            decide_finish_vs_split_typesafe,
+        )
+
+        verdict = await decide_finish_vs_split_typesafe(
+            step_description=step_description,
+            user_goal=user_goal,
+            intake_label=intake_label,
+            soothe_config=soothe_config,
+        )
+    except Exception as exc:  # noqa: BLE001 — never block on the classifier
+        logger.info("[decompose] typesafe finish/split unavailable (%s)", exc)
+        return None
+
+    if verdict == "finish":
+        _jev_finish_split.set("finish")
+        logger.info("[decompose] typesafe: finish in-thread (step=%s)", step_id)
+        return "finish"
+
+    return None
+
+
+def _reset_jev_finish_split_cache() -> None:
+    """Clear the JEV finish-vs-split cache (test isolation)."""
+    _jev_finish_split.set(None)
+    _jev_finish_split_step.set(None)
 
 
 def _override_write_todos_description(tools: list[Any]) -> list[Any]:
@@ -226,22 +298,41 @@ class DecomposeTaskMiddleware(AgentMiddleware):
                 len(tools),
             )
         else:
-            # Agent mode: inject decompose_task as usual.
-            before = len(tools)
-            already_present = "decompose_task" in {getattr(t, "name", None) for t in tools}
-            tools = _ensure_decompose_tool(tools)
-            if step_id not in _INJECTION_LOGGED_STEPS:
-                if len(_INJECTION_LOGGED_STEPS) >= _INJECTION_LOG_CAP:
-                    _INJECTION_LOGGED_STEPS.clear()
-                _INJECTION_LOGGED_STEPS.add(step_id)
-                logger.debug(
-                    "[decompose] injecting decompose_task on step %s thread "
-                    "(tools=%d→%d already_present=%s)",
-                    step_id,
-                    before,
-                    len(tools),
-                    already_present,
-                )
+            # Agent mode: check JEV finish-vs-split cache first.
+            # When JEV says "finish" with trusted confidence, strip
+            # decompose_task so the LLM has a narrower action space.
+            jev_verdict = _jev_finish_split.get()
+            if jev_verdict == "finish":
+                before = len(tools)
+                tools = _strip_decompose_tool(tools)
+                if step_id not in _INJECTION_LOGGED_STEPS:
+                    if len(_INJECTION_LOGGED_STEPS) >= _INJECTION_LOG_CAP:
+                        _INJECTION_LOGGED_STEPS.clear()
+                    _INJECTION_LOGGED_STEPS.add(step_id)
+                    logger.debug(
+                        "[decompose] stripped decompose_task per JEV finish "
+                        "verdict (step=%s tools=%d→%d)",
+                        step_id,
+                        before,
+                        len(tools),
+                    )
+            else:
+                # Agent mode: inject decompose_task as usual.
+                before = len(tools)
+                already_present = "decompose_task" in {getattr(t, "name", None) for t in tools}
+                tools = _ensure_decompose_tool(tools)
+                if step_id not in _INJECTION_LOGGED_STEPS:
+                    if len(_INJECTION_LOGGED_STEPS) >= _INJECTION_LOG_CAP:
+                        _INJECTION_LOGGED_STEPS.clear()
+                    _INJECTION_LOGGED_STEPS.add(step_id)
+                    logger.debug(
+                        "[decompose] injecting decompose_task on step %s thread "
+                        "(tools=%d→%d already_present=%s)",
+                        step_id,
+                        before,
+                        len(tools),
+                        already_present,
+                    )
 
         # Build system-prompt addendum.
         addendum = THREAD_POLICY_SYSTEM_ADDENDUM
@@ -305,5 +396,18 @@ class DecomposeTaskMiddleware(AgentMiddleware):
         request: ModelRequest[ContextT],
         handler: Callable[[ModelRequest[ContextT]], Awaitable[ModelResponse[Any]]],
     ) -> ModelResponse[Any]:
-        """Apply decompose injection before the async model call."""
+        """Apply decompose injection before the async model call.
+
+        Before the sync ``modify_request`` runs, evaluate the TypeSafe
+        finish-vs-split decision for the current step (once per step,
+        cached in a contextvar). The cached verdict is read by
+        ``modify_request`` to decide whether to strip ``decompose_task``.
+        """
+        conf = _decompose_runtime.langgraph_configurable()
+        step_id = _decompose_runtime.current_step_id() or conf.get(SOOTHE_DECOMPOSE_STEP_ID_KEY)
+        if step_id and not conf.get(SOOTHE_EVAL_STEP_ID_KEY):
+            mode = self._active_mode(conf)
+            if mode is None:
+                # Agent mode — run the JEV finish-vs-split decision.
+                await _try_jev_finish_vs_split(conf)
         return await handler(self.modify_request(request))

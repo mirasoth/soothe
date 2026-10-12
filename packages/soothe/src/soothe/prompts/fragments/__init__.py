@@ -29,11 +29,6 @@ def _read_xml_body(relative: str) -> str:
 
 PROMPT_TIMESTAMP_FRAGMENT = _read("system/prompt_timestamp.xml", strip=True)
 
-SCENARIO_CLASSIFIER_SYSTEM_FRAGMENT = _read(
-    "classifiers/scenario_classifier_system.xml", strip=True
-)
-SCENARIO_CLASSIFIER_USER_FRAGMENT = _read("classifiers/scenario_classifier_user.xml", strip=True)
-
 THREAD_POLICY_SYSTEM_ADDENDUM = _read_xml_body("decompose/thread_policy_system.xml")
 WRITE_TODOS_TOOL_DESCRIPTION = _read_xml_body("decompose/write_todos_tool.xml")
 DECOMPOSE_TASK_TOOL_DESCRIPTION = _read_xml_body("decompose/decompose_task_tool.xml")
@@ -59,8 +54,6 @@ __all__ = [
     "PARALLEL_NUDGE_ADDENDUM",
     "PLAN_MODE_ADDENDUM",
     "PROMPT_TIMESTAMP_FRAGMENT",
-    "SCENARIO_CLASSIFIER_SYSTEM_FRAGMENT",
-    "SCENARIO_CLASSIFIER_USER_FRAGMENT",
     "THREAD_POLICY_SYSTEM_ADDENDUM",
     "THREAD_USER_HINT_CHILD_FRAGMENT",
     "THREAD_USER_HINT_ROOT_FRAGMENT",

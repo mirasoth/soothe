@@ -207,6 +207,7 @@ class StrangeLoop:
                 skip_llm_if_workspace_default=skip_ws_default,
                 abstain_overrides_defaults=abstain_overrides,
                 picker=picker,
+                soothe_config=self.config,
             )
             return result.rail_id
         except Exception:

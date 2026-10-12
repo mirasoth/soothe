@@ -36,17 +36,32 @@ Replace keyword-based classification and length constraints with:
 
 ### Core Components
 
-#### 1. ScenarioClassifier (Phase 1)
+#### 1. Scenario Classification (pre-LLM resolution, zero LLM calls)
 
 **Purpose**: Determine appropriate synthesis scenario from goal + intent + execution pattern
+**before** the single synthesis LLM call — without making an LLM call of its own.
 
-**Model**: Fast model from configuration (optimized for structured classification)
+**Resolution order** (first non-`None` wins; all paths produce zero LLM calls):
 
-**Input**:
-- `goal`: User's goal description
-- `intent_type`: Intent classification (`quiz` / `continue_thread` / `new_goal`)
-- `task_complexity`: Task complexity level (`minimal` / `simple` / `medium` / `complex`)
-- `execution_summary`: Execution metadata (total_steps, successful_steps, step_types, tools_used, evidence_volume)
+1. **Heuristic fast-path** (`scenario_classifier._heuristic_classify`): pure
+   pattern matching on execution metadata (step count, success count, tool
+   types, evidence volume). Returns a `ScenarioClassification` for obvious
+   cases (single-step, all-failed, high-step analysis, low-evidence agentic)
+   or `None` when no rule matches.
+
+2. **TypeSafe (JEV) `Choice`** (`scenario_typesafe.classify_scenario_typesafe`):
+   when the heuristic is inconclusive, a TypeSafe `Choice` question picks one
+   of the 10 built-in scenario styles. JEV is a decision model, not a
+   text-generation LLM — this is **not** an LLM round trip. A trusted verdict
+   (confidence + margin gates met, suppression bar satisfied) returns a
+   `ScenarioClassification`; an untrusted or unavailable verdict returns
+   `None`.
+
+3. **Scratchpad fallback**: when both heuristic and JEV return `None`, the
+   synthesis LLM self-classifies inside `<analysis>` tags in the **same
+   streaming response** that produces the report body (see §2 below). This is
+   not a separate call — classification and synthesis are collapsed into one
+   LLM request.
 
 **Output Schema**:
 ```python
@@ -58,31 +73,38 @@ class ScenarioClassification(BaseModel):
 ```
 
 **Built-in Scenarios** (minimal templates):
-1. `code_architecture_design` - ["Summary", "Component Analysis", "Key Findings", "Recommendations"]
-2. `code_implementation_design` - ["Approach", "Implementation Details", "Code Examples", "Usage Guide"]
-3. `research_synthesis` - ["Executive Summary", "Key Findings", "Source Analysis", "Conclusions"]
-4. `travel_activity_plan` - ["Overview", "Itinerary", "Logistics", "Recommendations"]
-5. `tutorial_guide` - ["Introduction", "Prerequisites", "Steps", "Tips"]
-6. `analysis_report` - ["Executive Summary", "Metrics/Findings", "Trends", "Recommendations"]
-7. `investigation_summary` - ["Problem Statement", "Investigation Process", "Findings", "Resolution"]
-8. `decision_analysis` - ["Context", "Options", "Trade-offs", "Recommendation"]
-9. `content_draft` - ["Introduction", "Body", "Conclusion"]
-10. `general_summary` - ["Summary", "Key Points"]
+1. `code_architecture_design` - System/module structure analysis
+2. `code_implementation_design` - Concrete implementation patterns and examples
+3. `research_synthesis` - Multi-source information gathering and findings
+4. `travel_activity_plan` - Structured planning for trips, events, activities
+5. `tutorial_guide` - Step-by-step instructional content
+6. `analysis_report` - Data/metrics/trends analysis with recommendations
+7. `investigation_summary` - Problem/troubleshooting investigation process
+8. `decision_analysis` - Options comparison with trade-offs
+9. `content_draft` - Blog, documentation, proposal, email drafts
+10. `general_summary` - Simple summarization fallback
 
-**Matching Logic**: Execution pattern provides discriminative signal:
-- web_search + fetch_url → Research Synthesis
-- file_read + grep + ls → Code Architecture/Investigation (intent determines which)
-- execute + shell → Implementation Design
-- subagent calls → Complex scenarios (Investigation/Analysis)
-- No tools/light tools → General Summary
+#### 2. SynthesisGenerator (single LLM call)
 
-#### 2. SynthesisGenerator (Phase 2)
+**Unified Flow** (one LLM call, not two):
+1. Resolve classification via the pre-LLM cascade above (zero LLM calls)
+2. Build synthesis prompt from classification (no length constraints)
+3. Stream the report via a **single** `astream` call:
+   - **Non-scratchpad mode** (heuristic or JEV resolved the scenario): system
+     prompt has the scenario pre-selected; the LLM writes the report directly.
+   - **Scratchpad mode** (fallback): the system prompt instructs the model to
+     self-classify inside `<analysis>` tags **and then** write the report body
+     in the **same streaming response**. The `<analysis>` block is internal
+     reasoning within the same response — classification and synthesis are
+     collapsed into a single LLM request. After streaming,
+     `strip_analysis_scratchpad` removes the analysis block from the final
+     output (a deterministic string operation, not an LLM call).
 
-**Modified Flow**:
-1. Extract evidence from successful step results
-2. Call ScenarioClassifier → get classification
-3. Build synthesis prompt from classification (no length constraints)
-4. Stream via CoreAgent
+> **Design note**: The former two-phase classify→generate design (separate
+> classifier LLM call, then separate synthesis LLM call) has been collapsed
+> into a single LLM call. The scratchpad mode lets the model self-classify
+> inline; the JEV path pre-selects the scenario so the model doesn't even
+> need to self-classify. Neither path adds a second LLM call.
 
 **Prompt Structure**:
 ```
@@ -119,16 +141,18 @@ Plan Phase → decides synthesis needed
     ↓
 Goal Completion Decision → skip/direct/synthesize
     ↓
-SynthesisGenerator:
-    Phase 1: ScenarioClassifier
-        - Input: goal + intent + execution_summary
-        - Output: scenario + sections + contextual_focus
+SynthesisGenerator (single LLM call):
+    Pre-LLM classification (zero LLM calls):
+        1. Heuristic fast-path (pattern matching)
+        2. TypeSafe (JEV) Choice question (decision model, not LLM)
+        3. Fallback → scratchpad self-classification (inline in the LLM call)
     
-    Phase 2: Build Prompt + Stream
-        - Uses classification
-        - No length constraints
+    Single LLM streaming call:
+        - Non-scratchpad: scenario pre-selected → direct report stream
+        - Scratchpad: model self-classifies in <analysis> then writes
+          report body in the same response stream
     ↓
-Final Synthesis Response
+Final Synthesis Response (analysis block stripped deterministically)
 ```
 
 ### Removal of Legacy Components
@@ -154,30 +178,39 @@ Final Synthesis Response
 ### File Structure
 
 **New**:
-- `analysis/scenario_classifier.py` - ScenarioClassifier implementation + ScenarioClassification schema + BUILTIN_SCENARIOS constant
+- `sloop/engine/completion/scenario_classifier.py` - Heuristic fast-path, ScenarioClassification schema, _SCENARIO_DESCRIPTIONS, SCENARIO_FORMAT_HINTS
+- `sloop/engine/completion/scenario_typesafe.py` - TypeSafe (JEV) Choice question for scenario classification (pre-LLM, zero LLM calls)
+- `sloop/engine/completion/synthesis_projection.py` - Prompt rendering, scratchpad mode, analysis-block stripping
 
 **Modified**:
-- `analysis/synthesis.py` - Remove keyword classification, integrate classifier
+- `sloop/engine/completion/synthesis.py` - Unified single-LLM-call synthesis with heuristic → JEV → scratchpad cascade
 - `sloop/engine/strange_loop.py` - Remove length categorization step
-- `state/schemas.py` - Remove response_length_category from PlanResult
 
 **Deleted**:
 - `policies/response_length_policy.py` - Entire file
 
 ### Error Handling
 
-**Classifier Failure**:
+**Classification Failure (heuristic + JEV both return None)**:
 ```python
-try:
-    classification = await self._classify_scenario(goal, state)
-except Exception:
-    logger.warning("Scenario classification failed, using fallback")
-    classification = ScenarioClassification(
-        scenario="general_summary",
-        sections=["Summary", "Key Points"],
-        contextual_focus=["Provide concise summary of goal completion"],
-        evidence_emphasis="Use any available tool results or AI responses"
-    )
+# No LLM call was made for classification — fall through to scratchpad mode.
+# The synthesis LLM self-classifies inside <analysis> tags in the same
+# streaming response that produces the report body (single LLM call).
+classification = ScenarioClassification(
+    scenario="custom",
+    sections=[],
+    contextual_focus=[f"Summarize key findings for: {goal[:120]}"],
+    evidence_emphasis="Group evidence by concern or outcome in bullets/tables",
+)
+scratchpad_mode = True  # → single LLM call with inline self-classification
+```
+
+**Scratchpad Stream Timeout**:
+```python
+# The single synthesis LLM stream is wrapped in asyncio.timeout. On timeout,
+# fall back to generate_user_fallback_summary (deterministic, no LLM call).
+async for chunk in self._yield_fallback_chunk(state):
+    yield chunk
 ```
 
 **No Intent Available**:
@@ -332,3 +365,41 @@ TASK:
 - `user_message.py` — Removed EXECUTION SUMMARY + AVAILABLE BUILT-IN SCENARIOS sections
 - `synthesis_report_system.xml` — Added scenario list to system prompt
 - `synthesis_projection.py` — Changed `[Task]`→`USER:` and `[Finding]`→`AI:`
+
+### Amendment B: Unified Single-LLM-Call Synthesis + JEV Pre-Classification (IG-752)
+
+**Date**: 2026-10-12
+**Issue**: The original spec described a two-phase classify→generate flow (separate
+classifier LLM call, then separate synthesis LLM call). The implementation
+collapsed this into a single LLM call, and added a TypeSafe (JEV) pre-classification
+path that replaces what would otherwise be the classifier LLM call with a cheaper
+decision-model question.
+
+**Changes**:
+
+1. **Collapsed two-phase classify→generate into a single LLM call**:
+   - The scratchpad mode lets the model self-classify inside `<analysis>` tags
+     and then write the report body in the **same streaming response**.
+   - `strip_analysis_scratchpad` removes the analysis block deterministically
+     (string operation, not an LLM call).
+   - Docstring in `synthesis.py:generate_synthesis` confirms: "collapsing the
+     former two-phase classify→generate into a single LLM call."
+
+2. **Added TypeSafe (JEV) pre-classification path** (`scenario_typesafe.py`):
+   - When the heuristic fast-path is inconclusive, a JEV `Choice` question picks
+     one of the 10 built-in scenario styles before falling back to scratchpad.
+   - JEV is a decision model (TypeSafe `Choice`), not a text-generation LLM —
+     this is **not** an LLM round trip.
+   - A trusted verdict (confidence + margin gates met, suppression bar satisfied)
+     returns a `ScenarioClassification` with `scratchpad_mode=False` so the
+     synthesis LLM doesn't even need to self-classify.
+   - An untrusted or unavailable verdict returns `None` → scratchpad fallback.
+
+3. **Pre-LLM classification cascade** (zero LLM calls):
+   - Heuristic fast-path → JEV `Choice` → scratchpad fallback (inline in the
+     single LLM call). Only the synthesis `astream` call is an LLM call.
+
+**Files Added/Modified**:
+- `sloop/engine/completion/scenario_typesafe.py` — JEV `Choice` for scenario classification
+- `sloop/engine/completion/synthesis.py` — `_resolve_classification` now async, tries heuristic → JEV → scratchpad
+- `sloop/engine/completion/synthesis_projection.py` — `render_synthesis_system_prompt` with `scratchpad_mode=True`

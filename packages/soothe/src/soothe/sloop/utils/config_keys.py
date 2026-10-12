@@ -40,6 +40,11 @@ SOOTHE_CLARIFICATION_MODE_KEY = "soothe_clarification_mode"
 # False (autopilot), safety escalations degrade to inline instructive rejects.
 SOOTHE_HUMAN_ATTACHED_KEY = "soothe_human_attached"
 
+# Step description + user goal text propagated so the DecomposeTaskMiddleware
+# can run a TypeSafe (JEV) finish-vs-split decision before injecting the tool.
+SOOTHE_STEP_DESCRIPTION_KEY = "soothe_step_description"
+SOOTHE_USER_GOAL_KEY = "soothe_user_goal"
+
 
 def positive_config_int(value: Any, default: int, *, minimum: int = 1) -> int:
     """Coerce a config budget to an int at or above `minimum`.
@@ -61,5 +66,7 @@ __all__ = [
     "SOOTHE_IS_DAG_ROOT_KEY",
     "SOOTHE_CLARIFICATION_MODE_KEY",
     "SOOTHE_HUMAN_ATTACHED_KEY",
+    "SOOTHE_STEP_DESCRIPTION_KEY",
+    "SOOTHE_USER_GOAL_KEY",
     "positive_config_int",
 ]
