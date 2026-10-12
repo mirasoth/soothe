@@ -124,13 +124,14 @@ class Workspace:
             logger.warning("Checkpoint skipped — workspace is closing")
             return None
 
+        self._dirty_tracker.scan_now()
         dirty = self._dirty_tracker.get_dirty()
-        deleted = self._dirty_tracker.get_deleted()
+        deleted = self._dirty_tracker.deleted_files
         if not dirty and not deleted:
             logger.debug("No dirty files — skipping checkpoint")
             return None
 
-        checkpoint_id = await self._checkpoint_mgr.create_checkpoint(dirty, deleted)
+        checkpoint_id = await self._checkpoint_mgr.create_checkpoint()
         self._dirty_tracker.clear()
         return checkpoint_id
 
