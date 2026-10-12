@@ -49,6 +49,11 @@ class Workspace:
         debouncer: Debounced checkpoint trigger.
         checkpoint_mgr: Checkpoint lifecycle manager.
         uploader: Background uploader.
+        content_backend: Optional second backend addressing a plain file
+            tree (the "content root", e.g. workspace materials + mirrored
+            agent outputs). `materialize_content` pulls it into the local
+            workspace at open; the checkpoint manager mirrors dirty writes
+            and deletions back at checkpoint time.
     """
 
     def __init__(
@@ -63,6 +68,7 @@ class Workspace:
         debouncer: CheckpointDebouncer | None,
         checkpoint_mgr: CheckpointManager | None,
         uploader: BackgroundUploader | None,
+        content_backend: WorkspaceSyncBackend | None = None,
     ) -> None:
         """Initialize the workspace sync session with all sub-components."""
         self.run_id = run_id
@@ -74,6 +80,7 @@ class Workspace:
         self._debouncer = debouncer
         self._checkpoint_mgr = checkpoint_mgr
         self._uploader = uploader
+        self._content_backend = content_backend
         self._closing = False
         self._manifest: Manifest | None = None
 
@@ -103,6 +110,55 @@ class Workspace:
         )
         await materializer.materialize(resources)
         logger.info("Materialized %d resources for run %s", len(resources), self.run_id)
+
+    async def materialize_content(self) -> int:
+        """Materialize the content tree (dual-source sync) into the workspace.
+
+        Lists every file under the content backend's root and restores it at
+        the same relative path locally, skipping engine directories and files
+        whose local content already matches. This is the "read path" half of
+        content mirroring — the write half happens at checkpoint time (dirty
+        files/deletions are mirrored back by the checkpoint manager).
+
+        Returns:
+            Number of files downloaded (unchanged files are skipped).
+        """
+        if self._content_backend is None:
+            return 0
+
+        import hashlib as _hashlib
+
+        skip_prefixes = (".workspace/", "__pycache__/", ".git/")
+        rel_paths = await self._content_backend.list_content_files()
+        downloaded = 0
+        for rel in rel_paths:
+            if rel.startswith(skip_prefixes):
+                continue
+            dest = self.root / rel
+            if dest.is_file() and not dest.is_symlink():
+                existing = dest.read_bytes()
+                remote = await self._content_backend.get_content_file(rel)
+                if (
+                    remote is not None
+                    and _hashlib.sha256(existing).hexdigest() == _hashlib.sha256(remote).hexdigest()
+                ):
+                    continue
+            elif dest.exists():
+                continue  # symlink or special file — leave it alone
+            data = await self._content_backend.get_content_file(rel)
+            if data is None:
+                continue
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(data)
+            downloaded += 1
+        if rel_paths:
+            logger.info(
+                "Content materialization for run %s: %d/%d files fetched",
+                self.run_id,
+                downloaded,
+                len(rel_paths),
+            )
+        return downloaded
 
     async def start_tracking(self) -> None:
         """Start dirty tracking and background uploader.

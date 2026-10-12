@@ -47,6 +47,12 @@ class CheckpointManager:
         cas: Local content-addressed storage cache.
         dirty_tracker: Dirty file tracker (source of dirty file paths).
         workspace_root: Local workspace root path.
+        content_backend: Optional second backend addressing a plain file
+            tree (the "content root"). When set, every checkpoint also
+            MIRRORS dirty file contents to `<relpath>` on the content
+            backend and propagates deletions, so the content tree always
+            reflects the latest workspace state without requiring
+            manifest/checkpoint parsing to read.
         max_deltas: Compaction threshold — max delta chain length.
         max_cumulative_dirty: Compaction threshold — max cumulative
             dirty-file entries across the delta chain.
@@ -60,6 +66,7 @@ class CheckpointManager:
         cas: CASCache,
         dirty_tracker: DirtyTracker,
         workspace_root: Path,
+        content_backend: WorkspaceSyncBackend | None = None,
         max_deltas: int = _DEFAULT_MAX_DELTAS,
         max_cumulative_dirty: int = _DEFAULT_MAX_CUMULATIVE_DIRTY,
     ) -> None:
@@ -69,6 +76,7 @@ class CheckpointManager:
         self._cas = cas
         self._dirty_tracker = dirty_tracker
         self._workspace_root = workspace_root
+        self._content_backend = content_backend
         self._max_deltas = max_deltas
         self._max_cumulative_dirty = max_cumulative_dirty
         self._checkpoint_seq = 0
@@ -157,6 +165,34 @@ class CheckpointManager:
             if not self._cas.has_blob(sha256):
                 self._cas.store_blob(sha256, data)
             dirty_entries.append(ManifestEntry(path=rel_path, sha256=sha256, size=len(data)))
+            # Dual-source mirror: the content tree always holds the latest
+            # state of dirty files so non-engine readers can list/read it
+            # directly. Failures are logged, not fatal — the CAS/manifest
+            # write above remains the source of truth.
+            if self._content_backend is not None:
+                try:
+                    await self._content_backend.put_content_file(rel_path, data)
+                except Exception:  # noqa: BLE001
+                    logger.warning(
+                        "Content mirror put failed for %s (run %s)",
+                        rel_path,
+                        self._run_id,
+                        exc_info=True,
+                    )
+
+        # Mirror deletions to the content tree (also covers dirty paths that
+        # vanished between scan and checkpoint — moved into `deleted` above).
+        if self._content_backend is not None:
+            for d in deleted:
+                try:
+                    await self._content_backend.delete_content_file(d)
+                except Exception:  # noqa: BLE001
+                    logger.warning(
+                        "Content mirror delete failed for %s (run %s)",
+                        d,
+                        self._run_id,
+                        exc_info=True,
+                    )
 
         if self._manifest is None:
             self._manifest = Manifest(

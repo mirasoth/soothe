@@ -320,6 +320,67 @@ class FsspecSyncBackend:
             yield data[offset : offset + _STREAM_CHUNK_SIZE]
 
     # ------------------------------------------------------------------
+    # Flat content-tree operations (content mirror / dual-source sync)
+    # ------------------------------------------------------------------
+    #
+    # Unlike the CAS/manifest layout above, these address a PLAIN file tree
+    # rooted at `root` (e.g. s3://<bucket>/workspaces/<wsId>/): paths map
+    # 1:1 to relative workspace paths. Used by the content-mirror half of
+    # dual-source sync: materialize workspace files at open, mirror dirty
+    # file writes/deletes back at checkpoint.
+
+    def _content_path(self, rel_path: str) -> str:
+        """Map a relative workspace path to its content-tree storage path."""
+        validated = validate_relative_path(rel_path, name="content_path")
+        return f"{self._root}/{validated}"
+
+    async def list_content_files(self) -> list[str]:
+        """List all files in the content tree as relative workspace paths.
+
+        Returns an empty list when the tree does not exist yet.
+        """
+        try:
+            entries = await self._to_thread(self._fs.find, self._root)
+        except FileNotFoundError:
+            return []
+        rel_paths: list[str] = []
+        prefix = f"{self._root}/"
+        for entry in entries:
+            name = entry if isinstance(entry, str) else str(entry.get("name", ""))
+            if not name:
+                continue
+            if name.endswith("/"):
+                continue  # directory entries (some filesystems emit them)
+            if not name.startswith(prefix):
+                continue
+            rel = name[len(prefix) :]
+            if rel:
+                rel_paths.append(rel)
+        rel_paths.sort()
+        return rel_paths
+
+    async def get_content_file(self, rel_path: str) -> bytes | None:
+        """Return content-tree file bytes by relative path, or `None`."""
+        path = self._content_path(rel_path)
+        try:
+            return await self._to_thread(self._fs.cat, path)
+        except FileNotFoundError:
+            return None
+
+    async def put_content_file(self, rel_path: str, data: bytes) -> None:
+        """Write bytes to the content-tree path (plain overwrite)."""
+        path = self._content_path(rel_path)
+        await self._to_thread(self._ensure_parent_dir, path)
+        await self._to_thread(self._fs.pipe, path, data)
+
+    async def delete_content_file(self, rel_path: str) -> None:
+        """Delete the content-tree object, if present (idempotent)."""
+        path = self._content_path(rel_path)
+        exists = await self._to_thread(self._fs.exists, path)
+        if exists:
+            await self._to_thread(self._fs.rm, path)
+
+    # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
 
