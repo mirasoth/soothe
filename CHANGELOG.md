@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.0.20] - 2026-10-12
+
+### Fixed
+- `Workspace.checkpoint()` called a nonexistent `DirtyTracker.get_deleted()` and passed arguments to the zero-arg `CheckpointManager.create_checkpoint()`, so every checkpoint raised and was silently swallowed by callers. It now uses `deleted_files`, forces a final stat-scan via the new `scan_now()`, and calls `create_checkpoint()` with its real signature.
+- `DirtyTracker.scan_now()`: force an immediate stat-scan diff so writes landing after the last poll tick (e.g. right before session close) are captured; no-op when a native watcher is active.
+- `DirtyTracker` now tracks workspace-root files. The workspace root is the agent's working directory, but only `input/`, `working/`, `output/` were scanned, so files written at the root never synced.
+- `FsspecSyncBackend`: create parent directories before `pipe` in `put_blob` / `put_manifest` / `put_checkpoint` / `publish_artifact` — cloud filesystems create keys implicitly, but `LocalFileSystem` does not auto-create parent dirs, so blob/manifest/checkpoint writes to a `file://` source raised `FileNotFoundError`.
+
+[Compare with previous version]: https://github.com/mirasoth/soothe/compare/v1.0.19...v1.0.20
+
 ## [v1.0.19] - 2026-10-11
 
 ### Fixed
