@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.0.22] - 2026-10-12
+
+### Added
+- Dual-source workspace sync (content mirror): `WorkspaceManager` accepts a `content_backend_factory` that provisions a second `FsspecSyncBackend` addressing a plain file tree per run. `Workspace.materialize_content()` restores the content tree into the local workspace at open (skipping unchanged files by hash); `CheckpointManager` mirrors dirty-file writes and deletions back to the content tree at checkpoint time, so non-engine readers can list/read the latest workspace state directly without parsing manifests.
+
+[Compare with previous version]: https://github.com/mirasoth/soothe/compare/v1.0.21...v1.0.22
+
 ## [v1.0.21] - 2026-10-12
 
 ### Fixed

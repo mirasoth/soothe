@@ -42,6 +42,12 @@ class WorkspaceManager:
         backend: Remote storage backend (or `None` for local-only mode).
         state_store_factory: Callable that creates a `WorkspaceStateStore`
             for a given loop_id and workspace_dir.
+        content_backend_factory: Optional callable mapping a run_id to a
+            second backend addressing a plain file tree (the "content
+            root", e.g. `s3://<bucket>/workspaces/<run_id>`). Enables
+            dual-source sync: content files materialize into the workspace
+            at open and dirty writes/deletes mirror back at checkpoint.
+            Return `None` to disable content mirroring for a run.
     """
 
     def __init__(
@@ -51,12 +57,14 @@ class WorkspaceManager:
         cas_root: Path,
         backend: WorkspaceSyncBackend | None = None,
         state_store_factory: Callable[..., WorkspaceStateStore] | None = None,
+        content_backend_factory: Callable[[str], WorkspaceSyncBackend | None] | None = None,
     ) -> None:
         """Initialize the sync manager with workspace/CAS roots and optional backend."""
         self._workspaces_root = workspaces_root
         self._cas_root = cas_root
         self._backend = backend
         self._state_store_factory = state_store_factory
+        self._content_backend_factory = content_backend_factory
         self._workspaces: dict[str, Workspace] = {}
 
     def _workspace_root(self, run_id: str) -> Path:
@@ -111,6 +119,18 @@ class WorkspaceManager:
                 run_id,
             )
 
+        content_backend: WorkspaceSyncBackend | None = None
+        if self._content_backend_factory is not None:
+            try:
+                content_backend = self._content_backend_factory(run_id)
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "Content backend factory failed for run %s — "
+                    "content mirroring disabled for this run",
+                    run_id,
+                )
+                content_backend = None
+
         checkpoint_mgr: CheckpointManager | None = None
         if backend is not None:
             checkpoint_mgr = CheckpointManager(
@@ -119,6 +139,7 @@ class WorkspaceManager:
                 cas=cas,
                 dirty_tracker=dirty_tracker,
                 workspace_root=root,
+                content_backend=content_backend,
             )
 
         debouncer: CheckpointDebouncer | None = None
@@ -144,6 +165,7 @@ class WorkspaceManager:
             debouncer=debouncer,
             checkpoint_mgr=checkpoint_mgr,
             uploader=uploader,
+            content_backend=content_backend,
         )
         self._workspaces[run_id] = ws
         logger.info("Opened workspace for run %s at %s", run_id, root)
