@@ -239,6 +239,16 @@ class DirtyTracker:
             path for path, event in self._dirty_files.items() if event.status == "rejected_symlink"
         ]
 
+    def scan_now(self) -> None:
+        """Force an immediate stat-scan diff.
+
+        In stat-scan polling mode this catches writes that happened after
+        the last poll tick (e.g. right before a final checkpoint).  No-op
+        when a native watcher is active (events are already live).
+        """
+        if not self.is_native:
+            self._scan_and_diff()
+
     # ------------------------------------------------------------------
     # Stat-scan polling
     # ------------------------------------------------------------------
@@ -288,6 +298,19 @@ class DirtyTracker:
             Dict of relative path → (mtime, size).
         """
         snapshot: dict[str, tuple[float, int]] = {}
+        # Root-level files: the workspace root is the agent's working
+        # directory, so files written there must be tracked too.
+        try:
+            for entry in self._root.iterdir():
+                if entry.is_dir():
+                    continue
+                try:
+                    st = os.lstat(entry)
+                    snapshot[entry.name] = (st.st_mtime, st.st_size)
+                except OSError:
+                    pass
+        except OSError:
+            pass
         for subdir in _WATCHED_SUBDIRS:
             dirpath = self._root / subdir
             if not dirpath.exists():

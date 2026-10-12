@@ -102,6 +102,17 @@ class FsspecSyncBackend:
         validated = validate_relative_path(artifact_path, name="artifact_path")
         return f"{self._root}/artifacts/{validated}"
 
+    def _ensure_parent_dir(self, path: str) -> None:
+        """Create the parent directory for ``path``.
+
+        Cloud filesystems (s3/gs/az) create keys implicitly; local
+        filesystems (LocalFileSystem) need explicit parent directories
+        because ``pipe_file`` does not auto-create them.
+        """
+        parent = path.rsplit("/", 1)[0]
+        if parent:
+            self._fs.makedirs(parent, exist_ok=True)
+
     # ------------------------------------------------------------------
     # Thread-pool helper
     # ------------------------------------------------------------------
@@ -145,6 +156,7 @@ class FsspecSyncBackend:
         exists = await self._to_thread(self._fs.exists, path)
         if exists:
             return  # idempotent — blob already stored
+        await self._to_thread(self._ensure_parent_dir, path)
         await self._to_thread(self._fs.pipe, path, data)
 
     async def head_blob(self, sha256: str) -> bool:
@@ -197,6 +209,7 @@ class FsspecSyncBackend:
 
         path = self._manifest_path(run_id)
         data = manifest.model_dump_json().encode("utf-8")
+        await self._to_thread(self._ensure_parent_dir, path)
         await self._to_thread(self._fs.pipe, path, data)
         return manifest
 
@@ -241,6 +254,7 @@ class FsspecSyncBackend:
             data: Serialized checkpoint payload.
         """
         path = self._checkpoint_path(checkpoint_id)
+        await self._to_thread(self._ensure_parent_dir, path)
         await self._to_thread(self._fs.pipe, path, data)
 
     # ------------------------------------------------------------------
@@ -268,6 +282,7 @@ class FsspecSyncBackend:
         sha256 = hashlib.sha256(data).hexdigest()
         size = len(data)
         storage_path = self._artifact_storage_path(artifact_path)
+        await self._to_thread(self._ensure_parent_dir, storage_path)
         await self._to_thread(self._fs.pipe, storage_path, data)
         return Artifact(
             path=artifact_path,
