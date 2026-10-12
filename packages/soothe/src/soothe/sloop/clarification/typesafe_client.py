@@ -4,8 +4,8 @@ Every TypeSafe-backed decision in Soothe (tool-approval risk gating, intent
 classification, future local replacements for LLM round trips) resolves its
 endpoint the same way: nano's `providers` (a `provider_type: typesafe` entry)
 / `classifier` config.
-Questions are bound at construction, so each decision owns its own client
-instance — this module owns the shared resolution and gating logic.
+Questions are bound per-request via `ClassifierRequest`, so each decision
+owns its own question set — this module owns the shared resolution and gating.
 
 Two invariants hold for every consumer:
 
@@ -64,15 +64,11 @@ def resolve_classifier_provider(soothe_config: Any) -> tuple[str, dict[str, Any]
 
 def build_typesafe_classifier(
     soothe_config: Any,
-    questions: dict[str, Any],
 ) -> Any | None:
     """Build a `langchain-typesafe` classifier for the resolved provider.
 
     Args:
         soothe_config: `SootheConfig` providing the classifier provider.
-        questions: Mapping of question id → `Noul` / `Choice` / `Score`
-            question. Bound at construction (the TypeSafe API fixes questions
-            per client), so each decision passes its own set.
 
     Returns:
         A `TypeSafeClassifier`, or `None` when the classifier is disabled,
@@ -88,7 +84,6 @@ def build_typesafe_classifier(
     # the field so it falls back to TYPESAFE_API_KEY (and fails closed to
     # None if that is unset too).
     client_kwargs: dict[str, Any] = {
-        "questions": questions,
         "model": kwargs.get("model") or "jev-latest",
         "timeout": kwargs.get("timeout") or 2.0,
     }

@@ -29,7 +29,7 @@ def _query(tool: str = "run_command", command: str = "pytest -xvs") -> RiskQuery
 
 class _FakeResponse:
     def __init__(self, answer: Any) -> None:
-        self.choices = {"risk_decision": answer}
+        self.answers = {"risk_decision": answer}
         self.model = "nanojev:Qwen/Qwen3-0.6B"
 
 
@@ -55,6 +55,7 @@ def _classifier(answers=None, error=None, **cfg_over) -> TypeSafeRiskClassifier:
     clf = TypeSafeRiskClassifier.__new__(TypeSafeRiskClassifier)
     clf._config = cfg
     clf._max_states = 32
+    clf._questions = {}
     clf._classifier = _FakeClassifier(answers, error)
     return clf
 
@@ -126,7 +127,7 @@ class TestGates:
             goal_summary="refactor auth",
         )
         await clf.classify([query])
-        state = clf._classifier.states[0]
+        state = clf._classifier.states[0]["state"]
         assert state["tool"] == "write_file"
         assert state["args"] == {"file_path": "/ws/a.py"}
         assert state["goal"] == "refactor auth"

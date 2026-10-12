@@ -120,11 +120,13 @@ class TypeSafeRiskClassifier:
 
         self._config = classifier_config
         self._max_states = max(1, int(max_states_per_request))
+        # Questions travel per-request in langchain-typesafe >=0.0.1a3; hold
+        # the shared question set and bind it into each ClassifierRequest.
+        self._questions = {_QUESTION_ID: Choice(instructions=_INSTRUCTIONS, criteria=_CRITERIA)}
         # The client rejects an empty key; when the provider supplies none,
         # omit the field so it falls back to TYPESAFE_API_KEY (and fails
         # closed to the null backend if that is unset too).
         client_kwargs: dict[str, Any] = {
-            "questions": {_QUESTION_ID: Choice(instructions=_INSTRUCTIONS, criteria=_CRITERIA)},
             "model": model,
             "timeout": timeout,
         }
@@ -176,13 +178,20 @@ class TypeSafeRiskClassifier:
 
     async def classify(self, items: list[RiskQuery]) -> list[RiskVerdict]:
         """Classify subjects in bounded batches; failures degrade to fallback."""
+        from langchain_typesafe.types import ClassifierRequest
+
         if not items:
             return []
         verdicts: list[RiskVerdict] = []
         for start in range(0, len(items), self._max_states):
             batch = items[start : start + self._max_states]
             try:
-                responses = await self._classifier.abatch([self._state(item) for item in batch])
+                responses = await self._classifier.abatch(
+                    [
+                        ClassifierRequest(state=self._state(item), questions=self._questions)
+                        for item in batch
+                    ]
+                )
             except Exception as exc:  # noqa: BLE001 — never block on the classifier
                 logger.warning(
                     "[risk_classifier] classification unavailable (%s); falling back",
@@ -193,7 +202,7 @@ class TypeSafeRiskClassifier:
                     for _ in batch
                 )
                 continue
-            answers = [getattr(response, "choices", {}).get(_QUESTION_ID) for response in responses]
+            answers = [getattr(response, "answers", {}).get(_QUESTION_ID) for response in responses]
             # A server returning fewer responses than inputs is a defect; pad
             # so every subject still gets a verdict (never a silent allow).
             while len(answers) < len(batch):

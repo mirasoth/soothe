@@ -10,7 +10,7 @@ from soothe.sloop.eval import typesafe_eval_decision as ts_mod
 from soothe.sloop.eval.typesafe_eval_decision import decide_eval_coverage_typesafe
 
 langchain_typesafe = pytest.importorskip("langchain_typesafe")
-from langchain_typesafe.types import ChoiceAnswer, ClassificationResponse, Usage  # noqa: E402
+from langchain_typesafe.types import ChoiceAnswer, ClassifierResponse, Usage  # noqa: E402
 
 
 def _answer(choice: str, probabilities: dict[str, float], confidence: float) -> Any:
@@ -19,9 +19,9 @@ def _answer(choice: str, probabilities: dict[str, float], confidence: float) -> 
     )
 
 
-def _response(choice: str, confidence: float) -> ClassificationResponse:
+def _response(choice: str, confidence: float) -> ClassifierResponse:
     probabilities = {choice: 0.9, "eval" if choice == "no_eval" else "no_eval": 0.1}
-    return ClassificationResponse(
+    return ClassifierResponse(
         model="nanojev:Qwen/Qwen3-0.6B",
         request_id=None,
         answers={"coverage": _answer(choice, probabilities, confidence)},
@@ -62,7 +62,7 @@ class _CfgStub:
 
 
 def _patch(monkeypatch: pytest.MonkeyPatch, fake: _FakeClassifier) -> None:
-    monkeypatch.setattr(ts_mod, "build_typesafe_classifier", lambda _cfg, _q: fake)
+    monkeypatch.setattr(ts_mod, "build_typesafe_classifier", lambda _cfg: fake)
 
 
 def _decide(**over: Any) -> Any:
@@ -87,7 +87,7 @@ class TestTrusted:
         fake = _FakeClassifier(_response("no_eval", 0.97))
         _patch(monkeypatch, fake)
         assert await _decide() is False
-        assert "refactor" in fake.states[0]["goal"]
+        assert "refactor" in fake.states[0]["state"]["goal"]
 
     @pytest.mark.asyncio
     async def test_confident_eval_runs_audit(self, monkeypatch) -> None:
@@ -104,8 +104,8 @@ class TestTrusted:
             step_history_table="h" * 9000,
             soothe_config=_CfgStub(),
         )
-        assert len(fake.states[0]["goal"]) == 1200
-        assert len(fake.states[0]["step_history"]) == 4000
+        assert len(fake.states[0]["state"]["goal"]) == 1200
+        assert len(fake.states[0]["state"]["step_history"]) == 4000
 
 
 # ---------------------------------------------------------------------------

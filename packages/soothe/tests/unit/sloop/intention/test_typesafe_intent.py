@@ -11,7 +11,7 @@ from soothe.sloop.intention.models import IntakeLabel, ResponseLanguage
 from soothe.sloop.intention.typesafe_intent import classify_intent_typesafe
 
 langchain_typesafe = pytest.importorskip("langchain_typesafe")
-from langchain_typesafe.types import ChoiceAnswer, ClassificationResponse, Usage  # noqa: E402
+from langchain_typesafe.types import ChoiceAnswer, ClassifierResponse, Usage  # noqa: E402
 
 
 def _answer(choice: str, probabilities: dict[str, float], confidence: float) -> Any:
@@ -31,11 +31,11 @@ def _language_distribution(language: str) -> dict[str, float]:
     return {language: 0.90, others[0]: 0.05, others[1]: 0.03, others[2]: 0.02}
 
 
-def _confident(label: str, *, language: str | None = "en") -> ClassificationResponse:
+def _confident(label: str, *, language: str | None = "en") -> ClassifierResponse:
     answers = {"intent": _answer(label, _label_distribution(label), 0.95)}
     if language is not None:
         answers["language"] = _answer(language, _language_distribution(language), 0.93)
-    return ClassificationResponse(
+    return ClassifierResponse(
         model="nanojev:Qwen/Qwen3-0.6B", request_id=None, answers=answers, usage=Usage()
     )
 
@@ -80,7 +80,7 @@ def _patch_client(monkeypatch: pytest.MonkeyPatch, fake: _FakeClassifier) -> Non
     monkeypatch.setattr(
         ti_mod,
         "build_typesafe_classifier",
-        lambda _cfg, _questions: fake,
+        lambda _cfg: fake,
     )
 
 
@@ -103,7 +103,7 @@ class TestTrustedVerdicts:
         assert intent.intake_label is IntakeLabel.COMPLEX
         assert intent.task_complexity is not None
         assert intent.response_language is ResponseLanguage.EN
-        assert fake.states and "refactor" in fake.states[0]["query"]
+        assert fake.states and "refactor" in fake.states[0]["state"]["query"]
 
     @pytest.mark.asyncio
     async def test_simple_label_and_language(self, monkeypatch) -> None:
@@ -148,7 +148,7 @@ class TestTrustedVerdicts:
         fake = _FakeClassifier(_confident("complex"))
         _patch_client(monkeypatch, fake)
         await classify_intent_typesafe("a" * 5000, soothe_config=_CfgStub())
-        assert len(fake.states[0]["query"]) == 1000
+        assert len(fake.states[0]["state"]["query"]) == 1000
 
 
 # ---------------------------------------------------------------------------
