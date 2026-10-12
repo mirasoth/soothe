@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.0.21] - 2026-10-12
+
 ### Fixed
 - `SootheConfig` now exposes a `secret_resolver` property (resolving `${ENV_VAR}` via the shared `_resolve_env` helper), so `MCPRegistry` construction in the daemon (`server/core.py`) and the per-thread runner (`runner/_thread_manager.py`) no longer raises `AttributeError: 'SootheConfig' object has no attribute 'secret_resolver'` — the error that left the MCP registry empty and gave the agent zero tools.
 - `fetch_tools_and_descriptors` is now async and awaits `client.get_tools(...)` when it returns a coroutine (`langchain-mcp-adapters` 0.3.x), instead of iterating the coroutine as a list. Previously every MCP server logged `'coroutine' object is not iterable`, the coroutine was never awaited, and zero tools loaded despite `Initialized: N connected, 0 failed`.
@@ -15,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Upgraded langchain ecosystem pins to latest stable: `langchain` 1.4.4, `langchain-core` 1.6.9, `langchain-mcp-adapters` 0.3.2 (pin widened from `<0.3.1` to `<0.4.0` — 0.3.0 caused the async `get_tools` regression in #22), `langchain-openai` 1.7.0 (0.x→1.x), `langchain-community` 0.4.2, `langgraph` 1.2.14, `mcp` 1.30. `langchain-typesafe[experimental]` bumped to `>=0.0.1a3`.
 - Adapted the three TypeSafe decision modules (`risk_classifier`, `typesafe_intent`, `typesafe_eval_decision`) to `langchain-typesafe` 0.0.1a3: `TypeSafeClassifier` no longer binds questions at construction — they travel per-request via `ClassifierRequest` — and the response field is `.answers` (was `.choices`). `build_typesafe_classifier` drops the `questions` param.
 - Bump `soothe-nano` floor to 1.3.3 (pulls in the `secret_resolver` property + async `get_tools` fixes for #22).
+
+[Compare with previous version]: https://github.com/mirasoth/soothe/compare/v1.0.20...v1.0.21
 
 ## [v1.0.20] - 2026-10-12
 
