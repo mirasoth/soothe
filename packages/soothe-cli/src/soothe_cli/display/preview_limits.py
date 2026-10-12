@@ -14,6 +14,15 @@ STEP_CARD_TOOL_ACTIVITY_PREVIEW_COUNT: Final[int] = 5
 # are file-write tool rows for the step.
 STEP_CARD_FILE_EDIT_PREVIEW_COUNT: Final[int] = 5
 
+# Reasoning branch on step cards: max lines of captured thinking-token content
+# shown in the Reasoning section. Long reasoning is truncated to this many
+# lines with a "+N more lines" suffix.
+STEP_CARD_REASONING_PREVIEW_LINES: Final[int] = 8
+
+# Reasoning branch: max characters per line before truncation (width-aware
+# truncation also applies at render time via max_cols).
+STEP_CARD_REASONING_LINE_MAX_CHARS: Final[int] = 120
+
 # TUI file-change preview cards (the standalone write/edit/delete diff cards
 # mounted in the chat transcript, NOT the step-card File-edit branch).
 # When False (default), the standalone file-change cards are suppressed so
