@@ -23,7 +23,7 @@ classifiers = [
 ]
 dependencies = [
     "pydantic>=2.0.0,<3.0.0",
-    "langchain-core>=1.2.0,<2.0.0",  # For message types
+    "langchain-core>=1.6.0,<2.0.0",  # For message types
 ]
 
 [project.optional-dependencies]

@@ -91,31 +91,30 @@ async def classify_intent_typesafe(
         return None
 
     from langchain_typesafe import Choice
+    from langchain_typesafe.types import ClassifierRequest
 
-    classifier = build_typesafe_classifier(
-        soothe_config,
-        {
-            _LABEL_QUESTION_ID: Choice(instructions=_LABEL_INSTRUCTIONS, criteria=_LABEL_CRITERIA),
-            _LANGUAGE_QUESTION_ID: Choice(
-                instructions=_LANGUAGE_INSTRUCTIONS, criteria=_LANGUAGE_CRITERIA
-            ),
-        },
-    )
+    questions = {
+        _LABEL_QUESTION_ID: Choice(instructions=_LABEL_INSTRUCTIONS, criteria=_LABEL_CRITERIA),
+        _LANGUAGE_QUESTION_ID: Choice(
+            instructions=_LANGUAGE_INSTRUCTIONS, criteria=_LANGUAGE_CRITERIA
+        ),
+    }
+    classifier = build_typesafe_classifier(soothe_config)
     if classifier is None:
         logger.info("[intent] typesafe backend unavailable; using LLM path")
         return None
 
     state = {"query": truncate_text(query.strip(), limit=_QUERY_MAX_CHARS)}
     try:
-        response = await classifier.ainvoke(state)
+        response = await classifier.ainvoke(ClassifierRequest(state=state, questions=questions))
     except Exception as exc:  # noqa: BLE001 — never block on the classifier
         logger.warning(
             "[intent] typesafe classification unavailable (%s); falling back to LLM", exc
         )
         return None
 
-    choices = getattr(response, "choices", {}) or {}
-    label_answer = choices.get(_LABEL_QUESTION_ID)
+    answers = getattr(response, "answers", {}) or {}
+    label_answer = answers.get(_LABEL_QUESTION_ID)
     if label_answer is None:
         logger.info("[intent] typesafe returned no label answer; falling back to LLM")
         return None
@@ -135,7 +134,7 @@ async def classify_intent_typesafe(
     # Language rides along in the same request but is gated independently:
     # an untrusted language verdict leaves the field unset rather than
     # misrouting the reply language.
-    language = choices.get(_LANGUAGE_QUESTION_ID)
+    language = answers.get(_LANGUAGE_QUESTION_ID)
     if language is not None:
         lang_trusted, lang_reason = verdict_trusted(cfg, language)
         if not lang_trusted:

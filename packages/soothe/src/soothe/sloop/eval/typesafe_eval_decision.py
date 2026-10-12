@@ -84,11 +84,10 @@ async def decide_eval_coverage_typesafe(
         return None
 
     from langchain_typesafe import Choice
+    from langchain_typesafe.types import ClassifierRequest
 
-    classifier = build_typesafe_classifier(
-        soothe_config,
-        {_QUESTION_ID: Choice(instructions=_INSTRUCTIONS, criteria=_CRITERIA)},
-    )
+    questions = {_QUESTION_ID: Choice(instructions=_INSTRUCTIONS, criteria=_CRITERIA)}
+    classifier = build_typesafe_classifier(soothe_config)
     if classifier is None:
         return None
 
@@ -100,13 +99,13 @@ async def decide_eval_coverage_typesafe(
         state["task_complexity"] = task_complexity
 
     try:
-        response = await classifier.ainvoke(state)
+        response = await classifier.ainvoke(ClassifierRequest(state=state, questions=questions))
     except Exception as exc:  # noqa: BLE001 — never block on the classifier
         logger.warning("[eval_decision] typesafe unavailable (%s); using LLM", exc)
         return None
 
-    choices = getattr(response, "choices", {}) or {}
-    answer = choices.get(_QUESTION_ID)
+    answers = getattr(response, "answers", {}) or {}
+    answer = answers.get(_QUESTION_ID)
     if answer is None:
         logger.warning("[eval_decision] typesafe returned no answer; using LLM")
         return None

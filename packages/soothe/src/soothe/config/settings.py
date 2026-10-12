@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -179,6 +180,11 @@ class SootheConfig(BaseSettings):
 
             self._llm_factory = LLMFactory(self)
         return self._llm_factory
+
+    @property
+    def secret_resolver(self) -> Callable[[str], str]:
+        """Resolve ``${ENV_VAR}`` placeholders for MCP server env/auth values."""
+        return _resolve_env
 
     @classmethod
     def from_yaml_file(cls, path: str) -> SootheConfig:
