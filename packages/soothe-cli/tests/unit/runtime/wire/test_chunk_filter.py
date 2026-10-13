@@ -73,3 +73,44 @@ def test_should_keep_wire_dict_with_response_metadata_usage() -> None:
         {},
     )
     assert should_drop_stream_chunk_early((), "messages", wire) is False
+
+
+def test_should_keep_ai_chunk_with_reasoning_content() -> None:
+    """Reasoning-only chunks (empty content, no tools) must not be dropped."""
+    chunk = AIMessageChunk(
+        content="",
+        additional_kwargs={"reasoning_content": "I should search first."},
+    )
+    assert should_drop_stream_chunk_early((), "messages", (chunk, {})) is False
+
+
+def test_should_keep_wire_dict_with_reasoning_content() -> None:
+    """Wire dict reasoning-only chunks must not be dropped."""
+    wire = (
+        {
+            "type": "ai",
+            "data": {
+                "type": "ai",
+                "content": "",
+                "additional_kwargs": {"reasoning_content": "thinking about the approach"},
+            },
+        },
+        {},
+    )
+    assert should_drop_stream_chunk_early((), "messages", wire) is False
+
+
+def test_should_drop_wire_dict_with_empty_reasoning_content() -> None:
+    """Empty reasoning_content string should still be dropped."""
+    wire = (
+        {
+            "type": "ai",
+            "data": {
+                "type": "ai",
+                "content": "",
+                "additional_kwargs": {"reasoning_content": ""},
+            },
+        },
+        {},
+    )
+    assert should_drop_stream_chunk_early((), "messages", wire) is True

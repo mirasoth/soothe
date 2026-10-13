@@ -23,6 +23,8 @@ from soothe_cli.display.card import (
 )
 from soothe_cli.display.preview_limits import (
     STEP_CARD_FILE_EDIT_PREVIEW_COUNT,
+    STEP_CARD_REASONING_LINE_MAX_CHARS,
+    STEP_CARD_REASONING_PREVIEW_LINES,
     STEP_CARD_TOOL_ACTIVITY_PREVIEW_COUNT,
     TASK_DELEGATION_DESC_MAX_CHARS,
 )
@@ -372,8 +374,11 @@ def has_task_activity_body(
     subagent_notes: list[str],
     subagent_notes_by_task: dict[str, list[str]],
     todos: list[dict[str, str]] | None = None,
+    reasoning: str | None = None,
 ) -> bool:
     """True when the step card should show the task-activity tree panel."""
+    if reasoning and reasoning.strip():
+        return True
     if todos:
         return True
     if subagent_notes or subagent_notes_by_task:
@@ -863,24 +868,32 @@ class StepActivityTree:
         g: Any,
         preview_limit: int = STEP_CARD_TOOL_ACTIVITY_PREVIEW_COUNT,
         todos: list[dict[str, str]] | None = None,
+        reasoning: str | None = None,
         max_cols: int | None = None,
         glyph_override: str | None = None,
         file_edit_preview_limit: int = STEP_CARD_FILE_EDIT_PREVIEW_COUNT,
+        reasoning_preview_lines: int = STEP_CARD_REASONING_PREVIEW_LINES,
+        reasoning_line_max_chars: int = STEP_CARD_REASONING_LINE_MAX_CHARS,
     ) -> Content:
-        """To-do section, Tool-use section, then File-edit section.
+        """Reasoning section, To-do section, Tool-use section, then File-edit section.
 
         `max_cols` bounds each rendered line to the terminal width so tool
         rows never wrap; `None` preserves the prior fixed-cap behavior.
         `glyph_override` is the card header glyph (subagent glyph for orphan
         SubAgent cards) so the activity gutters align to the right of that dot.
 
-        Layout: the section header (`To-do` / `Tool-use` / `File-edit`) sits on a
-        `⎿` body-gutter line; its items (tool rows, todo markers, notes, `+N
-        more`) are indented one column beyond the section label so they nest
-        under the header without a tree glyph.
+        Layout: the section header (`Reasoning` / `To-do` / `Tool-use` /
+        `File-edit`) sits on a `⎿` body-gutter line; its items (tool rows, todo
+        markers, notes, `+N more`) are indented one column beyond the section
+        label so they nest under the header without a tree glyph.
 
         The File-edit branch is always rendered when file-write tool rows exist
         for the step; it is no longer config-gated.
+
+        The Reasoning section shows captured thinking-token content (from
+        ``additional_kwargs["reasoning_content"]`` on ``AIMessageChunk``)
+        truncated to ``reasoning_preview_lines`` lines with a "+N more lines"
+        suffix when longer.
         """
         section_gutter = _card_body_gutter(glyph_override)
         item_gutter = _card_item_indent(1, glyph_override=glyph_override)
@@ -903,10 +916,38 @@ class StepActivityTree:
             if index.file_edit_rows
             else []
         )
-        if not todo_items and not has_tools and not file_edit_rows:
+        reasoning_text = (reasoning or "").strip()
+        if not reasoning_text and not todo_items and not has_tools and not file_edit_rows:
             return Content("")
 
         first_block = True
+
+        # --- Reasoning (captured thinking tokens) ---
+        if reasoning_text:
+            first_block = False
+            parts.append(Content.styled(f"{section_gutter}Reasoning", theme.SECONDARY_TEXT_STYLE))
+            reasoning_lines = reasoning_text.splitlines()
+            # Truncate long lines first, then cap the total line count.
+            char_limit = reasoning_line_max_chars
+            if max_cols and max_cols > 0:
+                char_limit = min(char_limit, max_cols)
+            shown_lines: list[str] = []
+            for ln in reasoning_lines:
+                stripped_ln = ln.strip()
+                if not stripped_ln:
+                    continue
+                if len(stripped_ln) > char_limit:
+                    shown_lines.append(stripped_ln[: char_limit - 1] + "…")
+                else:
+                    shown_lines.append(stripped_ln)
+            hidden_reasoning = len(shown_lines) - reasoning_preview_lines
+            for ln in shown_lines[:reasoning_preview_lines]:
+                parts.append("\n")
+                parts.append(Content.styled(f"{item_gutter}· {ln}", theme.SECONDARY_TEXT_STYLE))
+            if hidden_reasoning > 0:
+                label = f"+{hidden_reasoning} more line{'s' if hidden_reasoning != 1 else ''}"
+                parts.append("\n")
+                parts.append(Content.styled(f"{item_gutter}· {label}", theme.SECONDARY_TEXT_STYLE))
 
         # --- To-do (all todo items) ---
         if todo_items:

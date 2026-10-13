@@ -194,6 +194,39 @@ def test_empty_ai_chunk_not_forwarded() -> None:
     assert _forward_messages_chunk(chunk) is False
 
 
+def test_reasoning_only_ai_chunk_forwarded() -> None:
+    """Reasoning-only chunks (empty content, captured thinking tokens) must reach the TUI.
+
+    The provider emits ``AIMessageChunk(content="", additional_kwargs={"reasoning_content": ...})``
+    at end-of-stream after stripping thinking tokens. Without forwarding, the TUI
+    step card Reasoning branch never receives content.
+    """
+    from langchain_core.messages import AIMessageChunk
+
+    from soothe.runner._runner_strange_loop import _ai_chunk_has_actionable_payload
+
+    msg = AIMessageChunk(
+        content="", additional_kwargs={"reasoning_content": "I should search first."}
+    )
+    chunk = ((), "messages", (msg, {}))
+    assert _ai_chunk_has_actionable_payload(msg) is True
+    assert _is_ai_messages_stream_chunk(chunk) is True
+    assert _forward_messages_chunk(chunk) is True
+
+
+def test_reasoning_only_dict_forwarded() -> None:
+    """Wire-dict form of a reasoning-only chunk must also be forwarded."""
+    from soothe.runner._runner_strange_loop import _ai_chunk_has_actionable_payload
+
+    flat = {
+        "type": "AIMessageChunk",
+        "content": "",
+        "additional_kwargs": {"reasoning_content": "thinking about the approach"},
+    }
+    assert _ai_chunk_has_actionable_payload(flat) is True
+    assert _forward_messages_chunk(((), "messages", (flat, {}))) is True
+
+
 def test_usage_only_ai_chunk_forwarded() -> None:
     """Providers emit a final chunk carrying only usage_metadata (no text/tools).
 

@@ -24,7 +24,9 @@ from soothe_cli.display.card import (
     _card_body_gutter,
 )
 from soothe_cli.display.markdown_theme import build_markdown
-from soothe_cli.display.preview_limits import STEP_CARD_FILE_EDIT_PREVIEW_COUNT
+from soothe_cli.display.preview_limits import (
+    STEP_CARD_FILE_EDIT_PREVIEW_COUNT,
+)
 from soothe_cli.runtime.presentation.duration_format import format_duration_ms
 from soothe_cli.settings import get_glyphs
 from soothe_cli.tui.widgets.clipboard import (
@@ -162,6 +164,8 @@ class CognitionStepMessage(Vertical):
         self._subagent_notes: list[str] = []
         self._subagent_notes_by_task: dict[str, list[str]] = {}
         self._todos: list[dict[str, str]] = []
+        self._reasoning_buffer: str = ""
+        """Captured thinking-token reasoning forwarded from the LLM provider."""
         self._execute_assistant_buffer: str = ""
         self._last_completed_execute_prose: str = ""
         """Execute-step prose frozen when ``set_complete`` runs (TUI dedupe vs goal_completion)."""
@@ -477,6 +481,14 @@ class CognitionStepMessage(Vertical):
         if self._status == "running":
             self._refresh_execute_assistant_running_display()
 
+    def append_reasoning_delta(self, delta: str) -> None:
+        """Accumulate captured thinking-token reasoning for the Reasoning branch."""
+        if not delta:
+            return
+        self._reasoning_buffer += delta
+        if self._status in ("running", "pending"):
+            self._sync_step_card_surface()
+
     def _refresh_execute_assistant_running_display(self) -> None:
         body = self._execute_assistant_buffer.strip()
         if not body or self._detail_widget is None:
@@ -489,7 +501,7 @@ class CognitionStepMessage(Vertical):
         index = self._build_row_index()
         return has_task_activity_body(
             index, self._subagent_notes, self._subagent_notes_by_task, self._todos
-        )
+        ) or bool(self._reasoning_buffer.strip())
 
     @staticmethod
     def _latest_preview_rows(
@@ -595,7 +607,7 @@ class CognitionStepMessage(Vertical):
         return max(0, width - 2)
 
     def _step_task_activity_content(self) -> Content:
-        """Tool-use then To-do (task markers, tool preview, notes) under the step title."""
+        """Reasoning, To-do, and Tool-use (task markers, tool preview, notes) under the step title."""
         g = get_glyphs()
         try:
             colors = theme.get_theme_colors(self)
@@ -612,6 +624,7 @@ class CognitionStepMessage(Vertical):
             colors=colors,
             g=g,
             todos=self._todos,
+            reasoning=self._reasoning_buffer,
             max_cols=self._available_line_width(),
             glyph_override=self._step_header_glyph() if self._is_orphan_subagent_card() else None,
             file_edit_preview_limit=STEP_CARD_FILE_EDIT_PREVIEW_COUNT,
@@ -636,7 +649,7 @@ class CognitionStepMessage(Vertical):
         if activity_widget is not None:
             show = has_task_activity_body(
                 index, self._subagent_notes, self._subagent_notes_by_task, self._todos
-            )
+            ) or bool(self._reasoning_buffer.strip())
             if show and not self._card_collapsed:
                 activity_widget.update(self._step_task_activity_content())
                 activity_widget.display = True

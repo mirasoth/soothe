@@ -1,11 +1,20 @@
 """Shared TypeSafe client construction (nano-configured, swappable backend).
 
-Every TypeSafe-backed decision in Soothe (tool-approval risk gating, intent
-classification, future local replacements for LLM round trips) resolves its
-endpoint the same way: nano's `providers` (a `provider_type: typesafe` entry)
-/ `classifier` config.
+Every TypeSafe-backed decision in Soothe resolves its endpoint the same way:
+nano's `providers` (a `provider_type: typesafe` entry) / `classifier` config.
 Questions are bound per-request via `ClassifierRequest`, so each decision
 owns its own question set — this module owns the shared resolution and gating.
+
+Current consumers (all use `Choice` for OOD detection, all fall back to LLM
+on any failure or unconfiguration):
+
+- Risk classification (`risk_classifier.py`) — tool-approval gate
+- Intent classification (`typesafe_intent.py`) — intake routing
+- Eval coverage decision (`typesafe_eval_decision.py`) — coverage audit gate
+- Scenario classification (`scenario_typesafe.py`) — synthesis style selection
+- Decompose finish/split (`decompose_typesafe.py`) — tool-surface narrowing
+- Rail auto-pick (`rail_typesafe.py`) — LoopRail selection
+- Root eval re-audit (`root_eval_typesafe.py`) — re-audit vs finalize
 
 Two invariants hold for every consumer:
 
@@ -15,7 +24,7 @@ Two invariants hold for every consumer:
   `verdict_trusted` rejects low-confidence and near-tie verdicts.
 - **Unavailable is normal.** Local servers are foreground processes with no
   autostart; every failure path returns `None` so the caller degrades to its
-  existing behaviour instead of blocking.
+  existing LLM-based behaviour instead of blocking.
 """
 
 from __future__ import annotations

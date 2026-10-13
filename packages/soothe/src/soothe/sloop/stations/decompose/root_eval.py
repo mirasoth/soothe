@@ -240,9 +240,24 @@ class RootEvalNode(LoopNode):
                             return NodeResult(payload={"root_eval_route": "finalize"})
                         # The Eval finished without a binding complete verdict
                         # (prose leakage, or incomplete with no continuation
-                        # subtasks). Do not finalize — fall through to a
-                        # bounded re-audit so the next Eval round must emit a
-                        # structured coverage_verdict.
+                        # subtasks). Try TypeSafe (JEV) to decide whether to
+                        # re-audit or finalize; fall back to unconditional
+                        # re-audit when unavailable or untrusted.
+                        from soothe.sloop.stations.decompose.root_eval_typesafe import (
+                            decide_reaudit_vs_finalize_typesafe,
+                        )
+
+                        reaudit_decision = await decide_reaudit_vs_finalize_typesafe(
+                            user_goal=(resolve_user_request(ctx.loop_state) or goal.description),
+                            step_history_table=_eval_envelope(
+                                resolve_user_request(ctx.loop_state) or goal.description,
+                                list(goal.steps.nodes.values()),
+                            ),
+                            soothe_config=ctx.strange_loop.config,
+                        )
+                        if reaudit_decision is False:
+                            logger.info("[root_eval] typesafe: finalize despite missing verdict")
+                            return NodeResult(payload={"root_eval_route": "finalize"})
                         logger.warning(
                             "[root_eval] latest Eval completed without complete verdict; re-audit"
                         )

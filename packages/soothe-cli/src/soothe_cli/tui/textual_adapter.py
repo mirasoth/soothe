@@ -3449,6 +3449,38 @@ async def execute_task_textual(
                                     router,
                                     ns_key,
                                 )
+                        # Capture reasoning content from additional_kwargs for the
+                        # step card Reasoning branch. Provider emits captured
+                        # thinking tokens via additional_kwargs["reasoning_content"].
+                        reasoning_text = ""
+                        if isinstance(message, (AIMessage, AIMessageChunk)):
+                            ak = getattr(message, "additional_kwargs", None) or {}
+                            reasoning_text = str(ak.get("reasoning_content") or "")
+                        elif isinstance(message, dict):
+                            ak = message.get("additional_kwargs")
+                            if isinstance(ak, dict):
+                                reasoning_text = str(ak.get("reasoning_content") or "")
+                        if reasoning_text:
+                            step_w_reasoning = adapter._step_by_namespace.get(ns_key)
+                            if step_w_reasoning is None:
+                                # The reasoning chunk may arrive from an execute
+                                # subgraph namespace that hasn't been bound to a
+                                # step card yet (binding happens on first tool call).
+                                # Try resolving via the same path as token accounting,
+                                # then fall back to any running step card.
+                                step_w_reasoning = _resolve_token_target_card(
+                                    adapter, router, ns_key, message=message
+                                )
+                            if step_w_reasoning is None:
+                                for _sw in adapter._current_step_messages.values():
+                                    if getattr(_sw, "_status", "") == "running":
+                                        step_w_reasoning = _sw
+                                        break
+                            if step_w_reasoning is not None and hasattr(
+                                step_w_reasoning, "append_reasoning_delta"
+                            ):
+                                step_w_reasoning.append_reasoning_delta(reasoning_text)
+
                         blocks = _tui_effective_ai_blocks(
                             message,
                             ns_key=ns_key,
@@ -3456,6 +3488,9 @@ async def execute_task_textual(
                         )
                         # A content-free ``goal_completion`` terminal frame still has to
                         # close the synthesis card, so it bypasses the empty-blocks gate.
+                        # Reasoning-only chunks (no text blocks) should not be skipped
+                        # here — they were already routed above; fall through to the
+                        # empty-blocks gate which will ``continue`` naturally.
                         if not blocks and not is_goal_completion_stream_terminal(message):
                             continue
 
