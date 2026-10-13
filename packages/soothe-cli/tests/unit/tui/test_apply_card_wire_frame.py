@@ -7,8 +7,8 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from soothe_sdk.core.events import CARD_CREATED, CARD_UPDATED
-from soothe_sdk.display.transcript_types import MessageData, MessageType
+from soothe_client.core.events import CARD_CREATED, CARD_UPDATED
+from soothe_client.display.transcript_types import MessageData, MessageType
 
 from soothe_cli.tui.app._messages_mixin import _MessagesMixin
 from soothe_cli.tui.textual_adapter import TextualUIAdapter

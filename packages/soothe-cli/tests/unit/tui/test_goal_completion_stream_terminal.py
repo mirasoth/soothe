@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from langchain_core.messages import AIMessageChunk
-from soothe_sdk.ux.loop_stream import (
+from soothe_client.ux.loop_stream import (
     GOAL_COMPLETION_STREAM_TERMINAL_FIELD,
     is_goal_completion_stream_terminal,
 )
@@ -132,7 +132,7 @@ async def test_stream_end_turn_scope_finalizes_inflight_streams() -> None:
 
 def test_stream_end_is_not_tier_filtered() -> None:
     """``soothe.stream.end`` is a control frame; the applier must still see it."""
-    from soothe_sdk.core.events import STREAM_END
+    from soothe_client.core.events import STREAM_END
 
     from soothe_cli.runtime.presentation.engine import PresentationEngine
     from soothe_cli.runtime.state.session_stats import TurnEventStats

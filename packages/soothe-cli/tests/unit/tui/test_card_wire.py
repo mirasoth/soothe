@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from soothe_sdk.core.events import CARD_CREATED, CARD_UPDATED
+from soothe_client.core.events import CARD_CREATED, CARD_UPDATED
 
 from soothe_cli.card_wire import parse_card_custom_payload
 

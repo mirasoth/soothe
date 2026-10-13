@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from langchain_core.messages import AIMessageChunk
-from soothe_sdk.ux.loop_stream import LOOP_ASSISTANT_OUTPUT_PHASES
+from soothe_client.ux.loop_stream import LOOP_ASSISTANT_OUTPUT_PHASES
 
 from soothe_cli.tui.textual_adapter import (
     _INSTANT_LOOP_ASSISTANT_PHASES,

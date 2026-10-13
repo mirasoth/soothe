@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Literal
 
 from packaging.version import InvalidVersion, Version
-from soothe_sdk.paths import SOOTHE_HOME
+from soothe_client.paths import SOOTHE_HOME
 
 from soothe_cli._version import PYPI_URL, USER_AGENT, __version__
 from soothe_cli.model_config import resolve_cli_config_path

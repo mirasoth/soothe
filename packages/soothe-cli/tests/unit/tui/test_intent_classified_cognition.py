@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from soothe_sdk.display import card_binder
-from soothe_sdk.display.transcript_types import MessageType
+from soothe_client.display import card_binder
+from soothe_client.display.transcript_types import MessageType
 
 from soothe_cli.tui.widgets.messages import CognitionReasonMessage
 

@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-from soothe_sdk.tools.metadata import get_file_write_tool_names
+from soothe_client.tools.metadata import get_file_write_tool_names
 
 from soothe_cli.display.preview_limits import APPROVAL_DIFF_MAX_LINES
 
@@ -271,7 +271,7 @@ def file_change_tool_call_ids_match(
     Handles provider opaque `call_*` ids vs stream-predicted `edit_file:N` keys
     on the same execute step (Kimi/OpenAI-style providers).
     """
-    from soothe_sdk.display.message_processing import _pending_or_overlay_id_matches_lookup
+    from soothe_client.display.message_processing import _pending_or_overlay_id_matches_lookup
 
     cid = str(candidate_id).strip()
     lid = str(lookup_id).strip()
@@ -282,7 +282,7 @@ def file_change_tool_call_ids_match(
     if _pending_or_overlay_id_matches_lookup(cid, lid, tool_name=tool_name):
         return True
 
-    from soothe_sdk.ux.task_namespace import parse_unified_tool_call_id
+    from soothe_client.ux.task_namespace import parse_unified_tool_call_id
 
     cand_step, cand_type, cand_tidx, cand_info = parse_unified_tool_call_id(cid)
     lookup_step, lookup_type, lookup_tidx, lookup_info = parse_unified_tool_call_id(lid)

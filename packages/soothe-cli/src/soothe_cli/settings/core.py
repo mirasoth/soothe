@@ -8,7 +8,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from soothe_sdk.paths import SOOTHE_HOME
+from soothe_client.paths import SOOTHE_HOME
 
 from soothe_cli._version import (
     is_editable_install as _is_editable_install,

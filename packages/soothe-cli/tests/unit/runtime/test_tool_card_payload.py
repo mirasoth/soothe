@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from langchain_core.messages import AIMessage, ToolMessage
-from soothe_sdk.display.tool_result import extract_tool_result_payload
+from soothe_client.display.tool_result import extract_tool_result_payload
 
 
 def test_extract_from_tool_message_success() -> None:

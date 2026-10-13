@@ -11,7 +11,7 @@ from typing import Annotated  # noqa: E402
 
 import click  # noqa: E402
 import typer  # noqa: E402
-from soothe_sdk.paths import SOOTHE_HOME  # noqa: E402
+from soothe_client.paths import SOOTHE_HOME  # noqa: E402
 
 from soothe_cli._version import __version__  # noqa: E402
 from soothe_cli.config.cli_config import CLIConfig  # noqa: E402

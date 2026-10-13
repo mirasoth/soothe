@@ -6,8 +6,8 @@ import time
 from pathlib import Path
 
 import typer
-from soothe_sdk.paths import SOOTHE_HOME
-from soothe_sdk.utils.logging import resolve_cli_log_level
+from soothe_client.paths import SOOTHE_HOME
+from soothe_client.utils.logging import resolve_cli_log_level
 
 from soothe_cli.cli.execution import run_headless, run_tui
 from soothe_cli.runtime import load_config, setup_logging
@@ -117,7 +117,7 @@ def run_impl(
         sys.exit(130)
     except Exception as e:
         logger.exception("CLI run error")
-        from soothe_sdk.utils import format_cli_error
+        from soothe_client.utils import format_cli_error
 
         typer.echo(f"Error: {format_cli_error(e)}", err=True)
         sys.exit(1)

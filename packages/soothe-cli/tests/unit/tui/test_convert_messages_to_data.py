@@ -493,8 +493,8 @@ def test_convert_loop_events_renders_interleaved_conversation_rows() -> None:
 @pytest.mark.asyncio
 async def test_fetch_loop_history_data_uses_ledger_rpc() -> None:
     """``_fetch_loop_history_data`` is the single ledger path (RFC-631)."""
-    from soothe_sdk.display.card_ledger import card_to_wire_dict
-    from soothe_sdk.display.transcript_types import MessageData, MessageType
+    from soothe_client.display.card_ledger import card_to_wire_dict
+    from soothe_client.display.transcript_types import MessageData, MessageType
 
     cards = [
         MessageData(type=MessageType.USER, content="hi"),
@@ -534,8 +534,8 @@ async def test_fetch_loop_history_data_uses_ledger_rpc() -> None:
 @pytest.mark.asyncio
 async def test_fetch_loop_history_data_merges_goal_snapshots_with_live_tail() -> None:
     """Goal-snapshot cards are concatenated before the live card tail."""
-    from soothe_sdk.display.card_ledger import card_to_wire_dict
-    from soothe_sdk.display.transcript_types import MessageData, MessageType
+    from soothe_client.display.card_ledger import card_to_wire_dict
+    from soothe_client.display.transcript_types import MessageData, MessageType
 
     frozen = [
         MessageData(type=MessageType.USER, content="goal 1", id="msg-u1"),
