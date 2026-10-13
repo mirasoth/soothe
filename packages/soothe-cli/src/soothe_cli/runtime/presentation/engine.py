@@ -6,8 +6,8 @@ import re
 import time
 from dataclasses import dataclass
 
-from soothe_sdk.core.verbosity import VerbosityTier, should_show
-from soothe_sdk.utils import log_preview
+from soothe_client.core.verbosity import VerbosityTier, should_show
+from soothe_client.utils import log_preview
 
 from soothe_cli.runtime.presentation.duration_format import format_duration_ms
 
@@ -139,7 +139,7 @@ class PresentationEngine:
         Returns:
         Plain-text status line (may already start with a status icon from brief).
         """
-        from soothe_sdk.display.message_processing import extract_tool_brief
+        from soothe_client.display.message_processing import extract_tool_brief
 
         brief = extract_tool_brief(tool_name, raw_content)
         summarized = self.summarize_tool_result(brief)

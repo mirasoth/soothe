@@ -8,7 +8,7 @@ from time import time
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 import textual.events as events
-from soothe_sdk.ux.task_namespace import (
+from soothe_client.ux.task_namespace import (
     is_step_level_task_tool_id,
     normalize_step_task_tool_call_id,
     parse_unified_tool_call_id,
@@ -947,7 +947,7 @@ class CognitionStepMessage(Vertical):
             except (TypeError, ValueError):
                 loaded = None
             if isinstance(loaded, dict):
-                from soothe_sdk.display.message_processing import extract_tool_args_dict
+                from soothe_client.display.message_processing import extract_tool_args_dict
 
                 parsed_from_raw = extract_tool_args_dict(loaded)
                 if parsed_from_raw:
@@ -1039,7 +1039,7 @@ class CognitionStepMessage(Vertical):
 
     def update_tool_args(self, tool_call_id: str, args: dict[str, Any]) -> None:
         """Refresh kwargs when streaming fills in arguments."""
-        from soothe_sdk.display.message_processing import extract_tool_args_dict
+        from soothe_client.display.message_processing import extract_tool_args_dict
 
         from soothe_cli.runtime.parse.tool_call_resolution import tool_args_meaningful
 

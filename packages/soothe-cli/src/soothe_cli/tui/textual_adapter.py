@@ -43,7 +43,7 @@ if TYPE_CHECKING:
 
 from langchain_core.messages import AIMessage, HumanMessage
 from soothe_client.appkit.turn import run_turn_pipeline
-from soothe_sdk.core.events import (
+from soothe_client.core.events import (
     INTENT_CLASSIFIED,
     LOOP_CLARIFICATION_ANSWERED,
     LOOP_CLARIFICATION_DEFERRED,
@@ -61,28 +61,28 @@ from soothe_sdk.core.events import (
     WIRED_SUBAGENT_FAILED,
     WIRED_SUBAGENT_STARTED,
 )
-from soothe_sdk.core.subagent_wire import (
+from soothe_client.core.subagent_wire import (
     is_allowlisted_subagent_event_type,
 )
-from soothe_sdk.display.message_processing import (
+from soothe_client.display.message_processing import (
     extract_tool_args_dict,
     ingest_tool_call_stream_state,
     tool_ids_touched_by_stream_message,
 )
-from soothe_sdk.display.tool_result import extract_tool_result_payload
-from soothe_sdk.ux.loop_stream import (
+from soothe_client.display.tool_result import extract_tool_result_payload
+from soothe_client.ux.loop_stream import (
     LOOP_ASSISTANT_OUTPUT_PHASES,
     assistant_output_phase,
     is_goal_completion_stream_terminal,
     is_stream_terminal,
 )
-from soothe_sdk.ux.stream_tool_wire import STREAM_TOOL_CALL_UPDATE, TOOL_CALL_UPDATES_BATCH
-from soothe_sdk.ux.subagent_wire_display import (
+from soothe_client.ux.stream_tool_wire import STREAM_TOOL_CALL_UPDATE, TOOL_CALL_UPDATES_BATCH
+from soothe_client.ux.subagent_wire_display import (
     SubagentWireRenderKind,
     classify_subagent_wire_render,
     subagent_wire_row_params,
 )
-from soothe_sdk.ux.task_namespace import (
+from soothe_client.ux.task_namespace import (
     TaskScope,
     is_inner_subgraph_task_tool_id,
     parse_unified_tool_call_id,
@@ -90,7 +90,7 @@ from soothe_sdk.ux.task_namespace import (
     task_scope_step_id,
     task_scope_task_idx,
 )
-from soothe_sdk.wire.codec import (
+from soothe_client.wire.codec import (
     messages_from_wire_dicts,
 )
 
@@ -179,7 +179,7 @@ logger = logging.getLogger(__name__)
 
 # LLM retry event type for step card status display
 LLM_RETRY_ATTEMPT = "soothe.cognition.llm.retry.attempt"
-# Plan-phase cognition card (not yet in soothe_sdk.core.events exports used by CLI).
+# Plan-phase cognition card (not yet in soothe_client.core.events exports used by CLI).
 STRANGE_LOOP_REASONED = "soothe.cognition.strange_loop.reasoned"
 
 # Single-chunk loop assistant phases mount immediately (avoid "Writing..." spinner).
@@ -1257,7 +1257,7 @@ def _apply_subagent_wire_activity_event(
     if et == "soothe.subagent.planner.progress" and _is_orphan_subagent_card(card):
         return True
 
-    from soothe_sdk.ux.subagent_progress import summarize_subagent_wire_activity
+    from soothe_client.ux.subagent_progress import summarize_subagent_wire_activity
 
     line = summarize_subagent_wire_activity(et, data).strip()
     if not line:

@@ -5,7 +5,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
-from soothe_sdk.ux.stream_tool_wire import STREAM_TOOL_CALL_UPDATE
+from soothe_client.ux.stream_tool_wire import STREAM_TOOL_CALL_UPDATE
 
 from soothe_cli.runtime.state.step_router import StepTaskRouter
 from soothe_cli.tui.textual_adapter import (

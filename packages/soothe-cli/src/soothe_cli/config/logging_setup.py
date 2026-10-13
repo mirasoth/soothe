@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from soothe_sdk.utils.logging import setup_logging as _setup_sdk_logging
+from soothe_client.utils.logging import setup_logging as _setup_sdk_logging
 
 # High-volume routing / step-card traces belong at DEBUG only.
 _QUIET_AT_INFO = (

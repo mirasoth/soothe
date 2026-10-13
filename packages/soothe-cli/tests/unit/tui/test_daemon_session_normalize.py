@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from langchain_core.messages import AIMessage, AIMessageChunk, messages_from_dict
-from soothe_sdk.wire.codec import envelope_langchain_message_dict
-from soothe_sdk.wire.protocol import _serialize_for_json
+from soothe_client.wire.codec import envelope_langchain_message_dict
+from soothe_client.wire.protocol import _serialize_for_json
 
 from soothe_cli.runtime.transport.session import TuiDaemonSession
 
@@ -396,7 +396,7 @@ async def test_iter_turn_chunks_records_cancellation_command() -> None:
 @pytest.mark.asyncio
 async def test_iter_turn_chunks_records_stream_end_cancel_reason() -> None:
     """``soothe.stream.end`` with cancel reason must flag cancellation for TUI UX."""
-    from soothe_sdk.core.events import STREAM_END
+    from soothe_client.core.events import STREAM_END
 
     session = object.__new__(TuiDaemonSession)
     session._loop_id = "loop-main"

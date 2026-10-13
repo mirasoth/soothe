@@ -17,7 +17,7 @@ from soothe_client.appkit.turn import (
     TurnEventPipeline,
     run_turn_pipeline,
 )
-from soothe_sdk.core.events import STRANGE_LOOP_STEP_COMPLETED
+from soothe_client.core.events import STRANGE_LOOP_STEP_COMPLETED
 
 from soothe_cli.runtime.state.session_stats import TurnEventStats, TurnLatencyStats
 from soothe_cli.runtime.turn.prepare import TurnPrepareState, prepare_turn_chunk

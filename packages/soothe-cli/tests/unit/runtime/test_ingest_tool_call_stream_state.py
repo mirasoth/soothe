@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from langchain_core.messages import AIMessageChunk
-from soothe_sdk.display.message_processing import (
+from soothe_client.display.message_processing import (
     ingest_tool_call_stream_state,
     try_parse_pending_tool_call_args,
 )

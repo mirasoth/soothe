@@ -12,7 +12,7 @@ from soothe_client.appkit.turn import (
     PRIORITY_LOW,
     PRIORITY_NORMAL,
 )
-from soothe_sdk.core.events import (
+from soothe_client.core.events import (
     STRANGE_LOOP_COMPLETED,
     STRANGE_LOOP_PLAN_DECISION,
     STRANGE_LOOP_STARTED,
@@ -21,9 +21,9 @@ from soothe_sdk.core.events import (
     STRANGE_LOOP_STEP_STARTED,
     STREAM_END,
 )
-from soothe_sdk.ux.classification import classify_event_to_tier
-from soothe_sdk.ux.loop_stream import assistant_output_phase
-from soothe_sdk.ux.stream_tool_wire import STREAM_TOOL_CALL_UPDATE, TOOL_CALL_UPDATES_BATCH
+from soothe_client.ux.classification import classify_event_to_tier
+from soothe_client.ux.loop_stream import assistant_output_phase
+from soothe_client.ux.stream_tool_wire import STREAM_TOOL_CALL_UPDATE, TOOL_CALL_UPDATES_BATCH
 
 from soothe_cli.runtime.presentation.engine import PresentationEngine
 from soothe_cli.runtime.state.session_stats import TurnEventStats

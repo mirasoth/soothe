@@ -222,7 +222,7 @@ class _MessagesMixin:
                     return
 
                 # Create and mount only visible widgets (max WINDOW_SIZE).
-                from soothe_sdk.display.card_binder import sanitize_resume_display_cards
+                from soothe_client.display.card_binder import sanitize_resume_display_cards
 
                 from soothe_cli.commands.binding import message_to_widget
 
@@ -265,7 +265,7 @@ class _MessagesMixin:
     async def _apply_card_wire_frame(self, data: Any) -> bool:
         """Apply one custom-mode `soothe.card.*` payload. Returns True if handled."""
 
-        from soothe_sdk.display.transcript_types import MessageType
+        from soothe_client.display.transcript_types import MessageType
 
         from soothe_cli.card_wire import (
             CARD_CREATED,
@@ -354,7 +354,7 @@ class _MessagesMixin:
 
     def _find_existing_card_widget(self, card: Any) -> Any | None:
         """Return an already-mounted widget for `card`, if any."""
-        from soothe_sdk.display.transcript_types import MessageType
+        from soothe_client.display.transcript_types import MessageType
 
         if getattr(card, "id", None):
             try:
@@ -382,7 +382,7 @@ class _MessagesMixin:
 
     def _user_prompt_already_mounted(self, content: str) -> bool:
         """True when a local user widget already shows this prompt text."""
-        from soothe_sdk.display.transcript_types import MessageType
+        from soothe_client.display.transcript_types import MessageType
 
         text = str(content or "").strip()
         if not text:
@@ -398,7 +398,7 @@ class _MessagesMixin:
         Also suppresses the raw plan ASSISTANT card when a plan-review
         `StructuredAskUserWidget` with overlapping body is mounted.
         """
-        from soothe_sdk.display.transcript_types import MessageType
+        from soothe_client.display.transcript_types import MessageType
 
         adapter = getattr(self, "_ui_adapter", None)
         if adapter is not None and getattr(adapter, "_goal_completion_mounted_this_turn", False):
@@ -468,7 +468,7 @@ class _MessagesMixin:
 
     def _cognition_reason_already_visible(self, card: Any) -> bool:
         """True when a live intent/plan cognition card already shows this text."""
-        from soothe_sdk.display.transcript_types import MessageType
+        from soothe_client.display.transcript_types import MessageType
 
         strategy = str(getattr(card, "cognition_plan_strategy", "") or "").strip()
         assessment = str(getattr(card, "cognition_plan_assessment", "") or "").strip()
@@ -493,7 +493,7 @@ class _MessagesMixin:
         would otherwise leave stale entries that the stream-end safety net
         mistakes for in-flight work.
         """
-        from soothe_sdk.display.transcript_types import MessageType
+        from soothe_client.display.transcript_types import MessageType
 
         from soothe_cli.tui.widgets.messages import CognitionStepMessage
 

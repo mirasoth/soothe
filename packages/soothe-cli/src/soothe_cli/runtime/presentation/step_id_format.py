@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from soothe_sdk.ux.task_namespace import (
+from soothe_client.ux.task_namespace import (
     _is_wire_step_fragment,
     _step_id_from_unified_fragment,
 )

@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
-from soothe_sdk.ux.task_namespace import (
+from soothe_client.ux.task_namespace import (
     _step_id_from_unified_fragment,
     is_inner_subgraph_task_tool_id,
     is_step_level_task_tool_id,

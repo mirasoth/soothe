@@ -145,7 +145,7 @@ def test_path_footer_text() -> None:
 
 
 def test_widget_to_message_serializes_plan_review() -> None:
-    from soothe_sdk.display.transcript_types import MessageType
+    from soothe_client.display.transcript_types import MessageType
 
     widget = _make_plan_review_widget(
         body_path="/tmp/x.md",
@@ -159,7 +159,7 @@ def test_widget_to_message_serializes_plan_review() -> None:
 
 
 def test_widget_to_message_serializes_answered_plan_review_refine() -> None:
-    from soothe_sdk.display.transcript_types import MessageType
+    from soothe_client.display.transcript_types import MessageType
 
     from soothe_cli.commands.binding import message_to_widget
 
@@ -187,7 +187,7 @@ def test_widget_to_message_serializes_answered_plan_review_refine() -> None:
 
 
 def test_widget_to_message_serializes_answered_plan_review_approve() -> None:
-    from soothe_sdk.display.transcript_types import MessageType
+    from soothe_client.display.transcript_types import MessageType
 
     widget = _make_plan_review_widget(
         body_markdown="# Plan",

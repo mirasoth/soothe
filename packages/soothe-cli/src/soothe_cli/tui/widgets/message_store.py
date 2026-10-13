@@ -5,10 +5,10 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from soothe_sdk.display.transcript_types import (
+from soothe_client.display.transcript_types import (
     UPDATABLE_FIELDS as _UPDATABLE_FIELDS,
 )
-from soothe_sdk.display.transcript_types import (
+from soothe_client.display.transcript_types import (
     MessageData,
     MessageType,
     ToolStatus,

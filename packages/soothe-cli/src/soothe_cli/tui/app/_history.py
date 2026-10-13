@@ -7,8 +7,8 @@ import logging
 from contextlib import suppress
 from typing import Any
 
-from soothe_sdk.display import card_binder as _binder
-from soothe_sdk.display.transcript_types import MessageData
+from soothe_client.display import card_binder as _binder
+from soothe_client.display.transcript_types import MessageData
 from textual.content import Content
 
 from soothe_cli.tui.app._types import _LoopHistoryPayload
@@ -36,7 +36,7 @@ class _HistoryMixin:
 
     # ------------------------------------------------------------------
     # Binder delegation (RFC-413).
-    # Pure logic lives in `soothe_sdk.display.card_binder`; these wrappers
+    # Pure logic lives in `soothe_client.display.card_binder`; these wrappers
     # preserve the existing SootheApp API so tests and callers stay unchanged.
     # ------------------------------------------------------------------
 
@@ -46,7 +46,7 @@ class _HistoryMixin:
         *,
         cognition_card_replay: list[MessageData] | None = None,
     ) -> list[MessageData]:
-        """Delegate to `soothe_sdk.display.card_binder.convert_messages_to_data`."""
+        """Delegate to `soothe_client.display.card_binder.convert_messages_to_data`."""
         return _binder.convert_messages_to_data(
             messages,
             cognition_card_replay=cognition_card_replay,
@@ -54,16 +54,16 @@ class _HistoryMixin:
 
     @staticmethod
     def _convert_event_to_message_data(event: dict[str, Any]) -> MessageData | None:
-        """Delegate to `soothe_sdk.display.card_binder.convert_event_to_message_data`."""
+        """Delegate to `soothe_client.display.card_binder.convert_event_to_message_data`."""
         return _binder.convert_event_to_message_data(event)
 
     @staticmethod
     def _collect_cognition_card_replay(events: list[dict[str, Any]]) -> list[MessageData]:
-        """Delegate to `soothe_sdk.display.card_binder.collect_cognition_card_replay`."""
+        """Delegate to `soothe_client.display.card_binder.collect_cognition_card_replay`."""
         return _binder.collect_cognition_card_replay(events)
 
     def _convert_loop_events_to_data(self, events: list[dict[str, Any]]) -> list[MessageData]:
-        """Delegate to `soothe_sdk.display.card_binder.convert_loop_events_to_data`."""
+        """Delegate to `soothe_client.display.card_binder.convert_loop_events_to_data`."""
         return _binder.convert_loop_events_to_data(events)
 
     def _merge_history_sources(
@@ -71,7 +71,7 @@ class _HistoryMixin:
         checkpoint_messages: list[Any],
         activity_events: list[dict[str, Any]],
     ) -> list[tuple[str, Any]]:
-        """Delegate to `soothe_sdk.display.card_binder.merge_history_sources`."""
+        """Delegate to `soothe_client.display.card_binder.merge_history_sources`."""
         return _binder.merge_history_sources(checkpoint_messages, activity_events)
 
     # ------------------------------------------------------------------
@@ -93,12 +93,12 @@ class _HistoryMixin:
         if self._daemon_session is None:
             return _LoopHistoryPayload([], 0)
 
-        from soothe_sdk.display.card_binder import (
+        from soothe_client.display.card_binder import (
             merge_consecutive_assistant_cards,
             sanitize_resume_display_cards,
         )
-        from soothe_sdk.display.card_ledger import card_from_wire_dict, card_to_wire_dict
-        from soothe_sdk.display.snapshot_types import GoalDisplaySnapshot
+        from soothe_client.display.card_ledger import card_from_wire_dict, card_to_wire_dict
+        from soothe_client.display.snapshot_types import GoalDisplaySnapshot
 
         try:
             response = await self._daemon_session.fetch_loop_history(loop_id)

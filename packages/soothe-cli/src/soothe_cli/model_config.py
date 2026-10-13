@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from soothe_sdk.paths import SOOTHE_HOME
+from soothe_client.paths import SOOTHE_HOME
 
 logger = logging.getLogger(__name__)
 
@@ -522,7 +522,7 @@ def has_provider_credentials(provider: str) -> bool | None:
                     return None
                 if provider_data.get("api_key"):
                     try:
-                        from soothe_sdk.utils import resolve_provider_env
+                        from soothe_client.utils import resolve_provider_env
 
                         v = resolve_provider_env(
                             provider_data["api_key"], provider_name=provider, field_name="api_key"

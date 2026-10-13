@@ -9,7 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from soothe_sdk.tools.metadata import get_file_write_tool_names
+from soothe_client.tools.metadata import get_file_write_tool_names
 
 from soothe_cli.runtime.state.file_tracker import (
     FILE_CHANGE_TOOLS,

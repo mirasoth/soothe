@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
-from soothe_sdk.display.transcript_types import MessageData, MessageType
+from soothe_client.display.transcript_types import MessageData, MessageType
 
 from soothe_cli.tui.app._messages_mixin import _MessagesMixin
 

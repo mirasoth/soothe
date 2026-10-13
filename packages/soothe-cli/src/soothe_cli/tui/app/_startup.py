@@ -688,7 +688,7 @@ class _StartupMixin:
             # TUI from rendering.
             from langchain_core.messages import AIMessage  # noqa: F401
             from langgraph.types import Command  # noqa: F401
-            from soothe_sdk.paths import DEFAULT_EXECUTE_TIMEOUT  # noqa: F401
+            from soothe_client.paths import DEFAULT_EXECUTE_TIMEOUT  # noqa: F401
         except Exception:
             logger.warning("Could not prewarm third-party imports", exc_info=True)
 

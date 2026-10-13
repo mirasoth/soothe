@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from soothe_sdk.paths import SOOTHE_DATA_DIR
+from soothe_client.paths import SOOTHE_DATA_DIR
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.content import Content

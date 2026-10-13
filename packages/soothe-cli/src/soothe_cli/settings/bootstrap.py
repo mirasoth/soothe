@@ -6,7 +6,7 @@ import logging
 import threading
 from pathlib import Path
 
-from soothe_sdk.paths import SOOTHE_HOME
+from soothe_client.paths import SOOTHE_HOME
 
 logger = logging.getLogger(__name__)
 
