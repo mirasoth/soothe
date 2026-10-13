@@ -68,7 +68,6 @@ Interactive / library use should omit it so StrangeLoop runs the user query.
 |---------|---------|
 | `soothe-daemon` | Long-running server (HTTP/WS, channels, Autopilot dispatch) |
 | `soothe-cli` | Human CLI + Textual TUI |
-| `soothe-nano` | Agent-side contracts (events, protocols, plugin API) |
 | `soothe-nano` | SootheNanoAgent (tools, skills, MCP) |
 
 ## Testing
