@@ -7,8 +7,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 
 from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, ToolMessage
-
-from soothe.ux.task_namespace import (
+from soothe_nano.ux.task_namespace import (
     _format_unified_tool_call_id,
     _shorten_tool_call_id,
     _task_index_from_task_tool_call_id,

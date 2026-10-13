@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from soothe_nano.core.subagent_wire import is_curated_subagent_wire_event_type
 from soothe_nano.utils.text_preview import preview_first
+from soothe_nano.ux.stream_tool_wire import STREAM_TOOL_CALL_UPDATE
 
 from soothe.config.constants import DEFAULT_MAX_ITERATIONS
 from soothe.events import (
@@ -46,7 +47,6 @@ from soothe.sloop.utils.messages import (
 )
 from soothe.sloop.utils.plan_action_text import resolve_plan_action_text
 from soothe.utils.messages import extract_text_from_message_content
-from soothe.ux.stream_tool_wire import STREAM_TOOL_CALL_UPDATE
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator

@@ -15,6 +15,7 @@ import logging
 import pytest
 from soothe_nano.core.events import SootheEvent
 from soothe_nano.core.verbosity import VerbosityTier
+from soothe_nano.ux.stream_tool_wire import STREAM_TOOL_CALL_UPDATE, TOOL_CALL_UPDATES_BATCH
 
 from soothe.events import EventMeta
 from soothe.events.visibility import (
@@ -28,7 +29,6 @@ from soothe.events.visibility import (
     is_custom_stream_payload_client_visible,
 )
 from soothe.ux.classification import classify_event_to_tier
-from soothe.ux.stream_tool_wire import STREAM_TOOL_CALL_UPDATE, TOOL_CALL_UPDATES_BATCH
 
 # ---------------------------------------------------------------------------
 # is_client_broadcast_event_type / catalog tier

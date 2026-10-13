@@ -258,7 +258,7 @@ async def run_online_benchmark(
     # Add package paths for online mode (requires full soothe imports)
     sys.path.insert(0, str(_ROOT))
     sys.path.insert(0, str(_ROOT / "packages" / "soothe" / "src"))
-        sys.path.insert(0, str(_ROOT / "packages" / "soothe-daemon" / "src"))
+    sys.path.insert(0, str(_ROOT / "packages" / "soothe-daemon" / "src"))
 
     from soothe.sloop.cognition.planner import LLMPlanner
     from soothe.sloop.state.schemas import LoopState

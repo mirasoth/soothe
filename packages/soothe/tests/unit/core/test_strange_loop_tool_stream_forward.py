@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from soothe_nano.ux.stream_tool_wire import STREAM_TOOL_CALL_UPDATE
 
 from soothe.runner._runner_strange_loop import (
     _MSG_PAIR_LEN,
@@ -17,7 +18,6 @@ from soothe.sloop.utils.messages import (
     LoopAIMessageChunk,
     loop_message_assistant_output_phase,
 )
-from soothe.ux.stream_tool_wire import STREAM_TOOL_CALL_UPDATE
 
 # ---------------------------------------------------------------------------
 # Test-only helpers (moved here from ``_runner_strange_loop.py``).

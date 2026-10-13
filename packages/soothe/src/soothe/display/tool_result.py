@@ -12,13 +12,14 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from soothe_nano.ux.task_namespace import parse_unified_tool_call_id
+
 from soothe.display._text_utils import text_looks_like_error
 from soothe.display.tool_message_format import (
     format_tool_message_content,
     run_python_envelope_indicates_failure,
     try_parse_run_python_result_envelope,
 )
-from soothe.ux.task_namespace import parse_unified_tool_call_id
 
 # Markers shared with act-wave finalize (canonical home for client + core reuse).
 _ERROR_TOOL_RESULT_MARKERS = (

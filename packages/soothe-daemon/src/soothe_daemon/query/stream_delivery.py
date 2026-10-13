@@ -16,12 +16,12 @@ from soothe.ux.loop_stream import (
     assistant_output_phase,
     is_stream_terminal_wire_dict,
 )
-from soothe.ux.stream_tool_wire import (
+from soothe.wire.codec import prepare_stream_data_for_wire
+from soothe_nano.core.events import STRANGE_LOOP_COMPLETED, STREAM_END
+from soothe_nano.ux.stream_tool_wire import (
     TOOL_CALL_UPDATES_BATCH,
     extract_tool_call_updates_from_wire_message,
 )
-from soothe.wire.codec import prepare_stream_data_for_wire
-from soothe_nano.core.events import STRANGE_LOOP_COMPLETED, STREAM_END
 
 StreamDeliveryMode = Literal["batch", "adaptive", "streaming"]
 
@@ -593,7 +593,7 @@ class StreamDeliveryCoalescer:
         namespace: tuple[str, ...],
         data: dict[str, Any],
     ) -> bool:
-        from soothe.ux.stream_tool_wire import STREAM_TOOL_CALL_UPDATE
+        from soothe_nano.ux.stream_tool_wire import STREAM_TOOL_CALL_UPDATE
 
         if str(data.get("type", "")) != STREAM_TOOL_CALL_UPDATE:
             return False
