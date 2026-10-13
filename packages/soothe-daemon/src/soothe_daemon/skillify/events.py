@@ -6,8 +6,8 @@ from typing import Literal
 
 from pydantic import ConfigDict
 from soothe.events.catalog import register_event
-from soothe_sdk.core.events import SubagentEvent
-from soothe_sdk.core.verbosity import VerbosityTier
+from soothe_nano.core.events import SubagentEvent
+from soothe_nano.core.verbosity import VerbosityTier
 
 from soothe_daemon.events.constants import (
     SKILLIFY_INDEX_FAILED,

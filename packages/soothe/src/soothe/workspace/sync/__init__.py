@@ -1,7 +1,7 @@
 """Workspace sync subsystem — materialization, CAS, dirty tracking, checkpointing.
 
 Host-side workspace sync layer.  The `WorkspaceSyncBackend` protocol and data
-models live in `soothe-sdk`; this package provides the concrete
+models live in `soothe.workspace.sync.workspace_sync`; this package provides the concrete
 `FsspecSyncBackend` adapter, CAS cache, dirty tracker, debouncer, and
 workspace manager.
 """

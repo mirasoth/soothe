@@ -9,8 +9,8 @@ from typing import Any
 from pydantic import ValidationError
 from soothe import __version__ as core_version
 from soothe.sloop.checkpoints.directory_manager import PersistenceDirectoryManager
+from soothe.wire.protocol import _serialize_for_json
 from soothe_nano.utils.text_preview import preview_first
-from soothe_sdk.wire.protocol import _serialize_for_json
 
 from soothe_daemon import __version__ as daemon_version
 from soothe_daemon.bootstrap.logging import set_client_id

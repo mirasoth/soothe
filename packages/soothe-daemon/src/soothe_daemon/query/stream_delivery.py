@@ -9,19 +9,19 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
+from soothe.display.text_extract import extract_text_from_ai_message
 from soothe.events.visibility import is_custom_stream_payload_client_visible
-from soothe_sdk.core.events import STRANGE_LOOP_COMPLETED, STREAM_END
-from soothe_sdk.display.text_extract import extract_text_from_ai_message
-from soothe_sdk.ux.loop_stream import (
+from soothe.ux.loop_stream import (
     GOAL_COMPLETION_STREAM_TERMINAL_FIELD,
     assistant_output_phase,
     is_stream_terminal_wire_dict,
 )
-from soothe_sdk.ux.stream_tool_wire import (
+from soothe.ux.stream_tool_wire import (
     TOOL_CALL_UPDATES_BATCH,
     extract_tool_call_updates_from_wire_message,
 )
-from soothe_sdk.wire.codec import prepare_stream_data_for_wire
+from soothe.wire.codec import prepare_stream_data_for_wire
+from soothe_nano.core.events import STRANGE_LOOP_COMPLETED, STREAM_END
 
 StreamDeliveryMode = Literal["batch", "adaptive", "streaming"]
 
@@ -64,7 +64,7 @@ class _ToolBatchBuffer:
 
 def _wire_update_args_displayable(args: Any) -> bool:
     """True when batched/custom wire kwargs are real tool parameters."""
-    from soothe_sdk.display.message_processing import extract_tool_args_dict
+    from soothe.display.message_processing import extract_tool_args_dict
 
     if not isinstance(args, dict) or not args:
         return False
@@ -452,7 +452,7 @@ class StreamDeliveryCoalescer:
                     out.extend(self._maybe_flush_tool_batch(ns, now, force=added_new))
                     body = wire_data[0] if wire_data else None
                     if isinstance(body, dict):
-                        from soothe_sdk.wire.codec import flatten_enveloped_message_dict
+                        from soothe.wire.codec import flatten_enveloped_message_dict
 
                         flat = flatten_enveloped_message_dict(body)
                         text = "".join(extract_text_from_ai_message(flat)).strip()
@@ -593,7 +593,7 @@ class StreamDeliveryCoalescer:
         namespace: tuple[str, ...],
         data: dict[str, Any],
     ) -> bool:
-        from soothe_sdk.ux.stream_tool_wire import STREAM_TOOL_CALL_UPDATE
+        from soothe.ux.stream_tool_wire import STREAM_TOOL_CALL_UPDATE
 
         if str(data.get("type", "")) != STREAM_TOOL_CALL_UPDATE:
             return False

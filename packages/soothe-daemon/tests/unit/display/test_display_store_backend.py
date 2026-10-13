@@ -10,7 +10,7 @@ from unittest.mock import MagicMock
 
 from soothe.config.models import PersistenceConfig
 from soothe.config.settings import SootheConfig
-from soothe_sdk.display.card_ledger import CardMutation
+from soothe.display.card_ledger import CardMutation
 
 from soothe_daemon.display.display_store import (
     DisplayCardStore,
@@ -23,7 +23,7 @@ from soothe_daemon.display.display_store_postgres import PostgresDisplayCardStor
 
 def test_configure_display_card_store_sqlite(tmp_path: Path, monkeypatch) -> None:
     reset_display_card_store_for_tests()
-    import soothe_sdk.paths as sdk_paths
+    import soothe_nano.paths as sdk_paths
 
     monkeypatch.setattr(sdk_paths, "SOOTHE_DATA_DIR", str(tmp_path))
     cfg = SootheConfig(persistence=PersistenceConfig(default_backend="sqlite"))
@@ -75,7 +75,7 @@ def test_postgres_store_uses_conflict_ignore_sql() -> None:
 
 def test_configure_replaces_previous_store(tmp_path: Path, monkeypatch) -> None:
     reset_display_card_store_for_tests()
-    import soothe_sdk.paths as sdk_paths
+    import soothe_nano.paths as sdk_paths
 
     monkeypatch.setattr(sdk_paths, "SOOTHE_DATA_DIR", str(tmp_path))
     sqlite_cfg = SootheConfig(persistence=PersistenceConfig(default_backend="sqlite"))

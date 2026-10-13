@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
-from soothe_sdk.paths import SOOTHE_HOME
+from soothe_nano.paths import SOOTHE_HOME
 
 # Lightweight helpers - avoid heavy imports (soothe.config takes 4.4s, SootheDaemon takes 5+ seconds)
 _PID_FILENAME = "soothed.pid"

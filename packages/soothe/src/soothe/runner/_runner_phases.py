@@ -7,7 +7,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from soothe_sdk.core.exceptions import ConfigurationError
+from soothe_nano.core.exceptions import ConfigurationError
 
 from soothe.sloop.utils.messages import loop_assistant_messages_chunk
 
@@ -321,7 +321,7 @@ class PhasesMixin:
         """
         import aiosqlite
         from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
-        from soothe_sdk.utils.serde import create_soothe_serde
+        from soothe_nano.utils.serde import create_soothe_serde
 
         from soothe.sloop.checkpoints.retry_utils import is_recoverable_sqlite_error
 
@@ -421,7 +421,7 @@ class PhasesMixin:
                 await self._checkpointer_pool.open()
 
                 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-                from soothe_sdk.utils.serde import create_soothe_serde
+                from soothe_nano.utils.serde import create_soothe_serde
 
                 checkpointer = AsyncPostgresSaver(
                     self._checkpointer_pool, serde=create_soothe_serde()

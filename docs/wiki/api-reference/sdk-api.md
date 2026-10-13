@@ -7,13 +7,32 @@ description: >-
   Transport lives in soothe-client-python (soothe_client).
 ---
 
-# Plugin & Contracts SDK (`soothe_sdk`)
+# Plugin & Contracts SDK (`soothe_sdk`) — DISSOLVED
 
-The `soothe_sdk` package is the public API surface for **plugin authors** who extend the agent with custom tools, subagents, and events, plus **shared contracts** (wire codec, paths, display/UX helpers, protocols) used by daemon, CLI, and clients.
+> **⚠️ The `soothe-sdk` package was dissolved on 2026-10-13 and removed from this monorepo.** The contracts moved to their owning axis:
+>
+> | Former module | New home |
+> |---|---|
+> | `soothe_sdk.plugin` (plugin author API) | `soothe_nano.plugin` (soothe-nano ≥ 1.4) |
+> | `soothe_sdk.core` (events · registry · verbosity) | `soothe_nano.core` |
+> | `soothe_sdk.protocols` (except `workspace_sync`) | `soothe_nano.protocols` |
+> | `soothe_sdk.paths` · `intention` · `observability.langfuse` | `soothe_nano.*` |
+> | `soothe_sdk.wire` · `display` · host-side `ux` helpers | `soothe.wire` / `soothe.display` / `soothe.ux` (host copies, daemon consumes via `soothe`) |
+> | Everything the CLI / Python client uses | `soothe_client.*` (soothe-client-python ≥ 1.1) |
+>
+> The last published version is `soothe-sdk 1.0.13` on PyPI; it will not receive further releases.
+
+The historical API reference below describes the final 1.x layout, kept for migration reference.
+
+---
+
+## Plugin & Contracts SDK (`soothe_sdk`)
+
+The `soothe_sdk` package was the public API surface for **plugin authors** who extend the agent with custom tools, subagents, and events, plus **shared contracts** (wire codec, paths, display/UX helpers, protocols) used by daemon, CLI, and clients.
 
 The WebSocket transport client lives in **`soothe-client-python`** (`soothe_client`), not in this package.
 
-> **Source**: `packages/soothe-sdk/src/soothe_sdk/`
+> **Source**: `packages/soothe-sdk/src/soothe_sdk/` *(removed)*
 > **Package**: `soothe-sdk` · **Python**: `>=3.11` · **Stability**: ✅ Stable (1.0.0+)
 > **Install constraint**: `soothe-sdk>=1.0.0,<2.0.0`
 

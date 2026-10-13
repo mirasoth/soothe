@@ -3,9 +3,7 @@
 
 The Docker image installs ``soothe==VERSION`` and ``soothe-daemon==VERSION``
 together from PyPI. Daemon must pin ``soothe`` to a range that admits the
-current monorepo VERSION. When a package also declares ``soothe-sdk``, that
-range must intersect soothe's ``soothe-sdk`` pin (empty intersection fails
-resolve).
+current monorepo VERSION.
 
 Daemon must NOT re-pin ``soothe-nano`` (comes via soothe) or depend on
 ``soothe-client-python`` at runtime (client sits above the daemon).
@@ -26,7 +24,9 @@ from packaging.version import Version
 ROOT = Path(__file__).resolve().parents[1]
 
 # Optional shared first-party pins: if both packages declare them, ranges must overlap.
-SHARED_FIRST_PARTY = ("soothe-sdk",)
+# (soothe-sdk was dissolved — agent-axis contracts live in soothe-nano, host-side
+# wire/display/ux copies in soothe.)
+SHARED_FIRST_PARTY: tuple[str, ...] = ()
 
 # Probe versions covering current and next major floors for intersection tests.
 _PROBE_VERSIONS = tuple(
@@ -98,7 +98,7 @@ def main() -> int:
         errors.append(
             (
                 "soothe-daemon must not declare soothe-client-python in core deps "
-                "(client sits above daemon; use soothe-sdk wire + admin_rpc)",
+                "(client sits above daemon; use soothe wire + admin_rpc)",
                 _DAEMON_PYPROJECT,
             )
         )
@@ -121,27 +121,6 @@ def main() -> int:
                     _DAEMON_PYPROJECT,
                 )
             )
-
-    # soothe-sdk is now a workspace member with its own VERSION (1.x line);
-    # its pin must admit the SDK's own version, not the root VERSION.
-    sdk_version_path = ROOT / "packages" / "soothe-sdk" / "VERSION"
-    if sdk_version_path.exists():
-        sdk_version = sdk_version_path.read_text().strip()
-        if re.fullmatch(r"\d+\.\d+\.\d+", sdk_version):
-            sdk_ver = Version(sdk_version)
-            for pkg_name, pkg_deps, pkg_file in (
-                ("soothe", soothe, _SOOTHE_PYPROJECT),
-                ("soothe-daemon", daemon, _DAEMON_PYPROJECT),
-            ):
-                sdk_req = pkg_deps.get("soothe-sdk")
-                if sdk_req is not None and sdk_ver not in sdk_req.specifier:
-                    errors.append(
-                        (
-                            f"{pkg_name} soothe-sdk pin {_normalize_spec(sdk_req.specifier)} "
-                            f"does not admit current SDK VERSION {sdk_version}",
-                            pkg_file,
-                        )
-                    )
 
     soothe_req = daemon.get("soothe")
     if soothe_req is None:

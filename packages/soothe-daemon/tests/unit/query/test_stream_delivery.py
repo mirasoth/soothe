@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from soothe_sdk.core.events import STREAM_END
+from soothe_nano.core.events import STREAM_END
 
 from soothe_daemon.query.stream_delivery import (
     STRANGE_LOOP_COMPLETED,
@@ -595,7 +595,7 @@ def test_adaptive_chunked_streaming_with_file_output_uses_pure_batch() -> None:
 
 def test_streaming_mode_emits_stream_end_after_terminal() -> None:
     """P2: terminal content is followed by soothe.stream.end scopes."""
-    from soothe_sdk.core.events import STREAM_END
+    from soothe_nano.core.events import STREAM_END
 
     coalescer = StreamDeliveryCoalescer("streaming")
     out = coalescer.ingest(*_gc_chunk("final", last=True))

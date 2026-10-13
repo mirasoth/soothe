@@ -248,7 +248,7 @@ class SootheDaemon(DaemonHandlersMixin):
                 postgres_dsn=self._config.resolve_postgres_dsn_for_database("metadata"),
             )
 
-        from soothe_sdk.paths import resolve_identity_db_path
+        from soothe_nano.paths import resolve_identity_db_path
 
         db_path = resolve_identity_db_path()
         return IdentityService(
@@ -1420,7 +1420,7 @@ class SootheDaemon(DaemonHandlersMixin):
 
         from datetime import datetime, timedelta
 
-        from soothe_sdk.protocols.durability import ThreadFilter
+        from soothe_nano.protocols.durability import ThreadFilter
 
         # Get timeout from config (in hours)
         timeout_hours = self._config.agent.protocols.durability.thread_inactivity_timeout_hours

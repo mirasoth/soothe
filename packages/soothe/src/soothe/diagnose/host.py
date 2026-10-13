@@ -192,7 +192,7 @@ def _check_skillify(config: Any | None) -> CheckResult:
             details={"enabled": False},
         )
 
-    import_result = _check_import("soothe_sdk.skillify", "skillify_module")
+    import_result = _check_import("soothe.skillify", "skillify_module")
     if import_result.status != CheckStatus.OK:
         return CheckResult(
             name="skillify",
@@ -201,7 +201,7 @@ def _check_skillify(config: Any | None) -> CheckResult:
             details={
                 **import_result.details,
                 "enabled": True,
-                "remediation": "Install soothe-sdk with skillify support",
+                "remediation": "Install the soothe package (skillify models ship in soothe.skillify)",
             },
         )
 
@@ -212,7 +212,7 @@ def _check_skillify(config: Any | None) -> CheckResult:
         details={
             "enabled": True,
             "model_role": getattr(skillify, "model_role", None),
-            "module": "soothe_sdk.skillify",
+            "module": "soothe.skillify",
         },
     )
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import importlib.resources
 from pathlib import Path
 
-from soothe_sdk.paths import SOOTHE_HOME
+from soothe_nano.paths import SOOTHE_HOME
 
 TEMPLATE_NAMES = ("nano.yml", "soothe.yml", "daemon.yml")
 

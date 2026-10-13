@@ -32,17 +32,17 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any
 
+from soothe.ux.task_namespace import parse_unified_tool_call_id
 from soothe_client.websocket import WebSocketClient
 from soothe_daemon.query.stream_delivery import StreamDeliveryMode
-from soothe_sdk.core.subagent_wire import (
+from soothe_nano.core.subagent_wire import (
     is_allowlisted_subagent_event_type,
     parse_subagent_wire_agent,
 )
-from soothe_sdk.ux.stream_tool_wire import (
+from soothe_nano.ux.stream_tool_wire import (
     STREAM_TOOL_CALL_UPDATE,
     extract_tool_call_updates_from_wire_message,
 )
-from soothe_sdk.ux.task_namespace import parse_unified_tool_call_id
 
 STREAM_DELIVERY_MODES: list[StreamDeliveryMode] = ["batch", "adaptive", "streaming"]
 

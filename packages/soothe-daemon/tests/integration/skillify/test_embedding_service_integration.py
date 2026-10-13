@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from soothe.config import SootheConfig
-from soothe_sdk.skillify.models import SkillBundle
+from soothe.skillify.models import SkillBundle
 
 from soothe_daemon.skillify.service import SkillifyService
 

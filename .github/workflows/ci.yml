@@ -46,7 +46,7 @@ jobs:
 
     - name: Verify package imports
       run: |
-        uv run python -c "from soothe_sdk.protocols.core_agent import CoreAgentCapabilities; print('soothe-sdk OK')"
+        uv run python -c "from soothe_nano.protocols.core_agent import CoreAgentCapabilities; print('agent contracts OK')"
 
     - name: Run tests (daemon package)
       run: make test-unit

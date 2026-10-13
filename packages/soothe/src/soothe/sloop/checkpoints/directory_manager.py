@@ -89,7 +89,7 @@ class PersistenceDirectoryManager:
             Path to shared `databases/checkpoints.db` (StrangeLoop + LangGraph).
             Table: agentloop_checkpoints (separate from LangGraph checkpoint tables).
         """
-        from soothe_sdk.paths import resolve_checkpoints_db_path
+        from soothe_nano.paths import resolve_checkpoints_db_path
 
         return resolve_checkpoints_db_path()
 

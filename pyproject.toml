@@ -6,7 +6,6 @@ description = "Soothe monorepo workspace (meta-package, no dependencies)"
 # python_full_version==3.14.* + win32; CI matrix is 3.12/3.13.
 requires-python = ">=3.11,<3.14"
 dependencies = [
-    "soothe-sdk",
     "soothe-client-python",
     "soothe-cli",
     "soothe",
@@ -29,7 +28,6 @@ url = "https://pypi.org/simple"
 default = true
 
 [tool.uv.sources]
-soothe-sdk = { workspace = true }
 soothe-client-python = { workspace = true }
 soothe-cli = { workspace = true }
 soothe = { workspace = true }
@@ -67,8 +65,6 @@ docstring-code-format = true
 # Dead-code analysis (make vulture, verify_finally)
 [tool.vulture]
 paths = [
-    "packages/soothe-sdk/vulture_whitelist.py",
-    "packages/soothe-sdk/src",
     "packages/soothe/src",
     "packages/soothe-daemon/src",
     "packages/soothe-cli/src",

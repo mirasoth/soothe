@@ -8,8 +8,8 @@ import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from soothe.display.card_ledger import CardMutation
 from soothe.sloop.checkpoints.runtime_paths import resolve_display_db_path
-from soothe_sdk.display.card_ledger import CardMutation
 
 if TYPE_CHECKING:
     from soothe.config import SootheConfig

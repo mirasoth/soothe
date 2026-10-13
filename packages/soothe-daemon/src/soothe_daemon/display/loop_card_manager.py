@@ -12,26 +12,26 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from langchain_core.messages import HumanMessage
-from soothe_sdk.core.events import (
+from soothe.display import card_binder
+from soothe.display.card_ledger import (
+    align_cards_preserving_ids,
+    cards_to_mutations,
+    diff_card_snapshots,
+)
+from soothe.display.snapshot_collapser import (
+    build_goal_snapshot,
+    fold_display_cards,
+    split_cards_by_user_segments,
+)
+from soothe.display.snapshot_types import GoalDisplaySnapshot
+from soothe.display.transcript_types import MessageData
+from soothe_nano.core.events import (
     CARD_CREATED,
     CARD_FINALIZED,
     CARD_REPLAY_BEGIN,
     CARD_REPLAY_END,
     CARD_UPDATED,
 )
-from soothe_sdk.display import card_binder
-from soothe_sdk.display.card_ledger import (
-    align_cards_preserving_ids,
-    cards_to_mutations,
-    diff_card_snapshots,
-)
-from soothe_sdk.display.snapshot_collapser import (
-    build_goal_snapshot,
-    fold_display_cards,
-    split_cards_by_user_segments,
-)
-from soothe_sdk.display.snapshot_types import GoalDisplaySnapshot
-from soothe_sdk.display.transcript_types import MessageData
 
 from soothe_daemon.display.loop_card_ledger import LoopCardLedger
 from soothe_daemon.display.loop_history_probe import filter_derivable_log_events
@@ -429,7 +429,7 @@ class LoopCardManager:
 
     @staticmethod
     def _ingest_message_wire(state: _BindingBuffers, msg_wire: dict[str, Any]) -> bool:
-        from soothe_sdk.wire.codec import (
+        from soothe.wire.codec import (
             flatten_enveloped_message_dict,
             messages_from_wire_dicts,
         )
@@ -631,7 +631,7 @@ class LoopCardManager:
         loop_status: str | None = None,
     ) -> dict[str, Any]:
         """Return frozen goal snapshots plus the live card tail."""
-        from soothe_sdk.display.card_ledger import card_to_wire_dict
+        from soothe.display.card_ledger import card_to_wire_dict
 
         from soothe_daemon.display.display_store import get_display_card_store
 

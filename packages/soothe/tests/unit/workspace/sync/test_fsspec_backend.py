@@ -110,7 +110,7 @@ class TestManifestOps:
         self,
         backend: FsspecSyncBackend,
     ) -> None:
-        from soothe_sdk.protocols.workspace_sync import Manifest, ManifestEntry
+        from soothe.workspace.sync.workspace_sync import Manifest, ManifestEntry
 
         manifest = Manifest(
             run_id="run-001",
@@ -136,7 +136,7 @@ class TestManifestOps:
         self,
         backend: FsspecSyncBackend,
     ) -> None:
-        from soothe_sdk.protocols.workspace_sync import Manifest
+        from soothe.workspace.sync.workspace_sync import Manifest
 
         # Write version 1
         m1 = Manifest(run_id="run-002", version=1)
@@ -151,7 +151,7 @@ class TestManifestOps:
         self,
         backend: FsspecSyncBackend,
     ) -> None:
-        from soothe_sdk.protocols.workspace_sync import Manifest
+        from soothe.workspace.sync.workspace_sync import Manifest
 
         # Write version 1
         m1 = Manifest(run_id="run-003", version=1)
@@ -297,7 +297,7 @@ class TestPathTraversalSecurity:
         self,
         backend: FsspecSyncBackend,
     ) -> None:
-        from soothe_sdk.protocols.workspace_sync import Manifest
+        from soothe.workspace.sync.workspace_sync import Manifest
 
         m = Manifest(run_id="../escape", version=1)
         with pytest.raises(ValueError, match="invalid run_id"):

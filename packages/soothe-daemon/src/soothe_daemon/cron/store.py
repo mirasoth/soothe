@@ -7,7 +7,7 @@ import sqlite3
 from datetime import UTC, datetime
 from typing import Any
 
-from soothe_sdk.paths import resolve_cron_db_path
+from soothe_nano.paths import resolve_cron_db_path
 
 from soothe_daemon.cron.models import CronJob, JobStatus, ScheduleKind
 

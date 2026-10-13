@@ -14,13 +14,13 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from soothe_sdk.identity.errors import (
+
+from soothe.identity.errors import (
     AKSKNotFoundError,
     MappingConflictError,
     MappingNotFoundError,
     UserNotFoundError,
 )
-
 from soothe.identity.identity_service import (
     IdentityService,
     initialize_identity_tables_sync,

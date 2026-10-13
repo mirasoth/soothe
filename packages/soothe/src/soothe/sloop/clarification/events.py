@@ -5,13 +5,13 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from pydantic import ConfigDict
-from soothe_sdk.core.events import (
+from soothe_nano.core.events import (
     LOOP_CLARIFICATION_ANSWERED,
     LOOP_CLARIFICATION_DEFERRED,
     LOOP_CLARIFICATION_REQUESTED,
     SootheEvent,
 )
-from soothe_sdk.core.verbosity import VerbosityTier
+from soothe_nano.core.verbosity import VerbosityTier
 
 from soothe.events import register_event
 

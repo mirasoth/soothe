@@ -247,11 +247,11 @@ def test_duplicate_task_rows_dedupe_to_one_marker() -> None:
 
 def test_subgraph_task_level_id_does_not_overwrite_main_delegation() -> None:
     """Regression: ``FHG_01:t0:task:0`` must not replace ``FHG_01:s:task:0`` args."""
-    card = CognitionStepMessage("FHG-01", "Deep Research soothe-sdk", id="stp-overwrite")
+    card = CognitionStepMessage("FHG-01", "Deep Research soothe-nano", id="stp-overwrite")
     card.add_tool_call(
         "FHG_01:s:task:0",
         "task",
-        {"subagent_type": "deep_research", "description": "Deep Research soothe-sdk package"},
+        {"subagent_type": "deep_research", "description": "Deep Research soothe-nano package"},
         is_task_row=True,
     )
     card.add_tool_call(
@@ -261,14 +261,14 @@ def test_subgraph_task_level_id_does_not_overwrite_main_delegation() -> None:
     )
     rows = card._iter_task_delegation_rows()
     assert len(rows) == 1
-    assert "soothe-sdk" in str(rows[0].args.get("description", ""))
+    assert "soothe-nano" in str(rows[0].args.get("description", ""))
     text = _plain(card._step_task_activity_content())
-    assert "Deep Research(Deep Research soothe-sdk package)" in text
+    assert "Deep Research(Deep Research soothe-nano package)" in text
 
 
 def test_task_branch_hides_redundant_opaque_task_metadata_row() -> None:
     """Opaque task metadata row not shown on step card."""
-    card = CognitionStepMessage("FHG-01", "Deep Research soothe-sdk", id="stp-hide-opaque-task")
+    card = CognitionStepMessage("FHG-01", "Deep Research soothe-nano", id="stp-hide-opaque-task")
     card.add_tool_call(
         "FHG_01:s:task:0",
         "task",

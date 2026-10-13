@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from soothe_sdk.intention.models import TaskComplexity
+from soothe_nano.intention.models import TaskComplexity
 
 from soothe.sloop.intention.models import IntakeLabel, IntentClassification
 from soothe.sloop.stations.preprocess.intake import node_intent_classify

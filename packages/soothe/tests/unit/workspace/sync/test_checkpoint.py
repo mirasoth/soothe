@@ -17,14 +17,14 @@ from typing import TYPE_CHECKING
 
 import pytest
 from fsspec.implementations.memory import MemoryFileSystem
-from soothe_sdk.protocols.workspace_sync import (
-    CheckpointType,
-)
 
 from soothe.workspace.sync.backends.fsspec import FsspecSyncBackend
 from soothe.workspace.sync.cas import CASCache
 from soothe.workspace.sync.checkpoint import CheckpointManager
 from soothe.workspace.sync.dirty_tracker import DirtyTracker
+from soothe.workspace.sync.workspace_sync import (
+    CheckpointType,
+)
 
 if TYPE_CHECKING:
     pass
@@ -125,7 +125,7 @@ class TestCheckpointCreation:
         # Verify the stored payload is a SNAPSHOT.
         data = await backend.get_checkpoint("run-123-c001")
         assert data is not None
-        from soothe_sdk.protocols.workspace_sync import CheckpointPayload
+        from soothe.workspace.sync.workspace_sync import CheckpointPayload
 
         payload = CheckpointPayload.model_validate_json(data)
         assert payload.kind == CheckpointType.SNAPSHOT
@@ -154,7 +154,7 @@ class TestCheckpointCreation:
 
         data = await backend.get_checkpoint("run-123-c002")
         assert data is not None
-        from soothe_sdk.protocols.workspace_sync import CheckpointPayload
+        from soothe.workspace.sync.workspace_sync import CheckpointPayload
 
         payload = CheckpointPayload.model_validate_json(data)
         assert payload.kind == CheckpointType.DELTA
@@ -176,7 +176,7 @@ class TestCheckpointCreation:
             await manager.create_checkpoint()
 
         # c005 should be a SNAPSHOT (compaction after 3 deltas).
-        from soothe_sdk.protocols.workspace_sync import CheckpointPayload
+        from soothe.workspace.sync.workspace_sync import CheckpointPayload
 
         data = await backend.get_checkpoint("run-123-c005")
         assert data is not None

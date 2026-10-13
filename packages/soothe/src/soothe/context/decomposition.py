@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
-from soothe_sdk.intention.models import TaskComplexity
+from soothe_nano.intention.models import TaskComplexity
 
 from soothe.context.models import ExecutionHint
 

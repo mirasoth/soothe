@@ -7,8 +7,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from soothe.events import EventMeta
-from soothe_sdk.core.events import SootheEvent
-from soothe_sdk.core.verbosity import VerbosityTier
+from soothe_nano.core.events import SootheEvent
+from soothe_nano.core.verbosity import VerbosityTier
 
 from soothe_daemon.event import EventBus, loop_event_topic
 from soothe_daemon.server.session import ClientSessionManager

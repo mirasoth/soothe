@@ -7,7 +7,7 @@ import importlib.metadata
 from typing import Any, cast
 from uuid import uuid4
 
-from soothe_sdk.wire.codec import (
+from soothe.wire.codec import (
     ConnectionInitEnvelope,
     ConnectionInitParams,
     ErrorEnvelope,

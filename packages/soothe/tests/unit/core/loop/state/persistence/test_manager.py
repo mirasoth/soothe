@@ -44,7 +44,7 @@ async def test_directory_manager_creates_directories(tmp_path):
 async def test_directory_manager_paths(tmp_path):
     """Test directory manager returns correct paths."""
 
-    import soothe_sdk.paths as sdk_config
+    import soothe_nano.paths as sdk_config
 
     import soothe.config as config
 

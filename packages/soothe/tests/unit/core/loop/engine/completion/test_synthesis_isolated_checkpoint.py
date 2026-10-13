@@ -100,7 +100,7 @@ async def test_generate_synthesis_sets_finalize_langfuse_run_name(monkeypatch) -
     soothe_cfg = SootheConfig(observability=obs)
     handler = MagicMock()
     monkeypatch.setattr(
-        "soothe_sdk.observability.langfuse._merge.cached_langfuse_callback_handler",
+        "soothe_nano.observability.langfuse._merge.cached_langfuse_callback_handler",
         lambda _c: handler,
     )
 

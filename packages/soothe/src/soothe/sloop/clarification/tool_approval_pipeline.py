@@ -189,12 +189,12 @@ class ToolApprovalPipeline:
         workspace_root: str | None,
     ) -> tuple[str, str | None] | None:
         """Run safety checks via nano's OperationSecurity.  Returns `(reason, rule_id)` if denied."""
+        from soothe_nano.protocols.operation_security import (
+            OperationSecurityContext,
+        )
         from soothe_nano.security.operation_guard import (
             WorkspaceToolOperationSecurity,
             build_operation_security_request,
-        )
-        from soothe_sdk.protocols.operation_security import (
-            OperationSecurityContext,
         )
 
         if self._security_evaluator is None:

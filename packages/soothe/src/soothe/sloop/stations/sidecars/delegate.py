@@ -122,7 +122,7 @@ async def _forward_wire_custom(
     step_id: str,
 ) -> None:
     """Stamp and forward curated customs (subagent + tool_call.update) to the stream."""
-    from soothe_sdk.ux.stream_tool_wire import STREAM_TOOL_CALL_UPDATE
+    from soothe.ux.stream_tool_wire import STREAM_TOOL_CALL_UPDATE
 
     et = data.get("type")
     if not isinstance(et, str):

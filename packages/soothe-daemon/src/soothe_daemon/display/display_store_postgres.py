@@ -8,7 +8,7 @@ import threading
 from datetime import UTC, datetime
 from typing import Any
 
-from soothe_sdk.display.card_ledger import CardMutation
+from soothe.display.card_ledger import CardMutation
 
 logger = logging.getLogger(__name__)
 

@@ -7,8 +7,8 @@ import contextlib
 import logging
 from typing import TYPE_CHECKING, Any
 
-from soothe_sdk.protocols.vector_store import VectorStoreProtocol
-from soothe_sdk.skillify.models import SkillRecord
+from soothe.skillify.models import SkillRecord
+from soothe_nano.protocols.vector_store import VectorStoreProtocol
 
 from .events import (
     SkillifyIndexFailedEvent,

@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from soothe_sdk.intention.models import TaskComplexity
+from soothe_nano.intention.models import TaskComplexity
 
 from soothe.config import SootheConfig
 from soothe.sloop.intention.models import IntakeLabel, IntentClassification
@@ -43,7 +43,7 @@ def test_intake_invoke_config_pins_trace_id() -> None:
 
 def test_intake_invoke_config_inherits_graph_handler() -> None:
     pytest.importorskip("langfuse")
-    from soothe_sdk.observability.langfuse.callback_handler import (
+    from soothe_nano.observability.langfuse.callback_handler import (
         SootheLangfuseCallbackHandler,
     )
 

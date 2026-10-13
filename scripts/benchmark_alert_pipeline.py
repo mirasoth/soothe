@@ -43,10 +43,9 @@ from typing import Any
 
 # Add package source paths for imports.
 # When run from a source checkout (not installed), these ensure the script
-# can import soothe and soothe-sdk without installation.
+# can import soothe without installation.
 _ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(_ROOT / "packages" / "soothe" / "src"))
-sys.path.insert(0, str(_ROOT / "packages" / "soothe-sdk" / "src"))
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)

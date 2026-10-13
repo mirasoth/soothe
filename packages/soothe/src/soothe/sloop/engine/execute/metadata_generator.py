@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from soothe_sdk.utils import get_outcome_type
+from soothe_nano.tools.metadata import get_outcome_type
 
 # Bounded excerpt for planner reflection (per-tool metadata); wave-level joins use the same cap
 # via import in the executor.

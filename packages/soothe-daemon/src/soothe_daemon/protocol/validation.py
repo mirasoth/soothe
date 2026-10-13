@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from pydantic import ValidationError
-from soothe_sdk.wire.codec import MessageType
+from soothe.wire.codec import MessageType
 
 from soothe_daemon.protocol.schemas import PARAMS_REGISTRY
 
@@ -17,7 +17,7 @@ __all__ = [
 
 
 # All valid ``type`` field values per RFC-450 §9.1. Derived from the canonical
-# ``MessageType`` enum in ``soothe_sdk.wire.codec`` so adding a message class
+# ``MessageType`` enum in ``soothe.wire.codec`` so adding a message class
 # there updates daemon validation automatically.
 VALID_TYPES: frozenset[str] = frozenset(m.value for m in MessageType)
 

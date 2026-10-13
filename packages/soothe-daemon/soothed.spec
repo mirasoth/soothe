@@ -9,11 +9,10 @@ block_cipher = None
 ROOT = Path(SPECPATH).resolve()
 SRC = ROOT / "src"
 SOOTHE_SRC = ROOT.parent / "soothe" / "src"
-SDK_SRC = ROOT.parent / "soothe-sdk" / "src"
 
 a = Analysis(
     [str(ROOT / "pyinstaller_entry.py")],
-    pathex=[str(SRC), str(SOOTHE_SRC), str(SDK_SRC)],
+    pathex=[str(SRC), str(SOOTHE_SRC)],
     binaries=[],
     datas=[
         # Prompt XML fragments loaded via pathlib.Path.read_text()
@@ -107,8 +106,6 @@ a = Analysis(
         "soothe.toolkits.image",
         "soothe.toolkits.audio",
         "soothe.toolkits.video",
-        # ── SDK ──
-        "soothe_sdk._upstream_warnings",
         # ── Native extensions & key deps ──
         "psycopg",
         "psycopg.pq",
@@ -179,7 +176,6 @@ a = Analysis(
 for pkg in [
     "soothe_daemon",
     "soothe",
-    "soothe_sdk",
     "langchain",
     "langchain_core",
     "langchain_openai",

@@ -411,7 +411,7 @@ class TestRouterAuthDispatch:
 
     @pytest.mark.asyncio
     async def test_router_auth_success(self) -> None:
-        from soothe_sdk.protocols.identity import AuthResult
+        from soothe_nano.protocols.identity import AuthResult
 
         auth_result = AuthResult(
             access_token="access-jwt",
@@ -516,7 +516,7 @@ class TestRouterAuthDispatch:
 
     @pytest.mark.asyncio
     async def test_router_auth_refresh_success(self) -> None:
-        from soothe_sdk.protocols.identity import TokenRefreshResult
+        from soothe_nano.protocols.identity import TokenRefreshResult
 
         refresh_result = TokenRefreshResult(
             access_token="new-access-jwt",

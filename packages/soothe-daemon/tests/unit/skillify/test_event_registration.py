@@ -1,6 +1,6 @@
 """skillify index events are registered in the shared REGISTRY."""
 
-from soothe_sdk.core.registry import REGISTRY
+from soothe_nano.core.registry import REGISTRY
 
 from soothe_daemon.events.constants import (
     SKILLIFY_INDEX_FAILED,

@@ -13,13 +13,12 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any
 
-from soothe_sdk.protocols.workspace_sync import (
+from soothe.workspace.sync.errors import ConcurrentModificationError, IntegrityError
+from soothe.workspace.sync.paths import validate_path_component, validate_relative_path
+from soothe.workspace.sync.workspace_sync import (
     Artifact,
     Manifest,
 )
-
-from soothe.workspace.sync.errors import ConcurrentModificationError, IntegrityError
-from soothe.workspace.sync.paths import validate_path_component, validate_relative_path
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator

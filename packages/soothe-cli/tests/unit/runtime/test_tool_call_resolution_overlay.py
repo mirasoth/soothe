@@ -177,7 +177,7 @@ def test_richest_pending_task_args_scoped_with_placeholder_tool_name() -> None:
         "AGP_01:s:task:0": {
             "name": "task",
             "args_str": (
-                '{"description": "Explore soothe-sdk package", "subagent_type": "deep_research"}'
+                '{"description": "Explore soothe-nano package", "subagent_type": "deep_research"}'
             ),
             "is_complete_json": True,
             "emitted": False,
@@ -199,7 +199,7 @@ def test_richest_pending_task_args_scoped_with_placeholder_tool_name() -> None:
         tool_name="tool",
     )
     assert "soothe-cli" in str(merged.get("description", ""))
-    assert "soothe-sdk" not in str(merged.get("description", ""))
+    assert "soothe-nano" not in str(merged.get("description", ""))
 
 
 def test_richest_pending_same_step_different_task_index() -> None:

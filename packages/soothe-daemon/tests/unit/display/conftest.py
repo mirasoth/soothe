@@ -10,7 +10,7 @@ from soothe_daemon.display.display_store import DisplayCardStore, get_display_ca
 @pytest.fixture(autouse=True)
 def isolated_display_db(tmp_path, monkeypatch: pytest.MonkeyPatch) -> DisplayCardStore:
     """Use an isolated ``display.db`` for every display test."""
-    import soothe_sdk.paths as sdk_config
+    import soothe_nano.paths as sdk_config
 
     import soothe_daemon.display.display_store as display_store_mod
 

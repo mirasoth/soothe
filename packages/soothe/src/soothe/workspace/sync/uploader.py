@@ -15,7 +15,7 @@ import logging
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
-    from soothe_sdk.protocols.workspace_sync import WorkspaceSyncBackend
+    from soothe.workspace.sync.workspace_sync import WorkspaceSyncBackend
 
 logger = logging.getLogger(__name__)
 

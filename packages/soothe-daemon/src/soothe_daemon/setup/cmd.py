@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 from typing import TextIO
 
-from soothe_sdk.paths import SOOTHE_HOME
+from soothe_nano.paths import SOOTHE_HOME
 
 from soothe_daemon.setup.paths import config_paths, resolve_config_dir
 from soothe_daemon.setup.provider import (

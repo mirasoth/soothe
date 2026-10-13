@@ -14,9 +14,14 @@ from typing import Any
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
+from soothe.display.transcript_types import MessageType
 from soothe_client import WebSocketClient
-from soothe_sdk.core.events import CARD_CREATED, CARD_REPLAY_BEGIN, CARD_REPLAY_END, CARD_WIRE_TYPES
-from soothe_sdk.display.transcript_types import MessageType
+from soothe_nano.core.events import (
+    CARD_CREATED,
+    CARD_REPLAY_BEGIN,
+    CARD_REPLAY_END,
+    CARD_WIRE_TYPES,
+)
 
 from soothe_daemon import SootheDaemon
 from soothe_daemon.display.loop_card_manager import LoopCardManager

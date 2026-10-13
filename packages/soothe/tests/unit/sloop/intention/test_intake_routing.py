@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from langgraph.graph import END
-from soothe_sdk.intention.models import TaskComplexity
+from soothe_nano.intention.models import TaskComplexity
 
 from soothe.sloop.intention.coordinator import IntakeCoordinator
 from soothe.sloop.intention.models import (

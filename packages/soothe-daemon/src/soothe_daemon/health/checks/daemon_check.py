@@ -117,7 +117,7 @@ async def _check_daemon_readiness(config: SootheDaemonConfig | None) -> CheckRes
     import json
 
     import websockets
-    from soothe_sdk.wire.codec import (
+    from soothe.wire.codec import (
         ConnectionInitEnvelope,
         ConnectionInitParams,
         encode_envelope,

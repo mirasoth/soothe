@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 
-from soothe_sdk.protocols.identity import IdentityProtocol
+from soothe_nano.protocols.identity import IdentityProtocol
 
 logger = logging.getLogger(__name__)
 

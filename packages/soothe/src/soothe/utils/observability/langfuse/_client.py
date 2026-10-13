@@ -15,7 +15,7 @@ def host_langfuse_client(soothe_config: Any) -> Any:
         Exception: When langfuse is unavailable; callers keep observability soft.
     """
     from langfuse import get_client
-    from soothe_sdk.observability.langfuse._client import ensure_langfuse_client, resolve_str
+    from soothe_nano.observability.langfuse._client import ensure_langfuse_client, resolve_str
 
     ensure_langfuse_client(soothe_config)
     pub = resolve_str(soothe_config.observability.langfuse.public_key)

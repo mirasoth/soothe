@@ -19,7 +19,7 @@ from ._resolver_infra import resolve_checkpointer, resolve_durability
 
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
-    from soothe_sdk.protocols.planner import PlannerProtocol
+    from soothe_nano.protocols.planner import PlannerProtocol
 
 logger = logging.getLogger(__name__)
 
