@@ -7,7 +7,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, Field
 from pydantic.json_schema import SkipJsonSchema
-from soothe_sdk.intention.models import RoutingClassification, TaskComplexity
+from soothe_nano.intention.models import RoutingClassification, TaskComplexity
 
 
 class IntakeLabel(StrEnum):

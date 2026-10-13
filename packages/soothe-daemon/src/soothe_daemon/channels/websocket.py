@@ -13,7 +13,7 @@ from typing import Any
 import uvicorn
 import websockets.exceptions
 from fastapi import FastAPI, WebSocket
-from soothe_sdk.wire.protocol import decode_websocket_text, encode_websocket_text
+from soothe.wire.protocol import decode_websocket_text, encode_websocket_text
 from starlette.websockets import WebSocketDisconnect, WebSocketState
 from websockets.frames import Close
 

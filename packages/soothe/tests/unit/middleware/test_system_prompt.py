@@ -7,10 +7,10 @@ from unittest.mock import patch
 from langchain.agents.middleware.types import ModelRequest
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from soothe_nano.intention.models import RoutingClassification
 from soothe_nano.middleware import SystemPromptMiddleware
 from soothe_nano.middleware.progressive_listing import ProgressiveListingMiddleware
 from soothe_nano.middleware.tool_enforcement import ToolEnforcementMiddleware
-from soothe_sdk.intention.models import RoutingClassification
 
 from soothe.config import SootheConfig
 
@@ -359,7 +359,7 @@ def test_goal_synthesis_disables_all_tools() -> None:
 
 def test_memory_section_uses_memory_summary_tag():
     """RFC-214: Memory section should use <MEMORY_SUMMARY> tag."""
-    from soothe_sdk.protocols.memory import MemoryItem
+    from soothe_nano.protocols.memory import MemoryItem
 
     config = SootheConfig()
     middleware = SystemPromptMiddleware(config=config)

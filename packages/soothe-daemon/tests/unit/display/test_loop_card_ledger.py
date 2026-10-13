@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import pytest
-from soothe_sdk.display.card_ledger import (
+from soothe.display.card_ledger import (
     CARD_SCHEMA_VERSION,
     CardMutation,
     card_to_wire_dict,
     cards_to_mutations,
     utc_now_iso,
 )
-from soothe_sdk.display.transcript_types import (
+from soothe.display.transcript_types import (
     MessageData,
     MessageType,
     ToolStatus,

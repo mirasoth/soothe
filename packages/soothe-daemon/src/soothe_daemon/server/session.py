@@ -12,8 +12,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import websockets.exceptions
-from soothe_sdk.core.events import STRANGE_LOOP_COMPLETED
-from soothe_sdk.ux.loop_stream import is_stream_terminal_wire_dict
+from soothe.ux.loop_stream import is_stream_terminal_wire_dict
+from soothe_nano.core.events import STRANGE_LOOP_COMPLETED
 
 from soothe_daemon.bootstrap.logging import set_client_id, set_loop_id
 from soothe_daemon.event import loop_event_topic

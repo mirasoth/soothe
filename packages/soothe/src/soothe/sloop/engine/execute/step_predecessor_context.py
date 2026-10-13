@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from langchain_core.messages import BaseMessage
-from soothe_sdk.protocols.planner import planner_outcome_text_preview
+from soothe_nano.protocols.planner import planner_outcome_text_preview
 
 from soothe.config.constants import (
     PRIOR_STEP_EVIDENCE_MAX_CHARS,

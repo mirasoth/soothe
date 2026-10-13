@@ -5,7 +5,7 @@ Hard cut: purpose files live only under `databases/`.
 
 from __future__ import annotations
 
-from soothe_sdk.paths import (
+from soothe_nano.paths import (
     resolve_checkpoints_db_path,
     resolve_context_db_path,
     resolve_cron_db_path,

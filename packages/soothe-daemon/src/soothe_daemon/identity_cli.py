@@ -27,7 +27,7 @@ def _get_jwt_key() -> str:
     if key:
         return key
 
-    from soothe_sdk.paths import SOOTHE_HOME
+    from soothe_nano.paths import SOOTHE_HOME
 
     key_file = SOOTHE_HOME / ".jwt_key"
 
@@ -48,7 +48,7 @@ def _get_jwt_key() -> str:
 def _get_identity_service() -> IdentityService:
     """Build IdentityService using the same backend as the daemon (unified persistence)."""
     from soothe.identity import IdentityService
-    from soothe_sdk.paths import resolve_identity_db_path
+    from soothe_nano.paths import resolve_identity_db_path
 
     jwt_key = _get_jwt_key()
 

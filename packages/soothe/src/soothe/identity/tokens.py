@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import jwt
-from soothe_sdk.protocols.identity import TokenClaims
+from soothe_nano.protocols.identity import TokenClaims
 
 
 class JWTManager:

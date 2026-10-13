@@ -7,12 +7,12 @@ from typing import TYPE_CHECKING, Any
 
 from langchain.agents.middleware.types import AgentMiddleware, ToolCallRequest
 from langchain_core.messages import ToolMessage
-from soothe_sdk.identity.errors import (
+
+from soothe.identity.errors import (
     MissingTokenError,
     TokenError,
     UnmappedIdentityError,
 )
-
 from soothe.identity.runtime import IdentityRuntime
 
 if TYPE_CHECKING:

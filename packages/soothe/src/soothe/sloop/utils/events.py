@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Literal
 
-from soothe_sdk.core.events import ProtocolEvent
-from soothe_sdk.core.verbosity import VerbosityTier
+from soothe_nano.core.events import ProtocolEvent
+from soothe_nano.core.verbosity import VerbosityTier
 
 from soothe.events import register_event
 

@@ -12,15 +12,15 @@ from pathlib import Path
 from typing import Any
 
 from langchain_core.messages import AIMessage, AIMessageChunk
+from soothe.display.text_extract import extract_text_from_ai_message
 from soothe.events import ERROR
 from soothe.logging import ThreadLogger, set_thread_id
-from soothe_sdk.display.text_extract import extract_text_from_ai_message
-from soothe_sdk.ux.stream_tool_wire import (
+from soothe.ux.stream_tool_wire import (
     TOOL_CALL_UPDATES_BATCH,
     extract_tool_call_updates_from_wire_message,
 )
-from soothe_sdk.wire.codec import prepare_stream_data_for_wire
-from soothe_sdk.wire.protocol import _serialize_for_json
+from soothe.wire.codec import prepare_stream_data_for_wire
+from soothe.wire.protocol import _serialize_for_json
 
 from soothe_daemon.bootstrap.logging import set_client_id, set_loop_id
 from soothe_daemon.protocol.intent_hints import is_daemon_intent_hint
@@ -39,7 +39,7 @@ _MAX_FULL_RESPONSE_CHARS = 100_000
 
 async def _peek_goal_completion_from_ledger(card_manager: Any, loop_id: str) -> str:
     """Return the best assistant completion body from the live display ledger."""
-    from soothe_sdk.display.transcript_types import MessageType
+    from soothe.display.transcript_types import MessageType
 
     ledger = await card_manager.ensure_for_loop(loop_id)
     cards = ledger.snapshot()
@@ -534,7 +534,7 @@ class QueryEngine:
         turn_generation: int | None = None,
     ) -> None:
         """Broadcast `soothe.stream.end` with `scope=turn`."""
-        from soothe_sdk.core.events import STREAM_END
+        from soothe_nano.core.events import STREAM_END
 
         from soothe_daemon.query.turn_boundary import format_turn_id
 
@@ -696,7 +696,7 @@ class QueryEngine:
         if stripped_tool_metadata:
             body = wire_data[0] if wire_data else None
             if isinstance(body, dict):
-                from soothe_sdk.wire.codec import flatten_enveloped_message_dict
+                from soothe.wire.codec import flatten_enveloped_message_dict
 
                 flat = flatten_enveloped_message_dict(body)
                 text = "".join(extract_text_from_ai_message(flat)).strip()
@@ -1350,7 +1350,7 @@ class QueryEngine:
                         )
                         if not namespace and mode == "messages" and is_msg_pair:
                             msg, _metadata = data
-                            from soothe_sdk.ux.loop_stream import assistant_output_phase
+                            from soothe.ux.loop_stream import assistant_output_phase
 
                             # Only AI-message text composes the assistant row.
                             # ``extract_text_from_ai_message`` also extracts
@@ -1386,7 +1386,7 @@ class QueryEngine:
                             # Bug #3: capture plan-mode approve follow-on exec
                             # signal from the completed event before coalescer
                             # ingestion (coalescer doesn't surface payload fields).
-                            from soothe_sdk.core.events import STRANGE_LOOP_COMPLETED
+                            from soothe_nano.core.events import STRANGE_LOOP_COMPLETED
 
                             if (
                                 mode == "custom"

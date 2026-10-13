@@ -39,7 +39,7 @@ This package is the **client** component that communicates with the Soothe daemo
 
 ## Dependencies
 
-- `soothe-sdk>=1.0.0` - events, display, wire contracts
+- `soothe-client-python>=1.1.0` - WebSocket transport + wire/display/ux contracts
 - `typer>=0.9.0` - CLI framework
 - `textual>=8.0.0` - TUI framework
 - `rich>=13.0.0` - Console output
@@ -74,4 +74,4 @@ Global flags apply to subcommands too, e.g. `soothe --daemon-port 9000 loop list
 ## Related Packages
 
 - **soothed**: Server package (agent runtime)
-- **soothe-sdk**: Shared SDK (WebSocket client, types)
+- **soothe-client-python**: WebSocket transport client + shared client-side contracts

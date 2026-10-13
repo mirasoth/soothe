@@ -11,24 +11,22 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from soothe_sdk.protocols.workspace_sync import (
-    Artifact,
-    ArtifactSpec,
-    Manifest,
-    Resource,
-)
-
 from soothe.workspace.sync.cas import CASCache
 from soothe.workspace.sync.checkpoint import CheckpointManager
 from soothe.workspace.sync.debouncer import CheckpointDebouncer
 from soothe.workspace.sync.dirty_tracker import DirtyTracker
 from soothe.workspace.sync.materializer import Materializer
 from soothe.workspace.sync.uploader import BackgroundUploader
+from soothe.workspace.sync.workspace_sync import (
+    Artifact,
+    ArtifactSpec,
+    Manifest,
+    Resource,
+)
 
 if TYPE_CHECKING:
-    from soothe_sdk.protocols.workspace_sync import WorkspaceSyncBackend
-
     from soothe.workspace.state.protocol import WorkspaceStateStore
+    from soothe.workspace.sync.workspace_sync import WorkspaceSyncBackend
 
 logger = logging.getLogger(__name__)
 

@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from soothe_sdk.observability.langfuse import (
+from soothe_nano.observability.langfuse import (
     SootheLangfuse as _SdkSootheLangfuse,
 )
-from soothe_sdk.observability.langfuse import (
+from soothe_nano.observability.langfuse import (
     merge_langfuse_runnable_config,
     resolve_langfuse_config_str,
 )
-from soothe_sdk.observability.langfuse._trace_io import (
+from soothe_nano.observability.langfuse._trace_io import (
     patch_langfuse_trace_goal_io,
 )
 

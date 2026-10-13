@@ -1,17 +1,6 @@
 """Identity service: AKSK authentication and JWT token management."""
 
-from soothe_sdk.identity.errors import (
-    AKSKExpiredError,
-    AKSKRevokedError,
-    IdentityDisabledError,
-    IdentityError,
-    InvalidCredentialsError,
-    TokenError,
-    TokenExpiredError,
-    TokenRevokedError,
-    UnmappedIdentityError,
-)
-from soothe_sdk.protocols.identity import (
+from soothe_nano.protocols.identity import (
     AKSKPair,
     AuthResult,
     ExternalIdentityMapping,
@@ -27,6 +16,17 @@ from soothe.identity.credentials import (
     generate_secret_key,
     hash_secret_key,
     verify_secret_key,
+)
+from soothe.identity.errors import (
+    AKSKExpiredError,
+    AKSKRevokedError,
+    IdentityDisabledError,
+    IdentityError,
+    InvalidCredentialsError,
+    TokenError,
+    TokenExpiredError,
+    TokenRevokedError,
+    UnmappedIdentityError,
 )
 from soothe.identity.identity_service import (
     IdentityService,

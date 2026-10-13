@@ -4,6 +4,13 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
+from soothe_nano.core.events import (
+    LifecycleEvent,
+    ProtocolEvent,
+    SootheEvent,
+)
+from soothe_nano.core.verbosity import VerbosityTier
+
 # Protocol-primitive event models (stream-end, memory, policy) are owned by
 # nano. Re-exported here for ``soothe.events`` consumers. Nano registers them;
 # host must not re-_reg them. ``PolicyCheckedEvent`` was removed in nano 1.1.14
@@ -14,12 +21,6 @@ from soothe_nano.events.catalog import (  # noqa: F401
     PolicyDeniedEvent,
     StreamEndEvent,
 )
-from soothe_sdk.core.events import (
-    LifecycleEvent,
-    ProtocolEvent,
-    SootheEvent,
-)
-from soothe_sdk.core.verbosity import VerbosityTier
 
 # ============================================================================
 # INTERNAL NAMESPACE (soothe.internal.*) — never broadcast to clients
@@ -650,14 +651,14 @@ class GoalDeferredEvent(ProtocolEvent):
 
 
 # ---------------------------------------------------------------------------
-# Registry — re-exported from soothe_sdk.core.registry (canonical owner)
+# Registry — re-exported from soothe_nano.core.registry (canonical owner)
 # ---------------------------------------------------------------------------
 # The EventPriority / EventMeta / EventRegistry trio, the REGISTRY singleton,
-# and register_event/_reg live in soothe_sdk.core.registry so that nano, the
+# and register_event/_reg live in soothe_nano.core.registry so that nano, the
 # host, and the daemon share one authoritative event-type index. nano modules
 # register directly into that shared REGISTRY at import time (see the module
 # imports below), so no host-side merge loop is required.
-from soothe_sdk.core.registry import (  # noqa: E402,F401
+from soothe_nano.core.registry import (  # noqa: E402,F401
     REGISTRY,
     EventHandler,
     EventMeta,
@@ -920,7 +921,7 @@ _reg(BRANCH_PRUNED, _BranchPrunedEvent, verbosity=VerbosityTier.INTERNAL)
 # Must be at the end after all core events are registered
 # ---------------------------------------------------------------------------
 
-# nano modules register directly into the shared soothe_sdk.core.registry REGISTRY
+# nano modules register directly into the shared soothe_nano.core.registry REGISTRY
 # at import time, so importing them here is sufficient — no host-side merge needed.
 # Ensure nano protocol primitives (stream/memory/policy/ERROR) are registered.
 import soothe_nano.events.catalog as _nano_events_catalog  # noqa: F401, E402

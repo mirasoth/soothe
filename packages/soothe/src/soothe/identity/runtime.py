@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Literal, Protocol
 
 from pydantic import BaseModel, Field
-from soothe_sdk.protocols.identity import IdentityProtocol
+from soothe_nano.protocols.identity import IdentityProtocol
 
 
 class TokenConfig(BaseModel):

@@ -7,7 +7,7 @@ import logging
 from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
-from soothe_sdk.display.card_ledger import (
+from soothe.display.card_ledger import (
     CardMutation,
     InMemoryCardLedger,
     build_header_mutation,
@@ -18,7 +18,7 @@ from soothe_sdk.display.card_ledger import (
 from soothe_daemon.display.display_store import get_display_card_store
 
 if TYPE_CHECKING:
-    from soothe_sdk.display.transcript_types import MessageData
+    from soothe.display.transcript_types import MessageData
 
 logger = logging.getLogger(__name__)
 

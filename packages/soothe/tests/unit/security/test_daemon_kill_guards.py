@@ -65,11 +65,11 @@ def test_ensure_daemon_kill_guards_installed_wires_nano_hook(monkeypatch) -> Non
 
 def test_shell_kill_of_daemon_pid_denied_via_operation_security(monkeypatch) -> None:
     """``run_command: kill <daemon-pid>`` must hit the same host guard as kill_process."""
-    from soothe_nano.security.operation_guard import WorkspaceToolOperationSecurity
-    from soothe_sdk.protocols.operation_security import (
+    from soothe_nano.protocols.operation_security import (
         OperationSecurityContext,
         OperationSecurityRequest,
     )
+    from soothe_nano.security.operation_guard import WorkspaceToolOperationSecurity
 
     clear_protected_kill_hooks()
     monkeypatch.setattr("soothe.security.daemon_kill_guards._installed", False)

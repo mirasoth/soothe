@@ -1,7 +1,7 @@
 # Soothe daemon — local source build (sdk from submodule; nano/deepagents from PyPI).
 #
 # Build context must be the monorepo root (parent of `packages/`). Installs from
-# local source: packages/soothe-sdk, packages/soothe, packages/soothe-daemon.
+# local source: packages/soothe, packages/soothe-daemon.
 # ``soothe-nano`` and ``soothe-deepagents`` are pulled from PyPI.
 #
 # Build (full image with browser subagent):
@@ -51,8 +51,6 @@ RUN mkdir -p /opt/ms-playwright
 
 # Copy only metadata first so dependency layer remains cacheable across source edits.
 COPY VERSION /app/VERSION
-COPY packages/soothe-sdk/pyproject.toml /app/packages/soothe-sdk/pyproject.toml
-COPY packages/soothe-sdk/README.md /app/packages/soothe-sdk/README.md
 COPY packages/soothe/pyproject.toml /app/packages/soothe/pyproject.toml
 COPY packages/soothe/README.md /app/packages/soothe/README.md
 COPY packages/soothe-daemon/pyproject.toml /app/packages/soothe-daemon/pyproject.toml
@@ -68,7 +66,6 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     rm -f /tmp/requirements.runtime.txt
 
 # Copy local packages after third-party + PyPI nano/deepagents deps are cached.
-COPY packages/soothe-sdk /app/packages/soothe-sdk
 COPY packages/soothe /app/packages/soothe
 COPY packages/soothe-daemon /app/packages/soothe-daemon
 
@@ -76,7 +73,6 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     set -eux; \
     uv pip install --python /app/.venv/bin/python \
         --no-deps \
-        "/app/packages/soothe-sdk" \
         "/app/packages/soothe" \
         "/app/packages/soothe-daemon"; \
     if [ "${INCLUDE_BROWSER}" = "true" ]; then \

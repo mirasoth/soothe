@@ -18,14 +18,13 @@ from langgraph.types import Command, Interrupt
 # Import registry directly (removed ToolConcurrencyMiddleware from stack)
 from soothe_nano.middleware.tool_call_args_registry import init_tool_call_args_registry
 from soothe_nano.middleware.tool_optimization_middleware import get_tool_reuse_metrics_snapshot
+from soothe_nano.tools.metadata import get_outcome_type
 from soothe_nano.utils.text_preview import (
     create_output_summary,
     log_preview,
     preview,
     preview_first,
 )
-from soothe_sdk.utils import get_outcome_type
-from soothe_sdk.ux.execute_namespace import is_step_level_execute_namespace_key
 
 from soothe.config.constants import (
     DEFAULT_CODE_EXEC_MAX_OUTPUT_CHARS,
@@ -141,9 +140,10 @@ from soothe.utils.messages import (
     extract_text_from_message_content,
     join_text_fragments,
 )
+from soothe.ux.execute_namespace import is_step_level_execute_namespace_key
 
 if TYPE_CHECKING:
-    from soothe_sdk.protocols.core_agent import CoreAgentProtocol
+    from soothe_nano.protocols.core_agent import CoreAgentProtocol
 
     from soothe.config import SootheConfig
 
@@ -446,7 +446,7 @@ class Executor:
         elif self._config is None:
             return base
         else:
-            from soothe_sdk.observability.langfuse._merge import (
+            from soothe_nano.observability.langfuse._merge import (
                 merge_langfuse_runnable_config,
                 pinned_trace_id_from_config,
             )

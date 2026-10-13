@@ -62,7 +62,7 @@ class ThreadLogger:
     ) -> None:
         """Log a stream chunk: custom events and tool-related messages."""
         if mode == "custom" and isinstance(data, dict):
-            from soothe_sdk.ux import classify_event_to_tier
+            from soothe.ux import classify_event_to_tier
 
             record: dict[str, Any] = {
                 "timestamp": datetime.now(UTC).isoformat(),
@@ -119,7 +119,8 @@ class ThreadLogger:
         """Log tool calls / tool results / loop assistant output from messages-mode chunks."""
         try:
             from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
-            from soothe_sdk.ux.loop_stream import assistant_output_phase
+
+            from soothe.ux.loop_stream import assistant_output_phase
 
             msg, _metadata = data
             if isinstance(msg, ToolMessage):
@@ -136,7 +137,7 @@ class ThreadLogger:
                     }
                 )
             elif isinstance(msg, AIMessageChunk):
-                from soothe_sdk.ux.loop_stream import is_goal_completion_stream_terminal
+                from soothe.ux.loop_stream import is_goal_completion_stream_terminal
 
                 phase = assistant_output_phase(msg)
                 if phase != "goal_completion":

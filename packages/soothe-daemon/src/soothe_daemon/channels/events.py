@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from pydantic import Field
-from soothe_sdk.core.events import OutputEvent, ProtocolEvent
+from soothe_nano.core.events import OutputEvent, ProtocolEvent
 
 from soothe_daemon.events.constants import (
     CHANNEL_MESSAGE_RECEIVED,

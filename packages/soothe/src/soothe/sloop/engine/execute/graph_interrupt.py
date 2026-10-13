@@ -9,7 +9,7 @@ from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from soothe_sdk.ux.execute_namespace import is_step_level_execute_namespace_key
+from soothe.ux.execute_namespace import is_step_level_execute_namespace_key
 
 logger = logging.getLogger(__name__)
 

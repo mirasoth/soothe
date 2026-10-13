@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
-from soothe_sdk.wire.codec import ConnectionInitParams as _SdkConnectionInitParams
+from soothe.wire.codec import ConnectionInitParams as _SdkConnectionInitParams
 
 __all__ = [
     # Base

@@ -7,9 +7,8 @@ import os
 import tempfile
 from pathlib import Path
 
-from soothe_sdk.utils import INVALID_WORKSPACE_DIRS
-
 from soothe.workspace.scoped import normalize_user_id
+from soothe.workspace.workspace_dirs import INVALID_WORKSPACE_DIRS
 
 logger = logging.getLogger(__name__)
 

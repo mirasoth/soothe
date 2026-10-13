@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Dissolved `packages/soothe-sdk`** (stage 3 of the SDK dissolution): shared contracts now live with their owning axis. Agent-axis contracts are consumed from `soothe-nano>=1.4.0` (plugin API, core events/registry, protocols, paths, intention, langfuse observability, `utils.serde`, security tool metadata). Host-side copies moved into `soothe` itself (`soothe.wire` codec/protocol, `soothe.display` binder/ledger/wire, `soothe.ux` task namespaces/classification/loop stream/stream tool wire, `soothe.workspace.sync.workspace_sync` contracts, `soothe.identity.errors`, `soothe.skillify` models, `INVALID_WORKSPACE_DIRS`); `soothe-daemon` imports them from `soothe` per the DAG. The CLI/client side already moved to `soothe-client-python>=1.1.0` (previous stage).
+- All `soothe_sdk.*` imports across `soothe` and `soothe-daemon` (src + tests) rewritten to the new homes; `soothe-sdk` removed from every `pyproject.toml`, the uv workspace, vulture paths, the release workflow (deploy-sdk job), and `verify_finally` package list. Import-boundary enforcement now also bans `soothe_sdk` imports from any owned package.
+- Rules docs updated: `.agents/rules/package-boundaries.md` (new DAG table, dissolved-package ban), `docs/diagrams/module_boundaries.mmd`, `docs/wiki/api-reference/sdk-api.md` (dissolution banner with migration table).
+
 ## [v1.0.22] - 2026-10-12
 
 ### Added

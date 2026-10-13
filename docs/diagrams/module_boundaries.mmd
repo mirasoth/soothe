@@ -15,11 +15,13 @@ config:
 graph TD
 
   %% ── PyPI dependencies (external to monorepo) ──
+  %% soothe-sdk was dissolved (2026-10-13): agent-axis contracts live in
+  %% soothe-nano (plugin API · core · protocols · paths), host copies in
+  %% soothe, client copies in soothe-client-python.
   subgraph PyPI["PyPI dependencies (consumed, not owned)"]
-    SDK["<b>soothe-sdk</b><br/>shared contracts: events · wire · display · plugin protocols<br/>leaf — no internal deps"]
-    NANO["<b>soothe-nano</b><br/>Coding CoreAgent · in-proc skills / MCP / backends<br/>← soothe-sdk · soothe-deepagents"]
+    NANO["<b>soothe-nano</b> ≥1.4<br/>Coding CoreAgent · in-proc skills / MCP / backends<br/>agent-axis contracts: plugin API · core events · protocols · paths<br/>← soothe-deepagents"]
     DEEP["<b>soothe-deepagents</b><br/>deepagents fork · MemoryMiddleware<br/>leaf"]
-    CLIENT["<b>soothe-client-python</b><br/>WebSocket transport (submodule)<br/>runtime dep of CLI only"]
+    CLIENT["<b>soothe-client-python</b> ≥1.1<br/>WebSocket transport + client-side contract copies<br/>(wire · events · display · ux)<br/>runtime dep of CLI only"]
   end
 
   %% ── Monorepo-owned packages ──
@@ -38,9 +40,9 @@ graph TD
       SLICE_ID["identity/ — auth & tokens<br/>identity_service · db · credentials · tokens · runtime · middleware"]
       SLICE_SEC["security/ — operation security · edit locks · kill guards"]
       SLICE_EVT["events/ — internal bus · catalog · visibility"]
-      SLICE_WS["workspace/ — loop workspace · resolution · scoped"]
+      SLICE_WS["workspace/ — loop workspace · resolution · scoped · sync (workspace_sync contracts)"]
       SLICE_MCP["mcp/ — progressive_registry"]
-      SLICE_MISC["config · subagents · utils · prompts · logging · diagnose"]
+      SLICE_MISC["config · subagents · utils · prompts · logging · diagnose<br/>host contract copies: wire/ (codec · protocol) · display/ (binder · ledger · wire) · ux/ (task namespaces · classification · loop stream) · skillify/ (models) · identity/errors"]
     end
 
     subgraph DAEMON["soothe-daemon — soothed process"]
@@ -60,14 +62,9 @@ graph TD
   end
 
   %% ── Dependency DAG (allowed direction only) ──
-  SDK --> DEEP
-  SDK --> NANO
   DEEP --> NANO
-  SDK --> SOOTHE
   NANO --> SOOTHE
-  SDK --> DAEMON
   SOOTHE --> DAEMON
-  SDK --> CLI
   CLIENT --> CLI
 
   %% ── Hard import bans (dashed red) ──
@@ -78,7 +75,7 @@ graph TD
   SOOTHE -. "must NOT import" .-> SLICE_NANO_PRIV["soothe_nano.middleware._*"]
 
   %% ── Communication boundary: CLI → daemon via WebSocket only ──
-  CLI == "WebSocket only<br/>(wire contracts in sdk + client)" ==> DAEMON
+  CLI == "WebSocket only<br/>(host wire copy in soothe · client copy in soothe-client-python)" ==> DAEMON
 
   %% ── Cross-cutting (all levels consume) ──
   SLICE_CTX -.-> SOOTHE
@@ -94,9 +91,9 @@ graph TD
   classDef ban fill:#ffebee,stroke:#c62828,stroke-dasharray:5 5,line-height:1.2
 
   class SOOTHE,DAEMON,CLI owned
-  class SDK,NANO,DEEP,CLIENT pypi
+  class NANO,DEEP,CLIENT pypi
   class SLICE_NANO_PRIV ban
 
-  linkStyle 0,1,2,3,4,5,6,7,8,9 stroke:#2e7d32,stroke-width:2px
-  linkStyle 10,11,12,13,14 stroke:#c62828,stroke-dasharray:5 5
-  linkStyle 15 stroke:#1565c0,stroke-width:3px
+  linkStyle 0,1,2,3 stroke:#2e7d32,stroke-width:2px
+  linkStyle 4,5,6,7,8 stroke:#c62828,stroke-dasharray:5 5
+  linkStyle 9 stroke:#1565c0,stroke-width:3px

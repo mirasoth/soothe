@@ -20,7 +20,7 @@ from soothe.sloop.state.sloop_manager import (
 )
 
 if TYPE_CHECKING:
-    from soothe_sdk.protocols.core_agent import CoreAgentProtocol
+    from soothe_nano.protocols.core_agent import CoreAgentProtocol
 
     from soothe.rails.interpreter import LoopRailInterpreter
     from soothe.sloop.clarification.protocol import ClarificationPolicy

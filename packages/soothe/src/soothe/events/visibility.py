@@ -6,13 +6,14 @@ import logging
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, NamedTuple
 
-from soothe_sdk.core.events import (
+from soothe_nano.core.events import (
     CARD_REPLAY_BEGIN,
     CARD_REPLAY_END,
     CARD_WIRE_TYPES,
 )
-from soothe_sdk.core.verbosity import VerbosityTier, should_show
-from soothe_sdk.ux.stream_tool_wire import STREAM_TOOL_CALL_UPDATE, TOOL_CALL_UPDATES_BATCH
+from soothe_nano.core.verbosity import VerbosityTier, should_show
+
+from soothe.ux.stream_tool_wire import STREAM_TOOL_CALL_UPDATE, TOOL_CALL_UPDATES_BATCH
 
 if TYPE_CHECKING:
     from soothe.events import EventMeta
@@ -144,7 +145,7 @@ def resolve_event_verbosity_tier(
         from .catalog import REGISTRY
 
         return REGISTRY.get_verbosity(event_type)
-    from soothe_sdk.ux.classification import classify_event_to_tier
+    from soothe.ux.classification import classify_event_to_tier
 
     return classify_event_to_tier(event_type)
 

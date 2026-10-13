@@ -9,7 +9,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from soothe_sdk.intention.models import TaskComplexity
+from soothe_nano.intention.models import TaskComplexity
 
 from soothe.sloop.intention.models import (
     IntakeLabel,

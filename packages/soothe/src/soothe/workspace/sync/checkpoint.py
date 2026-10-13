@@ -13,7 +13,7 @@ import hashlib
 import logging
 from typing import TYPE_CHECKING
 
-from soothe_sdk.protocols.workspace_sync import (
+from soothe.workspace.sync.workspace_sync import (
     CheckpointPayload,
     CheckpointType,
     Manifest,
@@ -23,10 +23,9 @@ from soothe_sdk.protocols.workspace_sync import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from soothe_sdk.protocols.workspace_sync import WorkspaceSyncBackend
-
     from soothe.workspace.sync.cas import CASCache
     from soothe.workspace.sync.dirty_tracker import DirtyTracker
+    from soothe.workspace.sync.workspace_sync import WorkspaceSyncBackend
 
 logger = logging.getLogger(__name__)
 

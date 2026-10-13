@@ -7,15 +7,15 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from soothe.skillify.models import SkillBundle, SkillRecord, SkillSearchResult
 from soothe.utils.messages import extract_text_from_message_content
-from soothe_sdk.protocols.policy import ActionRequest, PermissionSet, PolicyContext
-from soothe_sdk.skillify.models import SkillBundle, SkillRecord, SkillSearchResult
+from soothe_nano.protocols.policy import ActionRequest, PermissionSet, PolicyContext
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from langchain_core.embeddings import Embeddings
-    from soothe_sdk.protocols.vector_store import VectorStoreProtocol
+    from soothe_nano.protocols.vector_store import VectorStoreProtocol
 
 logger = logging.getLogger(__name__)
 

@@ -12,14 +12,14 @@ from pathlib import Path
 
 import pytest
 from fsspec.implementations.memory import MemoryFileSystem
-from soothe_sdk.protocols.workspace_sync import (
-    Manifest,
-    ManifestEntry,
-)
 
 from soothe.workspace.sync.backends.fsspec import FsspecSyncBackend
 from soothe.workspace.sync.cas import CASCache
 from soothe.workspace.sync.materializer import Materializer
+from soothe.workspace.sync.workspace_sync import (
+    Manifest,
+    ManifestEntry,
+)
 
 ROOT = "/test-materializer"
 

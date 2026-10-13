@@ -6,9 +6,9 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
 from pydantic import Field
-from soothe_sdk.ux.loop_stream import LOOP_ASSISTANT_OUTPUT_PHASES as ASSISTANT_OUTPUT_PHASES
 
 from soothe.sloop.orchestrator.stations import PLANNING_LEDGER_PHASES
+from soothe.ux.loop_stream import LOOP_ASSISTANT_OUTPUT_PHASES as ASSISTANT_OUTPUT_PHASES
 
 if TYPE_CHECKING:
     from soothe.sloop.state.schemas import LoopState

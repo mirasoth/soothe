@@ -25,7 +25,7 @@ PLAN_REVIEW: Final = "plan_review"
 AWAIT_USER: Final = "await_user"
 DELEGATE: Final = "delegate"
 
-# Wire-stable deliverable phases (soothe-sdk / CLI contract — do not rename).
+# Wire-stable deliverable phases (wire contract — do not rename).
 PHASE_GOAL_COMPLETION: Final = "goal_completion"
 PHASE_EXECUTE_STEP: Final = "execute_step"
 PHASE_GOAL_INTERRUPTED: Final = "goal_interrupted"

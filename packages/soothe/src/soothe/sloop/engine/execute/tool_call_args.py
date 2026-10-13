@@ -139,7 +139,7 @@ def _stream_update_has_displayable_args(args: Any) -> bool:
     if not isinstance(args, dict) or not args:
         return False
     if args.get("_subgraph_tool") is True:
-        from soothe_sdk.display.message_processing import extract_tool_args_dict
+        from soothe.display.message_processing import extract_tool_args_dict
 
         remainder = {k: v for k, v in args.items() if k != "_subgraph_tool"}
         return bool(extract_tool_args_dict(remainder))
@@ -174,7 +174,7 @@ def filter_redundant_stream_tool_updates(
 
 def wire_updates_from_ai_message(msg: BaseMessage) -> list[dict[str, Any]]:
     """Build `soothe.stream.tool_call.update` payloads from a post-backfill AI message."""
-    from soothe_sdk.ux.stream_tool_wire import (
+    from soothe.ux.stream_tool_wire import (
         tool_call_update_event,
         unified_tool_update_allowed_without_args,
     )
@@ -293,7 +293,7 @@ class ToolCallArgsCollector:
         task_idx: int | None = None,
     ) -> tuple[ToolMessage, list[dict[str, Any]]]:
         """Rewrite `tool_call_id`, merge invocation args, return wire update events."""
-        from soothe_sdk.ux.stream_tool_wire import tool_call_update_event
+        from soothe.ux.stream_tool_wire import tool_call_update_event
 
         raw_tcid = str(getattr(msg, "tool_call_id", "") or "").strip()
         self.ingest_invocation_registry(raw_tcid)
@@ -322,8 +322,8 @@ class ToolCallArgsCollector:
         tool_name: str,
     ) -> dict[str, Any] | None:
         """Subagent wire update: real args when known, else `_subgraph_tool` placeholder."""
-        from soothe_sdk.ux.stream_tool_wire import tool_call_update_event
-        from soothe_sdk.ux.task_namespace import is_unified_tool_call_id
+        from soothe.ux.stream_tool_wire import tool_call_update_event
+        from soothe.ux.task_namespace import is_unified_tool_call_id
 
         tcid = str(tool_call_id or "").strip()
         tname = str(tool_name or "").strip() or "unknown"
@@ -345,7 +345,7 @@ def enrich_wire_updates_with_collector(
     finishes or before `ToolMessage` promotion; hydrate from the collector when
     kwargs were recorded from AI chunks or the invocation registry.
     """
-    from soothe_sdk.ux.stream_tool_wire import tool_call_update_event
+    from soothe.ux.stream_tool_wire import tool_call_update_event
 
     enriched: list[dict[str, Any]] = []
     for upd in updates:

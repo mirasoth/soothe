@@ -8,11 +8,11 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from soothe.config import SOOTHE_HOME
-from soothe_sdk.utils.logging import (
-    DEFAULT_LOG_BACKUP_COUNT,
-    DEFAULT_LOG_MAX_BYTES,
-    ShortLevelFormatter,
-)
+from soothe_nano.utils.logging import ShortLevelFormatter
+
+# Shared rotation policy for `~/.soothe/logs/daemon.log` (same values the SDK used).
+DEFAULT_LOG_MAX_BYTES = 5_242_880  # 5 MB
+DEFAULT_LOG_BACKUP_COUNT = 3
 
 DEFAULT_DAEMON_LOG = "daemon.log"
 DEFAULT_MAX_BYTES = DEFAULT_LOG_MAX_BYTES

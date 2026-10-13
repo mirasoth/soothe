@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
-    from soothe_sdk.protocols.core_agent import CoreAgentProtocol
+    from soothe_nano.protocols.core_agent import CoreAgentProtocol
 
     from soothe.config import SootheConfig
     from soothe.sloop.relay.relay import LoopRelay

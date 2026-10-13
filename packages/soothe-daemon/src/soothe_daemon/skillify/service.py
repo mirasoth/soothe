@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from soothe.config import SOOTHE_HOME
-from soothe_sdk.skillify.models import SkillBundle
+from soothe.skillify.models import SkillBundle
 
 from .indexer import SkillIndexer
 from .retriever import SkillRetriever, configure_vector_search_concurrency

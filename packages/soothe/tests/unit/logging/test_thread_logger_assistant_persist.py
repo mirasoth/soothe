@@ -62,7 +62,7 @@ def test_full_loop_ai_message_with_goal_completion_phase_persists(tmp_path: Path
 
 def test_streaming_goal_completion_chunks_accumulate_until_terminal(tmp_path: Path) -> None:
     """Terminal ``goal_completion`` stream frames persist one assembled row."""
-    from soothe_sdk.ux.loop_stream import GOAL_COMPLETION_STREAM_TERMINAL_FIELD
+    from soothe.ux.loop_stream import GOAL_COMPLETION_STREAM_TERMINAL_FIELD
 
     logger = ThreadLogger(thread_dir=str(tmp_path), thread_id="t3")
     chunk_a = AIMessageChunk(content="There are ", phase="goal_completion")

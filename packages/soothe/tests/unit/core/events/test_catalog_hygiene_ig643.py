@@ -14,8 +14,8 @@ def test_dead_host_event_consts_removed() -> None:
 
 
 def test_nano_primitives_registered_without_host_rereg() -> None:
-    from soothe_sdk.core.events import ERROR, MEMORY_RECALLED, STREAM_END
-    from soothe_sdk.core.registry import REGISTRY
+    from soothe_nano.core.events import ERROR, MEMORY_RECALLED, STREAM_END
+    from soothe_nano.core.registry import REGISTRY
 
     import soothe.events  # noqa: F401
 

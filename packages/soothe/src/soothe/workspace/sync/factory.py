@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 from soothe.workspace.sync.backends.fsspec import FsspecSyncBackend
 
 if TYPE_CHECKING:
-    from soothe_sdk.protocols.workspace_sync import WorkspaceSyncBackend
+    from soothe.workspace.sync.workspace_sync import WorkspaceSyncBackend
 
 logger = logging.getLogger(__name__)
 

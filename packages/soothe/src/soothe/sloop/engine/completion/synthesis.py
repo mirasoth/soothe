@@ -7,7 +7,7 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any
 
-from soothe_sdk.observability.langfuse import merge_langfuse_runnable_config
+from soothe_nano.observability.langfuse import merge_langfuse_runnable_config
 
 from soothe.config.constants import GOAL_COMPLETION_REPORT_MAX_CHARS
 from soothe.sloop.engine.completion.scenario_classifier import (
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
     from langchain_core.language_models.chat_models import BaseChatModel
-    from soothe_sdk.protocols.core_agent import CoreAgentProtocol
+    from soothe_nano.protocols.core_agent import CoreAgentProtocol
 
     from soothe.config import SootheConfig
     from soothe.sloop.state.schemas import PlanResult

@@ -12,7 +12,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
-from soothe_sdk.core.events import (
+from soothe_nano.core.events import (
     CARD_CREATED,
     CARD_REPLAY_BEGIN,
     CARD_REPLAY_END,

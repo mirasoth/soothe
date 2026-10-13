@@ -5,7 +5,7 @@ can cache dependency installation independently from source code changes.
 
 ``soothe-nano`` and ``soothe-deepagents`` are installed from PyPI; their pins
 are taken from ``soothe``'s and ``soothe-daemon``'s dependencies.
-``soothe``, ``soothe-daemon``, ``soothe-cli``, and ``soothe-sdk`` are installed
+``soothe``, ``soothe-daemon``, and ``soothe-cli`` are installed
 from local source with ``--no-deps``.
 """
 
@@ -21,7 +21,6 @@ SKIP_LOCAL = {
     "soothe",
     "soothe-daemon",
     "soothe-cli",
-    "soothe-sdk",
 }
 
 

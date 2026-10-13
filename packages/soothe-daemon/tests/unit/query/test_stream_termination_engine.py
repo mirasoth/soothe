@@ -12,7 +12,7 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
-from soothe_sdk.core.events import STRANGE_LOOP_COMPLETED, STREAM_END
+from soothe_nano.core.events import STRANGE_LOOP_COMPLETED, STREAM_END
 
 _ENGINE_CANCEL_PATH = Path(__file__).with_name("test_engine_cancel.py")
 _ENGINE_CANCEL_SPEC = importlib.util.spec_from_file_location(

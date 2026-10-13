@@ -17,7 +17,7 @@ from soothe.workspace.sync.cas import CASCache, is_symlink_escaping, scan_escapi
 from soothe.workspace.sync.paths import validate_relative_path
 
 if TYPE_CHECKING:
-    from soothe_sdk.protocols.workspace_sync import Manifest, ManifestEntry, WorkspaceSyncBackend
+    from soothe.workspace.sync.workspace_sync import Manifest, ManifestEntry, WorkspaceSyncBackend
 
 logger = logging.getLogger(__name__)
 

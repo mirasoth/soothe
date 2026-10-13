@@ -21,8 +21,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from soothe.wire import ProtocolError
 from soothe_client import WebSocketClient
-from soothe_sdk.wire import ProtocolError
 
 from soothe_daemon import SootheDaemon
 from soothe_daemon.event import EventBus

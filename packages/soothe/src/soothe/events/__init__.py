@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from soothe_sdk.core.events import (
+from soothe_nano.core.events import (
     ERROR,
     LLM_RETRY_ATTEMPT,
     MEMORY_RECALLED,

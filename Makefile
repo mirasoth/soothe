@@ -1,7 +1,6 @@
 # Makefile for Soothe Multi-Package Monorepo
 #
 # Monorepo-owned packages (format / lint / test / publish here):
-# 1. soothe-sdk        - Shared contracts (events, wire, display, protocols)
 # 2. soothe-cli        - CLI client (Typer CLI + Textual TUI)
 # 3. soothe            - StrangeLoop / host composition
 # 4. soothe-daemon     - Daemon server (WebSocket/HTTP transports, cron)
@@ -30,7 +29,7 @@ DOCKER_PROD_COMPOSE := docker compose -f config/production/docker-compose.yml --
 # Configuration
 # ============================================================================
 
-PACKAGES = soothe-sdk soothe-cli soothe soothe-daemon
+PACKAGES = soothe-cli soothe soothe-daemon
 
 # Root-level directories to lint (outside packages)
 ROOT_LINT_DIRS = examples scripts
@@ -354,7 +353,6 @@ clean:
 # ============================================================================
 
 sdk-publish:
-	cd packages/soothe-sdk && uv publish dist/* --native-tls
 
 cli-publish:
 	cd packages/soothe-cli && uv publish dist/* --native-tls
@@ -372,7 +370,6 @@ publish: build sdk-publish cli-publish soothe-publish daemon-publish
 	@echo "Published to PyPI (nano publishes from its own repo)"
 
 sdk-publish-test:
-	cd packages/soothe-sdk && uv publish dist/* --index-url https://test.pypi.org/simple/ --native-tls
 
 cli-publish-test:
 	cd packages/soothe-cli && uv publish dist/* --index-url https://test.pypi.org/simple/ --native-tls

@@ -6,7 +6,7 @@ import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from soothe_sdk.wire.codec import MessageType
+from soothe.wire.codec import MessageType
 
 from soothe_daemon.admin_rpc import memory_stats, send_admin_request
 

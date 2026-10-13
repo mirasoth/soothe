@@ -13,7 +13,7 @@ import pytest
 
 def test_manifest_has_config_requirements():
     """PluginManifest should have config_requirements field."""
-    from soothe_sdk.plugin.manifest import PluginManifest
+    from soothe_nano.plugin.manifest import PluginManifest
 
     manifest = PluginManifest(
         name="test-plugin",
@@ -33,7 +33,7 @@ def test_manifest_has_config_requirements():
 
 def test_plugin_decorator_accepts_config_requirements():
     """@plugin decorator should accept config_requirements parameter."""
-    from soothe_sdk.plugin.decorators import plugin
+    from soothe_nano.plugin.decorators import plugin
 
     @plugin(
         name="test-config-plugin",
@@ -54,8 +54,8 @@ def test_config_dependency_resolution():
     """PluginLoader should validate config_requirements."""
     from soothe_nano.plugin.exceptions import DependencyError
     from soothe_nano.plugin.loader import PluginLoader
+    from soothe_nano.plugin.manifest import PluginManifest
     from soothe_nano.plugin.registry import PluginRegistry
-    from soothe_sdk.plugin.manifest import PluginManifest
 
     registry = PluginRegistry()
     loader = PluginLoader(registry)
@@ -158,8 +158,8 @@ def test_untrusted_plugin_blocked_by_default():
     """Untrusted plugins should be blocked unless env var is set."""
     from soothe_nano.plugin.exceptions import ValidationError
     from soothe_nano.plugin.loader import PluginLoader
+    from soothe_nano.plugin.manifest import PluginManifest
     from soothe_nano.plugin.registry import PluginRegistry
-    from soothe_sdk.plugin.manifest import PluginManifest
 
     # Ensure env var is not set
     original = os.environ.pop("SOOTHE_ALLOW_UNTRUSTED_PLUGINS", None)
@@ -188,8 +188,8 @@ def test_untrusted_plugin_blocked_by_default():
 def test_trusted_plugin_allowed():
     """Built-in, trusted, and standard plugins should always be allowed."""
     from soothe_nano.plugin.loader import PluginLoader
+    from soothe_nano.plugin.manifest import PluginManifest
     from soothe_nano.plugin.registry import PluginRegistry
-    from soothe_sdk.plugin.manifest import PluginManifest
 
     registry = PluginRegistry()
     loader = PluginLoader(registry)
