@@ -13,7 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Wire golden fixture contract tests: `scripts/gen_wire_golden.py` produces `tests/wire_fixtures/wire_golden.json` (canonical producer = host `soothe.wire`/`soothe.display`); the same file is committed in soothe-client-python and both sides' tests (`packages/soothe/tests/unit/wire/test_wire_golden.py`, client `tests/unit/test_wire_golden.py`) pin its sha256 — any wire-format drift now fails CI on both sides.
-- `soothe-nano` floor bumped to 1.4.1 (task_namespace ships); `soothe-client-python` floor bumped to 1.2.0.
+- `soothe-nano` floor bumped to 1.4.2; `soothe-client-python` floor bumped to 1.2.0.
+
+- `soothe-nano` 1.4.2 removes dead agent-axis surfaces in a cleanup release: `soothe_nano.utils.llm` (back-compat shim — import `soothe_nano.llm` directly), `soothe_nano.utils.embeddings_dashscope{,_openai}`, the MemU `config/{activity,event,profile}` modules (the `prompt.txt` files stay), `soothe_nano.filesystem.{factory,langchain_adapter}` (superseded by the soothe-deepagents backend layer), and unused helpers in `mcp.cleanup` / `mcp.mcp_events` / `middleware.tool_call_args_registry` / `middleware.tool_name_hints` / `llm.response_text`. The `aiohttp`, `firecrawl-anydoc`, `dashscope`, and `httpx` runtime deps are dropped. Verified by an AST sweep: all 110 `soothe_nano.*` modules and 625 imported symbols referenced by `soothe`, `soothe-daemon`, `soothe-cli`, scripts, and examples still resolve on 1.4.2.
 
 ### Changed (soothe-sdk dissolution — stage 3)
 - All `soothe_sdk.*` imports across `soothe` and `soothe-daemon` (src + tests) rewritten to the new homes; `soothe-sdk` removed from every `pyproject.toml`, the uv workspace, vulture paths, the release workflow (deploy-sdk job), and `verify_finally` package list. Import-boundary enforcement now also bans `soothe_sdk` imports from any owned package.
