@@ -1,4 +1,10 @@
-"""Scenario classifier for synthesis generation."""
+"""Scenario classifier for synthesis generation.
+
+Provides the heuristic fast-path and scenario metadata used by the unified
+single-LLM-call synthesis flow. When the heuristic is inconclusive, the
+TypeSafe (JEV) classifier is consulted before falling back to scratchpad
+mode (inline self-classification in the same LLM streaming call).
+"""
 
 from __future__ import annotations
 
@@ -6,11 +12,6 @@ import logging
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field, model_validator
-
-from soothe.prompts.fragments import (
-    SCENARIO_CLASSIFIER_SYSTEM_FRAGMENT,
-    SCENARIO_CLASSIFIER_USER_FRAGMENT,
-)
 
 if TYPE_CHECKING:
     from soothe.sloop.state.schemas import LoopState
@@ -22,7 +23,7 @@ logger = logging.getLogger(__name__)
 _DEFAULT_SCENARIO_RULES = ScenarioRulesConfig()
 
 # Built-in scenario style names → short descriptions.
-# Used by the prompt fragments for the scenario list reference.
+# Used by the JEV Choice criteria and the synthesis prompt for reference.
 _SCENARIO_DESCRIPTIONS: dict[str, str] = {
     "code_architecture_design": "System/module structure analysis",
     "code_implementation_design": "Concrete implementation patterns and examples",
@@ -98,10 +99,11 @@ def format_hint_for_scenario(scenario: str) -> str:
 class ScenarioClassification(BaseModel):
     """Scenario classification result for synthesis generation.
 
-    Produced by ScenarioClassifier from goal + intent + execution pattern.
-    Guides Phase 2 synthesis with style + optional outline suggestions + focus.
+    Produced by the heuristic fast-path or the TypeSafe (JEV) classifier from
+    goal + intent + execution pattern. Guides the synthesis LLM call with
+    style + optional outline suggestions + focus.
 
-    Empty `sections` means Phase 2 invents the outline (heuristic fast-path).
+    Empty `sections` means the synthesis model invents the outline.
     Non-empty `sections` are soft suggestions, not required headings.
     """
 
@@ -110,7 +112,7 @@ class ScenarioClassification(BaseModel):
         default_factory=list,
         description=(
             "Suggested ## section titles for the report outline (3–7 when set; "
-            "empty = Phase 2 designs the outline)"
+            "empty = synthesis model designs the outline)"
         ),
     )
     contextual_focus: list[str] = Field(
@@ -120,7 +122,7 @@ class ScenarioClassification(BaseModel):
 
     @model_validator(mode="after")
     def validate_sections(self) -> ScenarioClassification:
-        """Normalize section titles; empty list is allowed (Phase 2 invents outline)."""
+        """Normalize section titles; empty list is allowed (model invents outline)."""
         self.sections = [s.strip() for s in self.sections if isinstance(s, str) and s.strip()]
         return self
 
@@ -162,33 +164,6 @@ def _extract_execution_summary(state: LoopState) -> dict:
         "tools_used": tools_used,
         "evidence_volume": evidence_volume,
     }
-
-
-def _build_classifier_system_prompt() -> str:
-    """Build system prompt with task instructions, scenario list, and output schema."""
-    scenarios_list = "\n".join(
-        f"{i + 1}. {name} - {desc}" for i, (name, desc) in enumerate(_SCENARIO_DESCRIPTIONS.items())
-    )
-    return SCENARIO_CLASSIFIER_SYSTEM_FRAGMENT.format(scenarios_list=scenarios_list)
-
-
-def _build_classifier_user_prompt(
-    goal: str,
-    intent_type: str,
-    task_complexity: str,
-    execution_summary: dict,
-) -> str:
-    """Build per-request user prompt with goal, intent, and execution summary."""
-    return SCENARIO_CLASSIFIER_USER_FRAGMENT.format(
-        goal=goal,
-        intent_type=intent_type,
-        task_complexity=task_complexity,
-        total_steps=execution_summary["total_steps"],
-        successful_steps=execution_summary["successful_steps"],
-        step_types=execution_summary["step_types"],
-        tools_used=execution_summary["tools_used"],
-        evidence_volume=execution_summary["evidence_volume"],
-    )
 
 
 def _heuristic_classify(
@@ -257,3 +232,13 @@ def _heuristic_classify(
 
     # No heuristic matched — caller activates scratchpad self-classification.
     return None
+
+
+__all__ = [
+    "SCENARIO_FORMAT_HINTS",
+    "ScenarioClassification",
+    "_SCENARIO_DESCRIPTIONS",
+    "_extract_execution_summary",
+    "_heuristic_classify",
+    "format_hint_for_scenario",
+]

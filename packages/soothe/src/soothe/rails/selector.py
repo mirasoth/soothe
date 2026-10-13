@@ -264,6 +264,7 @@ async def resolve_rail_for_job(
     timeout_s: float = DEFAULT_TIMEOUT_S,
     skip_llm_if_workspace_default: bool = False,
     abstain_overrides_defaults: bool = True,
+    soothe_config: Any | None = None,
 ) -> RailPickResult:
     """Resolve rail id for a job submit (cascade).
 
@@ -317,6 +318,35 @@ async def resolve_rail_for_job(
         candidates = []
 
     if auto_pick and picker is not None and candidates and len(candidates) <= int(max_candidates):
+        # TypeSafe (JEV) fast-path: try the decision model before the LLM.
+        from soothe.rails.rail_typesafe import pick_rail_typesafe
+
+        typesafe_pick = await pick_rail_typesafe(
+            description=description,
+            candidates=candidates,
+            soothe_config=soothe_config,
+        )
+        if typesafe_pick is not None:
+            allowed = {c.id for c in candidates}
+            if typesafe_pick == "abstain":
+                if abstain_overrides_defaults:
+                    return RailPickResult(
+                        rail_id=None,
+                        reasoning="typesafe abstain",
+                        source="llm",
+                        candidates_considered=[c.id for c in candidates],
+                        catalog_hash=cat_hash,
+                    )
+            elif typesafe_pick in allowed:
+                return RailPickResult(
+                    rail_id=typesafe_pick,
+                    reasoning="typesafe pick",
+                    source="llm",
+                    candidates_considered=[c.id for c in candidates],
+                    catalog_hash=cat_hash,
+                )
+            # Unknown id or abstain without overrides → fall through to LLM.
+
         try:
             response = await asyncio.wait_for(
                 picker.pick(description, candidates),

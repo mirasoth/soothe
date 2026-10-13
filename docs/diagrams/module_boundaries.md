@@ -72,7 +72,7 @@ soothe-cli            ← Typer + Textual TUI                             ← OW
 | `persistence/` | Unified stores — `unified`, `sqlite_runtime`, `postgres_pool`, `loop_writer`, `checkpoint_split`, `db_init` |
 | `identity/` | Auth & tokens — `identity_service`, `db`, `credentials`, `tokens`, `runtime`, `middleware` |
 | `security/` | `operation_security`, `edit_lock`, `locked_backend`, `daemon_kill_guards` |
-| `events/` | Internal bus — `catalog`, `internal_bus`, `internal_events`, `visibility` |
+| `events/` | Event catalog & visibility — `catalog`, `visibility` |
 | `workspace/` | `loop_workspace`, `resolution`, `scoped` |
 | `mcp/` | `progressive_registry` |
 | `config/`, `subagents/`, `utils/`, `prompts/`, `logging/`, `diagnose/` | Supporting slices |

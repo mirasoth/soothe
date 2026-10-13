@@ -62,8 +62,21 @@ def message_has_tool_invocation_metadata(msg: Any) -> bool:
     return False
 
 
+def _message_has_reasoning_content(msg: Any) -> bool:
+    """True when message carries captured reasoning in ``additional_kwargs``."""
+    ak: Any = None
+    if hasattr(msg, "additional_kwargs"):
+        ak = getattr(msg, "additional_kwargs", None)
+    elif isinstance(msg, dict):
+        body = wire_message_body(msg) if isinstance(msg, dict) else msg
+        ak = body.get("additional_kwargs")
+    if not isinstance(ak, dict):
+        return False
+    return bool(str(ak.get("reasoning_content") or "").strip())
+
+
 def message_chunk_is_non_actionable(data: Any) -> bool:
-    """True when a `messages` pair has no tool, text, or loop phase payload."""
+    """True when a `messages` pair has no tool, text, reasoning, or loop phase payload."""
     if not isinstance(data, (list, tuple)) or len(data) != _MSG_PAIR_LEN:
         return False
     msg = data[0]
@@ -85,12 +98,16 @@ def message_chunk_is_non_actionable(data: Any) -> bool:
             return False
         if body.get("phase"):
             return False
+        if _message_has_reasoning_content(msg):
+            return False
         return not extract_plain_text_from_stream_message(msg).strip()
 
     if isinstance(msg, (AIMessage, AIMessageChunk)):
         if message_has_tool_invocation_metadata(msg):
             return False
         if getattr(msg, "phase", None):
+            return False
+        if _message_has_reasoning_content(msg):
             return False
         return not extract_plain_text_from_stream_message(msg).strip()
 
@@ -107,6 +124,7 @@ def should_drop_stream_chunk_early(namespace: tuple[Any, ...], mode: str, data: 
 
 
 __all__ = [
+    "_message_has_reasoning_content",
     "message_chunk_is_non_actionable",
     "message_has_tool_invocation_metadata",
     "should_drop_stream_chunk_early",

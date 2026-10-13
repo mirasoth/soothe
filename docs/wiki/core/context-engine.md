@@ -121,7 +121,7 @@ Goals have `topic` and `findings` fields for "cross-loop dreaming." AutopilotMon
 
 ## Lifecycle observers
 
-ContextEngine does **not** expose an in-process `.on()` callback API. Autopilot coordinates via the daemon `InternalEventBus` (`soothe.internal.goal.completed` / `.failed` / `.state_changed`, etc.). See AutopilotService / AutopilotMonitor.
+ContextEngine does **not** expose an in-process `.on()` callback API. Autopilot coordinates via the daemon EventBus (`soothe.internal.goal.completed` / `.failed` / `.state_changed`, etc.). See AutopilotService / AutopilotMonitor.
 
 ---
 

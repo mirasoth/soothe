@@ -18,7 +18,7 @@ The event system (`soothe.events`) provides the vocabulary and plumbing for all 
 
 The system exists because Soothe streams execution progress to clients in real time. Without a centralized event catalog, visibility rules would be scattered across daemon delivery stages, and bugs would silently drop user-visible output.
 
-**Source**: `packages/soothe/src/soothe/events/` (`constants.py`, `catalog.py`, `visibility.py`, `internal_bus.py`)
+**Source**: `packages/soothe/src/soothe/events/` (`catalog.py`, `visibility.py`)
 
 ---
 
@@ -128,9 +128,9 @@ if event_type == GOAL_CREATED:
 
 ---
 
-## Internal Event Bus
+## Internal Event Visibility
 
-Beyond the client-facing stream, there's an `InternalEventBus` for daemon/worker-internal pub/sub. This is separate from the client stream — internal events (`soothe.internal.*`) never appear on the WebSocket. The bus supports subscribing to specific event types with handler callbacks, used for cross-component coordination within the daemon process.
+Internal events (`soothe.internal.*`) never appear on the WebSocket. The visibility module (`events/visibility.py`) filters these using a prefix check on `"soothe.internal."`. This is separate from the client-facing catalog stream.
 
 ---
 

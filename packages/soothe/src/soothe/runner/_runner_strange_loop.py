@@ -386,7 +386,13 @@ def _ai_chunk_has_actionable_payload(msg: object) -> bool:
         return True
     if isinstance(msg, (AIMessage, AIMessageChunk)):
         text = extract_text_from_message_content(msg.content)
-        return bool(str(text or "").strip())
+        if bool(str(text or "").strip()):
+            return True
+        # Forward reasoning-only chunks (empty content but captured
+        # thinking tokens in additional_kwargs["reasoning_content"]) so
+        # the TUI step card Reasoning branch receives them.
+        ak = getattr(msg, "additional_kwargs", None) or {}
+        return bool(str(ak.get("reasoning_content") or "").strip())
     if isinstance(msg, dict):
         if loop_message_assistant_output_phase(msg) is not None:
             return True
@@ -396,7 +402,12 @@ def _ai_chunk_has_actionable_payload(msg: object) -> bool:
             return True
         from soothe_sdk.display.text_extract import extract_text_from_ai_message
 
-        return bool("".join(extract_text_from_ai_message(msg)).strip())
+        if bool("".join(extract_text_from_ai_message(msg)).strip()):
+            return True
+        # Forward reasoning-only wire dicts (empty content but
+        # additional_kwargs["reasoning_content"] is present).
+        ak = msg.get("additional_kwargs") if isinstance(msg.get("additional_kwargs"), dict) else {}
+        return bool(str(ak.get("reasoning_content") or "").strip())
     return False
 
 
