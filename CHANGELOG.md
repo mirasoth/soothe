@@ -7,19 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-- **ux/display placement cleanup** (contract-axis review): the unified tool-call ID format and stream tool-wire helpers now have a single agent-axis canonical home — `soothe_nano.ux.{task_namespace,stream_tool_wire}` (≥1.4.1); the temporary host copies in `soothe.ux` were removed and soothe/daemon import from nano.
-- `soothe-cli` now owns its TUI rendering helpers directly: `soothe_cli.display.{card_binder,text_extract}` (moved from soothe-client-python, with a direct `langchain-core` dependency) and `soothe_cli.ux.{subagent_progress,subagent_wire_display}`. `soothe-client-python` 1.2.0 correspondingly slimmed its display/ux surface to the wire-parse side and removed the dead `display.snapshot_collapser`.
+## [v1.1.0] - 2026-10-13
 
 ### Added
 - Wire golden fixture contract tests: `scripts/gen_wire_golden.py` produces `tests/wire_fixtures/wire_golden.json` (canonical producer = host `soothe.wire`/`soothe.display`); the same file is committed in soothe-client-python and both sides' tests (`packages/soothe/tests/unit/wire/test_wire_golden.py`, client `tests/unit/test_wire_golden.py`) pin its sha256 — any wire-format drift now fails CI on both sides.
-- `soothe-nano` floor bumped to 1.4.2; `soothe-client-python` floor bumped to 1.2.0.
 
-- `soothe-nano` 1.4.2 removes dead agent-axis surfaces in a cleanup release: `soothe_nano.utils.llm` (back-compat shim — import `soothe_nano.llm` directly), `soothe_nano.utils.embeddings_dashscope{,_openai}`, the MemU `config/{activity,event,profile}` modules (the `prompt.txt` files stay), `soothe_nano.filesystem.{factory,langchain_adapter}` (superseded by the soothe-deepagents backend layer), and unused helpers in `mcp.cleanup` / `mcp.mcp_events` / `middleware.tool_call_args_registry` / `middleware.tool_name_hints` / `llm.response_text`. The `aiohttp`, `firecrawl-anydoc`, `dashscope`, and `httpx` runtime deps are dropped. Verified by an AST sweep: all 110 `soothe_nano.*` modules and 625 imported symbols referenced by `soothe`, `soothe-daemon`, `soothe-cli`, scripts, and examples still resolve on 1.4.2.
+### Changed
+- **Dissolve `soothe-sdk`**: every `soothe_sdk.*` import in `soothe` and `soothe-daemon` (src + tests) now resolves to its new home (agent-axis contracts → `soothe_nano.*`, wire/display/ux → the host copies); the package is removed from all `pyproject.toml` files, the uv workspace, vulture paths, the release workflow (`deploy-sdk` job) and `verify_finally`, and importing it is now an import-boundary violation. Migration table: `docs/wiki/api-reference/sdk-api.md`.
+- `soothe-cli` owns its TUI rendering directly: `soothe_cli.display.{card_binder,text_extract}` and `soothe_cli.ux.{subagent_progress,subagent_wire_display}`; `soothe-client-python` 1.2.0 keeps only the wire-parse side and drops the dead `display.snapshot_collapser`.
+- Unified tool-call IDs and stream tool-wire helpers have a single canonical home — `soothe_nano.ux.{task_namespace,stream_tool_wire}`; the temporary `soothe.ux` copies are removed and soothe/daemon import from nano.
+- Floors: `soothe-nano>=1.4.2` and `soothe-client-python>=1.2.0`. nano 1.4.2 is a cleanup release — it drops the dead `utils.llm` shim, `utils.embeddings_dashscope{,_openai}`, the MemU `config/{activity,event,profile}` modules, `filesystem.{factory,langchain_adapter}` (superseded by the soothe-deepagents backend layer) and the `aiohttp`/`dashscope`/`httpx`/`firecrawl-anydoc` runtime deps; no host, daemon or CLI code references them.
 
-### Changed (soothe-sdk dissolution — stage 3)
-- All `soothe_sdk.*` imports across `soothe` and `soothe-daemon` (src + tests) rewritten to the new homes; `soothe-sdk` removed from every `pyproject.toml`, the uv workspace, vulture paths, the release workflow (deploy-sdk job), and `verify_finally` package list. Import-boundary enforcement now also bans `soothe_sdk` imports from any owned package.
-- Rules docs updated: `.agents/rules/package-boundaries.md` (new DAG table, dissolved-package ban), `docs/diagrams/module_boundaries.mmd`, `docs/wiki/api-reference/sdk-api.md` (dissolution banner with migration table).
+[Compare with previous version]: https://github.com/mirasoth/soothe/compare/v1.0.22...v1.1.0
 
 ## [v1.0.22] - 2026-10-12
 
