@@ -33,8 +33,6 @@ jobs:
     - name: Set up Python
       run: uv python install 3.12
 
-        exit 1
-
     - name: Sync CLI dependencies
       run: |
         cd packages/soothe-cli
@@ -138,8 +136,6 @@ jobs:
         done
         echo "❌ Timeout: soothe-nano ${VERSION} not found on PyPI after 5 minutes"
         echo "Publish soothe-nano from https://github.com/mirasoth/soothe-nano first, then re-run."
-        exit 1
-
         exit 1
 
     - name: Sync soothe core dependencies
