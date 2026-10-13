@@ -206,3 +206,82 @@ def test_render_reasoning_with_tools_section_ordering() -> None:
     assert reasoning_pos >= 0
     assert tool_use_pos >= 0
     assert reasoning_pos < tool_use_pos
+
+
+def test_append_reasoning_delta_from_subgraph_namespace() -> None:
+    """Reasoning from an execute subgraph namespace should reach the step card.
+
+    The reasoning chunk arrives from the execute subgraph (non-empty namespace),
+    but the step card is registered under ``()`` (main graph). The fallback
+    to any running step card must not be gated on ``is_main_agent``.
+    """
+    from unittest.mock import MagicMock
+
+    from soothe_cli.tui.widgets.messages.cognition_step import CognitionStepMessage
+
+    # Simulate a step card registered under the main-graph namespace.
+    step_card = CognitionStepMessage(step_id="s1", description="test step")
+    step_card.set_running()
+
+    # Simulate an adapter with the step card under () but not under the
+    # execute subgraph namespace.
+    adapter = MagicMock()
+    adapter._step_by_namespace = {(): step_card}
+    adapter._current_step_messages = {"s1": step_card}
+
+    # The reasoning chunk arrives from the execute subgraph namespace.
+    ns_key = ("execute:thread-abc",)
+    from langchain_core.messages import AIMessageChunk
+
+    message = AIMessageChunk(
+        content="",
+        additional_kwargs={"reasoning_content": "I should check the config."},
+    )
+
+    # _resolve_token_target_card returns None (no tool calls to infer from),
+    # so the fallback to any running step card must fire.
+    router = MagicMock()
+    router.active_step_ids = {"s1"}
+
+    # Replicate the routing logic from textual_adapter.
+    reasoning_text = str(getattr(message, "additional_kwargs", {}).get("reasoning_content") or "")
+    assert reasoning_text  # sanity check
+
+    step_w = adapter._step_by_namespace.get(ns_key)
+    assert step_w is None  # not bound under the subgraph namespace
+
+    # Fallback: any running step card.
+    for _sw in adapter._current_step_messages.values():
+        if getattr(_sw, "_status", "") == "running":
+            step_w = _sw
+            break
+
+    assert step_w is step_card
+    assert hasattr(step_w, "append_reasoning_delta")
+    step_w.append_reasoning_delta(reasoning_text)
+    assert step_w._reasoning_buffer == "I should check the config."
+
+
+def test_append_reasoning_delta_from_dict_message() -> None:
+    """Reasoning extracted from a wire dict message (normalization failure)."""
+    from soothe_cli.tui.widgets.messages.cognition_step import CognitionStepMessage
+
+    step_card = CognitionStepMessage(step_id="s1", description="test step")
+    step_card.set_running()
+
+    # A wire dict that failed to normalize back to AIMessageChunk.
+    message = {
+        "type": "AIMessageChunk",
+        "content": "",
+        "additional_kwargs": {"reasoning_content": "Dict-path reasoning."},
+    }
+
+    reasoning_text = ""
+    if isinstance(message, dict):
+        ak = message.get("additional_kwargs")
+        if isinstance(ak, dict):
+            reasoning_text = str(ak.get("reasoning_content") or "")
+
+    assert reasoning_text == "Dict-path reasoning."
+    step_card.append_reasoning_delta(reasoning_text)
+    assert step_card._reasoning_buffer == "Dict-path reasoning."

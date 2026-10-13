@@ -3456,10 +3456,22 @@ async def execute_task_textual(
                         if isinstance(message, (AIMessage, AIMessageChunk)):
                             ak = getattr(message, "additional_kwargs", None) or {}
                             reasoning_text = str(ak.get("reasoning_content") or "")
+                        elif isinstance(message, dict):
+                            ak = message.get("additional_kwargs")
+                            if isinstance(ak, dict):
+                                reasoning_text = str(ak.get("reasoning_content") or "")
                         if reasoning_text:
                             step_w_reasoning = adapter._step_by_namespace.get(ns_key)
-                            if step_w_reasoning is None and is_main_agent:
-                                # Fall back to any running step card on the main graph.
+                            if step_w_reasoning is None:
+                                # The reasoning chunk may arrive from an execute
+                                # subgraph namespace that hasn't been bound to a
+                                # step card yet (binding happens on first tool call).
+                                # Try resolving via the same path as token accounting,
+                                # then fall back to any running step card.
+                                step_w_reasoning = _resolve_token_target_card(
+                                    adapter, router, ns_key, message=message
+                                )
+                            if step_w_reasoning is None:
                                 for _sw in adapter._current_step_messages.values():
                                     if getattr(_sw, "_status", "") == "running":
                                         step_w_reasoning = _sw

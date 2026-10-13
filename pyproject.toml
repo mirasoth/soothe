@@ -2,12 +2,11 @@
 name = "soothe-workspace"
 version = "0.0.0"
 description = "Soothe monorepo workspace (meta-package, no dependencies)"
-# Cap below 3.14: uv universal resolution hits an unsatisfiable soothe-nano split on
+# Cap below 3.14: uv universal resolution hits an unsatisfiable split on
 # python_full_version==3.14.* + win32; CI matrix is 3.12/3.13.
 requires-python = ">=3.11,<3.14"
 dependencies = [
     "soothe-sdk",
-    "soothe-nano",
     "soothe-client-python",
     "soothe-cli",
     "soothe",
@@ -31,7 +30,6 @@ default = true
 
 [tool.uv.sources]
 soothe-sdk = { workspace = true }
-soothe-nano = { workspace = true }
 soothe-client-python = { workspace = true }
 soothe-cli = { workspace = true }
 soothe = { workspace = true }
