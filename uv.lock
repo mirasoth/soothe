@@ -955,27 +955,6 @@ wheels = [
 ]
 
 [[package]]
-name = "dashscope"
-version = "1.27.7"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "aiohttp" },
-    { name = "certifi" },
-    { name = "cryptography" },
-    { name = "httpx" },
-    { name = "httpx-sse" },
-    { name = "requests" },
-    { name = "rich" },
-    { name = "typer" },
-    { name = "typing-extensions" },
-    { name = "websocket-client" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/24/a8/c92b104a7e7f47b74d79904c1ff29dbca470c090ce805beecb29abbe4888/dashscope-1.27.7.tar.gz", hash = "sha256:6736697d8308f051a19616f64f85f7bd3d52abf52e9689a66ea18642df3cc757" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/72/6f/912e99746b5b5bed6db875dd56b00a9d4401a0abf6180d77c1f961f4972f/dashscope-1.27.7-py3-none-any.whl", hash = "sha256:e034664fc78d487bd949753807abc2640c154cfcecff7a59b8b2a4b6ec156bf9" },
-]
-
-[[package]]
 name = "decorator"
 version = "5.3.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1161,21 +1140,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/bb/29/745f7d30d47fe0f251d3ad3dc2978a23141917661998763bebb6da007eb1/filetype-1.2.0.tar.gz", hash = "sha256:66b56cd6474bf41d8c54660347d37afcc3f7d1970648de365c102ef77548aadb" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/18/79/1b8fa1bb3568781e84c9200f951c735f3f157429f44be0495da55894d620/filetype-1.2.0-py2.py3-none-any.whl", hash = "sha256:7ce71b6880181241cf7ac8697a2f1eb6a8bd9b429f7ad6d27b8db9ba5f1c2d25" },
-]
-
-[[package]]
-name = "firecrawl-anydoc"
-version = "0.1.9"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/aa/16/e37d4f284482a4f30e0502ce439a9fd8ccf013e6ae4438b4dfa209e48750/firecrawl_anydoc-0.1.9.tar.gz", hash = "sha256:0dfc64b82b4e971143dd6f0e4f39f8152fcc38be6523663682a241d8f3301b14" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/42/37/866bf6270ad8552eaf6edf3b8e1a360acf3e8764140641361ae7b440514e/firecrawl_anydoc-0.1.9-cp310-abi3-macosx_10_12_x86_64.whl", hash = "sha256:ebd956831822d3ea1831253406736e0e4d9b217e3471eb68c9bf2eba9302ce73" },
-    { url = "https://files.pythonhosted.org/packages/b1/9a/8fbe0726cdf69154e1eb05c119332b1fdfd8200eeafcfd1675741ac5f03d/firecrawl_anydoc-0.1.9-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:a2372d97826e8e7e68fd28cd415d08815f6aa66dcc09c6b423ac33dd2dfa91cf" },
-    { url = "https://files.pythonhosted.org/packages/b0/ce/86a626224c365d8de65699d6ac8f4626ac05e7e75c3ae76c82f4904a07d2/firecrawl_anydoc-0.1.9-cp310-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:ba1c19bdaa97f4850daf3fb4ca2855cefa146b5621ce7b22a71d158d3b84e54e" },
-    { url = "https://files.pythonhosted.org/packages/0e/28/00d1d48fe205ab66eda4a2a22cce44aadf586ef1495e703349b791c8de32/firecrawl_anydoc-0.1.9-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:deea7a270fccda9be29c73235e938ca32e0f703e1ae120f08bf0fdb39301c6b4" },
-    { url = "https://files.pythonhosted.org/packages/c8/25/ac52d98c5d082ef92396b2fcb398745a3b054816c67a12d19de86c1ba535/firecrawl_anydoc-0.1.9-cp310-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:de0858decd18188b0b88545689544fb3703ec08ade37f63c2857e4414e99bdf1" },
-    { url = "https://files.pythonhosted.org/packages/ca/d3/e80314b5746c4ca85150f3ab2a527b2167012c16e706e148733211cb88b3/firecrawl_anydoc-0.1.9-cp310-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:e4e1765ed5574fa502931f8bfaec1f87af913afa5bb432aaaf5f9c094efc7f43" },
-    { url = "https://files.pythonhosted.org/packages/8e/d0/e7b35c2365498d5e9f1bdb4b3ded78571b6dafbaba1880538490d27b71c9/firecrawl_anydoc-0.1.9-cp310-abi3-win_amd64.whl", hash = "sha256:aa6a5ca2e10939a87c9bd21c918ef8b146ad0061fedae661d4483ef5a5bbdf60" },
 ]
 
 [[package]]
@@ -7243,7 +7207,7 @@ requires-dist = [
     { name = "s3fs", marker = "extra == 'all-backends'", specifier = ">=2025.0.0" },
     { name = "s3fs", marker = "extra == 'dev'", specifier = ">=2025.0.0" },
     { name = "s3fs", marker = "extra == 's3'", specifier = ">=2025.0.0" },
-    { name = "soothe-nano", specifier = ">=1.4.1,<2.0.0" },
+    { name = "soothe-nano", specifier = ">=1.4.2,<2.0.0" },
     { name = "watchdog", specifier = ">=3.0.0,<5.0.0" },
 ]
 provides-extras = ["all-backends", "azure", "dev", "gcs", "s3"]
@@ -7434,17 +7398,13 @@ wheels = [
 
 [[package]]
 name = "soothe-nano"
-version = "1.4.1"
+version = "1.4.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiofiles" },
-    { name = "aiohttp" },
     { name = "browser-use" },
-    { name = "dashscope" },
     { name = "deepxiv-sdk" },
     { name = "docx2txt" },
-    { name = "firecrawl-anydoc" },
-    { name = "httpx" },
     { name = "jsonschema" },
     { name = "langchain" },
     { name = "langchain-community" },
@@ -7477,9 +7437,9 @@ dependencies = [
     { name = "tiktoken" },
     { name = "wcmatch" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/87/4c/d94e290cf6f6b9111351476dc4210f58b52b0f7d163957b359430eab1e0d/soothe_nano-1.4.1.tar.gz", hash = "sha256:cab6072cf7c1b9efbee053dd6b7140b860ad0aca29d20c74a622ee3eab0f67ea" }
+sdist = { url = "https://files.pythonhosted.org/packages/e5/2b/e38e627927fc059cfc5f6ac79117539770c8fd32307ccbee2db4becb6c8d/soothe_nano-1.4.2.tar.gz", hash = "sha256:0c005e2a123f3bf35abc7f3a48a909632340d2b78b9c1f5b8a65efa28496b610" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b4/a4/b4824f4b68cf5ffd02238e7ea88c155c8bd5ebafba3964b72c34d37edcb4/soothe_nano-1.4.1-py3-none-any.whl", hash = "sha256:6833c1bcb68d5b2a02963f8659f86e322c8f9aee48ed4962afd0cc10e12c8633" },
+    { url = "https://files.pythonhosted.org/packages/78/c9/284664606b41aae95b7c679065576f49c57c02efa1c2c73438a77edff483/soothe_nano-1.4.2-py3-none-any.whl", hash = "sha256:7bb9de6e304a50bbd091e098947b40baa7f787a940c76e856e6a1d3848bdc41a" },
 ]
 
 [[package]]
@@ -8171,15 +8131,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/5a/d6/b0690f55ea0483530a18bac917fbadbf54f35122510446fc370f5f1c2453/wcwidth-0.9.2-cp310-abi3-win_amd64.whl", hash = "sha256:2a9746de704242bd4fdaabb31dd46b82f694a56a8d21081ad89b679a89da9fec" },
     { url = "https://files.pythonhosted.org/packages/e5/11/6ecf4e9e268ab1a4ec617ffcccc2ee4a71301625f5490912dbaba462fa9c/wcwidth-0.9.2-cp310-abi3-win_arm64.whl", hash = "sha256:b9c6ab615e03723b7f8760ea2f27758d656e7e13b51515c9dca5c3e8b04612fa" },
     { url = "https://files.pythonhosted.org/packages/9c/b4/0bfa065af506540d9d558e3e5548cff00bc1f9b24e6e2a8512498e8628de/wcwidth-0.9.2-py3-none-any.whl", hash = "sha256:89ca642c5bf0101157a09366be69fad0379db1f700ae39a920e103234573670e" },
-]
-
-[[package]]
-name = "websocket-client"
-version = "1.9.2"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/d8/cb/a5abcc2891249f393827c650c6296660ce40374ac22d99ab9aea41f9d2a2/websocket_client-1.9.2.tar.gz", hash = "sha256:0fcb57545848be86992e128218fd96dd87a6769ffdb1a968dff79632b85604d0" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/d5/d2/cc4dc1271e464942db7ee278baae2daa99ee77cb2af744025c04da585a3e/websocket_client-1.9.2-py3-none-any.whl", hash = "sha256:e1a673830a9c7bfa47b1cd3d5e4178f4c9651d80a4eab02c9c23a1c3ec6250ce" },
 ]
 
 [[package]]
