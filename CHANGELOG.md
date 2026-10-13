@@ -8,7 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
-- **Dissolved `packages/soothe-sdk`** (stage 3 of the SDK dissolution): shared contracts now live with their owning axis. Agent-axis contracts are consumed from `soothe-nano>=1.4.0` (plugin API, core events/registry, protocols, paths, intention, langfuse observability, `utils.serde`, security tool metadata). Host-side copies moved into `soothe` itself (`soothe.wire` codec/protocol, `soothe.display` binder/ledger/wire, `soothe.ux` task namespaces/classification/loop stream/stream tool wire, `soothe.workspace.sync.workspace_sync` contracts, `soothe.identity.errors`, `soothe.skillify` models, `INVALID_WORKSPACE_DIRS`); `soothe-daemon` imports them from `soothe` per the DAG. The CLI/client side already moved to `soothe-client-python>=1.1.0` (previous stage).
+- **ux/display placement cleanup** (contract-axis review): the unified tool-call ID format and stream tool-wire helpers now have a single agent-axis canonical home — `soothe_nano.ux.{task_namespace,stream_tool_wire}` (≥1.4.1); the temporary host copies in `soothe.ux` were removed and soothe/daemon import from nano.
+- `soothe-cli` now owns its TUI rendering helpers directly: `soothe_cli.display.{card_binder,text_extract}` (moved from soothe-client-python, with a direct `langchain-core` dependency) and `soothe_cli.ux.{subagent_progress,subagent_wire_display}`. `soothe-client-python` 1.2.0 correspondingly slimmed its display/ux surface to the wire-parse side and removed the dead `display.snapshot_collapser`.
+
+### Added
+- Wire golden fixture contract tests: `scripts/gen_wire_golden.py` produces `tests/wire_fixtures/wire_golden.json` (canonical producer = host `soothe.wire`/`soothe.display`); the same file is committed in soothe-client-python and both sides' tests (`packages/soothe/tests/unit/wire/test_wire_golden.py`, client `tests/unit/test_wire_golden.py`) pin its sha256 — any wire-format drift now fails CI on both sides.
+- `soothe-nano` floor bumped to 1.4.1 (task_namespace ships); `soothe-client-python` floor bumped to 1.2.0.
+
+### Changed (soothe-sdk dissolution — stage 3)
 - All `soothe_sdk.*` imports across `soothe` and `soothe-daemon` (src + tests) rewritten to the new homes; `soothe-sdk` removed from every `pyproject.toml`, the uv workspace, vulture paths, the release workflow (deploy-sdk job), and `verify_finally` package list. Import-boundary enforcement now also bans `soothe_sdk` imports from any owned package.
 - Rules docs updated: `.agents/rules/package-boundaries.md` (new DAG table, dissolved-package ban), `docs/diagrams/module_boundaries.mmd`, `docs/wiki/api-reference/sdk-api.md` (dissolution banner with migration table).
 

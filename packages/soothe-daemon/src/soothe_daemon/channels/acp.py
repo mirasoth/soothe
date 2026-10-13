@@ -32,10 +32,6 @@ from typing import TYPE_CHECKING, Any
 from fastapi import FastAPI, WebSocket
 from soothe.display.text_extract import extract_text_from_ai_message
 from soothe.ux.loop_stream import assistant_output_phase
-from soothe.ux.stream_tool_wire import (
-    STREAM_TOOL_CALL_UPDATE,
-    TOOL_CALL_UPDATES_BATCH,
-)
 from soothe_nano.core.events import (
     LOOP_CLARIFICATION_REQUESTED,
     PLAN_CREATED,
@@ -48,6 +44,10 @@ from soothe_nano.core.events import (
     WIRED_SUBAGENT_COMPLETED,
     WIRED_SUBAGENT_FAILED,
     WIRED_SUBAGENT_STARTED,
+)
+from soothe_nano.ux.stream_tool_wire import (
+    STREAM_TOOL_CALL_UPDATE,
+    TOOL_CALL_UPDATES_BATCH,
 )
 from starlette.websockets import WebSocketDisconnect
 

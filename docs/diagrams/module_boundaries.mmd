@@ -21,7 +21,7 @@ graph TD
   subgraph PyPI["PyPI dependencies (consumed, not owned)"]
     NANO["<b>soothe-nano</b> ≥1.4<br/>Coding CoreAgent · in-proc skills / MCP / backends<br/>agent-axis contracts: plugin API · core events · protocols · paths<br/>← soothe-deepagents"]
     DEEP["<b>soothe-deepagents</b><br/>deepagents fork · MemoryMiddleware<br/>leaf"]
-    CLIENT["<b>soothe-client-python</b> ≥1.1<br/>WebSocket transport + client-side contract copies<br/>(wire · events · display · ux)<br/>runtime dep of CLI only"]
+    CLIENT["<b>soothe-client-python</b> ≥1.2<br/>WebSocket transport + client-side contract copies<br/>(wire · events · display parse side · ux classification)<br/>runtime dep of CLI only · wire golden fixture pinned with host"]
   end
 
   %% ── Monorepo-owned packages ──
@@ -56,7 +56,7 @@ graph TD
     subgraph CLI["soothe-cli — human interface"]
       C_CLI["cli/ — main.py (Typer) · commands/ · execution/"]
       C_TUI["tui/ — Textual app · widgets · commands · sessions · hooks · card_wire · composer_mode · tool_display · mermaid_render · markdown_theme"]
-      C_MISC["config · runtime"]
+      C_MISC["config · runtime · display (card_binder · text_extract) · ux (subagent render)"]
     end
 
   end

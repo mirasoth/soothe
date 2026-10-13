@@ -565,8 +565,7 @@ async def test_stream_and_collect_logs_tool_call_args_from_index_chunk(
 async def test_stream_and_collect_emits_late_tool_call_update_on_tool_message() -> None:
     """Wire update is emitted on ToolMessage when args were recorded from index chunks."""
     from langchain_core.messages import AIMessageChunk
-
-    from soothe.ux.stream_tool_wire import STREAM_TOOL_CALL_UPDATE
+    from soothe_nano.ux.stream_tool_wire import STREAM_TOOL_CALL_UPDATE
 
     ai = AIMessageChunk(
         content="",
@@ -612,7 +611,7 @@ async def test_stream_and_collect_emits_late_tool_call_update_on_tool_message() 
 @pytest.mark.asyncio
 async def test_stream_and_collect_counts_execute_namespace_tool_message() -> None:
     """Execute-namespace ToolMessages must count toward main_tool_count (RFC-628)."""
-    from soothe.ux.stream_tool_wire import STREAM_TOOL_CALL_UPDATE
+    from soothe_nano.ux.stream_tool_wire import STREAM_TOOL_CALL_UPDATE
 
     ai = AIMessage(
         content="",
@@ -877,7 +876,7 @@ async def test_stream_and_collect_assigns_task_idx_per_subgraph_namespace() -> N
 @pytest.mark.asyncio
 async def test_stream_and_collect_emits_subgraph_placeholder_wire_update() -> None:
     """Subagent ``tools:`` subgraph placeholder updates yield wire chunks (ea1d regression)."""
-    from soothe.ux.stream_tool_wire import STREAM_TOOL_CALL_UPDATE
+    from soothe_nano.ux.stream_tool_wire import STREAM_TOOL_CALL_UPDATE
 
     tool_msg = ToolMessage(
         content="[]",

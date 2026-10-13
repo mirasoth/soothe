@@ -12,8 +12,7 @@ from soothe_nano.core.events import (
     CARD_WIRE_TYPES,
 )
 from soothe_nano.core.verbosity import VerbosityTier, should_show
-
-from soothe.ux.stream_tool_wire import STREAM_TOOL_CALL_UPDATE, TOOL_CALL_UPDATES_BATCH
+from soothe_nano.ux.stream_tool_wire import STREAM_TOOL_CALL_UPDATE, TOOL_CALL_UPDATES_BATCH
 
 if TYPE_CHECKING:
     from soothe.events import EventMeta

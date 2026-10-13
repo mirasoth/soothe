@@ -77,11 +77,6 @@ from soothe_client.ux.loop_stream import (
     is_stream_terminal,
 )
 from soothe_client.ux.stream_tool_wire import STREAM_TOOL_CALL_UPDATE, TOOL_CALL_UPDATES_BATCH
-from soothe_client.ux.subagent_wire_display import (
-    SubagentWireRenderKind,
-    classify_subagent_wire_render,
-    subagent_wire_row_params,
-)
 from soothe_client.ux.task_namespace import (
     TaskScope,
     is_inner_subgraph_task_tool_id,
@@ -174,6 +169,11 @@ from soothe_cli.tui.widgets.messages import (
     reset_turn_tool_refresh_state,
 )
 from soothe_cli.tui.widgets.messages.cognition_goal_tree import _normalize_step_dependencies
+from soothe_cli.ux.subagent_wire_display import (
+    SubagentWireRenderKind,
+    classify_subagent_wire_render,
+    subagent_wire_row_params,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1257,7 +1257,7 @@ def _apply_subagent_wire_activity_event(
     if et == "soothe.subagent.planner.progress" and _is_orphan_subagent_card(card):
         return True
 
-    from soothe_client.ux.subagent_progress import summarize_subagent_wire_activity
+    from soothe_cli.ux.subagent_progress import summarize_subagent_wire_activity
 
     line = summarize_subagent_wire_activity(et, data).strip()
     if not line:

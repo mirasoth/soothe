@@ -1,0 +1,150 @@
+{
+  "cases": {
+    "ai_chunk": {
+      "additional_kwargs": {},
+      "chunk_position": null,
+      "content": "delta text ",
+      "id": "golden-chunk-1",
+      "invalid_tool_calls": [],
+      "name": null,
+      "response_metadata": {},
+      "tool_call_chunks": [],
+      "tool_calls": [],
+      "type": "AIMessageChunk",
+      "usage_metadata": null
+    },
+    "ai_message_with_tool_calls": {
+      "additional_kwargs": {},
+      "content": "Reading the ledger now.",
+      "id": "golden-ai-1",
+      "invalid_tool_calls": [],
+      "name": null,
+      "response_metadata": {},
+      "tool_calls": [
+        {
+          "args": {
+            "offset": 0,
+            "path": "docs/README.md"
+          },
+          "id": "call_golden_1",
+          "name": "read_file",
+          "type": "tool_call"
+        }
+      ],
+      "type": "ai",
+      "usage_metadata": null
+    },
+    "batch": [
+      {
+        "id": "golden-ping",
+        "payload": {},
+        "type": "ping"
+      },
+      {
+        "id": "golden-pong",
+        "payload": {},
+        "type": "pong"
+      }
+    ],
+    "card_frame": {
+      "cognition_goal_snapshot_json": null,
+      "cognition_plan_action": null,
+      "cognition_plan_assessment": null,
+      "cognition_plan_iteration": null,
+      "cognition_plan_status": null,
+      "cognition_plan_strategy": null,
+      "content": "",
+      "diff_file_path": null,
+      "height_hint": null,
+      "id": "card_golden_1",
+      "is_streaming": false,
+      "loop_output_phase": null,
+      "plan_markdown": null,
+      "plan_origin_node": null,
+      "plan_path": null,
+      "plan_review_action": null,
+      "plan_review_comments": null,
+      "skill_args": null,
+      "skill_body": null,
+      "skill_description": null,
+      "skill_expanded": false,
+      "skill_name": null,
+      "skill_source": null,
+      "step_duration_ms": null,
+      "step_progress_description": null,
+      "step_progress_id": null,
+      "step_progress_phase": null,
+      "step_success": null,
+      "step_summary": null,
+      "step_tool_call_count": null,
+      "step_tool_calls_json": null,
+      "timestamp": "2026-10-13T00:00:00Z",
+      "tool_args": {
+        "path": "docs/README.md"
+      },
+      "tool_expanded": false,
+      "tool_name": "read_file",
+      "tool_output": "# Title\nBody",
+      "tool_rows_json": null,
+      "tool_status": "success",
+      "type": "tool"
+    },
+    "connection_init": {
+      "id": "golden-init",
+      "payload": {
+        "client_name": "golden",
+        "client_version": "0.0.0",
+        "loop_id": "loop_golden"
+      },
+      "type": "connection_init"
+    },
+    "error": {
+      "id": "golden-err",
+      "payload": {
+        "code": "not_found",
+        "message": "loop missing"
+      },
+      "type": "error"
+    },
+    "human_message": {
+      "additional_kwargs": {},
+      "content": "Summarize the plan",
+      "id": "golden-human-1",
+      "name": null,
+      "response_metadata": {},
+      "type": "human"
+    },
+    "response": {
+      "id": "golden-resp",
+      "payload": {
+        "ok": true,
+        "result": {
+          "value": 42
+        }
+      },
+      "type": "response"
+    },
+    "stream_tool_update": {
+      "args": {
+        "path": "docs/README.md"
+      },
+      "tool_call_id": "s1:s:read_file:0",
+      "tool_name": "read_file",
+      "type": "soothe.cognition.stream.tool_call.update"
+    },
+    "tool_message": {
+      "additional_kwargs": {},
+      "artifact": null,
+      "content": "# Title\nBody",
+      "id": "golden-tool-1",
+      "name": "read_file",
+      "response_metadata": {},
+      "status": "success",
+      "tool_call_id": "call_golden_1",
+      "type": "tool"
+    }
+  },
+  "note": "Golden wire payloads; canonical producer is the host soothe.wire/soothe.display. The sha256 of this file is pinned in both the host and client contract tests.",
+  "response_wire_text": "{\"type\":\"response\",\"id\":\"golden-resp\",\"payload\":{\"ok\":true,\"result\":{\"value\":42}}}",
+  "schema": "soothe.wire.golden/1"
+}

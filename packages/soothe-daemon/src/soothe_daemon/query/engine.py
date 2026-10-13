@@ -15,12 +15,12 @@ from langchain_core.messages import AIMessage, AIMessageChunk
 from soothe.display.text_extract import extract_text_from_ai_message
 from soothe.events import ERROR
 from soothe.logging import ThreadLogger, set_thread_id
-from soothe.ux.stream_tool_wire import (
+from soothe.wire.codec import prepare_stream_data_for_wire
+from soothe.wire.protocol import _serialize_for_json
+from soothe_nano.ux.stream_tool_wire import (
     TOOL_CALL_UPDATES_BATCH,
     extract_tool_call_updates_from_wire_message,
 )
-from soothe.wire.codec import prepare_stream_data_for_wire
-from soothe.wire.protocol import _serialize_for_json
 
 from soothe_daemon.bootstrap.logging import set_client_id, set_loop_id
 from soothe_daemon.protocol.intent_hints import is_daemon_intent_hint

@@ -4,8 +4,7 @@ Extracted from verbosity.py.
 """
 
 from soothe_nano.core.verbosity import VerbosityTier
-
-from soothe.ux.stream_tool_wire import STREAM_TOOL_CALL_UPDATE, TOOL_CALL_UPDATES_BATCH
+from soothe_nano.ux.stream_tool_wire import STREAM_TOOL_CALL_UPDATE, TOOL_CALL_UPDATES_BATCH
 
 
 def _subagent_wire_tier(event_type: str) -> VerbosityTier | None:
