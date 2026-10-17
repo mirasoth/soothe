@@ -1,6 +1,6 @@
 """Host checkpointer pool — delegates to nano, bound to the host pool registry."""
 
-from soothe_nano.resolve.shared_checkpointer_pool import (
+from soothe_nano.persistence.shared_checkpointer_pool import (
     SharedCheckpointerPool as _NanoSharedCheckpointerPool,
 )
 

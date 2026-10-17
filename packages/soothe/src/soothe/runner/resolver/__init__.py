@@ -1,7 +1,7 @@
 """Runner-level resolution: durability, checkpointer, planner, and policy.
 
 Agent/tool/subagent resolution happens inside soothe-nano's AgentBuilder
-(`soothe_nano.resolve`); this module only binds host-owned pools and
+(`soothe_nano.utils.resolver`); this module only binds host-owned pools and
 runner-scoped protocols for `SootheRunner`.
 """
 
@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from soothe_nano.resolve import resolve_policy
+from soothe_nano.utils.resolver import resolve_policy
 
 from soothe.config import SootheConfig
 

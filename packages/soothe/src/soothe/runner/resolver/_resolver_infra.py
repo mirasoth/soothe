@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from soothe_nano.resolve import (
+from soothe_nano.utils.resolver import (
     resolve_checkpointer as _nano_resolve_checkpointer,
 )
-from soothe_nano.resolve import (
+from soothe_nano.utils.resolver import (
     resolve_durability as _nano_resolve_durability,
 )
 

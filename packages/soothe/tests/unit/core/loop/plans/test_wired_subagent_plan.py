@@ -8,7 +8,7 @@ from soothe.sloop.state.schemas import resolve_wire_subagent
 
 def test_resolve_wire_subagent_accepts_slash_hint() -> None:
     assert resolve_wire_subagent(wire_subagent="browser_use") == "browser_use"
-    assert resolve_wire_subagent(wire_subagent="academic_research") == "academic_research"
+    assert resolve_wire_subagent(wire_subagent="deep_research") == "deep_research"
     assert resolve_wire_subagent(wire_subagent="unknown") is None
 
 

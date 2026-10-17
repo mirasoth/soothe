@@ -11,7 +11,6 @@ INTAKE_ONLY_WIRE_SUBAGENTS = frozenset(
     {
         "browser_use",
         "deep_research",
-        "academic_research",
     }
 )
 

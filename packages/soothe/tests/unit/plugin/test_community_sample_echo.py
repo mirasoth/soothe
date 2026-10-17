@@ -8,7 +8,7 @@ import pytest
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
 from langchain_core.messages import HumanMessage
 from soothe_nano.plugin.global_registry import load_plugins
-from soothe_nano.resolve import resolve_subagents
+from soothe_nano.utils.resolver import resolve_subagents
 
 from soothe.config import SootheConfig
 from soothe.config.models import SubagentConfig, ToolsConfig

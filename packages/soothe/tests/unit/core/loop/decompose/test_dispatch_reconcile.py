@@ -75,7 +75,7 @@ async def test_dispatch_creates_root_and_claims() -> None:
 
 @pytest.mark.asyncio
 async def test_dispatch_plan_decision_carries_intake_label() -> None:
-    from soothe_nano.intention.models import TaskComplexity
+    from soothe_nano.protocols.routing import TaskComplexity
 
     from soothe.sloop.intention.models import IntakeLabel, IntentClassification
 
@@ -256,7 +256,7 @@ async def test_root_eval_finalizes_after_completed_eval() -> None:
 async def test_root_eval_minimal_skips_eval_and_finalizes() -> None:
     """Trivial tasks skip the coverage Eval phase and go directly to finalize,
     even with a decomposed action tree that would otherwise require Eval."""
-    from soothe_nano.intention.models import TaskComplexity
+    from soothe_nano.protocols.routing import TaskComplexity
 
     from soothe.sloop.intention.models import IntakeLabel, IntentClassification
 
@@ -287,7 +287,7 @@ async def test_root_eval_minimal_skips_eval_and_finalizes() -> None:
 async def test_root_eval_simple_llm_decides_skip(monkeypatch) -> None:
     """SIMPLE tasks: when the LLM decides no coverage audit is needed, skip
     Eval and finalize. This replaces the old deterministic SIMPLE skip."""
-    from soothe_nano.intention.models import TaskComplexity
+    from soothe_nano.protocols.routing import TaskComplexity
 
     from soothe.sloop.eval.eval_decision import EvalDecision
     from soothe.sloop.intention.models import IntakeLabel, IntentClassification
@@ -330,7 +330,7 @@ async def test_root_eval_simple_llm_decides_skip(monkeypatch) -> None:
 async def test_root_eval_simple_llm_decides_run_eval(monkeypatch) -> None:
     """SIMPLE tasks: when the LLM decides a coverage audit IS needed, insert
     an Eval step and route to dispatch."""
-    from soothe_nano.intention.models import TaskComplexity
+    from soothe_nano.protocols.routing import TaskComplexity
 
     from soothe.sloop.eval.eval_decision import EvalDecision
     from soothe.sloop.intention.models import IntakeLabel, IntentClassification
@@ -370,7 +370,7 @@ async def test_root_eval_simple_llm_decides_run_eval(monkeypatch) -> None:
 async def test_root_eval_simple_no_fast_model_fails_safe() -> None:
     """SIMPLE tasks: when no fast model is available, fail-safe to running
     Eval (should_run_eval=True) rather than silently skipping."""
-    from soothe_nano.intention.models import TaskComplexity
+    from soothe_nano.protocols.routing import TaskComplexity
 
     from soothe.sloop.intention.models import IntakeLabel, IntentClassification
 
@@ -400,7 +400,7 @@ async def test_root_eval_simple_no_fast_model_fails_safe() -> None:
 async def test_root_eval_complex_inserts_eval_step() -> None:
     """Complex tasks still run the full coverage Eval gate when Eval is
     required — the simple/minimal skip does not apply."""
-    from soothe_nano.intention.models import TaskComplexity
+    from soothe_nano.protocols.routing import TaskComplexity
 
     from soothe.sloop.intention.models import IntakeLabel, IntentClassification
 
@@ -438,7 +438,7 @@ async def test_root_eval_readonly_mode_skips_eval(mode: str) -> None:
     """Plan/ask interaction modes never run the coverage Eval — no Eval
     StepNode insertion and no eval-decision LLM call, even when the action
     tree would otherwise require one."""
-    from soothe_nano.intention.models import TaskComplexity
+    from soothe_nano.protocols.routing import TaskComplexity
 
     from soothe.sloop.intention.models import IntakeLabel, IntentClassification
 

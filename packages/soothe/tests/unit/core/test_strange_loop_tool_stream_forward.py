@@ -341,24 +341,6 @@ def test_browser_use_step_wire_custom_forwarded() -> None:
     assert _forward_messages_chunk(chunk) is True
 
 
-def test_academic_research_step_wire_custom_forwarded() -> None:
-    """academic_research wire customs must forward like deep_research for orphan cards."""
-    import soothe_nano.subagents.academic_research.events  # noqa: F401
-
-    chunk = (
-        (),
-        "custom",
-        {
-            "type": "soothe.subagent.academic_research.step.completed",
-            "tool_name": "PlanResearch",
-            "args_preview": "3 queries",
-            "status": "done",
-            "invocation_id": "inv1",
-        },
-    )
-    assert _forward_messages_chunk(chunk) is True
-
-
 def test_subagent_progress_wire_custom_forwarded() -> None:
     chunk = (
         ("tools:abc123",),
