@@ -97,6 +97,22 @@ def _try_readonly_step_retry(
     return NodeResult(payload={"root_eval_route": "dispatch"})
 
 
+def _dispatch_waves_exhausted(ctx: LoopRuntimeContext) -> tuple[bool, int, int]:
+    """Whether DISPATCH has hit its ``max_waves`` cap for the current goal.
+
+    Mirrors the wave check in ``DispatchNode.process`` so ROOT_EVAL can break
+    the ``DISPATCH → ROOT_EVAL → DISPATCH`` spin that otherwise burns the whole
+    LangGraph recursion budget on one goal when ``max_waves`` is reached while
+    the action tree still has ready (non-eval) steps.
+
+    Returns ``(exhausted, wave, max_waves)``.
+    """
+    dec_cfg = getattr(ctx.strange_loop.config.agent.loop, "decompose", None)
+    max_waves = positive_config_int(getattr(dec_cfg, "max_waves", 10) if dec_cfg else 10, 10)
+    wave = positive_config_int(getattr(ctx.loop_state, "iteration", 0), 0, minimum=0)
+    return wave >= max_waves, wave, max_waves
+
+
 def _eval_envelope(goal_text: str, nodes: list[Any]) -> str:
     rows: list[str] = []
     for node in nodes:
@@ -221,14 +237,36 @@ class RootEvalNode(LoopNode):
                     return NodeResult(payload={"root_eval_route": "fatal"})
                 if not goal.steps.action_tree_green():
                     if goal.steps.ready_steps():
-                        return NodeResult(payload={"root_eval_route": "dispatch"})
-                    logger.warning("[root_eval] action tree not green and no ready steps")
-                    return NodeResult(payload={"root_eval_route": "fatal"})
+                        # When DISPATCH waves are exhausted, DISPATCH rejects
+                        # non-eval ready steps (max_waves cap) and bounces back
+                        # here, which sees the same ready steps and routes to
+                        # DISPATCH again — an unbounded root_eval↔dispatch cycle
+                        # that exhausts the LangGraph recursion limit and aborts
+                        # the whole loop. When waves are exhausted, fall through
+                        # to coverage Eval insertion / finalize so the goal is
+                        # assessed from the work done so far instead of spinning.
+                        exhausted, wave, max_waves = _dispatch_waves_exhausted(ctx)
+                        if not exhausted:
+                            return NodeResult(payload={"root_eval_route": "dispatch"})
+                        logger.info(
+                            "[root_eval] action tree not green but waves exhausted "
+                            "(%d>=%d); assess coverage via Eval instead of cycling "
+                            "to DISPATCH",
+                            wave,
+                            max_waves,
+                        )
+                        # Fall through to Eval insertion below.
+                    else:
+                        logger.warning("[root_eval] action tree not green and no ready steps")
+                        return NodeResult(payload={"root_eval_route": "fatal"})
 
                 # RFC-231 LoopRail: action tree is green and no pending action
                 # steps remain. Emit dag_idle so rail rules can trigger
                 # complete_job or review/qa transitions before coverage Eval.
-                await _emit_dag_idle_rail_event(ctx, goal)
+                # Skip dag_idle when the tree isn't green (waves-exhausted fall
+                # through above) so rail rules don't fire a false complete_job.
+                if goal.steps.action_tree_green():
+                    await _emit_dag_idle_rail_event(ctx, goal)
 
                 latest = goal.steps.latest_eval()
                 if latest is not None:
