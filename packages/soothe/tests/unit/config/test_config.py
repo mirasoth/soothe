@@ -31,10 +31,9 @@ class TestSootheConfig:
         # Check that tools is a ToolsConfig instance
         assert isinstance(cfg.tools, ToolsConfig)
         # Check that default tools are enabled
-        assert cfg.tools.execution.enabled is True
+        assert cfg.tools.shell.enabled is True
         assert cfg.tools.file_ops.enabled is True
         assert cfg.tools.datetime.enabled is True
-        assert cfg.tools.data.enabled is True
         assert cfg.tools.wizsearch.enabled is True
         # Heavy optional tools are disabled by default (opt-in via config)
         assert cfg.tools.deepxiv.enabled is False

@@ -17,7 +17,7 @@ from soothe.events import ERROR
 from soothe.logging import ThreadLogger, set_thread_id
 from soothe.wire.codec import prepare_stream_data_for_wire
 from soothe.wire.protocol import _serialize_for_json
-from soothe_nano.ux.stream_tool_wire import (
+from soothe_nano.wire.stream_tool_wire import (
     TOOL_CALL_UPDATES_BATCH,
     extract_tool_call_updates_from_wire_message,
 )

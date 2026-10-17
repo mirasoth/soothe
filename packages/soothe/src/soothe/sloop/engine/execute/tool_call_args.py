@@ -174,7 +174,7 @@ def filter_redundant_stream_tool_updates(
 
 def wire_updates_from_ai_message(msg: BaseMessage) -> list[dict[str, Any]]:
     """Build `soothe.stream.tool_call.update` payloads from a post-backfill AI message."""
-    from soothe_nano.ux.stream_tool_wire import (
+    from soothe_nano.wire.stream_tool_wire import (
         tool_call_update_event,
         unified_tool_update_allowed_without_args,
     )
@@ -293,7 +293,7 @@ class ToolCallArgsCollector:
         task_idx: int | None = None,
     ) -> tuple[ToolMessage, list[dict[str, Any]]]:
         """Rewrite `tool_call_id`, merge invocation args, return wire update events."""
-        from soothe_nano.ux.stream_tool_wire import tool_call_update_event
+        from soothe_nano.wire.stream_tool_wire import tool_call_update_event
 
         raw_tcid = str(getattr(msg, "tool_call_id", "") or "").strip()
         self.ingest_invocation_registry(raw_tcid)
@@ -322,8 +322,8 @@ class ToolCallArgsCollector:
         tool_name: str,
     ) -> dict[str, Any] | None:
         """Subagent wire update: real args when known, else `_subgraph_tool` placeholder."""
-        from soothe_nano.ux.stream_tool_wire import tool_call_update_event
-        from soothe_nano.ux.task_namespace import is_unified_tool_call_id
+        from soothe_nano.wire.stream_tool_wire import tool_call_update_event
+        from soothe_nano.wire.task_namespace import is_unified_tool_call_id
 
         tcid = str(tool_call_id or "").strip()
         tname = str(tool_name or "").strip() or "unknown"
@@ -345,7 +345,7 @@ def enrich_wire_updates_with_collector(
     finishes or before `ToolMessage` promotion; hydrate from the collector when
     kwargs were recorded from AI chunks or the invocation registry.
     """
-    from soothe_nano.ux.stream_tool_wire import tool_call_update_event
+    from soothe_nano.wire.stream_tool_wire import tool_call_update_event
 
     enriched: list[dict[str, Any]] = []
     for upd in updates:

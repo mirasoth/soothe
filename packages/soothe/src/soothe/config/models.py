@@ -17,7 +17,7 @@ from soothe_nano.config.models import (  # noqa: F401
     DeepxivToolsConfig,
     DurabilityProtocolConfig,
     EmbeddingProfile,
-    ExecutionToolsConfig,
+    ShellToolsConfig,
     FailureIntentConfig,
     FileLoggingConfig,
     FilesystemMiddlewareConfig,

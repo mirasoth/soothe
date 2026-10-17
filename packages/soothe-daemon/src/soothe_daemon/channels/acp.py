@@ -45,7 +45,7 @@ from soothe_nano.core.events import (
     WIRED_SUBAGENT_FAILED,
     WIRED_SUBAGENT_STARTED,
 )
-from soothe_nano.ux.stream_tool_wire import (
+from soothe_nano.wire.stream_tool_wire import (
     STREAM_TOOL_CALL_UPDATE,
     TOOL_CALL_UPDATES_BATCH,
 )

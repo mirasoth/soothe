@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from soothe_nano.core.subagent_wire import is_curated_subagent_wire_event_type
 from soothe_nano.utils.text_preview import preview_first
-from soothe_nano.ux.stream_tool_wire import STREAM_TOOL_CALL_UPDATE
+from soothe_nano.wire.stream_tool_wire import STREAM_TOOL_CALL_UPDATE
 
 from soothe.config.constants import DEFAULT_MAX_ITERATIONS
 from soothe.events import (

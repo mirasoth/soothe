@@ -286,7 +286,7 @@ def _pending_or_overlay_id_matches_lookup(
     if cid == lid:
         return True
 
-    from soothe_nano.ux.task_namespace import parse_unified_tool_call_id
+    from soothe_nano.wire.task_namespace import parse_unified_tool_call_id
 
     cand_step, cand_type, cand_tidx, cand_info = parse_unified_tool_call_id(cid)
     lookup_step, lookup_type, lookup_tidx, lookup_info = parse_unified_tool_call_id(lid)
@@ -317,7 +317,7 @@ def _resolve_pending_lookup_tool_name(
         return name
     tcid = str(tool_call_id).strip()
     if tcid:
-        from soothe_nano.ux.task_namespace import parse_unified_tool_call_id
+        from soothe_nano.wire.task_namespace import parse_unified_tool_call_id
 
         _, _, _, tool_info = parse_unified_tool_call_id(tcid)
         if tool_info:

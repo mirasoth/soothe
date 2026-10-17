@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
-from soothe_nano.ux.stream_tool_wire import STREAM_TOOL_CALL_UPDATE
+from soothe_nano.wire.stream_tool_wire import STREAM_TOOL_CALL_UPDATE
 
 from soothe.runner._runner_strange_loop import (
     _MSG_PAIR_LEN,
