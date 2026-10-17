@@ -1027,39 +1027,80 @@ class StrangeLoop:
 
                     await invoke_strange_loop_graph(ctx)
                 except Exception as e:
-                    # Check if this is a recoverable DB connection error
-                    from soothe.sloop.checkpoints.retry_utils import (
-                        is_recoverable_connection_error,
-                    )
+                    # GraphRecursionError is a per-goal safety tripwire (e.g. a
+                    # routing cycle). Scope it to the current goal: mark it
+                    # interrupted so `retry`/`resume` restores the cursor, then
+                    # surface a goal-level error. The loop thread survives so
+                    # the next goal starts fresh with a full recursion budget.
+                    from langgraph.errors import GraphRecursionError
 
-                    if is_recoverable_connection_error(e):
+                    if isinstance(e, GraphRecursionError):
                         logger.error(
-                            "[pump_graph] DB connection error after retries: %s: %s. "
-                            "Emitting fatal_error event instead of crashing daemon.",
-                            type(e).__name__,
+                            "[pump_graph] GraphRecursionError for loop=%s: %s. "
+                            "Marking goal interrupted (per-goal recursion budget).",
+                            ctx.state_manager.loop_id,
                             e,
                         )
+                        if ctx.goal_record is not None:
+                            try:
+                                await ctx.state_manager.mark_goal_interrupted(
+                                    ctx.goal_record,
+                                    iteration=ctx.loop_state.iteration,
+                                    reason="graph_recursion_limit",
+                                )
+                            except Exception:
+                                logger.warning(
+                                    "[pump_graph] mark_goal_interrupted failed (loop=%s)",
+                                    ctx.state_manager.loop_id,
+                                    exc_info=True,
+                                )
                         await queue.put(
                             (
                                 "fatal_error",
                                 {
-                                    "error": f"Database connection lost: {type(e).__name__}",
+                                    "error": (
+                                        "Graph recursion limit reached for this goal "
+                                        "(per-goal budget exhausted, likely a routing "
+                                        "cycle). Goal marked interrupted; retry or "
+                                        "resume to continue."
+                                    ),
                                 },
                             )
                         )
                     else:
-                        logger.error(
-                            "[pump_graph] Graph execution error: %s: %s",
-                            type(e).__name__,
-                            e,
-                            exc_info=True,
+                        # Check if this is a recoverable DB connection error
+                        from soothe.sloop.checkpoints.retry_utils import (
+                            is_recoverable_connection_error,
                         )
-                        await queue.put(
-                            (
-                                "fatal_error",
-                                {"error": str(e)},
+
+                        if is_recoverable_connection_error(e):
+                            logger.error(
+                                "[pump_graph] DB connection error after retries: %s: %s. "
+                                "Emitting fatal_error event instead of crashing daemon.",
+                                type(e).__name__,
+                                e,
                             )
-                        )
+                            await queue.put(
+                                (
+                                    "fatal_error",
+                                    {
+                                        "error": f"Database connection lost: {type(e).__name__}",
+                                    },
+                                )
+                            )
+                        else:
+                            logger.error(
+                                "[pump_graph] Graph execution error: %s: %s",
+                                type(e).__name__,
+                                e,
+                                exc_info=True,
+                            )
+                            await queue.put(
+                                (
+                                    "fatal_error",
+                                    {"error": str(e)},
+                                )
+                            )
                 finally:
                     await queue.put(_graph_sentinel)
 

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Break the unbounded `DISPATCH → ROOT_EVAL → DISPATCH` cycle that exhausted the LangGraph recursion limit (10008) and aborted long-running `continue_loop` loops on a single goal. When `max_waves` was reached with a non-green action tree (ready non-eval steps remained), `DISPATCH` rejected the steps and bounced to `ROOT_EVAL`, which saw the same ready steps and routed back — ~5000 cycles in seconds until the per-goal recursion budget tripped (`GraphRecursionError`) and killed the loop. `ROOT_EVAL` now detects exhausted waves and falls through to coverage Eval insertion / finalize instead of cycling, and `dag_idle` is suppressed when the tree isn't green so rail rules don't fire a false `complete_job`.
+- `GraphRecursionError` from the StrangeLoop graph invoke is now scoped to the current goal: `pump_graph` marks the in-flight goal `interrupted` (resumable via `retry`/`resume`) and surfaces a goal-scoped message, so the loop thread survives and the next goal starts fresh with a full recursion budget instead of a hard fatal that loses the goal cursor.
+
 ## [v1.1.0] - 2026-10-13
 
 ### Added
