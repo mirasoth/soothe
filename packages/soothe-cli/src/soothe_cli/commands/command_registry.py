@@ -133,12 +133,6 @@ COMMANDS: tuple[SlashCommand, ...] = (
         enter_action=EnterAction.COMPLETE,
     ),
     SlashCommand(
-        name="/academic_research",
-        description="Route prompt to academic_research subagent (usage: /academic_research <query>)",
-        bypass_tier=BypassTier.QUEUED,
-        enter_action=EnterAction.COMPLETE,
-    ),
-    SlashCommand(
         name="/browser_use",
         description="Route prompt to browser_use subagent (usage: /browser_use <task>)",
         bypass_tier=BypassTier.QUEUED,
