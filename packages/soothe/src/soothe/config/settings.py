@@ -40,6 +40,7 @@ from soothe.config.models import (
     ProgressiveToolsConfig,
     ReportOutputConfig,
     RouterProfile,
+    SandboxConfig,
     SecurityConfig,
     SkillifyConfig,
     SubagentConfig,
@@ -539,6 +540,12 @@ class SootheConfig(BaseSettings):
 
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     """Tool group configurations. Each tool can be enabled/disabled and configured."""
+
+    sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
+    """Sandbox-mode tool placement policy; consulted only when a sandbox
+    backend is injected into the agent build. Mirrors the nano ``SandboxConfig``
+    so the host ``SootheConfig`` exposes the same ``config.sandbox`` seam that
+    :mod:`soothe_nano.agent.builder` reads during placement finalization."""
 
     mcp_servers: list[MCPServerConfig] = Field(default_factory=list)
     """MCP server configurations. Server names must be unique."""
