@@ -7,28 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [v1.2.0-beta.3] - 2026-10-18
+## [v1.2.0] - 2026-10-18
+
+First stable release on the nano 2.0 train. Pins `soothe-nano>=2.0.0,<3.0.0`.
 
 ### Changed
-- Config scaffold aligned to nano 2.0's tool/subagent surface (`packages/soothe-daemon/src/soothe_daemon/setup/templates/nano.yml`, mirrored by the `config/templates/nano.yml` symlink): `tools.execution` → `tools.shell` (nano renamed the tool group — tool names are unchanged), and the `tools.data` / `tools.file_ops` / `subagents.academic_research` blocks are removed (nano 2.0.0a1 deleted the `data` and `image` toolkits, retired the `file_ops` toolkit group in favour of the middleware filesystem surface, and deleted the `academic_research` subagent with no compat shim). Stale keys were silently ignored before (`SootheConfig` uses `extra="ignore"`), so scaffolding could ship a config that no longer matches any model field.
+- Align to nano 2.0: `soothe.runner.resolver` pruned to its real surface (runner-level `resolve_checkpointer`/`resolve_durability`/`resolve_planner`/`resolve_policy`); dead re-exports of nano's `resolve_memory`/`resolve_subagents`/`resolve_tools`/`SUBAGENT_FACTORIES` removed. Host pool binding imports nano's public `soothe_nano.resolve.{resolve_checkpointer,resolve_durability}` instead of the private `_resolver_infra` path.
+- Stream tool-wire contract imports moved with the nano rename: `soothe_nano.ux.{task_namespace,stream_tool_wire}` → `soothe_nano.wire.{task_namespace,stream_tool_wire}` (nano renamed the `ux` package to `wire`). All `soothe`/`soothe-daemon` src + test import sites updated in lockstep.
+- Config scaffold aligned to nano 2.0's tool/subagent surface (`packages/soothe-daemon/src/soothe_daemon/setup/templates/nano.yml`, mirrored by the `config/templates/nano.yml` symlink): `tools.execution` → `tools.shell`, and the `tools.data` / `tools.file_ops` / `subagents.academic_research` blocks are removed (nano 2.0 deleted the `data` and `image` toolkits, retired the `file_ops` toolkit group in favour of the middleware filesystem surface, and deleted the `academic_research` subagent with no compat shim).
+- Pin `soothe-nano>=2.0.0,<3.0.0` (was `>=2.0.0a2`).
 
 ### Fixed
-- Checkpoint serde allowlist covers every host routing enum that rides in loop state: `IntakeLabel` / `IntakeConfidence` / `IntakeScope` joined `ResponseLanguage` (plus nano's `RoutingClassification` / `TaskComplexity`) in `_create_host_serde`. Unlisted enums serialized fine but were dropped on restore with `Blocked deserialization of soothe.sloop.intention.models.IntakeLabel - not in allowed_msgpack_modules`, silently losing branch-routing state across restarts and thread resumes.
-- The PostgreSQL integration suite no longer hangs forever in pytest-asyncio event-loop teardown. `support_config.reset_pool_singletons` now awaits `AsyncConnectionPool._signal_stop_worker` — a coroutine since psycopg_pool 3.3 (pulled in by the nano 2.0 dependency train) — and joins the returned worker tasks under a bounded timeout; calling it without `await` left the worker and scheduler tasks alive, so `asyncio.Runner.close()` blocked in `_cancel_all_tasks`. It also unwraps `SharedPostgreSQLPool._pool` so the *inner* psycopg pool is signalled (guarded on `_signal_stop_worker`, since `AsyncConnectionPool._pool` is the connection deque).
+- Break the unbounded `DISPATCH → ROOT_EVAL → DISPATCH` cycle that exhausted the LangGraph recursion limit and aborted long-running `continue_loop` loops on a single goal. `ROOT_EVAL` now detects exhausted waves and falls through to coverage Eval insertion / finalize instead of cycling, and `dag_idle` is suppressed when the tree isn't green so rail rules don't fire a false `complete_job`.
+- `GraphRecursionError` from the StrangeLoop graph invoke is now scoped to the current goal: `pump_graph` marks the in-flight goal `interrupted` (resumable via `retry`/`resume`) and surfaces a goal-scoped message, so the loop thread survives and the next goal starts fresh with a full recursion budget.
+- Checkpoint serde allowlist covers every host routing enum that rides in loop state: `IntakeLabel` / `IntakeConfidence` / `IntakeScope` joined `ResponseLanguage` (plus nano's `RoutingClassification` / `TaskComplexity`) in `_create_host_serde`. Unlisted enums serialized fine but were dropped on restore, silently losing branch-routing state across restarts and thread resumes.
+- The PostgreSQL integration suite no longer hangs forever in pytest-asyncio event-loop teardown. `support_config.reset_pool_singletons` now awaits `AsyncConnectionPool._signal_stop_worker` (a coroutine since psycopg_pool 3.3) and joins the returned worker tasks under a bounded timeout; it also unwraps `SharedPostgreSQLPool._pool` so the inner psycopg pool is signalled.
 
-[Compare with previous version]: https://github.com/mirasoth/soothe/compare/v1.2.0-beta.1...v1.2.0-beta.3
-
-## [v1.2.0-beta.1] - 2026-10-18
-
-### Changed
-- `soothe.runner.resolver` pruned to its real surface (runner-level `resolve_checkpointer`/`resolve_durability`/`resolve_planner`/`resolve_policy`). The dead re-exports of nano's `resolve_memory`/`resolve_subagents`/`resolve_tools`/`SUBAGENT_FACTORIES` are removed — they had no production caller, and tests patching them targeted a namespace the builder never used (now patched at `soothe_nano.agent.builder`). Host pool binding imports nano's public `soothe_nano.resolve.{resolve_checkpointer,resolve_durability}` instead of the private `_resolver_infra` path.
-- Stream tool-wire contract imports moved with the nano rename: `soothe_nano.ux.{task_namespace,stream_tool_wire}` → `soothe_nano.wire.{task_namespace,stream_tool_wire}` (nano renamed the `ux` package to `wire` — it holds pure wire-format contracts, not UX/presentation logic; module names unchanged). All `soothe`/`soothe-daemon` src + test import sites updated in lockstep. This rides the nano 2.0.0 train: land the `soothe-nano>=2.0.0,<3.0.0` floor bump and `uv lock` refresh together with the nano 2.0.0 publish.
-
-### Fixed
-- Break the unbounded `DISPATCH → ROOT_EVAL → DISPATCH` cycle that exhausted the LangGraph recursion limit (10008) and aborted long-running `continue_loop` loops on a single goal. When `max_waves` was reached with a non-green action tree (ready non-eval steps remained), `DISPATCH` rejected the steps and bounced to `ROOT_EVAL`, which saw the same ready steps and routed back — ~5000 cycles in seconds until the per-goal recursion budget tripped (`GraphRecursionError`) and killed the loop. `ROOT_EVAL` now detects exhausted waves and falls through to coverage Eval insertion / finalize instead of cycling, and `dag_idle` is suppressed when the tree isn't green so rail rules don't fire a false `complete_job`.
-- `GraphRecursionError` from the StrangeLoop graph invoke is now scoped to the current goal: `pump_graph` marks the in-flight goal `interrupted` (resumable via `retry`/`resume`) and surfaces a goal-scoped message, so the loop thread survives and the next goal starts fresh with a full recursion budget instead of a hard fatal that loses the goal cursor.
-
-[Compare with previous version]: https://github.com/mirasoth/soothe/compare/v1.1.0...v1.2.0-beta.1
+[Compare with previous version]: https://github.com/mirasoth/soothe/compare/v1.1.0...v1.2.0
 
 ## [v1.1.0] - 2026-10-13
 
