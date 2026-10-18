@@ -135,11 +135,12 @@ class TestCoreAgentClass:
         from soothe.coreagent import SootheNanoAgent as CoreAgent
         from soothe.coreagent import create_soothe_agent
 
-        with patch("soothe.runner.resolver.resolve_tools", return_value=[]):
-            with patch("soothe.runner.resolver.resolve_subagents", return_value=[]):
-                with patch("soothe.runner.resolver.resolve_memory", return_value=None):
-                    with patch("soothe.runner.resolver.resolve_planner", return_value=None):
-                        with patch("soothe.runner.resolver.resolve_policy", return_value=None):
+        # The builder resolves via soothe_nano.agent.builder's namespace.
+        with patch("soothe_nano.agent.builder.resolve_tools", return_value=[]):
+            with patch("soothe_nano.agent.builder.resolve_subagents", return_value=[]):
+                with patch("soothe_nano.agent.builder.resolve_memory", return_value=None):
+                    with patch("soothe_nano.agent.builder.resolve_planner", return_value=None):
+                        with patch("soothe_nano.agent.builder.resolve_policy", return_value=None):
                             with patch("soothe_deepagents.create_deep_agent") as mock_create:
                                 mock_graph = _mock_graph()
                                 mock_create.return_value = mock_graph

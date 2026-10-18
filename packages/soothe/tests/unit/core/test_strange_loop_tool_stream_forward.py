@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
-from soothe_nano.ux.stream_tool_wire import STREAM_TOOL_CALL_UPDATE
+from soothe_nano.wire.stream_tool_wire import STREAM_TOOL_CALL_UPDATE
 
 from soothe.runner._runner_strange_loop import (
     _MSG_PAIR_LEN,
@@ -336,24 +336,6 @@ def test_browser_use_step_wire_custom_forwarded() -> None:
             "status": "done",
             "duration_ms": 12,
             "invocation_id": "abc",
-        },
-    )
-    assert _forward_messages_chunk(chunk) is True
-
-
-def test_academic_research_step_wire_custom_forwarded() -> None:
-    """academic_research wire customs must forward like deep_research for orphan cards."""
-    import soothe_nano.subagents.academic_research.events  # noqa: F401
-
-    chunk = (
-        (),
-        "custom",
-        {
-            "type": "soothe.subagent.academic_research.step.completed",
-            "tool_name": "PlanResearch",
-            "args_preview": "3 queries",
-            "status": "done",
-            "invocation_id": "inv1",
         },
     )
     assert _forward_messages_chunk(chunk) is True

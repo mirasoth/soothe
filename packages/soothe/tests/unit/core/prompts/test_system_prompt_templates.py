@@ -12,16 +12,18 @@ def test_configuration_defaults():
 def test_prompt_templates_exist():
     """Test that all prompt templates are defined."""
     from soothe_nano.prompts.fragments import SIMPLE_SYSTEM_PROMPT_FRAGMENT
-    from soothe_nano.prompts.system_templates import _DEFAULT_SYSTEM_PROMPT
+    from soothe_nano.prompts.system_templates import SystemTemplates
 
     from soothe.prompts import ASSISTANT_IDENTITY_FRAGMENT
+
+    default_prompt = SystemTemplates.DEFAULT_SYSTEM_PROMPT
 
     # All templates should be non-empty strings
     assert isinstance(SIMPLE_SYSTEM_PROMPT_FRAGMENT, str)
     assert len(SIMPLE_SYSTEM_PROMPT_FRAGMENT) > 0
 
-    assert isinstance(_DEFAULT_SYSTEM_PROMPT, str)
-    assert len(_DEFAULT_SYSTEM_PROMPT) > 0
+    assert isinstance(default_prompt, str)
+    assert len(default_prompt) > 0
 
     assert "{assistant_name}" in ASSISTANT_IDENTITY_FRAGMENT
 
@@ -40,17 +42,17 @@ def test_token_reduction_estimates():
     # Get prompts for each complexity
     from soothe.prompts import (
         SIMPLE_SYSTEM_PROMPT_FRAGMENT,
-        format_complex_agent_system_prompt_core,
+        PromptIdentity,
+        SystemTemplates,
     )
 
     simple_prompt = SIMPLE_SYSTEM_PROMPT_FRAGMENT
-    complex_prompt = format_complex_agent_system_prompt_core(
+    complex_prompt = SystemTemplates.format_complex_core(
         config.agent.system_prompt,
         config.agent.name,
     )
-    from soothe.prompts import build_assistant_identity_block
 
-    identity = build_assistant_identity_block(config.agent.name)
+    identity = PromptIdentity.identity_block(config.agent.name)
     simple_with_identity = f"{identity}\n\n{simple_prompt}"
     complex_with_identity = f"{identity}\n\n{complex_prompt}"
 

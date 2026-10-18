@@ -24,7 +24,6 @@ def test_intake_only_set_excludes_planner() -> None:
     assert not is_intake_only_wire_subagent("planner")
     assert is_intake_only_wire_subagent("deep_research")
     assert is_intake_only_wire_subagent("browser_use")
-    assert is_intake_only_wire_subagent("academic_research")
     assert not is_intake_only_wire_subagent("explorer")
 
 
@@ -33,7 +32,6 @@ def test_filter_task_catalog_excludes_intake_only_subagents() -> None:
         "planner",  # no longer intake-only (removed from catalog)
         "deep_research",
         "browser_use",
-        "academic_research",
         "plugin_agent",
     ]
     # planner is no longer filtered (not in INTAKE_ONLY_WIRE_SUBAGENTS).
@@ -56,13 +54,13 @@ def test_wired_intake_still_resolves_all_supported_specialists() -> None:
     assert resolve_wire_subagent(wire_subagent="planner") is None  # removed
     assert resolve_wire_subagent(wire_subagent="explorer") is None
     assert resolve_wire_subagent(wire_subagent="deep_research") == "deep_research"
-    assert resolve_wire_subagent(wire_subagent="academic_research") == "academic_research"
+    assert resolve_wire_subagent(wire_subagent="browser_use") == "browser_use"
 
 
 @pytest.mark.asyncio
 async def test_intake_task_guard_always_blocks_intake_only_task() -> None:
     mw = IntakeOnlyTaskGuardMiddleware()
-    for name in ("deep_research", "browser_use", "academic_research"):
+    for name in ("deep_research", "browser_use"):
         request = SimpleNamespace(
             tool_call={
                 "name": "task",

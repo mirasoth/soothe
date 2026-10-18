@@ -26,7 +26,7 @@ async def test_initialize_schema_runs_checkpoints_init_and_migrations() -> None:
 
     pool = object()
     with patch(
-        "soothe.sloop.checkpoints.postgres_schema.initialize_database",
+        "soothe.sloop.checkpoints.postgres_schema.DatabaseInit.initialize",
         new_callable=AsyncMock,
         return_value=DatabaseSchemaResult(init_applied=True, migrations_applied=["001"]),
     ) as run_init:

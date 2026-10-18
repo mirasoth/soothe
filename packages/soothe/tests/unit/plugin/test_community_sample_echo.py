@@ -8,7 +8,7 @@ import pytest
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
 from langchain_core.messages import HumanMessage
 from soothe_nano.plugin.global_registry import load_plugins
-from soothe_nano.resolve import resolve_subagents
+from soothe_nano.utils.resolver import resolve_subagents
 
 from soothe.config import SootheConfig
 from soothe.config.models import SubagentConfig, ToolsConfig
@@ -43,11 +43,9 @@ def _minimal_config_sample_echo_only() -> SootheConfig:
     """Disable built-in subagents and heavy tools; enable only ``sample_echo``."""
     cfg = SootheConfig()
     cfg.tools = ToolsConfig(
-        execution={"enabled": False},
-        file_ops={"enabled": False},
+        shell={"enabled": False},
         wizsearch={"enabled": False},
         datetime={"enabled": False},
-        data={"enabled": False},
         http_requests={"enabled": False},
     )
     for key in list(cfg.subagents.keys()):

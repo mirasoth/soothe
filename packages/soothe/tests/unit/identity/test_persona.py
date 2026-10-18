@@ -13,8 +13,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import soothe_nano.prompts.fragments as nano_fragments
-import soothe_nano.prompts.identity as nano_identity_mod
-from soothe_nano.prompts.identity import build_assistant_identity_block as nano_build
+from soothe_nano.prompts.identity import PromptIdentity
 
 from soothe.config import SootheConfig
 from soothe.config.models import AgentConfig, AssistantIdentity
@@ -40,13 +39,12 @@ _NANO_IDENTITY_XML = (
 def _restore_nano_fragment() -> None:
     """Restore nano module constants after a patch test."""
     nano_fragments.ASSISTANT_IDENTITY_FRAGMENT = _NANO_IDENTITY_XML
-    nano_identity_mod.ASSISTANT_IDENTITY_FRAGMENT = _NANO_IDENTITY_XML
 
 
 def test_default_block_matches_nano_fragment():
     """Host default identity block must reproduce nano's fragment byte-for-byte."""
     host_block = build_assistant_identity_block("Soothe")
-    nano_block = nano_build("Soothe")
+    nano_block = PromptIdentity.identity_block("Soothe")
     assert host_block == nano_block
 
 
@@ -139,20 +137,21 @@ def test_apply_override_patches_nano_fragment():
         assert "Acme" in patched
         assert "a coding agent" in patched
         # Nano's own builder now renders the custom block
-        hot_block = nano_build("Soothe")
+        hot_block = PromptIdentity.identity_block("Soothe")
         assert "invented by Acme" in hot_block
         assert "GPT-4 or Llama" in hot_block
     finally:
         _restore_nano_fragment()
 
 
-def test_apply_override_patches_nano_identity_module():
-    """Patch reaches the re-exported alias in soothe_nano.prompts.identity."""
+def test_apply_override_patches_nano_builder_hot_path():
+    """Patch is observed by nano's identity builder on every call."""
     custom = AssistantIdentity(creator="Acme")
     cfg = SootheConfig(agent=AgentConfig(assistant_identity=custom))
     try:
         apply_identity_fragment_override(cfg)
-        assert "Acme" in nano_identity_mod.ASSISTANT_IDENTITY_FRAGMENT
+        # Lazy fragment read: the builder reflects the patch on each call
+        assert "Acme" in PromptIdentity.identity_block("Soothe")
     finally:
         _restore_nano_fragment()
 

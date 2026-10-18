@@ -15,7 +15,7 @@ import logging
 import pytest
 from soothe_nano.core.events import SootheEvent
 from soothe_nano.core.verbosity import VerbosityTier
-from soothe_nano.ux.stream_tool_wire import STREAM_TOOL_CALL_UPDATE, TOOL_CALL_UPDATES_BATCH
+from soothe_nano.wire.stream_tool_wire import STREAM_TOOL_CALL_UPDATE, TOOL_CALL_UPDATES_BATCH
 
 from soothe.events import EventMeta
 from soothe.events.visibility import (

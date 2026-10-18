@@ -15,9 +15,7 @@ from soothe.sloop.checkpoints.base_backend import StrangeLoopPersistenceBackend
 from soothe.sloop.checkpoints.postgres_schema import (
     initialize_agentloop_postgres_schema,
 )
-from soothe.sloop.checkpoints.retry_utils import (
-    run_with_connection_retry,
-)
+from soothe.sloop.checkpoints.retry_utils import ConnectionRetry
 
 if TYPE_CHECKING:
     from soothe.sloop.checkpoints.shared_pool import SharedPostgreSQLPool
@@ -107,7 +105,9 @@ class PostgreSQLPersistenceBackend(StrangeLoopPersistenceBackend):
                 return self._pool
 
             # psycopg defaults min_size=4; cap min_size to max_size (e.g. reader_pool_size=2).
-            from soothe.persistence.postgres_pool_lifecycle import apply_row_factory
+            from soothe.persistence.postgres_pool_lifecycle import (
+                PostgresPoolLifecycle,
+            )
 
             pool_kwargs: dict[str, Any] = {
                 "max_size": self.pool_size,
@@ -121,7 +121,9 @@ class PostgreSQLPersistenceBackend(StrangeLoopPersistenceBackend):
                     "autocommit": True,
                     "prepare_threshold": 0,
                 }
-            pool = AsyncConnectionPool(self.dsn, **apply_row_factory(pool_kwargs))
+            pool = AsyncConnectionPool(
+                self.dsn, **PostgresPoolLifecycle.apply_row_factory(pool_kwargs)
+            )
 
             # Open pool and initialize schema
             await pool.open()
@@ -181,7 +183,7 @@ class PostgreSQLPersistenceBackend(StrangeLoopPersistenceBackend):
         Returns:
             Result from successful operation.
         """
-        return await run_with_connection_retry(
+        return await ConnectionRetry.run_with_retry(
             action=action,
             op=op,
             pool_getter=self._ensure_pool,

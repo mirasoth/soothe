@@ -5,7 +5,6 @@ from __future__ import annotations
 # Display names for known soothe core subagents.
 SUBAGENT_DISPLAY_NAMES: dict[str, str] = {
     "deep_research": "Deep Research",
-    "academic_research": "Academic Research",
     "browser_use": "Browser",
 }
 
@@ -14,7 +13,6 @@ SUBAGENT_DISPLAY_NAMES: dict[str, str] = {
 # Intake-only specialists (601) must stay here so slash sets preferred_subagent.
 # ``/plan`` is now handled separately by command_router (interaction_mode=plan).
 SUBAGENT_SLASH_ROUTE_IDS: tuple[str, ...] = (
-    "academic_research",
     "deep_research",
     "browser_use",
 )

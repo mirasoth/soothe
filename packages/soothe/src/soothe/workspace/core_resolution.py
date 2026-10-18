@@ -6,11 +6,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from soothe_nano.workspace.workspace_api import (
-    ResolvedWorkspace,
-    resolve_workspace_for_stream,
-    resolve_workspace_for_tool_execution,
-)
+from soothe_nano.workspace.workspace_api import ResolvedWorkspace
+from soothe_nano.workspace.workspace_policy import WorkspaceResolver
 
 
 class WorkspacePrecedence(Enum):
@@ -37,13 +34,13 @@ def resolve_workspace(
     if precedence == WorkspacePrecedence.LOOP:
         return _resolve_loop(**sources)
     if precedence == WorkspacePrecedence.STREAM:
-        return resolve_workspace_for_stream(
+        return WorkspaceResolver.resolve_stream(
             explicit=sources.get("explicit"),
             thread_workspace=sources.get("thread_workspace"),
             installation_default=sources.get("installation_default"),
         )
     if precedence == WorkspacePrecedence.TOOL_EXECUTION:
-        resolved = resolve_workspace_for_tool_execution(
+        resolved = WorkspaceResolver.resolve_tool_execution(
             runtime=sources.get("runtime"),
             config=sources.get("config"),
             state=sources.get("state"),

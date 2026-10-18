@@ -13,8 +13,8 @@ import uuid
 from pathlib import Path
 
 import pytest
-from soothe.wire import ProtocolError
 from soothe_client import WebSocketClient
+from soothe_client.wire.codec import ProtocolError
 
 from soothe_daemon import SootheDaemon
 from tests.integration.daemon_fixtures import (

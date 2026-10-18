@@ -161,7 +161,7 @@ def _render_plan_synthesis_system_prompt(
     config: SootheConfig | None = None,
 ) -> str:
     """Render the plan synthesis system prompt from the Jinja2 template."""
-    from soothe.prompts import build_timestamp_xml_footer, load_agent_instructions
+    from soothe.prompts import ProjectInstructions, SystemTemplates
     from soothe.prompts.loader import load_prompt_fragment
 
     template = load_prompt_fragment("instructions/plan_synthesis_system.xml")
@@ -172,13 +172,13 @@ def _render_plan_synthesis_system_prompt(
         agent_instructions_max_chars = 8000
         if config is not None:
             agent_instructions_max_chars = int(config.agent.agent_instructions_max_chars)
-        block = load_agent_instructions(
+        block = ProjectInstructions.load(
             workspace,
             headline_max_chars=agent_instructions_max_chars,
         )
         if block:
             parts.append(block)
-    parts.append(build_timestamp_xml_footer())
+    parts.append(SystemTemplates.timestamp_xml_footer())
     return "\n\n".join(parts)
 
 

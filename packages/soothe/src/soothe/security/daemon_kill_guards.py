@@ -5,7 +5,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from soothe_nano.toolkits.execution import register_protected_kill_hook
+from soothe_nano.toolkits.shell import register_protected_kill_hook
 
 from soothe.config import SOOTHE_HOME
 

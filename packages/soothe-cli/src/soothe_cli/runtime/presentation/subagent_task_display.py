@@ -92,7 +92,7 @@ def format_subagent_task_assistant_for_display(
     """
     agent = (subagent_type or "").strip().lower()
     text = raw
-    if agent in ("deep_research", "academic_research"):
+    if agent == "deep_research":
         stripped = text.strip()
         internal_present = any(
             _is_deep_research_internal_json_object(obj)

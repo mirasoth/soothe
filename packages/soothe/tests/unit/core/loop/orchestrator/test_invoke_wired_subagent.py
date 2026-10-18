@@ -31,9 +31,9 @@ async def _noop_emit(*_args, **_kwargs) -> None:  # type: ignore[no-untyped-def]
     return None
 
 
-def test_allowlist_includes_academic_research() -> None:
+def test_allowlist_includes_deep_research() -> None:
     assert resolve_wire_subagent(wire_subagent="explorer") is None
-    assert resolve_wire_subagent(wire_subagent="academic_research") == "academic_research"
+    assert resolve_wire_subagent(wire_subagent="deep_research") == "deep_research"
     assert resolve_wire_subagent(wire_subagent="planner") is None  # removed
     assert resolve_wire_subagent(wire_subagent="plan") is None
     assert resolve_wire_subagent(wire_subagent="not_a_subagent") is None
@@ -74,9 +74,9 @@ def test_intake_never_infers_a_specialist() -> None:
     assert (
         resolve_user_requested_wire_subagent(
             routing_classification=routing,
-            preferred_subagent="academic_research",
+            preferred_subagent="deep_research",
         )
-        == "academic_research"
+        == "deep_research"
     )
 
 
@@ -158,7 +158,7 @@ async def test_init_or_resume_slash_specialist_wins_over_continue_keyword_goal()
 
 
 def test_extract_subagent_report_prefers_answer_field() -> None:
-    """deep_research / academic_research put the report in state ``answer``."""
+    """deep_research puts the report in state ``answer``."""
     from soothe.sloop.stations.sidecars.delegate import (
         _extract_subagent_report,
     )

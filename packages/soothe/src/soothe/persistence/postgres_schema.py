@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from soothe.persistence.db_init import initialize_database
+from soothe.persistence.db_init import DatabaseInit
 
 if TYPE_CHECKING:
     from psycopg_pool import AsyncConnectionPool
@@ -27,7 +27,9 @@ async def initialize_agentloop_postgres_schema(pool: AsyncConnectionPool) -> Non
     Args:
         pool: Open `AsyncConnectionPool` for the soothe_checkpoints database.
     """
-    result = await initialize_database(pool, AGENTLOOP_POSTGRES_DATABASE, sql_root=_HOST_SQL_ROOT)
+    result = await DatabaseInit.initialize(
+        pool, AGENTLOOP_POSTGRES_DATABASE, sql_root=_HOST_SQL_ROOT
+    )
     if result.init_applied or result.migrations_applied:
         logger.debug(
             "StrangeLoop PostgreSQL schema initialized (migrations=%s)",

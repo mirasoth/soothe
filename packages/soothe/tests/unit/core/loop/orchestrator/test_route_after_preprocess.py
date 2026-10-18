@@ -13,7 +13,7 @@ from types import SimpleNamespace
 
 import pytest
 from langgraph.graph import END
-from soothe_nano.intention.models import TaskComplexity
+from soothe_nano.protocols.routing import TaskComplexity
 
 from soothe.sloop.intention.models import IntakeLabel
 from soothe.sloop.orchestrator.routing import route_after_preprocess
