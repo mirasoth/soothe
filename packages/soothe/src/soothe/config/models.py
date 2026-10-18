@@ -47,6 +47,7 @@ from soothe_nano.config.models import (  # noqa: F401
     ReportOutputConfig,
     RoleRoutingConfig,
     RouterProfile,
+    SandboxConfig,
     SecurityConfig,
     ShellToolsConfig,
     SqliteRuntimeConfig,
