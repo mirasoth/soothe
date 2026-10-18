@@ -362,9 +362,7 @@ class StrangeLoop:
             try_expand_slash_skill_user_line,
         )
         from soothe_nano.skills.workspace_sync import sync_specific_skill_to_workspace
-        from soothe_nano.workspace.workspace_paths import (
-            filesystem_virtual_mode_from_soothe_config,
-        )
+        from soothe_nano.workspace.workspace_paths import WorkspacePaths
 
         goal_user_submission: str | None = None
         skill_context: str | None = None
@@ -376,7 +374,7 @@ class StrangeLoop:
 
         # Targeted skill sync - only sync the addressed skill
         parsed_skill = None if clarification_answer else parse_slash_skill_user_line(goal)
-        if workspace and filesystem_virtual_mode_from_soothe_config(self.config):
+        if workspace and WorkspacePaths.from_config(self.config).virtual_mode:
             if parsed_skill is not None:
                 skill_name = parsed_skill[0]
                 sync_specific_skill_to_workspace(self.config, workspace, skill_name)

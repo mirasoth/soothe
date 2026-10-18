@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from soothe.workspace import ResolvedWorkspace, resolve_workspace_for_stream
+from soothe.workspace import ResolvedWorkspace, WorkspaceResolver
 
 
 def test_resolve_prefers_explicit_over_thread_and_daemon(tmp_path: Path, monkeypatch) -> None:
@@ -13,7 +13,7 @@ def test_resolve_prefers_explicit_over_thread_and_daemon(tmp_path: Path, monkeyp
     explicit.mkdir()
     thread = tmp_path / "b"
     thread.mkdir()
-    r = resolve_workspace_for_stream(
+    r = WorkspaceResolver.resolve_stream(
         explicit=str(explicit),
         thread_workspace=str(thread),
         installation_default=str(tmp_path),
@@ -26,7 +26,7 @@ def test_resolve_thread_when_no_explicit(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     thread = tmp_path / "proj"
     thread.mkdir()
-    r = resolve_workspace_for_stream(
+    r = WorkspaceResolver.resolve_stream(
         thread_workspace=str(thread),
         installation_default=str(tmp_path),
     )
@@ -38,7 +38,7 @@ def test_resolve_daemon_default_when_no_thread(tmp_path: Path, monkeypatch) -> N
     monkeypatch.chdir(tmp_path)
     default = tmp_path / "daemon_ws"
     default.mkdir()
-    r = resolve_workspace_for_stream(
+    r = WorkspaceResolver.resolve_stream(
         installation_default=str(default),
     )
     assert r.source == "daemon_default"
@@ -47,7 +47,7 @@ def test_resolve_daemon_default_when_no_thread(tmp_path: Path, monkeypatch) -> N
 
 def test_resolve_cwd_when_nothing_else(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
-    r = resolve_workspace_for_stream()
+    r = WorkspaceResolver.resolve_stream()
     assert r.source == "cwd"
     assert Path(r.path).resolve() == tmp_path.resolve()
 
@@ -56,7 +56,7 @@ def test_blank_explicit_falls_through(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     fallback = tmp_path / "fb"
     fallback.mkdir()
-    r = resolve_workspace_for_stream(
+    r = WorkspaceResolver.resolve_stream(
         explicit="   ",
         installation_default=str(fallback),
     )

@@ -84,8 +84,8 @@ async def test_run_with_progress_skips_intake_when_intent_preclassified() -> Non
             "soothe.sloop.strange_loop.LoopRuntimeContext",
         ) as runtime_ctx_cls,
         patch(
-            "soothe_nano.workspace.workspace_paths.filesystem_virtual_mode_from_soothe_config",
-            return_value=False,
+            "soothe_nano.workspace.workspace_paths.WorkspacePaths.from_config",
+            return_value=MagicMock(virtual_mode=False),
         ),
         patch("soothe_nano.skills.catalog.parse_slash_skill_user_line", return_value=None),
         patch("soothe_nano.skills.catalog.try_expand_slash_skill_user_line", return_value=None),
