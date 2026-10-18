@@ -411,9 +411,7 @@ class PhasesMixin:
             ConfigurationError if all retries exhausted.
         """
         from soothe.runner.resolver.shared_checkpointer_pool import SharedCheckpointerPool
-        from soothe.sloop.checkpoints.retry_utils import (
-            is_recoverable_connection_error,
-        )
+        from soothe.sloop.checkpoints.retry_utils import ConnectionRetry
 
         delay = base_delay
         for attempt in range(1, max_attempts + 1):
@@ -443,7 +441,7 @@ class PhasesMixin:
                 return
             except Exception as exc:
                 # Check if this is a recoverable connection error
-                if not is_recoverable_connection_error(exc):
+                if not ConnectionRetry.is_recoverable_connection_error(exc):
                     logger.error(
                         "[checkpointer_init] Unrecoverable error: %s: %s",
                         type(exc).__name__,

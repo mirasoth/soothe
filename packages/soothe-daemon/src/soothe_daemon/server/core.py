@@ -554,11 +554,11 @@ class SootheDaemon(DaemonHandlersMixin):
 
             if self._config.persistence.postgres_base_dsn:
                 from soothe_nano.persistence.postgres_provisioning import (
-                    ensure_postgres_databases_async,
+                    PostgresProvisioning,
                 )
 
                 try:
-                    await ensure_postgres_databases_async(self._config)
+                    await PostgresProvisioning.ensure_databases_async(self._config)
                 except Exception:
                     self._readiness_state = "error"
                     self._readiness_message = "PostgreSQL database provisioning failed"

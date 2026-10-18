@@ -48,7 +48,7 @@ class StrangeLoopCheckpointPersistenceManager:
         if backend_type == "postgresql":
             try:
                 from soothe.persistence.postgres_pool_lifecycle import (
-                    postgres_pool_timing_from_config,
+                    PostgresPoolLifecycle,
                 )
                 from soothe.sloop.checkpoints.postgres_backend import (
                     PostgreSQLPersistenceBackend,
@@ -60,7 +60,7 @@ class StrangeLoopCheckpointPersistenceManager:
                 ) from exc
             dsn = config.resolve_postgres_dsn_for_database("checkpoints")
             pool_size = config.persistence.postgres.metadata_pool_size
-            pool_timing = postgres_pool_timing_from_config(config, max_size=pool_size)
+            pool_timing = PostgresPoolLifecycle.timing_from_config(config, max_size=pool_size)
             self._backend = PostgreSQLPersistenceBackend(
                 dsn=dsn,
                 pool_size=pool_size,

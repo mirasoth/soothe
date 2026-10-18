@@ -5,39 +5,31 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
-from soothe_nano.persistence.postgres_provisioning import (
-    ensure_postgres_databases,
-    postgres_admin_dsn,
-    postgres_target_dsn,
-    required_postgres_database_keys,
-    reset_provision_cache_for_tests,
-    uses_postgresql_persistence,
-    validate_database_name,
-)
+from soothe_nano.persistence.postgres_provisioning import PostgresProvisioning
 
 from soothe.config import SootheConfig
 
 
 @pytest.fixture(autouse=True)
 def _clear_provision_cache() -> None:
-    reset_provision_cache_for_tests()
+    PostgresProvisioning.reset_cache_for_tests()
 
 
 def test_validate_database_name_rejects_invalid() -> None:
     with pytest.raises(ValueError, match="Invalid PostgreSQL database name"):
-        validate_database_name("bad-name")
+        PostgresProvisioning.validate_database_name("bad-name")
 
 
 def test_postgres_admin_dsn_replaces_path() -> None:
     assert (
-        postgres_admin_dsn("postgresql://user:pass@localhost:5432")
+        PostgresProvisioning.admin_dsn("postgresql://user:pass@localhost:5432")
         == "postgresql://user:pass@localhost:5432/postgres"
     )
 
 
 def test_postgres_target_dsn_builds_database_path() -> None:
     assert (
-        postgres_target_dsn("postgresql://user:pass@localhost:5432", "soothe_checkpoints")
+        PostgresProvisioning.target_dsn("postgresql://user:pass@localhost:5432", "soothe_checkpoints")
         == "postgresql://user:pass@localhost:5432/soothe_checkpoints"
     )
 
@@ -46,14 +38,14 @@ def test_required_keys_empty_without_base_dsn() -> None:
     cfg = SootheConfig()
     cfg.persistence.postgres_base_dsn = None
     cfg.persistence.default_backend = "postgresql"
-    assert required_postgres_database_keys(cfg) == frozenset()
+    assert PostgresProvisioning.required_database_keys(cfg) == frozenset()
 
 
 def test_required_keys_all_when_postgres_in_use() -> None:
     cfg = SootheConfig()
     cfg.persistence.postgres_base_dsn = "postgresql://postgres:postgres@127.0.0.1:6432"
     cfg.persistence.default_backend = "postgresql"
-    assert required_postgres_database_keys(cfg) == frozenset(
+    assert PostgresProvisioning.required_database_keys(cfg) == frozenset(
         {"checkpoints", "metadata", "vectors", "memory"}
     )
 
@@ -62,10 +54,10 @@ def test_uses_postgresql_when_pgvector_configured() -> None:
     cfg = SootheConfig()
     cfg.persistence.default_backend = "sqlite"
     cfg.vector_stores[0].provider_type = "pgvector"
-    assert uses_postgresql_persistence(cfg) is True
+    assert PostgresProvisioning.uses_postgresql(cfg) is True
 
 
-@patch("soothe_nano.persistence.postgres_provisioning._initialize_postgres_schemas")
+@patch("soothe_nano.persistence.postgres_provisioning.PostgresProvisioning._initialize_schemas")
 @patch("psycopg.connect")
 def test_ensure_postgres_databases_creates_missing(
     mock_connect: MagicMock, mock_init_schemas: MagicMock
@@ -99,7 +91,7 @@ def test_ensure_postgres_databases_creates_missing(
 
     cur.fetchone.side_effect = _fetchone_side_effect
 
-    created = ensure_postgres_databases(cfg)
+    created = PostgresProvisioning.ensure_databases(cfg)
 
     assert created == ["soothe_metadata", "soothe_vectors"]
     select_calls = [
@@ -112,7 +104,7 @@ def test_ensure_postgres_databases_creates_missing(
     mock_init_schemas.assert_called_once()
 
 
-@patch("soothe_nano.persistence.postgres_provisioning._initialize_postgres_schemas")
+@patch("soothe_nano.persistence.postgres_provisioning.PostgresProvisioning._initialize_schemas")
 @patch("psycopg.connect")
 def test_ensure_postgres_databases_is_idempotent_per_process(
     mock_connect: MagicMock,
@@ -131,7 +123,7 @@ def test_ensure_postgres_databases_is_idempotent_per_process(
     mock_connect.return_value = conn
     cur.fetchone.return_value = object()
 
-    assert ensure_postgres_databases(cfg) == []
-    assert ensure_postgres_databases(cfg) == []
+    assert PostgresProvisioning.ensure_databases(cfg) == []
+    assert PostgresProvisioning.ensure_databases(cfg) == []
     mock_connect.assert_called_once()
     mock_init_schemas.assert_called_once()
