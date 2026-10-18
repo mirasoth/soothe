@@ -7,12 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.2.0-beta.3] - 2026-10-18
+
 ### Changed
 - Config scaffold aligned to nano 2.0's tool/subagent surface (`packages/soothe-daemon/src/soothe_daemon/setup/templates/nano.yml`, mirrored by the `config/templates/nano.yml` symlink): `tools.execution` → `tools.shell` (nano renamed the tool group — tool names are unchanged), and the `tools.data` / `tools.file_ops` / `subagents.academic_research` blocks are removed (nano 2.0.0a1 deleted the `data` and `image` toolkits, retired the `file_ops` toolkit group in favour of the middleware filesystem surface, and deleted the `academic_research` subagent with no compat shim). Stale keys were silently ignored before (`SootheConfig` uses `extra="ignore"`), so scaffolding could ship a config that no longer matches any model field.
 
 ### Fixed
 - Checkpoint serde allowlist covers every host routing enum that rides in loop state: `IntakeLabel` / `IntakeConfidence` / `IntakeScope` joined `ResponseLanguage` (plus nano's `RoutingClassification` / `TaskComplexity`) in `_create_host_serde`. Unlisted enums serialized fine but were dropped on restore with `Blocked deserialization of soothe.sloop.intention.models.IntakeLabel - not in allowed_msgpack_modules`, silently losing branch-routing state across restarts and thread resumes.
 - The PostgreSQL integration suite no longer hangs forever in pytest-asyncio event-loop teardown. `support_config.reset_pool_singletons` now awaits `AsyncConnectionPool._signal_stop_worker` — a coroutine since psycopg_pool 3.3 (pulled in by the nano 2.0 dependency train) — and joins the returned worker tasks under a bounded timeout; calling it without `await` left the worker and scheduler tasks alive, so `asyncio.Runner.close()` blocked in `_cancel_all_tasks`. It also unwraps `SharedPostgreSQLPool._pool` so the *inner* psycopg pool is signalled (guarded on `_signal_stop_worker`, since `AsyncConnectionPool._pool` is the connection deque).
+
+[Compare with previous version]: https://github.com/mirasoth/soothe/compare/v1.2.0-beta.1...v1.2.0-beta.3
 
 ## [v1.2.0-beta.1] - 2026-10-18
 
