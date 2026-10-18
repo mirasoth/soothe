@@ -9,12 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from psycopg_pool import AsyncConnectionPool
 
-from soothe.persistence.postgres_pool_lifecycle import (
-    apply_row_factory,
-    close_async_pool,
-    postgres_pool_timing_from_config,
-    release_idle_pool_connections,
-)
+from soothe.persistence.postgres_pool_lifecycle import PostgresPoolLifecycle
 from soothe.persistence.postgres_pool_registry import PostgresPoolRegistry
 from soothe.sloop.checkpoints.directory_manager import (
     PersistenceDirectoryManager,
@@ -114,7 +109,9 @@ class SharedPostgreSQLPool:
             pool_kwargs.update(self._pool_timing)
         else:
             pool_kwargs["min_size"] = min(4, self.pool_size)
-        self._pool = AsyncConnectionPool(self.dsn, **apply_row_factory(pool_kwargs))
+        self._pool = AsyncConnectionPool(
+            self.dsn, **PostgresPoolLifecycle.apply_row_factory(pool_kwargs)
+        )
 
         # Open pool
         await self._pool.open()
@@ -136,7 +133,7 @@ class SharedPostgreSQLPool:
 
     async def release_idle_connections(self) -> None:
         """Return idle connections to PgBouncer (`Pool.check`)."""
-        await release_idle_pool_connections(self._pool, label="StrangeLoop")
+        await PostgresPoolLifecycle.release_idle(self._pool, label="StrangeLoop")
 
     async def close(self) -> None:
         """Close the shared connection pool (skipped when registry-backed)."""
@@ -145,7 +142,7 @@ class SharedPostgreSQLPool:
             self._initialized = False
             return
         if self._pool is not None:
-            await close_async_pool(self._pool, label="StrangeLoop")
+            await PostgresPoolLifecycle.close(self._pool, label="StrangeLoop")
             self._pool = None
             self._initialized = False
 
@@ -262,13 +259,13 @@ class SharedPostgreSQLPool:
                 pass
 
             from soothe_nano.persistence.postgres_provisioning import (
-                ensure_postgres_databases_async,
+                PostgresProvisioning,
             )
 
-            await ensure_postgres_databases_async(config)
+            await PostgresProvisioning.ensure_databases_async(config)
             dsn = config.resolve_postgres_dsn_for_database("checkpoints")
             pool_size = PostgresPoolRegistry.resolve_checkpoints_pool_size(config)
-            timing = postgres_pool_timing_from_config(config, max_size=pool_size)
+            timing = PostgresPoolLifecycle.timing_from_config(config, max_size=pool_size)
             _shared_pool = SharedPostgreSQLPool(
                 dsn,
                 pool_size=pool_size,

@@ -88,11 +88,7 @@ def render_synthesis_system_prompt(
     Returns:
         Rendered system prompt string.
     """
-    from soothe.prompts import (
-        build_response_language_hint,
-        build_timestamp_xml_footer,
-        load_agent_instructions,
-    )
+    from soothe.prompts import ProjectInstructions, SystemTemplates
     from soothe.prompts.loader import load_prompt_fragment
 
     template = load_prompt_fragment("instructions/synthesis_report_system.xml")
@@ -107,16 +103,16 @@ def render_synthesis_system_prompt(
             user_goal=user_goal,
             scratchpad_mode=scratchpad_mode,
         ),
-        build_response_language_hint(response_language),
+        SystemTemplates.build_response_language_hint(response_language),
     ]
     if workspace:
-        block = load_agent_instructions(
+        block = ProjectInstructions.load(
             workspace,
             headline_max_chars=agent_instructions_max_chars,
         )
         if block:
             parts.append(block)
-    parts.append(build_timestamp_xml_footer())
+    parts.append(SystemTemplates.timestamp_xml_footer())
     return "\n\n".join(parts)
 
 

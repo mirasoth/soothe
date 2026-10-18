@@ -90,14 +90,14 @@ async def _drive_intake(
         ),
         patch("soothe.sloop.strange_loop.LoopRuntimeContext") as runtime_ctx_cls,
         patch(
-            "soothe_nano.workspace.workspace_paths.filesystem_virtual_mode_from_soothe_config",
-            return_value=False,
+            "soothe_nano.workspace.workspace_paths.WorkspacePaths.from_config",
+            return_value=MagicMock(virtual_mode=False),
         ),
         patch(
-            "soothe_nano.skills.catalog.parse_slash_skill_user_line",
+            "soothe_nano.skills.catalog.SlashSkillLine.parse",
             return_value=parsed_skill,
         ),
-        patch("soothe_nano.skills.catalog.try_expand_slash_skill_user_line", return_value=None),
+        patch("soothe_nano.skills.catalog.SkillCatalog.try_expand_slash_line", return_value=None),
     ):
         runtime_ctx = MagicMock()
         runtime_ctx.emit = _noop_emit
@@ -124,7 +124,7 @@ async def test_slash_skill_clears_specialist_routing_hint() -> None:
     """Regression: ``/skill:`` plus an inferred specialist must not take the wired route."""
     runtime_ctx_cls = await _drive_intake(
         goal="Begin research on the seed paper",
-        preferred_subagent="academic_research",
+        preferred_subagent="deep_research",
         parsed_skill=("omr-bootstrap", "Begin research on the seed paper"),
     )
 
@@ -136,18 +136,18 @@ async def test_slash_skill_clears_specialist_routing_hint() -> None:
 
 @pytest.mark.asyncio
 async def test_slash_specialist_without_skill_keeps_routing_hint() -> None:
-    """A bare ``/academic_research`` submission still reaches the wired specialist."""
+    """A bare ``/deep_research`` submission still reaches the wired specialist."""
     runtime_ctx_cls = await _drive_intake(
         goal="Begin research on the seed paper",
-        preferred_subagent="academic_research",
+        preferred_subagent="deep_research",
         parsed_skill=None,
     )
 
     kwargs = runtime_ctx_cls.call_args.kwargs
-    assert kwargs["preferred_subagent"] == "academic_research"
+    assert kwargs["preferred_subagent"] == "deep_research"
     routing = kwargs["loop_state"].routing_classification
     assert routing is not None
-    assert routing.preferred_subagent == "academic_research"
+    assert routing.preferred_subagent == "deep_research"
 
 
 @pytest.mark.asyncio
@@ -186,7 +186,7 @@ async def test_stray_wire_subagent_field_is_ignored() -> None:
             "intake_label": IntakeLabel.SIMPLE,
             "requires_tool_use": True,
             "task_complexity": TaskComplexity.SIMPLE,
-            "wire_subagent": "academic_research",
+            "wire_subagent": "deep_research",
         }
     )
     assert not hasattr(intent, "wire_subagent")

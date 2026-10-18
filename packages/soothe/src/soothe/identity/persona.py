@@ -62,9 +62,9 @@ def _identity_values(
     identity: AssistantIdentity | None,
 ) -> dict[str, str]:
     """Build the interpolation context for identity templates."""
-    from soothe.prompts import normalize_assistant_name
+    from soothe.prompts import PromptIdentity
 
-    name = normalize_assistant_name(assistant_name)
+    name = PromptIdentity.normalize_name(assistant_name)
     if identity is None:
         return {
             "assistant_name": name,
@@ -136,10 +136,11 @@ def apply_identity_fragment_override(config: SootheConfig | None) -> None:
     """Patch nano's identity fragment when persona config is non-default.
 
     The CoreAgent runtime rebuilds the system prompt every turn via nano's
-    `SystemPromptMiddleware`, which reads `ASSISTANT_IDENTITY_FRAGMENT`
-    from the nano module at call time. When the configured persona differs
-    from defaults, this function patches that module-level constant so the
-    hot path renders the configured creator/role/denylist.
+    `SystemPromptMiddleware`. `PromptIdentity.identity_block` reads
+    `ASSISTANT_IDENTITY_FRAGMENT` from the nano fragments module at call
+    time. When the configured persona differs from defaults, this function
+    patches that module-level constant so the hot path renders the
+    configured creator/role/denylist.
 
     No-op when `config` is None, the identity block is default, or the
     nano module cannot be reached (graceful degradation).
@@ -154,18 +155,16 @@ def apply_identity_fragment_override(config: SootheConfig | None) -> None:
         return
 
     # Build a rendered template (with {assistant_name} placeholder) so nano's
-    # build_assistant_identity_block / prepend_assistant_identity can still
-    # interpolate the assistant name at call time.
+    # PromptIdentity.identity_block / prepend_identity can still interpolate
+    # the assistant name at call time.
     name_placeholder = "{assistant_name}"
     values = _identity_values(name_placeholder, identity)
     rendered = _IDENTITY_TEMPLATE.format(**values)
 
     try:
         import soothe_nano.prompts.fragments as nano_fragments
-        import soothe_nano.prompts.identity as nano_identity
 
         nano_fragments.ASSISTANT_IDENTITY_FRAGMENT = rendered
-        nano_identity.ASSISTANT_IDENTITY_FRAGMENT = rendered
     except Exception:
         # Graceful degradation: if nano module layout changes, intake path
         # still works via the host builder; hot path falls back to default.

@@ -12,7 +12,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from soothe_nano.ux.task_namespace import parse_unified_tool_call_id
+from soothe_nano.wire.task_namespace import parse_unified_tool_call_id
 
 from soothe.display._text_utils import text_looks_like_error
 from soothe.display.tool_message_format import (

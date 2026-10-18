@@ -22,8 +22,9 @@ def test_build_passes_filesystem_backend_to_deepagents(
     monkeypatch.setattr(AgentBuilder, "_resolve_memory", lambda self: None)
     monkeypatch.setattr(AgentBuilder, "_resolve_planner", lambda self, model: None)
     monkeypatch.setattr(AgentBuilder, "_resolve_policy", lambda self: None)
-    monkeypatch.setattr("soothe.runner.resolver.resolve_tools", lambda *args, **kwargs: [])
-    monkeypatch.setattr("soothe.runner.resolver.resolve_subagents", lambda *args, **kwargs: [])
+    # The builder resolves via soothe_nano.agent.builder's namespace.
+    monkeypatch.setattr("soothe_nano.agent.builder.resolve_tools", lambda *args, **kwargs: [])
+    monkeypatch.setattr("soothe_nano.agent.builder.resolve_subagents", lambda *args, **kwargs: [])
     monkeypatch.setattr(
         "soothe_nano.middleware._builder.build_soothe_middleware_stack",
         lambda *args, **kwargs: (),
@@ -62,6 +63,11 @@ def test_build_passes_filesystem_backend_to_deepagents(
         "delete",
         "glob",
         "grep",
+        "file_info",
+        "edit_lines",
+        "insert_lines",
+        "delete_lines",
+        "apply_diff",
     ]
     assert captured["parent_owned_state_keys"] == frozenset({"workspace"})
     assert captured["recursion_limit"] == 9999

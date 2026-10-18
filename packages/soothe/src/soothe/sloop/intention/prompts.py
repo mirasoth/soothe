@@ -84,10 +84,10 @@ def build_intake_system_prompt(
             built-in identity line.
     """
     from soothe.identity.persona import _format_vendor_denylist, build_assistant_identity_block
-    from soothe.prompts import normalize_assistant_name
+    from soothe.prompts import PromptIdentity
     from soothe.utils.prompt_clock import prompt_datetime_context
 
-    name = normalize_assistant_name(assistant_name)
+    name = PromptIdentity.normalize_name(assistant_name)
     # Capture the datetime context once to avoid a timestamp race where
     # the second ticks over between independent calls.
     if ctx is None:

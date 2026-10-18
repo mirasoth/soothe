@@ -268,12 +268,6 @@ COMMANDS: dict[str, dict[str, Any]] = {
         "description": "Route query to Deep Research subagent",
         "requires_query": True,
     },
-    "/academic_research": {
-        "location": "daemon",
-        "type": "routing",
-        "description": "Route query to Academic Research subagent",
-        "requires_query": True,
-    },
     "/browser_use": {
         "location": "daemon",
         "type": "routing",

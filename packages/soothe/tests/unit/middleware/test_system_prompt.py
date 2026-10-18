@@ -7,10 +7,10 @@ from unittest.mock import patch
 from langchain.agents.middleware.types import ModelRequest
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-from soothe_nano.intention.models import RoutingClassification
 from soothe_nano.middleware import SystemPromptMiddleware
 from soothe_nano.middleware.progressive_listing import ProgressiveListingMiddleware
 from soothe_nano.middleware.tool_enforcement import ToolEnforcementMiddleware
+from soothe_nano.protocols.routing import RoutingClassification
 
 from soothe.config import SootheConfig
 

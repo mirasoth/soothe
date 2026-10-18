@@ -18,7 +18,7 @@ _REEXPORTED_MODELS = (
     "DeepxivToolsConfig",
     "DurabilityProtocolConfig",
     "EmbeddingProfile",
-    "ExecutionToolsConfig",
+    "ShellToolsConfig",
     "FailureIntentConfig",
     "FileLoggingConfig",
     "FilesystemMiddlewareConfig",

@@ -2,11 +2,7 @@
 
 import sqlite3
 
-from soothe_nano.persistence.retry_utils import (
-    is_duplicate_schema_error,
-    is_recoverable_connection_error,
-    run_with_connection_retry,
-)
+from soothe_nano.persistence.retry_utils import ConnectionRetry
 
 _RECOVERABLE_SQLITE_MESSAGES = (
     "unable to open database file",
@@ -36,8 +32,6 @@ def is_recoverable_sqlite_error(exc: Exception) -> bool:
 
 
 __all__ = [
-    "is_duplicate_schema_error",
-    "is_recoverable_connection_error",
+    "ConnectionRetry",
     "is_recoverable_sqlite_error",
-    "run_with_connection_retry",
 ]

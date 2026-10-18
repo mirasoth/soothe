@@ -9,7 +9,7 @@ from soothe_nano.protocols.planner import Plan, PlannerProtocol
 from soothe_nano.protocols.policy import PolicyProtocol
 
 from soothe.config import SootheConfig
-from soothe.workspace import resolve_workspace_for_stream
+from soothe.workspace import WorkspaceResolver
 
 from ._runner_phases import PhasesMixin
 from ._runner_shared import StreamChunk
@@ -838,7 +838,7 @@ class SootheRunner(
         prev_client_loop = self._client_loop_id_for_stream
         self._client_loop_id_for_stream = cl_scope or None
         try:
-            resolved = resolve_workspace_for_stream(
+            resolved = WorkspaceResolver.resolve_stream(
                 explicit=workspace,
                 installation_default=str(resolve_daemon_workspace()),
             )

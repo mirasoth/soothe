@@ -1,17 +1,16 @@
-"""Protocol, subagent, and tool resolution logic for create_soothe_agent."""
+"""Runner-level resolution: durability, checkpointer, planner, and policy.
+
+Agent/tool/subagent resolution happens inside soothe-nano's AgentBuilder
+(`soothe_nano.utils.resolver`); this module only binds host-owned pools and
+runner-scoped protocols for `SootheRunner`.
+"""
 
 from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING
 
-from soothe_nano.resolve import (
-    SUBAGENT_FACTORIES,
-    resolve_memory,
-    resolve_policy,
-    resolve_subagents,
-    resolve_tools,
-)
+from soothe_nano.utils.resolver import resolve_policy
 
 from soothe.config import SootheConfig
 
@@ -24,14 +23,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 __all__ = [
-    "SUBAGENT_FACTORIES",
     "resolve_checkpointer",
     "resolve_durability",
-    "resolve_memory",
     "resolve_planner",
     "resolve_policy",
-    "resolve_subagents",
-    "resolve_tools",
 ]
 
 

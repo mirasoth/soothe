@@ -58,7 +58,7 @@ def reset_pool_singletons(agent_mod: Any, registry_cls: Any) -> None:
     if getattr(agent_mod, "_shared_pool", None) is not None:
         pools_to_reset.append(agent_mod._shared_pool)
 
-    import soothe_nano.resolve.shared_checkpointer_pool as nano_cp_mod
+    import soothe_nano.persistence.shared_checkpointer_pool as nano_cp_mod
 
     if getattr(nano_cp_mod, "_shared_checkpointer_pool", None) is not None:
         pools_to_reset.append(nano_cp_mod._shared_checkpointer_pool)

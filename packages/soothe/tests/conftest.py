@@ -295,9 +295,7 @@ def web_enabled_config(test_config: SootheConfig) -> SootheConfig:
     from soothe.config.models import ToolsConfig
 
     test_config.tools = ToolsConfig(
-        execution={"enabled": True},
-        file_ops={"enabled": True},
-        code_edit={"enabled": True},
-        web_search={"enabled": True},
+        shell={"enabled": True},
+        wizsearch={"enabled": True},
     )
     return test_config

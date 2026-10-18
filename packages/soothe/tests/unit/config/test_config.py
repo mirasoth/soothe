@@ -31,10 +31,8 @@ class TestSootheConfig:
         # Check that tools is a ToolsConfig instance
         assert isinstance(cfg.tools, ToolsConfig)
         # Check that default tools are enabled
-        assert cfg.tools.execution.enabled is True
-        assert cfg.tools.file_ops.enabled is True
+        assert cfg.tools.shell.enabled is True
         assert cfg.tools.datetime.enabled is True
-        assert cfg.tools.data.enabled is True
         assert cfg.tools.wizsearch.enabled is True
         # Heavy optional tools are disabled by default (opt-in via config)
         assert cfg.tools.deepxiv.enabled is False
@@ -182,12 +180,12 @@ class TestSootheConfig:
         assert "planner" not in cfg.subagents
         assert "explorer" not in cfg.subagents
         assert "deep_research" in cfg.subagents
-        assert "academic_research" in cfg.subagents
+        assert "academic_research" not in cfg.subagents
         assert "browser_use" in cfg.subagents
         assert "skillify" not in cfg.subagents
         assert "claude" not in cfg.subagents
         assert "scout" not in cfg.subagents
-        for name in ("deep_research", "academic_research"):
+        for name in ("deep_research",):
             assert cfg.subagents[name].enabled is True, f"{name} should be enabled by default"
         assert cfg.subagents["browser_use"].enabled is True
         assert cfg.subagents["browser_use"].model_role == "default"

@@ -3,7 +3,7 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from soothe_nano.intention.models import TaskComplexity
+from soothe_nano.protocols.routing import TaskComplexity
 
 from soothe.sloop.intention.classifier import IntentClassifier
 from soothe.sloop.intention.coordinator import IntakeResult

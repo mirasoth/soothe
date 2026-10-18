@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from soothe_nano.toolkits.execution import (
+from soothe_nano.toolkits.shell import (
     _protected_kill_refusal,
     clear_protected_kill_hooks,
 )

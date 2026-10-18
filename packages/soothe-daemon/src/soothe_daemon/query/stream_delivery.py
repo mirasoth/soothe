@@ -18,7 +18,7 @@ from soothe.ux.loop_stream import (
 )
 from soothe.wire.codec import prepare_stream_data_for_wire
 from soothe_nano.core.events import STRANGE_LOOP_COMPLETED, STREAM_END
-from soothe_nano.ux.stream_tool_wire import (
+from soothe_nano.wire.stream_tool_wire import (
     TOOL_CALL_UPDATES_BATCH,
     extract_tool_call_updates_from_wire_message,
 )
@@ -593,7 +593,7 @@ class StreamDeliveryCoalescer:
         namespace: tuple[str, ...],
         data: dict[str, Any],
     ) -> bool:
-        from soothe_nano.ux.stream_tool_wire import STREAM_TOOL_CALL_UPDATE
+        from soothe_nano.wire.stream_tool_wire import STREAM_TOOL_CALL_UPDATE
 
         if str(data.get("type", "")) != STREAM_TOOL_CALL_UPDATE:
             return False

@@ -2,25 +2,21 @@
 
 from __future__ import annotations
 
-from soothe.prompts import (
-    build_assistant_identity_block,
-    normalize_assistant_name,
-    prepend_assistant_identity,
-)
+from soothe.prompts import PromptIdentity
 
 
-def test_normalize_assistant_name_defaults_to_soothe() -> None:
-    assert normalize_assistant_name("") == "Soothe"
-    assert normalize_assistant_name("  MyBot  ") == "MyBot"
+def test_normalize_name_defaults_to_soothe() -> None:
+    assert PromptIdentity.normalize_name("") == "Soothe"
+    assert PromptIdentity.normalize_name("  MyBot  ") == "MyBot"
 
 
-def test_build_assistant_identity_block_includes_name() -> None:
-    block = build_assistant_identity_block("Soothe")
+def test_identity_block_includes_name() -> None:
+    block = PromptIdentity.identity_block("Soothe")
     assert "Soothe" in block
     assert "ASSISTANT_IDENTITY" in block
 
 
-def test_prepend_assistant_identity() -> None:
-    out = prepend_assistant_identity("Do the task.", "Soothe")
+def test_prepend_identity() -> None:
+    out = PromptIdentity.prepend_identity("Do the task.", "Soothe")
     assert "Soothe" in out
     assert "Do the task." in out

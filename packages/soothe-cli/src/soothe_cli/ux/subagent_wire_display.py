@@ -76,8 +76,7 @@ def subagent_wire_row_params(
         if rc or st:
             tail = f"{rc} hits, {st} sources"
             preview = f"{query} → {tail}" if query else tail
-        tool_name = "AcademicSearch" if ".academic_research." in et else "WebSearch"
-        return tool_name, {"query": preview or query}, "success", 0
+        return "WebSearch", {"query": preview or query}, "success", 0
     if et.endswith(".crawl.summary"):
         urls = int(data.get("urls_crawled", 0) or 0)
         success = int(data.get("success_count", 0) or 0)

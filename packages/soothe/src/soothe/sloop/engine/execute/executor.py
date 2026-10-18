@@ -17,7 +17,7 @@ from langgraph.types import Command, Interrupt
 
 # Import registry directly (removed ToolConcurrencyMiddleware from stack)
 from soothe_nano.middleware.tool_call_args_registry import init_tool_call_args_registry
-from soothe_nano.middleware.tool_optimization_middleware import get_tool_reuse_metrics_snapshot
+from soothe_nano.middleware.tool_optimization import get_tool_reuse_metrics_snapshot
 from soothe_nano.tools.metadata import get_outcome_type
 from soothe_nano.utils.text_preview import (
     create_output_summary,

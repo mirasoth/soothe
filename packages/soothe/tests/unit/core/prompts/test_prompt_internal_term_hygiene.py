@@ -6,12 +6,8 @@ import re
 from pathlib import Path
 
 import pytest
-from soothe_nano.prompts.system_templates import _TOOL_ORCHESTRATION_GUIDE
 
-from soothe.prompts import (
-    EXECUTE_WORKSPACE_RULES_FRAGMENT,
-    RESPONSE_LANGUAGE_HINT_FALLBACK,
-)
+from soothe.prompts import SystemTemplates
 from soothe.sloop.intention.prompts import (
     INTAKE_CLASSIFY_HUMAN_TASK,
     INTAKE_CLASSIFY_SYSTEM_PROMPT,
@@ -48,9 +44,9 @@ def test_xml_fragments_omit_internal_terms(path: Path) -> None:
                 encoding="utf-8"
             ),
         ),
-        ("execute_workspace_rules", EXECUTE_WORKSPACE_RULES_FRAGMENT),
-        ("response_language_hint", RESPONSE_LANGUAGE_HINT_FALLBACK),
-        ("tool_orchestration_guide", _TOOL_ORCHESTRATION_GUIDE),
+        ("execute_workspace_rules", SystemTemplates.EXECUTE_WORKSPACE_RULES_FRAGMENT),
+        ("response_language_hint", SystemTemplates.RESPONSE_LANGUAGE_HINT_FALLBACK),
+        ("tool_orchestration_guide", SystemTemplates.TOOL_ORCHESTRATION_GUIDE),
         ("veritas_system", build_veritas_system_prompt()),
     ],
 )

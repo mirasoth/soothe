@@ -1,7 +1,7 @@
 """Shared checkpointer pool singleton (per-process).
 
 Host ``SharedCheckpointerPool`` is a thin subclass; singleton state lives in
-``soothe_nano.resolve.shared_checkpointer_pool``.
+``soothe_nano.persistence.shared_checkpointer_pool``.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from soothe.runner.resolver.shared_checkpointer_pool import SharedCheckpointerPo
 @pytest.fixture(autouse=True)
 def _reset_singleton() -> None:
     """Isolate singleton between tests."""
-    import soothe_nano.resolve.shared_checkpointer_pool as mod
+    import soothe_nano.persistence.shared_checkpointer_pool as mod
 
     mod._shared_checkpointer_pool = None
     mod._checkpointer_setup_done = False
@@ -65,7 +65,7 @@ def test_is_shared_pool_false_for_foreign_pool() -> None:
 
 @pytest.mark.asyncio
 async def test_setup_checkpointer_runs_once_after_first_success() -> None:
-    import soothe_nano.resolve.shared_checkpointer_pool as mod
+    import soothe_nano.persistence.shared_checkpointer_pool as mod
 
     setup = AsyncMock()
     pool = MagicMock()
@@ -105,7 +105,7 @@ def _mock_checkpointer_pool() -> tuple[MagicMock, AsyncMock]:
 
 @pytest.mark.asyncio
 async def test_setup_checkpointer_serializes_concurrent_waiters() -> None:
-    import soothe_nano.resolve.shared_checkpointer_pool as mod
+    import soothe_nano.persistence.shared_checkpointer_pool as mod
 
     pool, setup = _mock_checkpointer_pool()
 
@@ -125,7 +125,7 @@ async def test_setup_checkpointer_serializes_concurrent_waiters() -> None:
 async def test_reset_shared_instance_from_different_event_loop() -> None:
     pytest.importorskip("psycopg_pool")
 
-    import soothe_nano.resolve.shared_checkpointer_pool as mod
+    import soothe_nano.persistence.shared_checkpointer_pool as mod
 
     cfg = SootheConfig(
         persistence={

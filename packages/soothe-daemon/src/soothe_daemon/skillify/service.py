@@ -28,7 +28,7 @@ def _builtin_skills_dir() -> Path:
     """Resolve soothe-nano builtin skills directory for warehouse defaults."""
     import soothe_nano.skills as skills_pkg
 
-    return Path(skills_pkg.__file__).resolve().parent / "builtin_skills"
+    return Path(skills_pkg.__file__).resolve().parent / "builtin"
 
 
 def _default_warehouse_paths(soothe_home: Path) -> list[str]:

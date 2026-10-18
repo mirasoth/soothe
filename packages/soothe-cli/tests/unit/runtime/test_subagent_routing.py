@@ -14,7 +14,6 @@ from soothe_cli.commands.subagent_routing import (
     ("raw", "expected_subagent", "expected_cleaned"),
     [
         ("/deep_research papers", "deep_research", "papers"),
-        ("/academic_research transformers", "academic_research", "transformers"),
         ("/browser_use open example.com", "browser_use", "open example.com"),
         # /plan and /planner are no longer subagent routes; plan mode is
         # handled by command_router setting interaction_mode=plan.
@@ -38,7 +37,6 @@ def test_parse_subagent_from_input(
 
 def test_get_subagent_display_name_research_subagents() -> None:
     assert get_subagent_display_name("deep_research") == "Deep Research"
-    assert get_subagent_display_name("academic_research") == "Academic Research"
     assert get_subagent_display_name("browser_use") == "Browser"
     # planner removed — returns the raw id unmapped.
     assert get_subagent_display_name("planner") == "planner"
@@ -53,6 +51,12 @@ def test_slash_registries_include_browser_use() -> None:
     assert "browser_use" in SUBAGENT_SLASH_ROUTE_IDS
     # "plan" removed from subagent slash routes (now handled by command_router).
     assert "plan" not in SUBAGENT_SLASH_ROUTE_IDS
+    # academic_research subagent was removed in nano 2.0.0.
+    assert "academic_research" not in SUBAGENT_SLASH_ROUTE_IDS
+    assert get_subagent_display_name("academic_research") == "academic_research"
+    assert not any(cmd.name == "/academic_research" for cmd in UI_COMMANDS)
+    assert not any(name == "/academic_research" for name, _desc, _kw in SLASH_COMMANDS)
+    assert RFC_COMMANDS.get("/academic_research") is None
     assert any(cmd.name == "/browser_use" for cmd in UI_COMMANDS)
     assert any(name == "/browser_use" for name, _desc, _kw in SLASH_COMMANDS)
     entry = RFC_COMMANDS.get("/browser_use")
