@@ -1023,7 +1023,7 @@ async def test_unknown_method_rejected(mock_server: _MockDaemonServer) -> None:
     """Unknown method is rejected — either -32601 METHOD_NOT_FOUND or
     -32602 INVALID_PARAMS depending on whether the channel's schema
     validation catches it first."""
-    from soothe.wire.codec import ProtocolError
+    from soothe_client.wire.codec import ProtocolError
 
     client = await _connect_and_handshake(mock_server)
     try:
@@ -1044,7 +1044,7 @@ async def test_unknown_method_rejected(mock_server: _MockDaemonServer) -> None:
 @pytest.mark.asyncio
 async def test_invalid_params_rejected(mock_server: _MockDaemonServer) -> None:
     """Missing required params are rejected with -32602 INVALID_PARAMS."""
-    from soothe.wire.codec import ProtocolError
+    from soothe_client.wire.codec import ProtocolError
 
     client = await _connect_and_handshake(mock_server)
     try:
@@ -1159,7 +1159,7 @@ async def test_rpc_loop_get(mock_server: _MockDaemonServer) -> None:
 @pytest.mark.asyncio
 async def test_rpc_loop_get_not_found(mock_server: _MockDaemonServer) -> None:
     """loop_get on a non-existent loop returns LOOP_NOT_FOUND."""
-    from soothe.wire.codec import ProtocolError
+    from soothe_client.wire.codec import ProtocolError
 
     client = await _connect_and_handshake(mock_server)
     try:
@@ -1356,7 +1356,7 @@ async def test_rpc_job_status(mock_server: _MockDaemonServer) -> None:
 @pytest.mark.asyncio
 async def test_rpc_job_status_not_found(mock_server: _MockDaemonServer) -> None:
     """job_status on non-existent job returns JOB_NOT_FOUND."""
-    from soothe.wire.codec import ProtocolError
+    from soothe_client.wire.codec import ProtocolError
 
     client = await _connect_and_handshake(mock_server)
     try:

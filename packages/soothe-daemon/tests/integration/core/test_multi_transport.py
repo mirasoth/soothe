@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import socket
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -13,13 +14,20 @@ from soothe_daemon.channels.websocket import WebSocketChannel
 from soothe_daemon.config.models import WebSocketConfig
 
 
+def _free_port() -> int:
+    """Grab an ephemeral port so tests never collide with local services."""
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
 @pytest.mark.asyncio
 async def test_websocket_channel_basic() -> None:
     """Test basic WebSocket channel lifecycle."""
     config = WebSocketConfig(
         enabled=True,
         host="127.0.0.1",
-        port=18765,
+        port=_free_port(),
         tls_enabled=False,
     )
 
@@ -49,7 +57,7 @@ async def test_websocket_client_connect() -> None:
     config = WebSocketConfig(
         enabled=True,
         host="127.0.0.1",
-        port=18766,
+        port=_free_port(),
         tls_enabled=False,
     )
 
@@ -67,7 +75,7 @@ async def test_websocket_client_connect() -> None:
 
     try:
         # Connect client
-        client = WebSocketClient(url="ws://127.0.0.1:18766")
+        client = WebSocketClient(url=f"ws://127.0.0.1:{config.port}")
         await client.connect()
         assert client.is_connected
 
@@ -87,7 +95,7 @@ async def test_websocket_broadcast() -> None:
     config = WebSocketConfig(
         enabled=True,
         host="127.0.0.1",
-        port=18768,
+        port=_free_port(),
         tls_enabled=False,
     )
 
@@ -105,7 +113,7 @@ async def test_websocket_broadcast() -> None:
 
     try:
         # Connect client
-        client = WebSocketClient(url="ws://127.0.0.1:18768")
+        client = WebSocketClient(url=f"ws://127.0.0.1:{config.port}")
         await client.connect()
 
         # Broadcast message
