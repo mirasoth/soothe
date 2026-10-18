@@ -48,7 +48,6 @@ Route queries to specialized subagents:
 | Command | Subagent | Use Case |
 |---------|----------|----------|
 | `/deep_research <query>` | Deep Research | Public web research |
-| `/academic_research <query>` | Academic Research | Papers and literature review |
 | `/plan` | Plan | Plan-mode routing |
 | `/«id» <query>` | Configured id | Optional plugins from soothe-plugins (see that repo for ids) |
 

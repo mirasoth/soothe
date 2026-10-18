@@ -20,6 +20,37 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _create_host_serde() -> Any:
+    """Checkpoint serde extended with host/routing types that ride in loop state.
+
+    Every host enum written into loop state must be listed: an unlisted type is
+    serialized but blocked on deserialize, which silently drops the value on
+    restore (`Blocked deserialization of ... - not in allowed_msgpack_modules`).
+    """
+    from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
+    from soothe_nano.protocols.routing import RoutingClassification, TaskComplexity
+    from soothe_nano.utils.serde import create_soothe_serde
+
+    from soothe.sloop.intention.models import (
+        IntakeConfidence,
+        IntakeLabel,
+        IntakeScope,
+        ResponseLanguage,
+    )
+
+    serde: JsonPlusSerializer = create_soothe_serde().with_msgpack_allowlist(
+        [
+            ResponseLanguage,
+            IntakeLabel,
+            IntakeConfidence,
+            IntakeScope,
+            RoutingClassification,
+            TaskComplexity,
+        ]
+    )
+    return serde
+
+
 class PhasesMixin:
     """Chitchat fast path and LangGraph checkpointer initialization.
 
@@ -321,7 +352,6 @@ class PhasesMixin:
         """
         import aiosqlite
         from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
-        from soothe_nano.utils.serde import create_soothe_serde
 
         from soothe.sloop.checkpoints.retry_utils import is_recoverable_sqlite_error
 
@@ -336,7 +366,7 @@ class PhasesMixin:
             conn = None
             try:
                 conn = await aiosqlite.connect(str(db_path))
-                checkpointer = AsyncSqliteSaver(conn, serde=create_soothe_serde())
+                checkpointer = AsyncSqliteSaver(conn, serde=_create_host_serde())
                 await checkpointer.setup()
 
                 self._checkpointer = checkpointer
@@ -419,10 +449,9 @@ class PhasesMixin:
                 await self._checkpointer_pool.open()
 
                 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-                from soothe_nano.utils.serde import create_soothe_serde
 
                 checkpointer = AsyncPostgresSaver(
-                    self._checkpointer_pool, serde=create_soothe_serde()
+                    self._checkpointer_pool, serde=_create_host_serde()
                 )
                 if SharedCheckpointerPool.is_shared_pool(self._checkpointer_pool):
                     await SharedCheckpointerPool.setup_checkpointer(

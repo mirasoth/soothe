@@ -67,7 +67,7 @@ Soothe is a monorepo of five owned packages with a one-way dependency DAG: `soot
 
 | Package | Purpose | Key Modules |
 |---------|---------|-------------|
-| **soothe** | Core runtime & host | `coreagent/` (CoreAgent factory, builder), `sloop/` (StrangeLoop: engine, cognition, stages, orchestrator), `context/` (ContextEngine: engine, projection, ledger, DAG, stores), `runner/` (SootheRunner, resolver, thread manager), `protocols/` (loop_planner, loop_working_memory, runner), `subagents/` (planner, deep_research, academic_research, browser_use, veritas), `identity/`, `workspace/`, `events/`, `persistence/`, `security/`, `prompts/`, `config/` |
+| **soothe** | Core runtime & host | `coreagent/` (CoreAgent factory, builder), `sloop/` (StrangeLoop: engine, cognition, stages, orchestrator), `context/` (ContextEngine: engine, projection, ledger, DAG, stores), `runner/` (SootheRunner, resolver, thread manager), `protocols/` (loop_planner, loop_working_memory, runner), `subagents/` (planner, deep_research, browser_use, veritas), `identity/`, `workspace/`, `events/`, `persistence/`, `security/`, `prompts/`, `config/` |
 | **soothe-autopilot** | Goal orchestration | `dispatch/`, `monitor/`, `verify/`, `rails/`, `intake/`, `jobs/`, `sla/`, `workers/`, `notify/` |
 | **soothe-daemon** | Process lifecycle & server | `server/` (HTTP/WS), `channels/`, `cron/`, `runtime/`, `bootstrap/`, `health/`, `query/`, `events/`, `display/`, `skillify/`, `persistence/`, `admin_rpc.py` |
 | **soothe-cli** | CLI / TUI | `cli/` (Typer commands), `tui/` (Textual UI), `runtime/`, `config/` |

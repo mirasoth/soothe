@@ -13,17 +13,16 @@ from soothe.config import SOOTHE_HOME, SootheConfig
 
 
 def apply_example_defaults(config: SootheConfig) -> SootheConfig:
-    """Force SQLite persistence and disable autopilot for standalone examples.
+    """Force SQLite persistence for standalone examples.
 
-    Autopilot requires daemon goal dispatch. These examples run StrangeLoop
-    directly through ``SootheRunner.astream`` (interactive / one-shot mode).
+    These examples run StrangeLoop directly through ``SootheRunner.astream``
+    (interactive / one-shot mode) without a daemon dispatching autopilot goals.
     """
     durability = config.agent.protocols.durability.model_copy(
         update={"backend": "sqlite", "checkpointer": "sqlite"}
     )
     protocols = config.agent.protocols.model_copy(update={"durability": durability})
-    autopilot = config.agent.autopilot.model_copy(update={"enabled": False})
-    agent = config.agent.model_copy(update={"protocols": protocols, "autopilot": autopilot})
+    agent = config.agent.model_copy(update={"protocols": protocols})
     persistence = config.persistence.model_copy(update={"default_backend": "sqlite"})
     return config.model_copy(update={"agent": agent, "persistence": persistence})
 

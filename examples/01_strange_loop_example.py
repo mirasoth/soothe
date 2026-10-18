@@ -40,7 +40,6 @@ async def main() -> None:
     config = load_soothe_example_config()
     print(f"\n[Config] Model: {config.router.default}")
     print(f"[Config] Persistence: {config.persistence.default_backend}")
-    print(f"[Config] Autopilot: {config.agent.autopilot.enabled}")
     print(f"[Config] Loop enabled: {config.agent.loop.enabled}")
 
     runner = SootheRunner(config)

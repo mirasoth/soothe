@@ -129,10 +129,6 @@ subagents:
     config:
       effort: thorough
       save_reports: false  # default; true → write under .soothe/agents/ + short summary
-  academic_research:
-    config:
-      effort: normal
-      save_reports: false
   planner:
     model_role: think  # router role; optional model: provider:model overrides role
 ```

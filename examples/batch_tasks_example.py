@@ -55,7 +55,7 @@ def main() -> None:
         print()
 
         result = subprocess.run(
-            [soothe_cli, "run", "--no-tui", task],
+            [soothe_cli, "--prompt", task, "--no-tui"],
             capture_output=False,
             text=True,
         )

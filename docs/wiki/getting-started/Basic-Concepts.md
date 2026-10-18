@@ -511,8 +511,6 @@ subagents:
     enabled: true
   deep_research:
     enabled: true
-  academic_research:
-    enabled: true
   browser_use:
     enabled: true
 ```

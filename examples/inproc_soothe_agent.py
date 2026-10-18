@@ -31,6 +31,7 @@ from langchain_core.tools import tool
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from soothe.config import SootheConfig
 from soothe.coreagent import create_soothe_agent
+from soothe_nano.workspace import WorkspacePaths
 
 load_dotenv()
 
@@ -149,7 +150,7 @@ async def main() -> None:
     # config = SootheConfig()
 
     # Option 2: Load from YAML file
-    config_path = Path(__file__).parent.parent / "config" / "develop" / "config.yml"
+    config_path = Path(__file__).parent.parent / "config" / "develop" / "nano.yml"
     if config_path.exists():
         config = SootheConfig.from_yaml_file(str(config_path))
         print(f"[Config] Loaded from: {config_path}")
@@ -158,7 +159,7 @@ async def main() -> None:
         print("[Config] Using defaults (requires OPENAI_API_KEY)")
 
     print(f"[Config] Model: {config.router.default}")
-    print(f"[Config] Workspace: {config.workspace_dir}")
+    print(f"[Config] Workspace: {WorkspacePaths.from_config(config).root}")
 
     # Create in-process agent with custom tools
     print("\n[Init] Creating CoreAgent...")

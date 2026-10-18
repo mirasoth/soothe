@@ -34,9 +34,13 @@ from soothe_client import (
     connect_websocket_with_retries,
     websocket_url_from_config,
 )
+from soothe_client.appkit.events import unwrap_next
 
 # Image path configuration
-IMAGE_PATH = Path(__file__).parent.parent / "test_image.jpg"
+_REPO_ROOT = Path(__file__).parent.parent
+IMAGE_PATH = _REPO_ROOT / "test_image.jpg"
+if not IMAGE_PATH.is_file():
+    IMAGE_PATH = _REPO_ROOT / "docs" / "assets" / "logical-arch.jpg"
 MAX_IMAGE_SIZE_MB = 20  # Daemon limit
 
 
@@ -81,13 +85,40 @@ def load_image_as_attachment(image_path: Path) -> dict[str, str]:
     with open(image_path, "rb") as f:
         image_bytes = f.read()
     base64_data = base64.b64encode(image_bytes).decode("utf-8")
+    mime = mime_type
+
+    # Providers cap total input length (~984k chars for DashScope); a large
+    # photo's base64 easily exceeds it and every pool model 400s. Downscale
+    # client-side until the base64 fits (Pillow required).
+    max_b64_chars = 900_000
+    if len(base64_data) > max_b64_chars:
+        try:
+            import io
+
+            from PIL import Image
+
+            img = Image.open(image_path)
+            scale = 0.8
+            while len(base64_data) > max_b64_chars and scale > 0.1:
+                resized = img.resize(
+                    (max(1, int(img.width * scale)), max(1, int(img.height * scale)))
+                )
+                buf = io.BytesIO()
+                resized.convert("RGB").save(buf, format="JPEG", quality=85)
+                image_bytes = buf.getvalue()
+                base64_data = base64.b64encode(image_bytes).decode("utf-8")
+                mime = "image/jpeg"
+                scale -= 0.1
+            print(f"[Image] Resized for provider input limit -> {len(base64_data)} chars")
+        except ImportError:
+            print("[Image] WARNING: too large for provider input; install Pillow to auto-resize")
 
     print(f"[Image] Loaded: {image_path.name}")
     print(f"[Image] Size: {file_size_mb:.2f} MB")
-    print(f"[Image] MIME: {mime_type}")
+    print(f"[Image] MIME: {mime}")
     print(f"[Image] Base64 length: {len(base64_data)} chars")
 
-    return {"mime_type": mime_type, "data": base64_data}
+    return {"mime_type": mime, "data": base64_data}
 
 
 async def stream_response_events(client: WebSocketClient) -> None:
@@ -102,9 +133,17 @@ async def stream_response_events(client: WebSocketClient) -> None:
     event_count = 0
     while True:
         try:
-            event = await asyncio.wait_for(client.read_event(), timeout=30.0)
+            event = await asyncio.wait_for(client.read_event(), timeout=120.0)
             if not event:
                 continue
+
+            # Protocol-1 wraps legacy frames (status/event/...) in `next`
+            # envelopes; unwrap so the legacy type dispatch below keeps working.
+            event = unwrap_next(event)
+            if event.get("type") == "error":
+                error = event.get("error") or {}
+                print(f"\n[Daemon Error] {error}")
+                break
 
             event_count += 1
             event_type = event.get("type")
@@ -266,7 +305,14 @@ async def main() -> None:
         sys.exit(1)
 
     # Get daemon WebSocket URL
-    ws_url = websocket_url_from_config(config)
+    # Host config (nano.yml) does not carry daemon transport settings; resolve
+    # the WebSocket URL from the CLI config like the `soothe` client does.
+    try:
+        ws_url = websocket_url_from_config(config)
+    except AttributeError:
+        from soothe_cli.config.cli_config import CLIConfig
+
+        ws_url = CLIConfig().websocket_url()
     print(f"\n[Daemon] WebSocket URL: {ws_url}")
 
     # Create WebSocket client
@@ -297,14 +343,11 @@ async def main() -> None:
         print("\n[Input] Sending query with image attachment...")
         query_text = "Describe this image in detail. What do you see?"
 
-        input_message = {
-            "type": "input",
-            "text": query_text,
-            "attachments": [attachment],  # Image attachment
-            "autonomous": False,  # Single query mode
-        }
-
-        await client.send(input_message)
+        await client.send_input(
+            thread_id,
+            query_text,
+            attachments=[attachment],  # Image attachment
+        )
         print(f"[Input] Query: {query_text}")
         print("[Input] Attachment: 1 image")
 

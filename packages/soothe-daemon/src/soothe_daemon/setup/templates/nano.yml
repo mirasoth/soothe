@@ -145,15 +145,11 @@ agent:
       synthesis_max_chars: 0
 
 tools:
-  execution:
+  shell:
     enabled: true
     background_log_dir: null
     background_log_retention_days: 7
-  file_ops:
-    enabled: true
   datetime:
-    enabled: true
-  data:
     enabled: true
   wizsearch:
     enabled: true
@@ -183,10 +179,6 @@ subagents:
     model_role: think
     transport: local
   deep_research:
-    enabled: true
-    transport: local
-    config: {}
-  academic_research:
     enabled: true
     transport: local
     config: {}
