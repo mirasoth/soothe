@@ -46,7 +46,7 @@ The full set of sections:
 | `router` | `ModelRouter` | **Derived** (not in YAML) — role → `provider:model` mapping |
 | `embedding_model` / `embedding_dims` | `str` / `int` | **Derived** from `embedding_profile` |
 | `agent` | `AgentConfig` | Identity, loop, autonomous mode, protocols |
-| `subagents` | `SubagentConfig` (dict) | planner / deep_research / academic_research / browser_use / veritas |
+| `subagents` | `SubagentConfig` (dict) | planner / deep_research / browser_use / veritas |
 | `skillify` | `SkillifyConfig` | Daemon-shared semantic skill warehouse indexing and retrieval |
 | `tools` | `ToolsConfig` | Tool group enable/disable + config |
 | `mcp_servers` | `MCPServerConfig` (list) | External MCP server connections |
@@ -121,9 +121,9 @@ The `default` sentinel in durability lets you set the backend once in `persisten
 
 A dict of `SubagentConfig` entries. Each has `enabled`, `model` (optional explicit `provider:model`; takes precedence over `model_role` on planner and research subagents), `model_role` (router role when `model` is unset), `transport` (local | acp | a2a | langgraph), `url`, `config` (subagent-specific), and `runtime_dir`. Built-in research subagents default to the `fast` role; `planner` defaults to `think` via `model_role`.
 
-Built-ins (`planner`, `deep_research`, `academic_research`, `browser_use`, `veritas`) are merged automatically; you only override what you want to change. `browser_use` ships enabled by default in core. Semantic skill search uses top-level `skillify:` (not a subagent).
+Built-ins (`planner`, `deep_research`, `browser_use`, `veritas`) are merged automatically; you only override what you want to change. `browser_use` ships enabled by default in core. Semantic skill search uses top-level `skillify:` (not a subagent).
 
-For `deep_research` and `academic_research`, nested `config` merges into the engine config. Common keys:
+For `deep_research`, nested `config` merges into the engine config. Common keys:
 
 | Key | Default | Purpose |
 |-----|---------|---------|

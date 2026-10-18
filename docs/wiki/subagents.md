@@ -11,7 +11,7 @@ audience: user
 
 Subagents are specialized autonomous agents that perform multi-step, stateful workflows. They extend Soothe's capabilities beyond simple tool invocations, enabling complex operations like structured planning, deep research, and browser automation.
 
-Core Soothe ships five built-in subagents: **planner**, **deep_research**, **academic_research**, **browser_use**, and **veritas**. Semantic skill discovery uses the daemon-shared **Skillify** service via the `search_skills` tool (see `skillify` in config). Additional optional delegated agents (e.g. **weaver**) are maintained in the external **`soothe-plugins`** package.
+Core Soothe ships four built-in subagents: **planner**, **deep_research**, **browser_use**, and **veritas** (nano also registers a built-in **computer_use** subagent). Semantic skill discovery uses the daemon-shared **Skillify** service via the `search_skills` tool (see `skillify` in config). Additional optional delegated agents (e.g. **weaver**) are maintained in the external **`soothe-plugins`** package.
 
 > Source: `packages/soothe/src/soothe/subagents/`
 
@@ -21,8 +21,7 @@ Core Soothe ships five built-in subagents: **planner**, **deep_research**, **aca
 
 | Subagent | Slash Command | Best For |
 |----------|---------------|----------|
-| Deep Research | `/deep_research <query>` | Public web research, comparisons, how-tos |
-| Academic Research | `/academic_research <query>` | Papers, literature reviews, citations |
+| Deep Research | `/deep_research <query>` | Public web research, comparisons, how-tos, academic literature |
 | Planner | `/plan` or `/plan <prompt>` | Plan-mode routing |
 | Browser Use | `/browser_use <url>` | Browser automation and web interaction |
 | Veritas | (auto-invoked) | Clarification auto-answerer in autonomous mode |
@@ -98,41 +97,7 @@ subagents:
       save_reports: false  # false: full report inline; true: save to file + short summary
 ```
 
-For academic papers and literature reviews, use **`academic_research`** instead.
-
----
-
-## Academic Research (`academic_research`)
-
-Iterative **academic literature** research via DeepXiv search, with the same crawl-on-discovery and adaptive report pattern.
-
-**Capabilities**:
-- Academic paper / preprint search (DeepXiv)
-- URL crawl for paper pages (shared `url_crawl` toolkit)
-- Academic report scenarios (literature review, paper comparison, method survey, …)
-- Mandatory **Scope** banner (academic sources only; no local repo files)
-
-**Usage**:
-```bash
-/academic_research Literature review on retrieval-augmented generation 2024-2026
-/academic_research Compare BERT vs modern embedding models for code search
-```
-
-**Effort levels**: same `normal` | `thorough` profiles as `deep_research`.
-
-**Report delivery**: same `save_reports` knob as `deep_research` (default `false` returns the report inline; set `true` to write under `.soothe/agents/academic_research/`).
-
-**Configuration**:
-```yaml
-subagents:
-  academic_research:
-    enabled: true
-    config:
-      effort: normal
-      save_reports: false
-```
-
-Requires DeepXiv credentials (`DEEPXIV_API_KEY` / `DEEPXIV_TOKEN`) when configured.
+Academic literature (papers, preprints, literature reviews) goes through **`deep_research`** — the `academic_research` subagent was deleted in nano 2.0 with no compat shim.
 
 ---
 
@@ -188,7 +153,6 @@ Subagents use specific model roles, not the main agent's model. This is a cost o
 |----------|------------|--------|-----------|
 | planner | `think` (default) | `model` or `model_role` | Explicit `provider:model` wins over role |
 | deep_research | `fast` | `model` or router default | Optional explicit `provider:model` override |
-| academic_research | `fast` | `model` or router default | Same resolution as deep_research |
 | browser_use | `default` | `subagents.browser_use.model_role` | Browser step planning uses the default model |
 
 Built-in subagents ignore `subagents.<name>.model_role` when `model` (explicit `provider:model`) is set. Use `model_role` for router-based selection; use `model` to pin a specific provider/model.

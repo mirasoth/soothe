@@ -135,9 +135,9 @@ async def _reset_pool_singletons() -> None:
     import soothe.sloop.checkpoints.shared_pool as agent_mod
     from soothe.persistence.postgres_pool_registry import PostgresPoolRegistry
 
-    reset_pool_singletons(agent_mod, PostgresPoolRegistry)
+    await reset_pool_singletons(agent_mod, PostgresPoolRegistry)
     yield
-    reset_pool_singletons(agent_mod, PostgresPoolRegistry)
+    await reset_pool_singletons(agent_mod, PostgresPoolRegistry)
 
 
 @pytest.mark.asyncio

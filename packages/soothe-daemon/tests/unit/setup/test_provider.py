@@ -20,7 +20,7 @@ from soothe_daemon.setup.scaffold import scaffold_configs
 def test_update_config_preserves_unrelated_keys() -> None:
     existing = {
         "providers": [{"name": "openai", "api_key": "${OPENAI_API_KEY}", "models": ["gpt-4o"]}],
-        "tools": {"execution": {"enabled": True}},
+        "tools": {"shell": {"enabled": True}},
         "router_profiles": [
             {
                 "name": "default",
@@ -36,7 +36,7 @@ def test_update_config_preserves_unrelated_keys() -> None:
         api_key="${OPENAI_API_KEY}",
         model="gpt-4o",
     )
-    assert updated["tools"]["execution"]["enabled"] is True
+    assert updated["tools"]["shell"]["enabled"] is True
     assert updated["router_profiles"][0]["router"]["think"] == "openai:o3-mini"
     assert updated["router_profiles"][0]["router"]["default"] == "openai:gpt-4o"
     assert "gpt-4o" in updated["providers"][0]["models"]

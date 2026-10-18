@@ -266,8 +266,7 @@ Subagents are specialized helper agents:
 
 **Built-in** (always available):
 - `planner` - Planning delegate
-- `deep_research` - Public web research
-- `academic_research` - Academic literature research
+- `deep_research` - Public web research (including academic literature)
 - `browser_use` - Browser automation
 - `veritas` - Clarification auto-answerer in autonomous mode
 - `SkillifyService` - Semantic skill search (daemon-shared; configure via `skillify:`)
@@ -279,10 +278,6 @@ subagents:
     enabled: true
     config:
       effort: normal  # normal | thorough
-  academic_research:
-    enabled: true
-    config:
-      effort: normal
 ```
 
 See [Subagents Guide](subagents.md).
