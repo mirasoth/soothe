@@ -7259,7 +7259,7 @@ requires-dist = [
     { name = "s3fs", marker = "extra == 'all-backends'", specifier = ">=2025.0.0" },
     { name = "s3fs", marker = "extra == 'dev'", specifier = ">=2025.0.0" },
     { name = "s3fs", marker = "extra == 's3'", specifier = ">=2025.0.0" },
-    { name = "soothe-nano", specifier = ">=2.0.0a2,<3.0.0" },
+    { name = "soothe-nano", specifier = ">=2.0.0,<3.0.0" },
     { name = "watchdog", specifier = ">=3.0.0,<5.0.0" },
 ]
 provides-extras = ["all-backends", "azure", "dev", "gcs", "s3"]
@@ -7450,7 +7450,7 @@ wheels = [
 
 [[package]]
 name = "soothe-nano"
-version = "2.0.0a2"
+version = "2.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiofiles" },
@@ -7490,9 +7490,9 @@ dependencies = [
     { name = "tiktoken" },
     { name = "wcmatch" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c6/cc/21d1ba03069adc6d798bc72e1c14321734def81b121edfa05de72be8b78d/soothe_nano-2.0.0a2.tar.gz", hash = "sha256:015054af083f1c0b7334f592d3eec5f2f65907418da2760b01d4aaf14bd9e907", size = 1349395, upload-time = "2026-10-18T13:50:40.097Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/79/d2/43745cac84723021ef5de3bd30dcdbb341166d68dc82ae4d2af38313538f/soothe_nano-2.0.0.tar.gz", hash = "sha256:849b7a9f57c00694ff5db7ce864ed2a391317ed7d0e57b528d7f74290918c258", size = 1349372, upload-time = "2026-10-18T14:18:12.601Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/56/99/48b2f64996b7aad5e339cd2fd38a4b25a2bc550f3fe8fd2b8cbcd9233d5c/soothe_nano-2.0.0a2-py3-none-any.whl", hash = "sha256:1179965a293eed40c7a1d57ea6f5ba856513bcc1bf0bcb8da838979c2b405df9", size = 1610237, upload-time = "2026-10-18T13:50:38.305Z" },
+    { url = "https://files.pythonhosted.org/packages/8e/12/fc0f6baf794d816dff3ac342133b89558a7c587af175d16c69df444743d7/soothe_nano-2.0.0-py3-none-any.whl", hash = "sha256:daa080e179db2a7d04fa0f5e6e66b8c7842672bc2871aff5b88a83c067ecf66a", size = 1610219, upload-time = "2026-10-18T14:18:10.817Z" },
 ]
 
 [[package]]
