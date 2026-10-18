@@ -63,6 +63,11 @@ def test_build_passes_filesystem_backend_to_deepagents(
         "delete",
         "glob",
         "grep",
+        "file_info",
+        "edit_lines",
+        "insert_lines",
+        "delete_lines",
+        "apply_diff",
     ]
     assert captured["parent_owned_state_keys"] == frozenset({"workspace"})
     assert captured["recursion_limit"] == 9999

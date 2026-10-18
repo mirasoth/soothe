@@ -43,11 +43,9 @@ def _minimal_config_sample_echo_only() -> SootheConfig:
     """Disable built-in subagents and heavy tools; enable only ``sample_echo``."""
     cfg = SootheConfig()
     cfg.tools = ToolsConfig(
-        execution={"enabled": False},
-        file_ops={"enabled": False},
+        shell={"enabled": False},
         wizsearch={"enabled": False},
         datetime={"enabled": False},
-        data={"enabled": False},
         http_requests={"enabled": False},
     )
     for key in list(cfg.subagents.keys()):

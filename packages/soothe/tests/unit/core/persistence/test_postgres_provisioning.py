@@ -29,7 +29,9 @@ def test_postgres_admin_dsn_replaces_path() -> None:
 
 def test_postgres_target_dsn_builds_database_path() -> None:
     assert (
-        PostgresProvisioning.target_dsn("postgresql://user:pass@localhost:5432", "soothe_checkpoints")
+        PostgresProvisioning.target_dsn(
+            "postgresql://user:pass@localhost:5432", "soothe_checkpoints"
+        )
         == "postgresql://user:pass@localhost:5432/soothe_checkpoints"
     )
 

@@ -29,9 +29,7 @@ def test_is_duplicate_schema_error_detects_psycopg_unique_violation() -> None:
     from psycopg import errors as pg_errors
 
     assert ConnectionRetry.is_duplicate_schema_error(pg_errors.UniqueViolation("dup")) is True
-    assert (
-        ConnectionRetry.is_recoverable_connection_error(psycopg.OperationalError("down")) is True
-    )
+    assert ConnectionRetry.is_recoverable_connection_error(psycopg.OperationalError("down")) is True
 
 
 def test_is_recoverable_connection_error_detects_pool_timeout() -> None:
@@ -39,9 +37,7 @@ def test_is_recoverable_connection_error_detects_pool_timeout() -> None:
     from psycopg_pool import PoolTimeout
 
     assert (
-        ConnectionRetry.is_recoverable_connection_error(
-            PoolTimeout("couldn't get a connection")
-        )
+        ConnectionRetry.is_recoverable_connection_error(PoolTimeout("couldn't get a connection"))
         is True
     )
 

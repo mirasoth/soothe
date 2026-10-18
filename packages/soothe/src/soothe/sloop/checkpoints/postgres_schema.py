@@ -27,7 +27,9 @@ async def initialize_agentloop_postgres_schema(pool: AsyncConnectionPool) -> Non
     Args:
         pool: Open `AsyncConnectionPool` for the soothe_checkpoints database.
     """
-    result = await DatabaseInit.initialize(pool, AGENTLOOP_POSTGRES_DATABASE, sql_root=_HOST_SQL_ROOT)
+    result = await DatabaseInit.initialize(
+        pool, AGENTLOOP_POSTGRES_DATABASE, sql_root=_HOST_SQL_ROOT
+    )
     if result.init_applied or result.migrations_applied:
         logger.debug(
             "StrangeLoop PostgreSQL schema initialized (migrations=%s)",
