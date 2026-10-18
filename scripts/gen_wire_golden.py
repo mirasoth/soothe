@@ -68,7 +68,7 @@ def build_cases() -> dict[str, dict]:
     )
 
     stream_update = {
-        "type": "soothe.cognition.stream.tool_call.update",
+        "type": "soothe.stream.tool_call.update",
         "tool_call_id": "s1:s:read_file:0",
         "tool_name": "read_file",
         "args": {"path": "docs/README.md"},
