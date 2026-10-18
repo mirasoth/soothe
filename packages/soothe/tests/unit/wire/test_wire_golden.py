@@ -24,7 +24,7 @@ from soothe.wire.protocol import decode_websocket_text, encode_websocket_text
 
 # <root>/packages/soothe/tests/unit/wire/test_wire_golden.py → <root>/tests/wire_fixtures/
 FIXTURE = Path(__file__).resolve().parents[5] / "tests" / "wire_fixtures" / "wire_golden.json"
-FIXTURE_SHA256 = "46a58955f95283b1aa31534510990f8fdfe9446839f7987b55fad772da2720ee"
+FIXTURE_SHA256 = "ba5a5a408fc2c259b768eae2915289de1820a931da37aad30fdd410d52b16627"
 
 MESSAGE_CASES = ("ai_message_with_tool_calls", "ai_chunk", "human_message", "tool_message")
 ENVELOPE_CASES = ("connection_init", "response", "error")
