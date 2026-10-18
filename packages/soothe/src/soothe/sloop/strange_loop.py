@@ -357,11 +357,8 @@ class StrangeLoop:
         Yields:
             `(event_type, event_data)` tuples for progress updates.
         """
-        from soothe_nano.skills.catalog import (
-            parse_slash_skill_user_line,
-            try_expand_slash_skill_user_line,
-        )
-        from soothe_nano.skills.workspace_sync import sync_specific_skill_to_workspace
+        from soothe_nano.skills.catalog import SkillCatalog, SlashSkillLine
+        from soothe_nano.skills.workspace_sync import WorkspaceSkillMirror
         from soothe_nano.workspace.workspace_paths import WorkspacePaths
 
         goal_user_submission: str | None = None
@@ -373,21 +370,20 @@ class StrangeLoop:
         execution_goal = "" if clarification_answer else goal
 
         # Targeted skill sync - only sync the addressed skill
-        parsed_skill = None if clarification_answer else parse_slash_skill_user_line(goal)
+        parsed_skill = None if clarification_answer else SlashSkillLine.parse(goal)
         if workspace and WorkspacePaths.from_config(self.config).virtual_mode:
             if parsed_skill is not None:
                 skill_name = parsed_skill[0]
-                sync_specific_skill_to_workspace(self.config, workspace, skill_name)
+                WorkspaceSkillMirror(self.config, workspace).sync_specific(skill_name)
             # If no skill addressed, skip sync (skills are synced on-demand via middleware)
 
         skill_env = (
             None
             if clarification_answer
-            else try_expand_slash_skill_user_line(
-                goal,
+            else SkillCatalog(
                 self.config,
                 workspace=str(workspace) if workspace else None,
-            )
+            ).try_expand_slash_line(goal)
         )
         if skill_env is not None:
             goal_user_submission = goal
@@ -1067,11 +1063,9 @@ class StrangeLoop:
                         )
                     else:
                         # Check if this is a recoverable DB connection error
-                        from soothe.sloop.checkpoints.retry_utils import (
-                            is_recoverable_connection_error,
-                        )
+                        from soothe.sloop.checkpoints.retry_utils import ConnectionRetry
 
-                        if is_recoverable_connection_error(e):
+                        if ConnectionRetry.is_recoverable_connection_error(e):
                             logger.error(
                                 "[pump_graph] DB connection error after retries: %s: %s. "
                                 "Emitting fatal_error event instead of crashing daemon.",

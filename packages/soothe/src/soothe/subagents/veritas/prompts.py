@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from soothe.prompts import load_agent_instructions
+from soothe.prompts import ProjectInstructions
 
 if TYPE_CHECKING:
     from soothe.sloop.clarification.protocol import ClarificationRequest
@@ -153,7 +153,7 @@ def build_veritas_user_prompt(
     # workspace_summary holds the thread workspace path string (RFC-103). When
     # the path is absent or no instruction file exists, the loader returns None
     # and the section is skipped — veritas falls back to context-only answering.
-    block = load_agent_instructions(
+    block = ProjectInstructions.load(
         view.workspace_summary,
         headline_max_chars=agent_instructions_max_chars,
     )

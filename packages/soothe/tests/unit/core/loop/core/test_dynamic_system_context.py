@@ -9,13 +9,7 @@ import pytest
 from soothe_nano.middleware import SystemPromptMiddleware
 
 from soothe.config.models import MODEL_KNOWLEDGE_CUTOFFS, get_knowledge_cutoff
-from soothe.prompts import (
-    build_context_sections_for_complexity,
-    build_soothe_environment_section,
-    build_soothe_protocols_section,
-    build_soothe_thread_section,
-    build_soothe_workspace_section,
-)
+from soothe.prompts import ContextXml
 
 
 class TestKnowledgeCutoff:
@@ -52,7 +46,7 @@ class TestEnvironmentSection:
 
     def test_environment_section_format(self) -> None:
         """Environment section has nested XML structure."""
-        section = build_soothe_environment_section(model="claude-opus-4-6")
+        section = ContextXml.build_environment(model="claude-opus-4-6")
 
         # RFC-207: Removed SOOTHE_ prefix from ENVIRONMENT tag
         # Removed version attribute for cache optimization
@@ -66,7 +60,7 @@ class TestEnvironmentSection:
 
     def test_environment_section_contains_model(self) -> None:
         """Environment section contains configured model."""
-        section = build_soothe_environment_section(model="claude-opus-4-6")
+        section = ContextXml.build_environment(model="claude-opus-4-6")
         assert "claude-opus-4-6" in section
 
 
@@ -75,7 +69,7 @@ class TestWorkspaceSection:
 
     def test_workspace_section_non_git(self) -> None:
         """Workspace section handles non-git directory."""
-        section = build_soothe_workspace_section(Path("/tmp/test"))
+        section = ContextXml.build_workspace(Path("/tmp/test"))
 
         # RFC-207: Removed SOOTHE_ prefix from WORKSPACE tag
         # Removed version attribute for cache optimization
@@ -97,7 +91,7 @@ class TestWorkspaceSection:
         git_dir.exists.return_value = True
         mock_path.__truediv__ = lambda self, other: git_dir if other == ".git" else MagicMock()
 
-        section = build_soothe_workspace_section(mock_path)
+        section = ContextXml.build_workspace(mock_path)
 
         assert 'present="true"' in section
         assert '<vcs present="true"/>' in section
@@ -105,7 +99,7 @@ class TestWorkspaceSection:
     def test_workspace_section_no_workspace_uses_cwd(self) -> None:
         """Workspace section uses cwd when workspace is None."""
         with patch.object(Path, "cwd", return_value=Path("/current/working/dir")):
-            section = build_soothe_workspace_section(None)
+            section = ContextXml.build_workspace(None)
             assert "/current/working/dir" in section
 
 
@@ -119,7 +113,7 @@ class TestThreadSection:
             "conversation_turns": 3,
         }
 
-        section = build_soothe_thread_section(thread_context)
+        section = ContextXml.build_thread(thread_context)
 
         # Removed version attribute for cache optimization
         assert "<SOOTHE_THREAD>" in section
@@ -135,7 +129,7 @@ class TestThreadSection:
             "current_plan": "Phase 1: Design the API",
         }
 
-        section = build_soothe_thread_section(thread_context)
+        section = ContextXml.build_thread(thread_context)
 
         assert "Phase 1: Design the API" in section
 
@@ -151,7 +145,7 @@ class TestProtocolsSection:
             "policy": {"type": "ConfigDrivenPolicy"},
         }
 
-        section = build_soothe_protocols_section(protocol_summary)
+        section = ContextXml.build_protocols(protocol_summary)
 
         # Removed version attribute for cache optimization
         assert "<SOOTHE_PROTOCOLS>" in section
@@ -161,7 +155,7 @@ class TestProtocolsSection:
 
     def test_protocols_section_empty(self) -> None:
         """Empty protocol summary returns empty string."""
-        section = build_soothe_protocols_section({})
+        section = ContextXml.build_protocols({})
 
         assert section == ""
 
@@ -173,7 +167,7 @@ class TestProtocolsSection:
             "policy": None,
         }
 
-        section = build_soothe_protocols_section(protocol_summary)
+        section = ContextXml.build_protocols(protocol_summary)
 
         assert 'id="planner"' in section
         assert 'id="memory"' not in section
@@ -186,10 +180,10 @@ class TestBuildContextSectionsForComplexity:
         config = MagicMock()
         config.resolve_model.return_value = "m"
         state = {"workspace": "/tmp"}
-        blocks = build_context_sections_for_complexity(
+        blocks = ContextXml.build_complexity_sections(
             config=config, complexity="simple", state=state, include_workspace_extras=False
         )
-        # build_context_sections_for_complexity returns both ENVIRONMENT and WORKSPACE
+        # ContextXml.build_complexity_sections returns both ENVIRONMENT and WORKSPACE
         # but _get_prompt_for_complexity only uses ENVIRONMENT in static sections
         # (WORKSPACE is tool-triggered per RFC-210)
         assert len(blocks) == 2

@@ -105,8 +105,8 @@ def test_resolve_subagents_browser_use_fallback_passes_soothe_config_not_model()
 
 def test_call_subagent_factory_browser_use_plugin_accepts_model_none() -> None:
     """Regression: @subagent wrapper requires model kwarg even when unused."""
-    from soothe_nano.utils.resolver import _call_subagent_factory
     from soothe_nano.subagents.browser_use import BrowserUsePlugin
+    from soothe_nano.utils.resolver import _call_subagent_factory
 
     cfg = SootheConfig()
     plugin = BrowserUsePlugin()

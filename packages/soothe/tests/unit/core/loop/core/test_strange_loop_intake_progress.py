@@ -88,8 +88,8 @@ async def test_run_with_progress_uses_in_graph_classify() -> None:
             "soothe_nano.workspace.workspace_paths.WorkspacePaths.from_config",
             return_value=MagicMock(virtual_mode=False),
         ),
-        patch("soothe_nano.skills.catalog.parse_slash_skill_user_line", return_value=None),
-        patch("soothe_nano.skills.catalog.try_expand_slash_skill_user_line", return_value=None),
+        patch("soothe_nano.skills.catalog.SlashSkillLine.parse", return_value=None),
+        patch("soothe_nano.skills.catalog.SkillCatalog.try_expand_slash_line", return_value=None),
     ):
         runtime_ctx = MagicMock()
         runtime_ctx.emit = AsyncMock()

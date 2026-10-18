@@ -54,8 +54,6 @@ from soothe.config.models import (
 )
 from soothe.config.ownership import validate_nano_file_ownership
 
-# Lazy import to avoid circular dependency - _DEFAULT_SYSTEM_PROMPT imported in methods that use it
-
 if TYPE_CHECKING:
     from langchain_core.embeddings import Embeddings
     from langchain_core.language_models import BaseChatModel
@@ -782,7 +780,7 @@ class SootheConfig(BaseSettings):
             if self.persistence.default_backend == "postgresql":
                 try:
                     from soothe.persistence.postgres_pool_lifecycle import (
-                        postgres_pool_timing_from_config,
+                        PostgresPoolLifecycle,
                     )
                     from soothe.persistence.postgres_pool_registry import (
                         PostgresPoolRegistry,
@@ -794,7 +792,7 @@ class SootheConfig(BaseSettings):
                         if vectors_pool is not None:
                             kwargs["shared_pool"] = vectors_pool
                             kwargs["pool_size"] = 0
-                    kwargs["pool_timing"] = postgres_pool_timing_from_config(
+                    kwargs["pool_timing"] = PostgresPoolLifecycle.timing_from_config(
                         self,
                         max_size=kwargs["pool_size"] or self.persistence.postgres.vectors_pool_size,
                     )
@@ -1106,22 +1104,20 @@ class SootheConfig(BaseSettings):
         Returns:
             The system prompt string.
         """
-        from soothe_nano.prompts.identity import prepend_assistant_identity
-        from soothe_nano.prompts.system_templates import (
-            format_complex_agent_system_prompt_core,
-        )
+        from soothe_nano.prompts.identity import PromptIdentity
+        from soothe_nano.prompts.system_templates import SystemTemplates
 
         from soothe.utils.prompt_clock import local_date_str, local_timezone_label
 
         current_date = local_date_str()
         tz_label = local_timezone_label()
 
-        base_prompt = format_complex_agent_system_prompt_core(
+        base_prompt = SystemTemplates.format_complex_core(
             self.agent.system_prompt,
             self.agent.name,
         )
         body = f"{base_prompt}\n\nToday's date is {current_date} ({tz_label})."
-        return prepend_assistant_identity(body, self.agent.name)
+        return PromptIdentity.prepend_identity(body, self.agent.name)
 
     def propagate_env(self) -> None:
         """Set provider-specific env vars for downstream libraries.

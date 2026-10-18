@@ -8,7 +8,7 @@ import soothe_nano.skills as skills_pkg
 
 from soothe_daemon.skillify.service import _default_warehouse_paths, resolve_warehouse_paths
 
-_BUILTIN_SKILLS = Path(skills_pkg.__file__).resolve().parent / "builtin_skills"
+_BUILTIN_SKILLS = Path(skills_pkg.__file__).resolve().parent / "builtin"
 
 
 def test_default_warehouse_paths_include_user_skill_dirs(tmp_path: Path) -> None:
@@ -32,7 +32,7 @@ def test_resolve_warehouse_paths_keeps_custom_paths(tmp_path: Path) -> None:
     custom = "/tmp/extra-skills"
     resolved = resolve_warehouse_paths(soothe_home, [custom])
     assert resolved[0] == str(Path.home() / ".agents" / "skills")
-    assert resolved[1].endswith("/skills/builtin_skills")
+    assert resolved[1].endswith("/skills/builtin")
     assert resolved[2] == str(soothe_home / "skills")
     assert resolved[3] == custom
 

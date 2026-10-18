@@ -1047,7 +1047,7 @@ class MessageRouter:
         import asyncio
 
         d = self._daemon
-        from soothe_nano.skills.catalog import wire_entries_for_agent_config
+        from soothe_nano.skills.catalog import SkillCatalog
 
         # Prefer explicit workspace param (RPC sidecar has no loop subscription),
         # then fall back to client's subscribed loop workspace, then cwd.
@@ -1070,12 +1070,12 @@ class MessageRouter:
                         workspace = raw_ws.strip()
 
         # Run filesystem I/O in a thread to avoid blocking the event loop
-        skills = await asyncio.to_thread(
-            wire_entries_for_agent_config,
-            d._config,
-            workspace,
-            skill_index=d._skill_index,
-        )
+        def _wire() -> list[dict]:
+            return SkillCatalog(d._config, workspace).wire_entries(
+                skill_index=d._skill_index,
+            )
+
+        skills = await asyncio.to_thread(_wire)
         await self._send_response(
             client_id,
             msg.get("request_id"),
@@ -1139,11 +1139,7 @@ class MessageRouter:
     async def _handle_invoke_skill(self, client_id: str, msg: dict[str, Any]) -> None:
         """Resolve a skill on the daemon host, ack the client, then queue the composed turn."""
         d = self._daemon
-        from soothe_nano.skills.catalog import (
-            format_slash_skill_invoke_line,
-            read_skill_markdown,
-            resolve_skill_directory,
-        )
+        from soothe_nano.skills.catalog import SkillCatalog, SlashSkillLine
 
         # Capacity check moved to query_engine.py to eliminate race
 
@@ -1186,7 +1182,8 @@ class MessageRouter:
                         if isinstance(raw_ws, str) and raw_ws.strip():
                             workspace = raw_ws.strip()
 
-        meta = resolve_skill_directory(d._config, raw_skill, workspace)
+        catalog = SkillCatalog(d._config, workspace)
+        meta = catalog.resolve_skill(raw_skill)
         if meta is None:
             await d._send_client_message(
                 client_id,
@@ -1198,7 +1195,7 @@ class MessageRouter:
             )
             return
 
-        md = read_skill_markdown(meta)
+        md = catalog.read_markdown(meta)
         if md is None or not md.strip():
             await d._send_client_message(
                 client_id,
@@ -1222,7 +1219,7 @@ class MessageRouter:
             )
             return
 
-        plain_user_line = format_slash_skill_invoke_line(str(meta.get("name", "")), args)
+        plain_user_line = SlashSkillLine.format(str(meta.get("name", "")), args)
         echo = {
             "skill_name": meta["name"],
             "description": meta.get("description", ""),
