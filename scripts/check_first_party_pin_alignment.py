@@ -12,7 +12,6 @@ Daemon must NOT re-pin ``soothe-nano`` (comes via soothe) or depend on
 from __future__ import annotations
 
 import os
-import re
 import sys
 import tomllib
 from pathlib import Path
@@ -128,16 +127,28 @@ def main() -> int:
     else:
         version_path = ROOT / "VERSION"
         version = version_path.read_text().strip()
-        if not re.fullmatch(r"\d+\.\d+\.\d+", version):
+        try:
+            parsed_version = Version(version)
+        except Exception:
             errors.append((f"VERSION looks invalid: {version!r}", "VERSION"))
-        elif Version(version) not in soothe_req.specifier:
-            errors.append(
-                (
-                    f"soothe-daemon soothe pin {_normalize_spec(soothe_req.specifier)} "
-                    f"does not admit current VERSION {version}",
-                    _DAEMON_PYPROJECT,
-                )
+            parsed_version = None
+        if parsed_version is not None:
+            # Pre-releases (e.g. 1.2.0-beta.1) only satisfy a specifier when it
+            # explicitly allows prereleases; a plain `>=1.0.0,<2.0.0` does not.
+            # Compare the base version so beta/rc cuts still validate the pin.
+            admit_version = (
+                Version(parsed_version.base_version)
+                if parsed_version.is_prerelease
+                else parsed_version
             )
+            if admit_version not in soothe_req.specifier:
+                errors.append(
+                    (
+                        f"soothe-daemon soothe pin {_normalize_spec(soothe_req.specifier)} "
+                        f"does not admit current VERSION {version}",
+                        _DAEMON_PYPROJECT,
+                    )
+                )
 
     if errors:
         print("FAILED: first-party pin alignment")
