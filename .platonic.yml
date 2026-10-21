@@ -1,0 +1,29 @@
+# Platonic Coding configuration — namespaces declared 2026-10-21 (specs-partition)
+namespaces:
+  coreagent:
+    prefix: CORE
+    description: CoreAgent runtime — tools, workspace, filesystem security, context injection
+  loop:
+    prefix: LOOP
+    description: StrangeLoop plan-execute loop — cognition, prompting, context, intake, middleware
+  protocol:
+    prefix: PROT
+    description: Protocol architectures (context, memory, planner, policy, durability, identity)
+  daemon:
+    prefix: DAEM
+    description: Daemon — events, MCP, channels, thread management, IPC
+  client:
+    prefix: CLNT
+    description: Client & presentation — TUI, display, appkit, streaming, widgets
+  plugin:
+    prefix: PLUG
+    description: Plugin & subagent ecosystem
+  sdk:
+    prefix: SDK
+    description: SDK module structure & shared utilities
+  persist:
+    prefix: PERS
+    description: Persistence backends
+  sloop:
+    prefix: SLP
+    description: Sloop graph topology, recursive decomposition & eval threads

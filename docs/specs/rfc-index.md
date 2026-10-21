@@ -1,20 +1,27 @@
 # RFC Index
 
-**Last Updated**: 2026-10-07
-**Total RFCs**: 97 (81 active, 16 archived)
+**Last Updated**: 2026-10-21
+**Total RFCs**: 94 (79 active, 15 archived)
 
 This index is the canonical catalog of all RFCs in the Soothe project. It also
 serves as the deprecation list and archived-RFC table.
 
+> **Namespace Partition (2026-10-21)**: Active specs were partitioned into 9
+> namespaces (`coreagent`, `loop`, `protocol`, `daemon`, `client`, `plugin`, `sdk`, `persist`, `sloop`). Active IDs use the
+> qualified form `RFC-<PREFIX>-NNN`; cross-cutting RFCs (RFC-000, RFC-001)
+> stay at the specs root. Archived RFCs keep their pre-partition RFC-NNN
+> identifiers (frozen historical IDs). The full old-ID to new-ID mapping is
+> recorded in `rfc-history.md`.
+
 > **⚠️ Autopilot Cleansing (2026-10-07)**: The legacy `soothe-autopilot`
-> subsystem has been replaced in code by **LoopRail** (RFC-231) +
-> **ContextEngine** (RFC-624). Six RFCs were archived with their still-normative
-> content absorbed into RFC-231: RFC-204, RFC-222, RFC-228, RFC-229, RFC-230,
+> subsystem has been replaced in code by **LoopRail** (RFC-LOOP-017) +
+> **ContextEngine** (RFC-SDK-002). Six RFCs were archived with their still-normative
+> content absorbed into RFC-LOOP-017: RFC-204, RFC-222, RFC-228, RFC-229, RFC-230,
 > RFC-625. RFC-900 (process/deprecation scheme) was deleted — its content
 > duplicated this index and `rfc-history.md`. `docs/rfc-methodology-guide.md`
 > was also deleted — RFC templates now come from the platonic-coding skill's
 > shipped assets. See
-> [IG-779](../impl/IG-779-rfc-autopilot-cleansing-and-mode-alignment.md)
+> [IG-LOOP-013](../impl/loop/IG-LOOP-013-rfc-autopilot-cleansing-and-mode-alignment.md)
 > for the full migration mapping.
 
 > **⚠️ Path Restructure Notice (2026-08)**: RFCs written before the 2026-07
@@ -40,659 +47,68 @@ serves as the deprecation list and archived-RFC table.
 >
 > Explicitly patched RFCs note the correction inline.
 
+## Namespace Summary
+
+| Namespace | Prefix | RFCs | Description |
+|-----------|--------|------|-------------|
+| [`coreagent/](coreagent/rfc-index.md) | CORE | 9 | CoreAgent runtime - tools, workspace, filesystem security, context injection |
+| [`loop/](loop/rfc-index.md) | LOOP | 28 | StrangeLoop plan-execute loop - cognition, prompting, context, intake, middleware |
+| [`protocol/](protocol/rfc-index.md) | PROT | 7 | Protocol architectures (context, memory, planner, policy, durability, identity) |
+| [`daemon/](daemon/rfc-index.md) | DAEM | 8 | Daemon - events, MCP, channels, thread management, IPC |
+| [`client/](client/rfc-index.md) | CLNT | 11 | Client & presentation - TUI, display, appkit, streaming, widgets |
+| [`plugin/](plugin/rfc-index.md) | PLUG | 4 | Plugin & subagent ecosystem |
+| [`sdk/](sdk/rfc-index.md) | SDK | 4 | SDK module structure & shared utilities |
+| [`persist/](persist/rfc-index.md) | PERS | 3 | Persistence backends |
+| [`sloop/](sloop/rfc-index.md) | SLP | 3 | Sloop graph topology, recursive decomposition & eval threads |
+
+## Root RFCs (cross-cutting)
+
+| ID | Title | Kind | Status |
+|----|-------|------|--------|
+| [RFC-000](RFC-000-system-conceptual-design.md) | System Conceptual Design | Conceptual Design | Implemented |
+| [RFC-001](RFC-001-core-modules-architecture.md) | Architecture Design for Core Protocol Modules | Architecture Design | Implemented |
+
+Non-RFC root docs: [`rest-api-spec.md`](rest-api-spec.md) (daemon REST API contract).
+
 ## RFC Status Summary
 
 | Status | Count |
-|--------|-------|
-| Draft | 38 |
-| Proposed | 2 |
-| Accepted | 1 |
-| Implemented | 29 |
-| Implemented (partial) | 6 |
+|---|---|
+| Draft | 37 |
+| Implemented | 30 |
+| Implemented (partial) | 8 |
 | Implemented (Partially Superseded) | 1 |
-| Archived | 16 |
-
-> **Note**: Status values follow the lifecycle: Draft → Proposed → Accepted →
-> Implemented → Deprecated → Archived. "Implemented (partial)" and
-> "Implemented (Partially Superseded)" are project-specific variants documenting
-> in-progress or partially superseded implementations. See individual RFC
-> headers for authoritative per-RFC status. Counts updated 2026-10-07: RFC-900
-> deleted (process spec duplicating this index + rfc-history); the deprecation
-> process is now inline in this index and `rfc-history.md`.
+| Accepted | 1 |
+| Proposed | 1 |
+| Proposed (deletion portion landed via IG-752/IG-753; recursive topology not yet implemented) | 1 |
 
 ## RFC Kind Summary
 
 | Kind | Count |
-|------|-------|
-| Architecture Design | 59 |
+|---|---|
+| Architecture Design | 57 |
 | Implementation Interface Design | 17 |
 | Architecture Design + Implementation Interface Design | 2 |
 | Conceptual Design | 1 |
 | Architecture Design + Protocol Specification | 1 |
 | Feature Enhancement | 1 |
 
----
+## Archived RFCs
 
-## RFC Catalog
+Archived specs live in `docs/archive/specs/` and keep their pre-partition IDs.
 
-### Foundation (0xx)
-
-- **RFC-000**: [System Conceptual Design](RFC-000-system-conceptual-design.md)
-  - Kind: Conceptual Design
-  - Status: Implemented
-  - Created: 2026-03-12
-  - Updated: 2026-05-26
-- **RFC-001**: [Architecture Design for Core Protocol Modules](RFC-001-core-modules-architecture.md)
-  - Kind: Architecture Design
-  - Status: Implemented
-  - Created: 2026-03-12
-  - Updated: 2026-04-17 (RFC consolidation; retrieval module canonical in RFC-302)
-
-### Core Agent (1xx)
-
-- **RFC-100**: [CoreAgent Runtime Architecture](RFC-100-coreagent-runtime.md)
-  - Kind: Architecture Design
-  - Status: Implemented (partial)
-  - Created: 2026-03-29
-  - Depends on: RFC-000, RFC-001
-  - Updated: 2026-05-26
-- **RFC-101**: [Tool Interface & Event Naming](RFC-101-tool-interface.md)
-  - Kind: Implementation Interface Design
-  - Status: Implemented
-  - Created: 2026-03-31
-  - Depends on: RFC-100 (CoreAgent Runtime), RFC-401 (Event Processing)
-  - Supersedes: RFC-0016, RFC-0025
-  - Authors: Xiaming Chen
-  - Updated: 2026-03-31
-- **RFC-102**: [Secure Filesystem Path Handling and Security Policy](RFC-102-security-filesystem-policy.md)
-  - Kind: Implementation Interface Design
-  - Status: Implemented
-  - Created: 2026-03-18
-  - Depends on: RFC-001 (Policy System)
-  - Authors: System
-  - Implemented: 2026-03-18
-- **RFC-103**: [Thread-Aware Workspace](RFC-103-thread-aware-workspace.md)
-  - Kind: Implementation Interface Design
-  - Status: Draft
-  - Created: 2026-03-31
-  - Depends on: RFC-102 (Security Filesystem Policy), RFC-450 (Daemon Communication), RFC-452 (Thread Management)
-  - Authors: Design brainstorming session
-  - Updated: 2026-08-08
-- **RFC-104**: [Dynamic System Context Injection](RFC-104-dynamic-system-context.md)
-  - Kind: Implementation Interface Design
-  - Status: Implemented
-  - Created: 2026-03-31
-  - Depends on: RFC-100 (CoreAgent Runtime), RFC-101 (Tool Interface), RFC-103 (Thread-Aware Workspace)
-  - Authors: Platonic brainstorming session
-  - Updated: 2026-08-08
-- **RFC-105**: [Progressive Skill Loading](RFC-105-progressive-skill-loading.md)
-  - Kind: Implementation Interface Design
-  - Status: Implemented (partial)
-  - Created: 2026-05-29
-  - Depends on: RFC-100 (CoreAgent Runtime), RFC-104 (Dynamic System Context), RFC-214 (StrangeLoop Loop Message Surface), RFC-600 (Plugin Extension System)
-  - Authors: Platonic brainstorming session
-  - Updated: 2026-07-03
-
-### StrangeLoop & Cognition (2xx)
-
-- **RFC-200**: [Autonomous Goal Management Loop](../archive/specs/RFC-200-autonomous-goal-management.md) ⚠️ **ARCHIVED**
-  - Kind: Architecture Design
-  - Status: Archived
-  - Superseded By: RFC-222 (control flow), RFC-625 (GoalEngine architecture)
-  - Archived Date: 2026-06-16
-  - Created: 2026-03-15
-- **RFC-201**: [StrangeLoop Plan-Execute Loop Architecture](RFC-201-strangeloop-plan-execute-loop.md)
-  - Kind: Architecture Design
-  - Status: Implemented (Partially Superseded)
-  - Created: 2026-04-17
-  - Depends on: RFC-000, RFC-001, RFC-100
-  - Partially Superseded By: RFC-220 (§loop driver), RFC-222 (GoalEngine daemon-ownership), RFC-225 (loop-centric model), RFC-904 (recursive step decomposition — upfront plan waves)
-  - Updated: 2026-08-19
-- **RFC-203**: [StrangeLoop State & Memory Architecture](../archive/specs/RFC-203-strangeloop-state-memory.md) ⚠️ **ARCHIVED**
-  - Kind: Architecture Design / Impl Interface
-  - Status: Archived
-  - Superseded By: RFC-626
-  - Archived Date: 2026-06-16
-  - Created: 2026-04-17
-- **RFC-204**: [Autopilot Mode](../archive/specs/RFC-204-autopilot-mode.md) ⚠️ **ARCHIVED**
-  - Kind: Architecture Design
-  - Status: Archived
-  - Superseded By: RFC-231 (report-commit judgment §4.1); UX surfaces moved to RFC-500/504 + RFC-450
-  - Archived Date: 2026-10-07
-  - Created: 2026-04-03
-- **RFC-206**: [Hierarchical Prompt Architecture](RFC-206-prompt-architecture.md)
-  - Kind: Architecture Design
-  - Status: Draft
-  - Created: 2026-04-08
-  - Depends on: RFC-200, RFC-100, RFC-214 (Volatility-Tiered Prompt Architecture & Unified Message Ledger)
-- **RFC-207**: [StrangeLoop Thread Lifecycle & Goal Context Management](RFC-207-strangeloop-thread-context-lifecycle.md)
-  - Kind: Architecture Design
-  - Status: Draft
-  - Created: 2026-04-17
-  - Depends on: RFC-201, RFC-203
-  - Supersedes: RFC-216 (Multi-Thread Infinite Lifecycle)
-  - Updated: 2026-06-19
-- **RFC-211**: [Layer 2 Tool Result Optimization](RFC-211-layer2-tool-result-optimization.md)
-  - Kind: Architecture Design
-  - Status: Draft
-  - Created: 2026-04-10
-  - Depends on: RFC-200, RFC-100, RFC-203, RFC-207
-  - Updated: 2026-08-08
-- **RFC-213**: [StrangeLoop Reasoning Quality & Robustness](RFC-213-strangeloop-reasoning-quality.md)
-  - Kind: Architecture Design
-  - Status: Draft
-  - Created: 2026-04-17
-  - Depends on: RFC-200, RFC-203
-  - Partially Superseded By: RFC-904 (per-iteration assess+generate pair → `decompose_task`); RFC-905 (coverage Eval thread, not assess-only ROOT_EVAL / GapResult)
-  - Authors: Claude Code
-  - Updated: 2026-08-20
-- **RFC-214**: [Volatility-Tiered Prompt Architecture & Unified Message Ledger](RFC-214-strangeloop-loop-message-surface.md)
-  - Kind: Architecture Design
-  - Status: Draft
-  - Created: 2026-05-03
-  - Depends on: RFC-100 (CoreAgent Runtime), RFC-206 (Prompt Architecture), RFC-104 (Dynamic System Context), RFC-207 (Thread Lifecycle & Goal Context), RFC-203 (StrangeLoop State & Memory), RFC-803 (StrangeLoop Checkpoint Backend), RFC-218 (Checkpoint Tree), RFC-217 (Goal Context Management), RFC-624 (Context Engine)
-  - Updated: 2026-08-08
-- **RFC-216**: [StrangeLoop Multi-Thread Infinite Lifecycle](../archive/specs/RFC-216-strangeloop-multithread-lifecycle.md) ⚠️ **ARCHIVED**
-  - Kind: Architecture Design
-  - Status: Archived
-  - Created: 2026-04-16
-- **RFC-217**: [Goal Context Management for StrangeLoop](RFC-217-goal-context-management.md)
-  - Kind: Architecture Design
-  - Status: Implemented
-  - Created: 2026-04-17
-  - Depends on: RFC-201 (Agentic Goal Execution), RFC-207 (Thread Lifecycle & Goal Context), RFC-225 (Loop Continuity)
-  - Updated: 2026-08-08
-- **RFC-218**: [StrangeLoop Checkpoint Tree Architecture](RFC-218-strangeloop-checkpoint-tree-architecture.md)
-  - Kind: Architecture Design
-  - Status: Draft
-  - Created: 2026-04-22
-  - Depends on: RFC-207 (Thread Lifecycle & Goal Context), RFC-803 (StrangeLoop Checkpoint Backend)
-  - Authors: Soothe contributors
-- **RFC-219**: [Goal Completion Module Architecture](RFC-219-goal-completion-module.md)
-  - Kind: Architecture Design
-  - Status: Implemented
-  - Created: 2026-04-28
-  - Depends on: RFC-201, RFC-603
-  - Updated: 2026-08-08
-- **RFC-220**: [LangGraph Agent Loop Orchestrator](RFC-220-langgraph-agent-loop-orchestrator.md)
-  - Kind: Architecture Design
-  - Status: Implemented
-  - Created: 2026-05-05
-  - Depends on: RFC-000, RFC-001, RFC-100, RFC-604, RFC-803, RFC-218, RFC-219
-  - Supersedes: RFC-201 §loop driver (imperative Plan → Execute driver)
-  - Partially Superseded By: RFC-903 (node lifecycle, node folds, typed route contract); RFC-904 (recursive step decomposition — plan/eval/execute station spine)
-  - Implemented: 2026-08-11
-- **RFC-221**: [Loop Runner Protocol and Subprocess Isolation](RFC-221-loop-runner-protocol-and-ray.md)
-  - Kind: Architecture Design
-  - Status: Implemented
-  - Created: 2026-05-09
-  - Depends on: RFC-001, RFC-220, RFC-450, RFC-452
-- **RFC-222**: [Autopilot Daemon Architecture](../archive/specs/RFC-222-autopilot-goal-engine-architecture.md) ⚠️ **ARCHIVED**
-  - Kind: Architecture Design
-  - Status: Archived
-  - Superseded By: RFC-231 (LoopRailService runtime §4 + §14 component map)
-  - Archived Date: 2026-10-07
-  - Created: 2026-05-27
-- **RFC-223**: [Thread Inheritance with LangGraph Checkpoint Forking](RFC-223-thread-inheritance-checkpoint-forking.md)
-  - Kind: Architecture Design
-  - Status: Implemented (partial)
-  - Created: 2026-05-27
-  - Depends on: RFC-201, RFC-214, RFC-207, RFC-218
-  - Updated: 2026-08-08
-- **RFC-224**: [Automatic Context Window Management](RFC-224-automatic-context-window-management.md)
-  - Kind: Architecture Design
-  - Status: Draft
-  - Created: 2026-05-27
-  - Depends on: RFC-223, RFC-201, RFC-214
-  - Updated: 2026-08-08
-- **RFC-225**: [Loop Continuity and Goal Record Enrichment](RFC-225-loop-continuity-and-goal-record-enrichment.md)
-  - Kind: Architecture Design
-  - Status: Implemented
-  - Created: 2026-05-29
-  - Depends on: RFC-201, RFC-214, RFC-207, RFC-218, RFC-220
-  - Supersedes: ---
-  - Authors: xiaming
-  - Updated: 2026-08-08
-- **RFC-226**: [Continuation-Aware plan_assess and Post-Execute Fast Exit](RFC-226-continuation-aware-plan-assess.md)
-  - Kind: Architecture Design
-  - Status: Implemented
-  - Created: 2026-05-29
-  - Depends on: RFC-220, RFC-225
-  - Supersedes: ---
-  - Authors: xiaming
-  - Updated: 2026-05-29
-- **RFC-227**: [Plan-Assess Prior-Progress Digest](RFC-227-plan-assess-prior-progress-digest.md)
-  - Kind: Architecture Design
-  - Status: Implemented
-  - Created: 2026-06-01
-  - Depends on: RFC-214, RFC-220
-  - Supersedes: ---
-  - Authors: xiaming
-  - Updated: 2026-06-01
-- **RFC-228**: [Autopilot Job IPC Commands](../archive/specs/RFC-228-autopilot-job-ipc.md) ⚠️ **ARCHIVED**
-  - Kind: Protocol Specification
-  - Status: Archived
-  - Superseded By: RFC-450 (`job_*` IPC commands), RFC-231 (§10 rail selection)
-  - Archived Date: 2026-10-07
-  - Created: 2026-06-04
-- **RFC-229**: [Cron Service for Autopilot](../archive/specs/RFC-229-cron-service.md) ⚠️ **ARCHIVED**
-  - Kind: Architecture Design
-  - Status: Archived
-  - Superseded By: RFC-231 (§18 cron as external submit path), RFC-450 (cron IPC)
-  - Archived Date: 2026-10-07
-  - Created: 2026-06-24
-- **RFC-230**: [Job Maturity Assessment for Autopilot Rails](../archive/specs/RFC-230-job-maturity-assessment.md) ⚠️ **ARCHIVED**
-  - Kind: Architecture Design
-  - Status: Archived
-  - Superseded By: RFC-231 (§4 job maturity + §8 maturity predicates)
-  - Archived Date: 2026-10-07
-  - Created: 2026-08-05
-- **RFC-231**: [LoopRail and Rail Exec (Composable Verb Bodies)](RFC-231-looprail-rail-exec.md)
-  - Kind: Architecture Design
-  - Status: Draft
-  - Created: 2026-08-07
-  - Depends on: RFC-624 (Context Engine), RFC-626 (Entity Model Consolidation), RFC-630 (Start-Phase LLM Intake)
-  - Authors: Soothe Team
-  - Updated: 2026-10-07 (autopilot cleansing — supersedes RFC-204/222/228/229/230/625; absorbs report-commit §4.1 + CE §17 + cron §18; `LoopRailService` replaces `AutopilotService`; `soothe/rails/` replaces `soothe/autopilot/rails/`)
-- **RFC-232**: [Flat WavePlan Wire Ingest (Semi-Structured, No Nesting)](RFC-232-waveplan-flat-semistructured-ingest.md)
-  - Kind: Architecture Design
-  - Status: Draft
-  - Created: 2026-08-07
-  - Depends on: RFC-231, RFC-204, RFC-222, RFC-625, RFC-630
-  - Authors: Soothe Team
-  - Updated: 2026-08-08
-
-### Protocol Architecture (3xx)
-
-- **RFC-300**: [Context and Memory Architecture Design](../archive/specs/RFC-300-context-memory-protocols.md) ⚠️ **ARCHIVED**
-  - Kind: Architecture Design
-  - Status: Archived
-  - Superseded By: RFC-302 (ContextProtocol Architecture), RFC-303 (MemoryProtocol Architecture)
-  - Archived Date: 2026-06-16
-  - Created: 2026-03-14
-- **RFC-301**: [Protocol Registry](RFC-301-protocol-registry.md)
-  - Kind: Implementation Interface Design
-  - Status: Implemented
-  - Created: 2026-03-31
-  - Depends on: RFC-001 (Core Modules Architecture), RFC-302 (Context Protocol), RFC-303 (Memory Protocol)
-  - Authors: Xiaming Chen
-  - Updated: 2026-03-31
-- **RFC-302**: [ContextProtocol Architecture](RFC-302-context-protocol-architecture.md)
-  - Kind: Architecture Design
-  - Status: Draft
-  - Created: 2026-04-17
-  - Depends on: RFC-000, RFC-001
-- **RFC-303**: [MemoryProtocol Architecture](RFC-303-memory-protocol-architecture.md)
-  - Kind: Architecture Design
-  - Status: Draft
-  - Created: 2026-04-17
-  - Depends on: RFC-000, RFC-302
-- **RFC-304**: [PlannerProtocol Architecture](RFC-304-planner-protocol-architecture.md)
-  - Kind: Architecture Design
-  - Status: Draft
-  - Created: 2026-04-17
-  - Depends on: RFC-000, RFC-302
-  - Updated: 2026-08-08
-- **RFC-305**: [PolicyProtocol Architecture](RFC-305-policy-protocol-architecture.md)
-  - Kind: Architecture Design
-  - Status: Draft
-  - Created: 2026-04-17
-  - Depends on: RFC-000, RFC-001
-  - Updated: 2026-08-08
-- **RFC-306**: [DurabilityProtocol Architecture](RFC-306-durability-protocol-architecture.md)
-  - Kind: Architecture Design
-  - Status: Draft
-  - Created: 2026-04-17
-  - Depends on: RFC-000, RFC-001
-- **RFC-307**: [IdentityProtocol Architecture](RFC-307-identity-protocol-architecture.md)
-  - Kind: Architecture Design
-  - Status: Draft
-  - Created: 2026-06-25
-  - Depends on: RFC-000, RFC-001, RFC-305
-
-### Event & Daemon (4xx)
-
-- **RFC-401**: [Event Processing & Filtering](RFC-401-event-processing.md)
-  - Kind: Implementation Interface Design
-  - Status: Implemented
-  - Created: 2026-03-31
-  - Depends on: RFC-450 (Daemon Communication), RFC-403 (Unified Event Naming), RFC-500 (CLI/TUI Architecture)
-  - Supersedes: RFC-0015, RFC-0019, RFC-0022
-  - Authors: Soothe Team
-  - Updated: 2026-04-29
-- **RFC-403**: [Unified Event Naming Semantics](RFC-403-unified-event-naming.md)
-  - Kind: Implementation Interface Design
-  - Status: Draft
-  - Created: 2026-04-15
-  - Authors: Platonic Brainstorming Session
-  - Updated: 2026-05-01
-- **RFC-411**: [Event Stream Replay & History Reconstruction](../archive/specs/RFC-411-event-stream-replay.md) ⚠️ **ARCHIVED**
-  - Kind: Architecture Design
-  - Status: Archived
-  - Superseded By: RFC-413
-  - Archived Date: 2026-06-16
-  - Created: 2026-04-22
-- **RFC-412**: [MCP Management](RFC-412-mcp-management.md)
-  - Kind: Implementation Interface Design
-  - Status: Implemented (partial)
-  - Created: 2026-05-29
-  - Depends on: RFC-100 (CoreAgent Runtime), RFC-101 (Tool Interface), RFC-105 (Progressive Skill Loading), RFC-305 (Policy Protocol Architecture), RFC-600 (Plugin Extension System)
-  - Authors: Platonic brainstorming session
-  - Updated: 2026-07-11
-- **RFC-413**: [Server-Owned Display Card Ledger](RFC-413-server-owned-display-card-ledger.md)
-  - Kind: Architecture Design
-  - Status: Implemented
-  - Created: 2026-06-04
-  - Depends on: RFC-225 (Goal Record Enrichment), RFC-401 (Event Processing), RFC-403 (Unified Event Naming), RFC-411 (Event Stream Replay), RFC-503 (Loop-First UX), RFC-631 (Goal Display Snapshots)
-  - Supersedes: RFC-411 (history reconstruction model)
-  - Authors: xiaming (with Claude)
-  - Updated: 2026-08-08
-- **RFC-450**: [Unified Daemon Communication Protocol](RFC-450-daemon-communication-protocol.md)
-  - Kind: Architecture Design + Protocol Specification
-  - Status: Draft
-  - Created: 2026-03-19
-  - Depends on: RFC-000, RFC-001, RFC-500, RFC-614, RFC-403
-  - Updated: 2026-10-07
-- **RFC-452**: [Unified Thread Management Architecture](RFC-452-unified-thread-management.md)
-  - Kind: Architecture Design
-  - Status: Implemented (partial)
-  - Created: 2026-03-22
-  - Depends on: RFC-000, RFC-001, RFC-201, RFC-450, RFC-101
-- **RFC-454**: [Slash Command Architecture](RFC-454-slash-command-architecture.md)
-  - Kind: Architecture Design
-  - Status: Draft
-  - Created: 2026-04-16
-  - Authors: Soothe contributors
-  - Updated: 2026-08-08
-
-### CLI / TUI (5xx)
-
-- **RFC-500**: [CLI TUI Architecture Design](RFC-500-cli-tui-architecture.md)
-  - Kind: Architecture Design
-  - Status: Implemented
-  - Created: 2026-03-12
-  - Updated: 2026-07-02
-- **RFC-501**: [Display & Verbosity](RFC-501-display-verbosity.md)
-  - Kind: Implementation Interface Design
-  - Status: Draft
-  - Created: 2026-03-31
-  - Depends on: RFC-500 (CLI/TUI Architecture), RFC-401 (Event Processing)
-  - Supersedes: RFC-0020, RFC-0024
-  - Authors: Soothe Team
-  - Updated: 2026-08-08
-- **RFC-502**: [Unified Presentation Engine](RFC-502-unified-presentation-engine.md)
-  - Kind: Implementation Interface Design
-  - Status: Implemented (partial)
-  - Created: 2026-04-02
-  - Depends on: RFC-401 (Event Processing), RFC-501 (Display & Verbosity), RFC-500 (CLI/TUI Architecture)
-  - Authors: Soothe Team
-- **RFC-503**: [Loop-First User Experience Architecture](RFC-503-loop-first-user-experience.md)
-  - Kind: Architecture Design
-  - Status: Draft
-  - Created: 2026-04-22
-  - Depends on: RFC-207 (Thread Lifecycle & Goal Context), RFC-450 (Daemon Communication), RFC-500 (CLI/TUI), RFC-454 (Slash Commands)
-  - Authors: Claude Sonnet 4.6
-- **RFC-504**: [Loop Management CLI Commands](RFC-504-loop-management-cli-commands.md)
-  - Kind: Implementation Interface Design
-  - Status: Draft
-  - Created: 2026-04-22
-  - Depends on: RFC-503 (Loop-First UX), RFC-218 (Checkpoint Tree), RFC-454 (Slash Commands), RFC-450 (Daemon Communication Protocol)
-  - Authors: Soothe contributors
-- **RFC-505**: [Soothe Desktop Client Architecture](../archive/specs/RFC-505-soothe-desktop-client.md) ⚠️ **ARCHIVED**
-  - Kind: Architecture Design
-  - Status: Archived
-  - Created: 2026-06-04
-
-### Agent / Presentation Enhancements (6xx)
-
-- **RFC-600**: [Plugin Extension Specification](RFC-600-plugin-extension-system.md)
-  - Kind: Architecture Design
-  - Status: Implemented
-  - Created: 2026-03-23
-  - Depends on: RFC-000, RFC-001, RFC-200, RFC-302
-  - Updated: 2026-03-27
-- **RFC-601**: [Built-in Plugin Agents](RFC-601-built-in-agents.md)
-  - Kind: Architecture Design
-  - Status: Implemented
-  - Created: 2026-03-31
-  - Depends on: RFC-600 (Plugin Extension System), RFC-301 (Protocol Registry)
-  - Supersedes: RFC-0004, RFC-0005, RFC-0021
-  - Authors: Soothe Team
-  - Updated: 2026-04-05
-- **RFC-603**: [Reasoning Quality & Progressive Actions](RFC-603-reasoning-quality-progressive-actions.md)
-  - Kind: Feature Enhancement
-  - Status: Draft
-  - Created: 2026-04-09
-  - Authors: Claude Code
-  - Updated: 2026-05-04
-- **RFC-604**: [Plan Phase Robustness (Three-Layer Defense)](RFC-604-reason-phase-robustness.md)
-  - Kind: Architecture Design
-  - Status: Implemented
-  - Created: 2026-04-11
-  - Depends on: RFC-201 (StrangeLoop Plan-Execute Loop)
-  - Authors: Claude Sonnet 4.6
-  - Updated: 2026-05-05
-- **RFC-605**: [Explore Subagent and Parallel Spawning](../archive/specs/RFC-605-explore-subagent-parallel-spawning.md) ⚠️ **ARCHIVED**
-  - Kind: Architecture Design
-  - Status: Archived
-  - Superseded By: RFC-613
-  - Archived Date: 2026-06-16
-  - Created: 2026-04-13
-- **RFC-606**: [DeepAgents CLI TUI Migration Specification](RFC-606-deepagents-cli-tui-migration.md)
-  - Kind: Architecture Design + Implementation Interface Design
-  - Status: Draft
-  - Created: 2026-04-13
-  - Depends on: RFC-000, RFC-001, RFC-302, RFC-500, RFC-501, RFC-203, RFC-303
-- **RFC-607**: [Progressive Display Refinements Post-Migration](RFC-607-progressive-display-refinements.md)
-  - Kind: Implementation Interface Design
-  - Status: Draft
-  - Created: 2026-04-14
-  - Depends on: RFC-606 (DeepAgents CLI TUI Migration), RFC-501 (Display Verbosity), RFC-500 (CLI/TUI Architecture)
-  - Authors: Claude Code, Xiaming Chen
-- **RFC-610**: [SDK Module Structure Refactoring](RFC-610-sdk-module-structure-refactoring.md)
-  - Kind: Architecture Design
-  - Status: Draft
-  - Created: 2026-04-17
-  - Depends on: RFC-600, RFC-302
-- **RFC-613**: [Explore Agent — LLM-Orchestrated Iterative Search](../archive/specs/RFC-613-explore-agent-llm-orchestrated-search.md) ⚠️ **ARCHIVED**
-  - Kind: Architecture Design
-  - Status: Archived
-  - Created: 2026-04-24
-- **RFC-614**: [Unified Daemon → Client Streaming Messaging Framework](RFC-614-unified-streaming-messaging.md)
-  - Kind: Architecture Design
-  - Status: Implemented
-  - Created: 2026-04-27
-  - Depends on: RFC-000, RFC-001, RFC-450, RFC-401, RFC-403
-- **RFC-616**: [Scenario-Driven Goal Completion Synthesis](RFC-616-scenario-driven-synthesis.md)
-  - Kind: Architecture Design
-  - Status: Draft
-  - Created: 2026-04-28
-- **RFC-618**: [Plan Subagent — Structured Planning with Explore Delegation](RFC-618-plan-subagent-delegation.md)
-  - Kind: Architecture Design
-  - Status: Draft
-  - Created: 2026-05-11
-  - Depends on: RFC-000, RFC-001, RFC-100, RFC-600, RFC-601, RFC-613
-  - Authors: Soothe Team
-  - Updated: 2026-07-28
-- **RFC-619**: [Deep Research Subagent](RFC-619-deep-research-subagent.md)
-  - Kind: Architecture Design
-  - Status: Accepted
-  - Created: 2026-05-21
-  - Depends on: RFC-600 (Plugin Extension System), RFC-601 (Built-in Agents), RFC-403 (Unified Event Naming), RFC-616 (Scenario-Driven Synthesis)
-  - Supersedes: Deep Research subagent identity (prior RFC-619 revision), Research section identity in RFC-601 §4
-  - Authors: Soothe Team
-  - Updated: 2026-07-07
-- **RFC-620**: [Unified Channel Architecture](RFC-620-channel-architecture.md)
-  - Kind: Architecture Design
-  - Status: Implemented (partial)
-  - Created: 2026-05-29
-  - Depends on: RFC-450, RFC-0015, RFC-000
-  - Authors: Xiaming Chen
-  - Updated: 2026-08-11
-- **RFC-621**: [Workspace Host Convention for Container Deployments](RFC-621-workspace-host-convention.md)
-  - Kind: Architecture Design
-  - Status: Implemented
-  - Created: 2026-06-02
-  - Depends on: RFC-103, RFC-450
-  - Authors: Platonic Coding Workflow
-  - Updated: 2026-06-02
-- **RFC-622**: [CoreAgent Clarification Relay](RFC-622-coreagent-clarification-relay.md)
-  - Kind: Architecture Design
-  - Status: Implemented
-  - Created: 2026-06-02
-  - Depends on: RFC-220 (Agentic Goal Execution / StrangeLoop), RFC-231 (LoopRail + Rail Exec), RFC-600 (Plugin Extension System), RFC-601 (Built-in Agents), RFC-403 (Unified Event Naming)
-  - Supersedes: Empty-answer auto-resume behavior currently encoded in `sloop/engine/graph_interrupt.py::build_auto_resume_payload` for `type=="ask_user"` interrupts.
-  - Authors: Soothe Team
-  - Updated: 2026-10-07 (terminology cleanse: "autopilot" → "loop-rail runs" / "headless runs"; RFC-222 dependency replaced by RFC-231; semantics unchanged)
-- **RFC-623**: [Veritas Auto-Mode Robustness](RFC-623-veritas-auto-mode-robustness.md)
-  - Kind: Implementation Interface Design
-  - Status: Implemented
-  - Created: 2026-06-03
-  - Depends on: RFC-622 (CoreAgent Clarification Relay), RFC-220 (Agentic Goal Execution / StrangeLoop), RFC-403 (Unified Event Naming)
-  - Supersedes: ---
-  - Authors: Soothe Team
-  - Updated: 2026-10-07 (terminology cleanse: "autopilot" → "loop-rail runs" / "headless runs"; RFC-222 reference replaced by RFC-231; semantics unchanged)
-- **RFC-634**: [AutoModeMiddleware — Inline Tool-Approval Gate](RFC-634-automode-middleware.md)
-  - Kind: Implementation Interface Design
-  - Status: Implemented
-  - Created: 2026-09-20
-  - Depends on: RFC-622 (CoreAgent Clarification Relay), RFC-623 (Veritas Auto-Mode Robustness), Tool-Approval Pipeline draft (2026-08-27)
-  - Supersedes: Station-side tool-approval pipeline evaluation (`AutoClarificationPolicy._answer_tool_approval`, `InteractiveClarificationPolicy` pre-filter, `interrupt_rules.py` `when_*` predicates)
-  - Authors: Soothe Team
-  - Updated: 2026-10-07 (`active_in_bypass` default true→false to match "bypass mode permits ALL tool calls" design rule; "autopilot" → "loop-rail headless run" terminology)
-- **RFC-635**: [AskUserGateMiddleware — Inline Veritas Fast Path for `ask_user`](RFC-635-askuser-gate-middleware.md)
-  - Kind: Implementation Interface Design
-  - Status: Implemented
-  - Created: 2026-09-20
-  - Depends on: RFC-622 (CoreAgent Clarification Relay), RFC-623 (Veritas Auto-Mode Robustness), RFC-634 (AutoModeMiddleware)
-  - Supersedes: ---
-  - Authors: Soothe Team
-  - Updated: 2026-10-07 (§3 decision table extended to bypass mode — gate fires in auto AND bypass per design rule "all ask_human routed to veritas"; "autopilot retry sentinel" → "loop-rail retry sentinel")
-- **RFC-624**: [Context Engine](RFC-624-context-engine.md)
-  - Kind: Architecture Design
-  - Status: Implemented (partial)
-  - Created: 2026-06-12
-  - Depends on: RFC-000 (System Conceptual Design), RFC-200 (Autonomous Goal Management), RFC-201 (StrangeLoop Plan-Execute Loop), RFC-214 (Loop Message Surface), RFC-803 (Persistence Backend)
-  - Updated: 2026-08-24 (reentrant state — awaiting_clarification matching, IG-760)
-- **RFC-625**: [AutopilotMonitor and ContextEngine Unification](../archive/specs/RFC-625-autopilot-monitor-context-engine-unification.md) ⚠️ **ARCHIVED**
-  - Kind: Architecture Design
-  - Status: Archived
-  - Superseded By: RFC-231 (§17 CE `GoalNode.report` commit + `goal_report_committed`), RFC-624 (Context Engine)
-  - Archived Date: 2026-10-07
-  - Created: 2026-06-15
-- **RFC-626**: [Entity Model and State Management Consolidation](RFC-626-entity-model-state-consolidation.md)
-  - Kind: Architecture Design
-  - Status: Draft
-  - Created: 2026-06-16
-  - Depends on: RFC-624 (Context Engine), RFC-625 (AutopilotMonitor and ContextEngine Unification), RFC-203 (StrangeLoop State & Memory), RFC-201 (StrangeLoop Plan-Execute Loop)
-  - Updated: 2026-08-11
-- **RFC-627**: [Unified LLM Utilities Module](RFC-627-unified-llm-utilities.md)
-  - Kind: Architecture Design
-  - Status: Implemented
-  - Created: 2026-06-17
-  - Depends on: RFC-000 (System Conceptual Design), RFC-104 (Model Knowledge Cutoff)
-  - Updated: 2026-06-17
-- **RFC-628**: [Cognition Step Card & SubAgent Card Display](RFC-628-step-card-display-refactor.md)
-  - Kind: Implementation Interface Design
-  - Status: Implemented
-  - Created: 2026-06-26
-  - Depends on: RFC-500 (CLI/TUI Architecture), RFC-501 (Display Verbosity), RFC-607 (Progressive Display Refinements), RFC-630 (intake-only wire stream contract for Part III)
-  - Authors: Xiaming Chen
-  - Updated: 2026-07-15
-- **RFC-629**: [Client Library — Core Upgrade and Appkit Architecture](RFC-629-client-appkit-architecture.md)
-  - Kind: Architecture Design
-  - Status: Draft
-  - Created: 2026-06-30
-  - Depends on: RFC-450, RFC-614, RFC-403
-  - Authors: Xiaming Chen
-  - Updated: 2026-07-29
-- **RFC-630**: [Start-Phase LLM Intake and Branch Routing](RFC-630-start-phase-llm-intake-and-branch-routing.md)
-  - Kind: Architecture Design
-  - Status: Draft
-  - Created: 2026-06-30
-  - Depends on: RFC-220, RFC-225, RFC-226, RFC-503
-  - Supersedes: The `_is_likely_agentic` heuristic bypass and `simple_bypass` string-prefix detection introduced by IG-518
-  - Partially Superseded By: RFC-904 (Pass 2 scope classification and complexity-tiered plan routes removed; Pass 1 retained)
-  - Authors: Xiaming Chen
-  - Updated: 2026-08-19
-- **RFC-631**: [Goal-Bound Display Snapshots](RFC-631-goal-display-snapshots.md)
-  - Kind: Architecture Design
-  - Status: Draft
-  - Created: 2026-07-05
-  - Depends on: RFC-225 (Goal Record Enrichment), RFC-413 (Display Card Ledger), RFC-450 (Daemon Protocol), RFC-503 (Loop-First UX)
-  - Authors: xiaming (with Claude)
-- **RFC-632**: [Loop-Scoped Router Profile Override](RFC-632-loop-scoped-router-profile-override.md)
-  - Kind: Architecture Design
-  - Status: Implemented
-  - Created: 2026-07-14
-  - Depends on: RFC-450 (Daemon Protocol — `input` / turn overrides), RFC-454 (Slash Command Architecture), RFC-500 (CLI TUI), RFC-503 (Loop-First UX), RFC-627 (LLM Utilities / ModelRouter)
-  - Authors: xiaming (with Cursor)
-- **RFC-633**: [Planner Plan Artifact and Human Review](RFC-633-planner-plan-artifact-and-human-review.md)
-  - Kind: Architecture Design
-  - Status: Implemented
-  - Created: 2026-07-28
-  - Updated: 2026-08-24 (reject→refine flow, reentrant state IG-760)
-  - Depends on: RFC-618, RFC-622, RFC-630, RFC-656 (IG-656 intake-only planner)
-  - Authors: Soothe Team
-
-### Product & Applications (7xx)
-
-- **RFC-700**: [Desktop App Product Redesign](../archive/specs/RFC-700-desktop-app-product-redesign.md) ⚠️ **ARCHIVED**
-  - Kind: Product Specification
-  - Status: Archived
-  - Superseded By: RFC-629 (client library architecture)
-  - Archived Date: 2026-06-19
-  - Created: 2026-04-10
-
-### Persistence (8xx)
-
-- **RFC-801**: [SQLite Backend Specification](RFC-801-sqlite-backend.md)
-  - Kind: Architecture Design + Implementation Interface Design
-  - Status: Draft
-  - Created: 2026-04-04
-  - Depends on: RFC-000, RFC-001, RFC-302, RFC-303, RFC-802
-  - Updated: 2026-07-24
-- **RFC-802**: [Persistence Architecture Refactor](RFC-802-persistence-architecture-refactor.md)
-  - Kind: Architecture Design
-  - Status: Draft
-  - Created: 2026-04-22
-  - Authors: Platonic Coding Workflow
-  - Updated: 2026-07-24
-- **RFC-803**: [StrangeLoop Checkpoint Backend Architecture](RFC-803-strangeloop-checkpoint-backend.md)
-  - Kind: Architecture Design
-  - Status: Draft
-  - Created: 2026-04-22
-  - Depends on: RFC-207 (Thread Lifecycle & Goal Context), RFC-218 (Checkpoint Tree), RFC-503 (Loop-First UX), RFC-801 (SQLite Runtime), RFC-802 (Persistence Architecture)
-  - Authors: Claude Sonnet 4.6
-  - Updated: 2026-07-24
-
-### Security / Sloop (9xx)
-
-- **RFC-901**: [OperationSecurityProtocol for Workspace and Tool Execution](RFC-901-operation-security-protocol.md)
-  - Kind: Architecture Design
-  - Status: Implemented
-  - Created: 2026-04-30
-  - Depends on: RFC-102, RFC-103, RFC-305, RFC-613
-- **RFC-902**: [Same-File Edit Concurrency and Optimization](RFC-902-same-file-edit-optimization.md)
-  - Kind: Architecture Design
-  - Status: Draft
-  - Created: 2026-06-28
-  - Depends on: RFC-101 (tool interface), RFC-102 (security filesystem policy), RFC-231 (loop-rail goal engine)
-- **RFC-903**: [Sloop Graph Topology and Node Lifecycle](RFC-903-sloop-graph-topology.md)
-  - Kind: Architecture Design
-  - Status: Proposed
-  - Created: 2026-08-18
-  - Depends on: RFC-220, RFC-604, RFC-622, RFC-633, RFC-803
-- **RFC-904**: [Sloop Recursive Step Decomposition](RFC-904-sloop-recursive-decomposition.md)
-  - Kind: Architecture Design
-  - Status: Proposed (deletion portion landed via IG-752/IG-753; recursive topology not yet implemented)
-  - Created: 2026-08-19
-  - Updated: 2026-08-20 (RFC-905 supersedes ROOT_EVAL assess-only / GapResult)
-  - Depends on: RFC-220, RFC-624, RFC-630, RFC-903, RFC-622
-  - Partially Superseded By: RFC-905 (§ROOT_EVAL assess-only / GapResult new-root)
-- **RFC-905**: [StrangeLoop Eval Thread](RFC-905-sloop-eval-thread.md)
-  - Kind: Architecture Design
-  - Status: Draft
-  - Created: 2026-08-20
-  - Updated: 2026-08-20
-  - Depends on: RFC-904, RFC-219, RFC-630, RFC-901, RFC-214
+- **RFC-200**: Autonomous Goal Management Loop - archived; Superseded By: RFC-222 (control flow), RFC-625 (GoalEngine architecture)
+- **RFC-203**: StrangeLoop State & Memory Architecture - archived; Superseded By: RFC-SDK-003
+- **RFC-204**: Autopilot Mode - archived; Superseded By: RFC-LOOP-017 (report-commit judgment §4.1); UX surfaces moved to RFC-CLNT-001/504 + RFC-DAEM-005
+- **RFC-216**: StrangeLoop Multi-Thread Infinite Lifecycle - archived; Superseded By: -
+- **RFC-222**: Autopilot Daemon Architecture - archived; Superseded By: RFC-LOOP-017 (LoopRailService runtime §4 + §14 component map)
+- **RFC-228**: Autopilot Job IPC Commands - archived; Superseded By: RFC-DAEM-005 (`job_*` IPC commands), RFC-LOOP-017 (§10 rail selection)
+- **RFC-229**: Cron Service for Autopilot - archived; Superseded By: RFC-LOOP-017 (§18 cron as external submit path), RFC-DAEM-005 (cron IPC)
+- **RFC-230**: Job Maturity Assessment for Autopilot Rails - archived; Superseded By: RFC-LOOP-017 (§4 job maturity + §8 maturity predicates)
+- **RFC-300**: Context and Memory Architecture Design - archived; Superseded By: RFC-PROT-002 (ContextProtocol Architecture), RFC-PROT-003 (MemoryProtocol Architecture)
+- **RFC-411**: Event Stream Replay & History Reconstruction - archived; Superseded By: RFC-DAEM-004
+- **RFC-505**: Soothe Desktop Client Architecture - archived; Superseded By: -
+- **RFC-605**: Explore Subagent and Parallel Spawning - archived; Superseded By: RFC-613
+- **RFC-613**: Explore Agent — LLM-Orchestrated Iterative Search - archived; Superseded By: -
+- **RFC-625**: AutopilotMonitor and ContextEngine Unification - archived; Superseded By: RFC-LOOP-017 (§17 CE `GoalNode.report` commit + `goal_report_committed`), RFC-SDK-002 (Context Engine)
+- **RFC-700**: Desktop App Product Redesign - archived; Superseded By: RFC-CLNT-010 (client library architecture)

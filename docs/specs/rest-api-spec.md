@@ -1,7 +1,7 @@
 # REST API Specification Reference
 
 **Status**: Reference Document
-**Source**: Extracted from RFC-302
+**Source**: Extracted from RFC-PROT-002
 **Purpose**: HTTP REST API specification for Soothe daemon
 
 ## Overview
