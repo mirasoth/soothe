@@ -2,7 +2,7 @@
 
 **RFC**: 604
 **Title**: Plan Phase Robustness (Three-Layer Defense)
-**Status**: Implemented
+**Status**: Implemented (partial)
 **Kind**: Architecture Design
 **Created**: 2026-04-11
 **Updated**: 2026-05-05
@@ -607,7 +607,7 @@ for attempt in range(3):
 
 ### 13.1 Dependencies
 
-* **RFC-LOOP-020-reasoning-quality-progressive-actions**: Provides Plan phase architecture and quality improvements that this RFC builds upon
+* **RFC-LOOP-020-reasoning-quality-progressive-actions** (archived 2026-10-21, see `docs/archive/specs/`): provided Plan phase architecture and quality improvements that this RFC builds upon
 * **RFC-LOOP-001-strangeloop-plan-execute-loop**: Defines StrangeLoop architecture where Plan phase operates
 
 ### 13.2 Integration Points

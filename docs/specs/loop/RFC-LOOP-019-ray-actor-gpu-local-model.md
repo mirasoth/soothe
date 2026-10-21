@@ -2,7 +2,7 @@
 
 **RFC**: 233
 **Title**: GPU-Bound Ray Actor with Local Model Server for On-Device Inference
-**Status**: Proposed
+**Status**: Implemented
 **Kind**: Architecture Design
 **Created**: 2026-09-13
 **Authors**: Soothe Team

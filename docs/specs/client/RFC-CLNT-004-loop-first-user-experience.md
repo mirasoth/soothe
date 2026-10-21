@@ -2,7 +2,7 @@
 
 **RFC**: 503
 **Title**: Loop-First User Experience Architecture
-**Status**: Draft
+**Status**: Implemented (partial)
 **Kind**: Architecture Design
 **Created**: 2026-04-22
 **Updated**: 2026-04-22

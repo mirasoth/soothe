@@ -2,10 +2,12 @@
 
 **RFC**: 603
 **Title**: Reasoning Quality & Progressive Actions
-**Status**: Draft
+**Status**: Archived
+**Archived Date**: 2026-10-21
+**Superseded By**: RFC-SLP-002 (decompose_task) and RFC-LOOP-021; LLMPlanner removed by IG-SLP-003
 **Kind**: Feature Enhancement
 **Created**: 2026-04-09
-**Updated**: 2026-05-04
+**Updated**: 2026-05-04 (archived 2026-10-21)
 **Authors**: Claude Code
 **Related**: IG-143, IG-376, RFC-LOOP-006, RFC-LOOP-021
 

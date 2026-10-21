@@ -2,7 +2,7 @@
 
 **RFC**: 904
 **Title**: Sloop Recursive Step Decomposition
-**Status**: Proposed
+**Status**: Implemented (partial)
 **Kind**: Architecture Design
 **Created**: 2026-08-19
 **Authors**: Soothe Team

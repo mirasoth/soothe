@@ -2,7 +2,7 @@
 
 **RFC**: 305
 **Title**: PolicyProtocol: Permission Checking & Scope Matching
-**Status**: Draft
+**Status**: Implemented (partial)
 **Kind**: Architecture Design
 **Created**: 2026-04-17
 **Authors**: Soothe Team

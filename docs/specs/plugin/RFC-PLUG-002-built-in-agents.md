@@ -2,7 +2,7 @@
 
 **RFC**: 601
 **Title**: Built-in Plugin Agents
-**Status**: Implemented
+**Status**: Implemented (partial)
 **Kind**: Architecture Design
 **Created**: 2026-03-31
 **Updated**: 2026-04-05

@@ -2,7 +2,7 @@
 
 **RFC**: 906
 **Title**: Workspace Sync — Materialization and Incremental Persistence
-**Status**: Draft
+**Status**: Implemented
 **Kind**: Architecture Design
 **Created**: 2026-09-01
 **Authors**: Xiaming Chen

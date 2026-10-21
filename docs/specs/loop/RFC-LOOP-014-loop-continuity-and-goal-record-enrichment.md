@@ -2,7 +2,7 @@
 
 **RFC**: 225
 **Title**: Loop Continuity and Goal Record Enrichment
-**Status**: Implemented
+**Status**: Implemented (partial)
 **Kind**: Architecture Design
 **Authors**: xiaming
 **Created**: 2026-05-29

@@ -2,7 +2,7 @@
 
 **RFC**: 307
 **Title**: IdentityProtocol: AKSK Authentication & JWT Token Management
-**Status**: Draft
+**Status**: Implemented (partial)
 **Kind**: Architecture Design
 **Created**: 2026-06-25
 **Authors**: Soothe Team

@@ -1226,3 +1226,21 @@ python scripts/generate_rfc_history.py
 | RFC-906 | RFC-CORE-010 |
 
 (RFC-000, RFC-001 and all archived RFCs keep their pre-partition IDs.)
+
+### 2026-10-21 - Spec Status Sync (Review vs Code)
+
+Full review of all 81 active RFCs against the implementation (8 parallel review passes, symbol-level verification).
+
+**Status corrections**: 45 RFCs
+- Upgraded to Implemented: RFC-CORE-001, RFC-CORE-004, RFC-CORE-006, RFC-CORE-010, RFC-LOOP-013, RFC-LOOP-019, RFC-LOOP-022, RFC-PLUG-004, RFC-DAEM-005, RFC-CLNT-003, RFC-CLNT-011
+- Set to Implemented (partial): RFC-CORE-002, RFC-CORE-009, RFC-LOOP-001, RFC-LOOP-003, RFC-LOOP-004, RFC-LOOP-005, RFC-LOOP-006, RFC-LOOP-007, RFC-LOOP-009, RFC-LOOP-010, RFC-LOOP-014, RFC-LOOP-015, RFC-LOOP-016, RFC-LOOP-017, RFC-LOOP-018, RFC-LOOP-021, RFC-LOOP-025, RFC-PROT-001, RFC-PROT-005, RFC-PROT-006, RFC-PROT-007, RFC-PLUG-002, RFC-DAEM-007, RFC-SDK-004, RFC-CLNT-002, RFC-CLNT-004, RFC-CLNT-005, RFC-CLNT-010, RFC-PERS-001, RFC-PERS-002, RFC-PERS-003, RFC-SLP-001, RFC-SLP-002, RFC-SLP-003
+
+**Archived**: 4 deprecated RFCs (moved to docs/archive/specs/)
+- RFC-CLNT-006 (RFC-CLNT-006-deepagents-cli-tui-migration.md) - Superseded By: Soothe-native TUI (RFC-CLNT-009 step cards, RFC-CLNT-003 presentation engine); deepagents migration withdrawn (IG-166 archived)
+- RFC-CLNT-007 (RFC-CLNT-007-progressive-display-refinements.md) - Superseded By: RFC-CLNT-009 (step-card display) and RFC-CLNT-003 (runtime presentation engine); StreamDisplayPipeline removed by IG-348
+- RFC-SDK-001 (RFC-SDK-001-sdk-module-structure-refactoring.md) - Superseded By: soothe-sdk package dissolved 2026-10-13 (commit 23b14a4c7); contracts moved to soothe-nano (PyPI) agent-axis + soothe host-axis
+- RFC-LOOP-020 (RFC-LOOP-020-reasoning-quality-progressive-actions.md) - Superseded By: RFC-SLP-002 (decompose_task) and RFC-LOOP-021; LLMPlanner removed by IG-SLP-003
+
+Note: RFC-DAEM-002 (unified event naming) kept as Draft - its proposed taxonomy was not adopted by the shipped event catalog; revisit or rewrite later.
+
+Supersession annotations added: RFC-LOOP-015 -> Partially Superseded By RFC-SLP-002.

@@ -2,7 +2,7 @@
 
 **RFC**: 619
 **Title**: Deep Research Subagent
-**Status**: Accepted
+**Status**: Implemented
 **Kind**: Architecture Design
 **Created**: 2026-05-21
 **Updated**: 2026-07-07

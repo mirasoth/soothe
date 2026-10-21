@@ -2,7 +2,7 @@
 
 **RFC**: 631
 **Title**: Goal-Bound Display Snapshots for Loop History Recovery
-**Status**: Draft
+**Status**: Implemented
 **Kind**: Architecture Design
 **Created**: 2026-07-05
 **Authors**: xiaming (with Claude)

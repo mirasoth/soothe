@@ -2,7 +2,7 @@
 
 **RFC**: 301
 **Title**: Protocol Registry
-**Status**: Implemented
+**Status**: Implemented (partial)
 **Kind**: Implementation Interface Design
 **Created**: 2026-03-31
 **Authors**: Xiaming Chen

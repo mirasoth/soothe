@@ -2,7 +2,7 @@
 
 **RFC**: 217
 **Title**: Goal Context Management for StrangeLoop
-**Status**: Implemented
+**Status**: Implemented (partial)
 **Kind**: Architecture Design
 **Created**: 2026-04-17
 **Authors**: Soothe Team

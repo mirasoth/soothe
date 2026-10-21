@@ -2,7 +2,7 @@
 
 **RFC**: 220
 **Title**: LangGraph Agent Loop Orchestrator
-**Status**: Implemented
+**Status**: Implemented (partial)
 **Kind**: Architecture Design
 **Created**: 2026-05-05
 **Authors**: Soothe Team

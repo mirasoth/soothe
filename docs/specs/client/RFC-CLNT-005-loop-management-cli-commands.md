@@ -2,7 +2,7 @@
 
 **RFC**: 504
 **Title**: Loop Management CLI Commands
-**Status**: Draft
+**Status**: Implemented (partial)
 **Kind**: Implementation Interface Design
 **Created**: 2026-04-22
 **Updated**: 2026-04-22

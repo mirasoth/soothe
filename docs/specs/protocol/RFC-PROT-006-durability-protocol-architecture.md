@@ -2,7 +2,7 @@
 
 **RFC**: 306
 **Title**: DurabilityProtocol: Thread Lifecycle & Metadata Management
-**Status**: Draft
+**Status**: Implemented (partial)
 **Kind**: Architecture Design
 **Created**: 2026-04-17
 **Authors**: Soothe Team

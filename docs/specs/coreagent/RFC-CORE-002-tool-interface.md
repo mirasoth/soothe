@@ -2,7 +2,7 @@
 
 **RFC**: 101
 **Title**: Tool Interface & Event Naming
-**Status**: Implemented
+**Status**: Implemented (partial)
 **Kind**: Implementation Interface Design
 **Created**: 2026-03-31
 **Updated**: 2026-03-31

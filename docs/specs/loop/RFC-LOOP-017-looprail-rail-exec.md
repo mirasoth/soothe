@@ -2,7 +2,7 @@
 
 **RFC**: 231
 **Title**: LoopRail and Rail Exec (Composable Verb Bodies)
-**Status**: Draft
+**Status**: Implemented (partial)
 **Kind**: Architecture Design
 **Created**: 2026-08-07
 **Updated**: 2026-10-07

@@ -2,7 +2,7 @@
 
 **RFC**: 201
 **Title**: StrangeLoop Plan-Execute Loop Architecture (Consolidated)
-**Status**: Implemented (Partially Superseded)
+**Status**: Implemented (partial)
 **Partially Superseded By**: RFC-LOOP-010 (§loop driver), RFC-222 (GoalEngine daemon-ownership), RFC-LOOP-014 (loop-centric model), RFC-SLP-002 (recursive step decomposition — upfront plan waves)
 **Kind**: Architecture Design
 **Created**: 2026-04-17

@@ -2,7 +2,7 @@
 
 **RFC**: 802
 **Title**: Persistence Architecture Refactor
-**Status**: Draft
+**Status**: Implemented (partial)
 **Kind**: Architecture Design
 **Created**: 2026-04-22
 **Authors**: Platonic Coding Workflow

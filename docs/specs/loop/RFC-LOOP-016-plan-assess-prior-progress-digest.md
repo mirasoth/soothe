@@ -2,7 +2,7 @@
 
 **RFC**: 227
 **Title**: Plan-Assess Prior-Progress Digest
-**Status**: Implemented
+**Status**: Implemented (partial)
 **Kind**: Architecture Design
 **Authors**: xiaming
 **Created**: 2026-06-01
