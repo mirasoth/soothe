@@ -8,6 +8,7 @@ manager, and background uploader to provide a simple async lifecycle API.
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -109,7 +110,12 @@ class Workspace:
         await materializer.materialize(resources)
         logger.info("Materialized %d resources for run %s", len(resources), self.run_id)
 
-    async def materialize_content(self) -> int:
+    async def materialize_content(
+        self,
+        *,
+        protected: Iterable[str] = (),
+        reconcile: bool = True,
+    ) -> int:
         """Materialize the content tree (dual-source sync) into the workspace.
 
         Lists every file under the content backend's root and restores it at
@@ -117,6 +123,16 @@ class Workspace:
         whose local content already matches. This is the "read path" half of
         content mirroring — the write half happens at checkpoint time (dirty
         files/deletions are mirrored back by the checkpoint manager).
+
+        Args:
+            protected: Relative paths that must never be reconciled away
+                (e.g. engine manifest artifact paths — agent outputs that
+                live in the workspace but not necessarily in the content
+                tree).
+            reconcile: When true, after the restore pass delete local files
+                that no longer exist in the content tree and are not
+                `protected` (the delete half of the read path — backend-side
+                deletions must not linger in the workspace, RFC-RD-607 §4.3).
 
         Returns:
             Number of files downloaded (unchanged files are skipped).
@@ -156,7 +172,65 @@ class Workspace:
                 downloaded,
                 len(rel_paths),
             )
+        if reconcile:
+            await self._reconcile_content(rel_paths, protected, skip_prefixes)
         return downloaded
+
+    async def _reconcile_content(
+        self,
+        remote_rel_paths: list[str],
+        protected: Iterable[str],
+        skip_prefixes: tuple[str, ...],
+    ) -> None:
+        """Delete local files that no longer exist in the content tree.
+
+        Files under the skip prefixes, symlinked paths, and `protected`
+        relative paths (agent artifacts absent from the content tree) are
+        never removed. Now-empty parent directories are pruned best-effort,
+        except the root and the engine-created top-level dirs
+        (`.workspace`/`input`/`working`/`output`).
+        """
+        keep = {rel for rel in remote_rel_paths}
+        keep.update(p.strip("/") for p in protected if p)
+        keep_roots = {"input", "working", "output", ".workspace"}
+        removed: list[Path] = []
+
+        for path in sorted(self.root.rglob("*")):
+            if not path.is_file() or path.is_symlink():
+                continue
+            rel = path.relative_to(self.root).as_posix()
+            if rel.startswith(skip_prefixes):
+                continue
+            if rel in keep:
+                continue
+            try:
+                path.unlink()
+                removed.append(path)
+            except OSError:
+                logger.warning(
+                    "Content reconcile: failed to remove %s for run %s", rel, self.run_id
+                )
+
+        if removed:
+            logger.info(
+                "Content reconcile for run %s: %d stale file(s) removed",
+                self.run_id,
+                len(removed),
+            )
+            parents = {p.parent for p in removed}
+            for parent in sorted(parents, key=lambda d: len(d.parts), reverse=True):
+                rel_parent = parent.relative_to(self.root)
+                if len(rel_parent.parts) <= 1 or rel_parent.parts[0] in keep_roots:
+                    continue
+                try:
+                    next(parent.rglob("*"))
+                except StopIteration:
+                    try:
+                        parent.rmdir()
+                    except OSError:
+                        logger.debug(
+                            "Content reconcile: rmdir failed for %s", parent, exc_info=True
+                        )
 
     async def start_tracking(self) -> None:
         """Start dirty tracking and background uploader.
