@@ -148,6 +148,111 @@ class TestMaterializeContent:
 
 
 # ---------------------------------------------------------------------------
+# Workspace.materialize_content — reconcile (delete half of the read path)
+# ---------------------------------------------------------------------------
+
+
+class TestMaterializeContentReconcile:
+    async def test_removes_backend_deleted_file(
+        self, tmp_path: Path, sync_backend, content_backend
+    ) -> None:
+        await content_backend.put_content_file("materials/m1/a.txt", b"v1")
+        ws = _make_workspace(tmp_path, sync_backend, content_backend)
+        target = ws.root / "materials/m1/a.txt"
+        target.parent.mkdir(parents=True)
+        target.write_bytes(b"v1")
+
+        # Backend deletes the object; the next materialize must reconcile.
+        await content_backend.delete_content_file("materials/m1/a.txt")
+        await ws.materialize_content()
+
+        assert not target.exists()
+
+    async def test_protected_artifact_survives(
+        self, tmp_path: Path, sync_backend, content_backend
+    ) -> None:
+        ws = _make_workspace(tmp_path, sync_backend, content_backend)
+        artifact = ws.root / "output/analysis.md"
+        artifact.parent.mkdir(parents=True)
+        artifact.write_bytes(b"agent output")
+
+        await ws.materialize_content(protected=["output/analysis.md"])
+
+        assert artifact.read_bytes() == b"agent output"
+
+    async def test_unprotected_stale_file_removed(
+        self, tmp_path: Path, sync_backend, content_backend
+    ) -> None:
+        await content_backend.put_content_file("materials/m1/live.txt", b"live")
+        ws = _make_workspace(tmp_path, sync_backend, content_backend)
+        stale = ws.root / "output/stale.txt"
+        stale.parent.mkdir(parents=True)
+        stale.write_bytes(b"stale")
+
+        await ws.materialize_content()
+
+        assert not stale.exists()
+        assert (ws.root / "materials/m1/live.txt").read_bytes() == b"live"
+
+    async def test_symlink_untouched(self, tmp_path: Path, sync_backend, content_backend) -> None:
+        await content_backend.put_content_file("materials/m1/live.txt", b"live")
+        ws = _make_workspace(tmp_path, sync_backend, content_backend)
+        outside = tmp_path / "outside.txt"
+        outside.write_bytes(b"outside")
+        link = ws.root / "materials/m1/link.txt"
+        link.parent.mkdir(parents=True)
+        link.symlink_to(outside)
+
+        await ws.materialize_content()
+
+        assert link.is_symlink()  # never followed or deleted
+
+    async def test_skip_dirs_untouched(self, tmp_path: Path, sync_backend, content_backend) -> None:
+        ws = _make_workspace(tmp_path, sync_backend, content_backend)
+        state_db = ws.root / ".workspace/state.db"
+        state_db.parent.mkdir(parents=True)
+        state_db.write_bytes(b"engine state")
+
+        await ws.materialize_content()
+
+        assert state_db.read_bytes() == b"engine state"
+
+    async def test_reconcile_false_preserves_stale(
+        self, tmp_path: Path, sync_backend, content_backend
+    ) -> None:
+        ws = _make_workspace(tmp_path, sync_backend, content_backend)
+        stale = ws.root / "output/stale.txt"
+        stale.parent.mkdir(parents=True)
+        stale.write_bytes(b"stale")
+
+        await ws.materialize_content(reconcile=False)
+
+        assert stale.read_bytes() == b"stale"
+
+    async def test_empty_parent_dirs_pruned_but_top_level_kept(
+        self, tmp_path: Path, sync_backend, content_backend
+    ) -> None:
+        await content_backend.put_content_file("materials/m1/deep/a.txt", b"x")
+        ws = _make_workspace(tmp_path, sync_backend, content_backend)
+        deep = ws.root / "materials/m1/deep/a.txt"
+        deep.parent.mkdir(parents=True)
+        deep.write_bytes(b"x")
+        out = ws.root / "output/result.txt"
+        out.parent.mkdir(parents=True)
+        out.write_bytes(b"stale output")
+        (ws.root / ".workspace").mkdir(exist_ok=True)  # engine state dir
+
+        # Backend removes the deep file; output/result.txt is stale & unprotected.
+        await content_backend.delete_content_file("materials/m1/deep/a.txt")
+        await ws.materialize_content()
+
+        assert not (ws.root / "materials/m1/deep").exists()
+        assert not out.exists()
+        assert (ws.root / "output").is_dir()  # engine-created top-level dir kept
+        assert (ws.root / ".workspace").is_dir()
+
+
+# ---------------------------------------------------------------------------
 # CheckpointManager — write path (mirror back)
 # ---------------------------------------------------------------------------
 
