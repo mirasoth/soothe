@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.2.1] - 2026-10-21
+
+### Fixed
+- `Workspace.materialize_content()` now deletes local files absent from the content backend after restoring the content tree, so backend-side deletions no longer linger in the workspace (the delete-half of the content-mirror read path).
+
+[Compare with previous version]: https://github.com/mirasoth/soothe/compare/v1.2.0...v1.2.1
+
 ## [v1.2.0] - 2026-10-18
 
 First stable release on the nano 2.0 train. Pins `soothe-nano>=2.0.0,<3.0.0`.
