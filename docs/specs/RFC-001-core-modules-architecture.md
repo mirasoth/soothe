@@ -6,12 +6,12 @@
 **Kind**: Architecture Design
 **Created**: 2026-03-12
 **Authors**: Soothe Team
-**Updated**: 2026-04-17 (RFC consolidation; retrieval module canonical in RFC-302)
-**Related**: RFC-000, RFC-302, RFC-303, RFC-305
+**Updated**: 2026-04-17 (RFC consolidation; retrieval module canonical in RFC-PROT-002)
+**Related**: RFC-000, RFC-PROT-002, RFC-PROT-003, RFC-PROT-005
 
 ## Abstract
 
-Defines the architecture for Soothe's core protocol modules beyond deepagents/langchain: each module follows the pattern *protocol (abstract) → data models (Pydantic) → default implementation (langchain-friendly) → integration point*. Context, Memory, Planner, Policy, and Durability protocols have been extracted into dedicated RFCs (RFC-302–RFC-306); this RFC retains ConcurrencyPolicy, VectorStoreProtocol, and the protocol composition wiring.
+Defines the architecture for Soothe's core protocol modules beyond deepagents/langchain: each module follows the pattern *protocol (abstract) → data models (Pydantic) → default implementation (langchain-friendly) → integration point*. Context, Memory, Planner, Policy, and Durability protocols have been extracted into dedicated RFCs (RFC-PROT-002–RFC-PROT-006); this RFC retains ConcurrencyPolicy, VectorStoreProtocol, and the protocol composition wiring.
 
 ## Module 1: ContextProtocol (Cognitive Context Engineering)
 
@@ -30,7 +30,7 @@ class ContextProtocol(Protocol):
     def get_retrieval_module(self) -> ContextRetrievalModule: ...
 ```
 
-**Extended methods**: `get_retrieval_module()` and the `ContextRetrievalModule` type are fully specified in [RFC-302](./RFC-302-context-protocol-architecture.md) (canonical retrieval surface). This RFC keeps the summary above aligned with implementations that expose goal-centric retrieval.
+**Extended methods**: `get_retrieval_module()` and the `ContextRetrievalModule` type are fully specified in [RFC-PROT-002](./protocol/RFC-PROT-002-context-protocol-architecture.md) (canonical retrieval surface). This RFC keeps the summary above aligned with implementations that expose goal-centric retrieval.
 
 ### Data Models
 
@@ -43,12 +43,12 @@ class ContextProtocol(Protocol):
 
 **Retrieval Authority Clarification** (brainstorming-derived architectural separation):
 
-- **ContextProtocol ownership**: Retrieval module implementation (RFC-302 `ContextRetrievalModule`), algorithm versions, stable API boundary
-- **StrangeLoop operational authority**: WHEN to retrieve, FOR WHICH goal, HOW to combine with GoalContextManager output (RFC-201 §61-78)
+- **ContextProtocol ownership**: Retrieval module implementation (RFC-PROT-002 `ContextRetrievalModule`), algorithm versions, stable API boundary
+- **StrangeLoop operational authority**: WHEN to retrieve, FOR WHICH goal, HOW to combine with GoalContextManager output (RFC-LOOP-001 §61-78)
 - **Architectural principle**: Retrieval algorithms evolve behind stable API in ContextProtocol, preserving integration contracts with StrangeLoop
 
 **Implementation Status**:
-- ✅ ContextProtocol interface defined (RFC-302)
+- ✅ ContextProtocol interface defined (RFC-PROT-002)
 - ⚠️ KeywordContext implementation (not yet implemented - critical gap)
 - ⚠️ ContextRetrievalModule (not yet implemented)
 
@@ -58,9 +58,9 @@ class ContextProtocol(Protocol):
 4. **Hierarchical summarization** -- entries summarized at multiple levels
 5. **Subagent isolation** -- subagents receive projections, not full context; return results only
 
-### Goal-centric retrieval (canonical: RFC-302)
+### Goal-centric retrieval (canonical: RFC-PROT-002)
 
-`ContextRetrievalModule`, `retrieve_by_goal_relevance(...)`, algorithm-version notes, and default wiring for `KeywordContext` / `VectorContext` are defined in **[RFC-302](./RFC-302-context-protocol-architecture.md)**. RFC-001 references that document as the **single authoritative** copy of the retrieval API to avoid schema drift.
+`ContextRetrievalModule`, `retrieve_by_goal_relevance(...)`, algorithm-version notes, and default wiring for `KeywordContext` / `VectorContext` are defined in **[RFC-PROT-002](./protocol/RFC-PROT-002-context-protocol-architecture.md)**. RFC-001 references that document as the **single authoritative** copy of the retrieval API to avoid schema drift.
 
 **Typical call pattern** (Layer 2 runner or runner integration assembling Plan / Execute context):
 
@@ -161,12 +161,12 @@ class PlannerProtocol(Protocol):
 
 ### Implementations
 
-- `LLMPlanner` -- structured-output planning: two-phase architecture (`StatusAssessment`, then conditional `PlanGeneration` merged into `PlanResult`) per RFC-604; assess/generate prompts split (IG-372) with trimmed plan-generate schema (IG-329)
+- `LLMPlanner` -- structured-output planning: two-phase architecture (`StatusAssessment`, then conditional `PlanGeneration` merged into `PlanResult`) per RFC-LOOP-021; assess/generate prompts split (IG-372) with trimmed plan-generate schema (IG-329)
 
 **Architectural evolution**:
 - IG-028: DirectPlanner → SimplePlanner
 - IG-036: Removed SubagentPlanner indirection
-- IG-149: Implemented RFC-604 two-phase Plan architecture
+- IG-149: Implemented RFC-LOOP-021 two-phase Plan architecture
 - IG-150: Removed ClaudePlanner and AutoPlanner, consolidated to LLMPlanner; planning merged into `soothe.sloop` (`cognition.*` paths)
 
 **Module location**: `packages/soothe/src/soothe/sloop/cognition/planner.py` (after IG-150 consolidation; package `soothe.sloop`)
@@ -350,11 +350,11 @@ $SOOTHE_HOME/
 
 | Module | Protocol | RFC | Status |
 |--------|----------|-----|--------|
-| **Module 1** | ContextProtocol | [RFC-302](./RFC-302-context-protocol-architecture.md) | Draft |
-| **Module 2** | MemoryProtocol | [RFC-303](./RFC-303-memory-protocol-architecture.md) | Draft |
-| **Module 3** | PlannerProtocol | [RFC-304](./RFC-304-planner-protocol-architecture.md) | Draft |
-| **Module 4** | PolicyProtocol | [RFC-305](./RFC-305-policy-protocol-architecture.md) | Draft |
-| **Module 5** | DurabilityProtocol | [RFC-306](./RFC-306-durability-protocol-architecture.md) | Draft |
+| **Module 1** | ContextProtocol | [RFC-PROT-002](./protocol/RFC-PROT-002-context-protocol-architecture.md) | Draft |
+| **Module 2** | MemoryProtocol | [RFC-PROT-003](./protocol/RFC-PROT-003-memory-protocol-architecture.md) | Draft |
+| **Module 3** | PlannerProtocol | [RFC-PROT-004](./protocol/RFC-PROT-004-planner-protocol-architecture.md) | Draft |
+| **Module 4** | PolicyProtocol | [RFC-PROT-005](./protocol/RFC-PROT-005-policy-protocol-architecture.md) | Draft |
+| **Module 5** | DurabilityProtocol | [RFC-PROT-006](./protocol/RFC-PROT-006-durability-protocol-architecture.md) | Draft |
 | **Module 6** | ConcurrencyPolicy | Stayed in RFC-001 | — |
 | **Module 7** | VectorStoreProtocol | Stayed in RFC-001 | — |
 

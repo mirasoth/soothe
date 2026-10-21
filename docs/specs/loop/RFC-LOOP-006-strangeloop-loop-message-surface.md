@@ -1,0 +1,727 @@
+# RFC-LOOP-006: Volatility-Tiered Prompt Architecture & Unified Message Ledger
+
+**RFC**: 214
+**Title**: Volatility-Tiered Prompt Architecture & Unified Message Ledger
+**Status**: Draft
+**Kind**: Architecture Design
+**Created**: 2026-05-03
+**Authors**: Soothe Team
+**Updated**: 2026-08-08
+**Depends on**: RFC-CORE-001, RFC-LOOP-002, RFC-LOOP-003, RFC-LOOP-007, RFC-SDK-002
+**Related**: RFC-LOOP-004, RFC-LOOP-005, RFC-LOOP-010, RFC-LOOP-014, RFC-LOOP-015
+
+---
+
+## Abstract
+
+StrangeLoop orchestration currently maintains context through multiple parallel encoding paths, mixes volatile and static content in system prompts (breaking prompt caching), and duplicates messages between the ledger and CoreAgent checkpoints. This RFC addresses three problems with a unified design:
+
+1. **Cache-unfriendly prompt structure**: Dynamic content (date, execution hints, per-turn memories) is interleaved with static content (identity, policies, tool schemas) in the system prompt, preventing prompt-cache hits on stable prefixes.
+
+2. **Fragmented and duplicated context**: The Plan phase receives context from multiple disjoint sources (evidence strings, XML excerpts, LangGraph message replay, working memory). The same subagent output appears in multiple encodings that can diverge.
+
+3. **Muddy semantics**: Memory, RAG documents, and dynamic context are injected into the system prompt alongside behavioral instructions. The LLM cannot distinguish persistent directives from per-turn context.
+
+**Solution**:
+
+- **Volatility-tiered prompt architecture**: System prompts are split into a static tier (session-stable, maximum cache hits) and a semi-static tier (goal-stable). All per-turn volatile content moves to a structured user message envelope.
+- **Complete StrangeLoop ledger**: All orchestration turns — plan-assess, plan-generate, and execute-step — are recorded in a single `loop_messages` ledger. Plan-phase messages are excluded from CoreAgent's thread.
+- **User message envelope**: A standard XML envelope carries per-turn dynamic content (goal context, execution hints, retrieved knowledge, user query) in semantically distinct sections.
+- **Reference-based dedup**: Ledger messages carry `core_agent_message_id` to reference CoreAgent message history without duplicating content.
+
+---
+
+## Motivation
+
+### Problem 1: Cache-Unfriendly Prompt Structure
+
+Anthropic's prompt caching works at the content-block level within a single message. When any block changes, subsequent blocks lose their cache hit. The current system prompt interleaves volatile content (date line, execution hints, per-turn memories) with static content (identity, policies, tool schemas):
+
+```
+[System: identity + policies + tools + ENVIRONMENT + WORKSPACE + memory + date + hints]
+```
+
+Every turn, the date line and execution hints change, invalidating the cache for everything that follows — including the tool schemas and policies that never change.
+
+### Problem 2: Fragmented and Duplicated Context
+
+The Plan phase receives context from multiple disjoint sources:
+
+- `PromptBuilder` assembling goal and evidence fragments
+- `LoopState.step_results` storing raw execution outputs (legacy `CONCRETE EVIDENCE`)
+- `plan_conversation_excerpts` with XML-wrapped excerpts (legacy `<PRIOR_CONVERSATION>`)
+- `StateManager.derive_plan_conversation` reconstructing conversations from execution history
+- LangGraph `messages` channel containing full transcripts with tool traffic
+
+Execute persists traces into Pydantic records (`ReasonStepRecord`, `ActWaveRecord`, `StepExecutionRecord`) while CoreAgent maintains full LangGraph transcripts. This fragmentation causes:
+
+**Duplication and Drift**: The same subagent output appears in multiple encodings (act checkpoint strings, evidence blocks, `<PRIOR_CONVERSATION>` XML, CoreAgent `messages`). Each encoding path can diverge.
+
+**Ambiguous Step Identity**: Step outcomes are not first-class objects. Orchestration uses aggregated `AIMessage` / delegate-final heuristics. No explicit `LoopAIMessage` tied to `step_id`.
+
+**Checkpoint Fidelity Issues**: Loop-typed messages must round-trip through LangGraph serde. Allowlist drift can deserialize messages as plain `dict` payloads. Loss of type information breaks the "Loop message" invariant.
+
+**Prompt Cost Inefficiency**: Plan prompts grow with redundant encodings. Multiple representations of the same content increase token costs without improving reasoning quality.
+
+### Problem 3: Muddy Semantics
+
+Memory, RAG documents, and dynamic context are injected into the system prompt alongside behavioral instructions. The LLM cannot distinguish persistent directives from per-turn context, and dialogue semantics are polluted — retrieved knowledge looks like system-level authority rather than supplemental information. Memory items placed as system content are treated as prescriptive rather than referential.
+
+---
+
+## Guiding Principles
+
+### P1: Volatility-Ordered Content Blocks
+
+Content blocks within a message are ordered from least volatile to most volatile. Static blocks (identity, policies, tool schemas) form a cache-friendly prefix that rarely changes. Semi-static blocks (workspace, memory summary) change infrequently. Volatile content (date, execution hints, per-turn memory) is never in the system prompt.
+
+### P2: Ledger Records All Orchestration Turns
+
+The ledger captures all orchestration-visible conversation:
+- **plan-assess** phase: assessment user prompts and AI responses
+- **plan-generate** phase: plan generation user prompts and AI responses
+- **execute-step** phase: step execution turns (human inputs, AI outcomes)
+- Special flows: synthesis, thread checks, goal completion
+
+Each turn is marked with `phase` for filtering. CoreAgent receives only execute-step messages (see §3.1 for how dependent steps ground predecessor output on isolated branch checkpoints).
+
+### P3: Ledger as Authoritative Plan Context
+
+No separate "synthetic transcript" for Plan phase:
+- Plan reads directly from the message ledger
+- No duplicate encoding paths
+- No legacy reconstruction heuristics
+
+### P4: CoreAgent Transcript as Implementation Detail
+
+LangGraph checkpoints remain for tool execution, resume capability, and debugging. StrangeLoop orchestration does NOT require:
+- Replaying full tool subgraphs for Plan reasoning
+- Reading LangGraph `messages` channel for context
+
+### P5: Semantic Separation of Context Types
+
+- **System prompt**: Persistent directives and semi-static background (identity, policies, workspace rules, long-term memory summary). The LLM treats these as authoritative instructions.
+- **User message envelope (leading) `<CURRENT_GOAL>` + `<USER_QUERY>`**: The active goal text and the step instruction for this turn. Placed first so the model sees intent and task before auxiliary context.
+- **User message envelope `<DYNAMIC_CONTEXT>`**: Per-turn operational context only (execution hints when present, `<CONTEXT_INFO>` with timestamp, date, response-language hint, and optional loop iteration / workspace snapshot). Separated from the leading blocks by a `--- Context ---` delimiter for scanning and cache-friendly grouping.
+- **User message envelope `<RETRIEVED_KNOWLEDGE>`**: Supplemental information (per-turn memories, RAG documents). The LLM may reference these but should not treat them as directives.
+
+### P6: Unified Planner Assembly (Three Parts, Two Modes)
+
+Every planner LLM call — `continuation` (RFC-LOOP-015 discriminator), `plan_assess`, and `plan_generate` — uses the same assembly shape:
+
+1. **System** — call-kind instructions and semi-static context (workspace, environment).
+2. **Ledger** — projected native Human/AI turns from the CE ledger (read-side caps only; persisted ledger is never mutated).
+3. **Task** — one final `LoopHumanMessage` with plain-text sections (`GOAL:`, optional context blocks, `TASK:`).
+
+**Ledger carries narrative; the task envelope carries structure and the per-call directive.** Do not paste long bodies into the task envelope when the same content already appears in projected ledger messages above (dedup rule).
+
+**Projection mode** (two values only, derived from loop state):
+
+| Mode | Condition |
+|------|-----------|
+| `new_goal` | `iteration == 0` and no `step_results` |
+| `mid_goal` | all other planner moments |
+
+Cache optimization is **message-based**: identical message content (or content blocks, provider-dependent) hits cache. Volatility belongs in the **last** HumanMessage (task envelope), not in duplicated inline prose. System content is stable per call kind.
+
+---
+
+## Target Design
+
+### 1. CoreAgent System Prompt — Two Tiers, Volatility-Ordered
+
+The system prompt is a single `SystemMessage` with multiple content blocks ordered from least volatile to most volatile. Static blocks cache for the entire session; semi-static blocks cache across goals within a session.
+
+#### Static Tier (session-stable)
+
+These blocks rarely or never change during a session. They form the cache-friendly prefix.
+
+| # | Block | XML Tag | Content | Source |
+|---|-------|---------|---------|--------|
+| 1 | Agent identity + behavioral rules | (plain text) | Name, guidelines (concise answers, multi-step plans, obstacle handling, never reference internal architecture, maintain context, respect CLAUDE.md/AGENTS.md) | `_DEFAULT_SYSTEM_PROMPT` / `_MEDIUM_SYSTEM_PROMPT` |
+| 2 | Tool orchestration guide | (plain text) | Shell, file ops, surgical edit, data, goals, research, subagent guides + key rules | `_TOOL_ORCHESTRATION_GUIDE` |
+| 3 | Execution policies | `<EXECUTION_POLICIES>` | Step granularity, filesystem discovery, first-wave constraints | `execution_policies.xml` fragment |
+| 4 | Subagent routing directive | `<SUBAGENT_ROUTING_DIRECTIVE>` | When user explicitly requests a subagent — force `task` tool usage | Conditionally injected |
+| 5 | Agent loop output contract | `<STRANGE_LOOP_OUTPUT_CONTRACT>` | Wrap-up limits for tool/subagent results | Conditionally injected when `current_decision` exists |
+
+#### Semi-Static Tier (goal-stable)
+
+These blocks change infrequently — at most once per goal or when the workspace context shifts. They sit after the static tier so the static prefix stays cached.
+
+| # | Block | XML Tag | Content | Source |
+|---|-------|---------|---------|--------|
+| 6 | Workspace rules | `<WORKSPACE_RULES>` | "Use file tools against this directory. Don't ask for paths. Inspect immediately for architecture goals." | Inline in builder |
+| 7 | Workspace metadata | `<WORKSPACE>` | Root path, VCS presence, branch, main branch, layout preview, README excerpt | `build_soothe_workspace_section()` |
+| 8 | Environment | `<ENVIRONMENT>` | Platform, shell, OS version, model, knowledge cutoff | `build_soothe_environment_section()` |
+| 9 | Memory summary | `<MEMORY_SUMMARY>` | User persona, long-term preferences, retrieved semi-static facts (up to 5 items, 200 chars each) | `_build_memory_section()` — long-term memories only |
+| 10 | Context projection | `<CONTEXT_PROJECTION>` | Projected context entries when context tools are triggered | `_build_context_section()` |
+| 11 | Thread context | `<THREAD>` | Thread ID, conversation turns, active goals, current plan | `build_soothe_thread_section()` — complex only |
+| 12 | Protocol summary | `<PROTOCOLS>` | Active protocols (memory, planner, policy) with type and stats | `build_soothe_protocols_section()` — complex only |
+| 13 | Scenario guidance | (plain text) | Architecture analysis, research synthesis, thread continuation, quiz — intent-driven guides | `_build_scenario_section()` |
+
+#### What is NOT in the system prompt
+
+All per-turn volatile content is removed from the system prompt:
+
+- **Date/time** → moves to `<CONTEXT_INFO>` inside `<DYNAMIC_CONTEXT>` in the user message envelope
+- **Execution hints** → moves to `<EXECUTION_HINTS>` inside `<DYNAMIC_CONTEXT>` in the user message envelope
+- **Per-turn recalled memories** → moves to `<RETRIEVED_KNOWLEDGE>` in the user message envelope
+- **Current goal context** → moves to `<CURRENT_GOAL>` at the **start** of the user message envelope (not nested under `<DYNAMIC_CONTEXT>`). Any legacy trailing ` (iteration N/M)` suffix on the stored goal string is stripped so `<CURRENT_GOAL>` contains only the user's goal text.
+
+The system prompt is cache-stable across the entire session (static tier) or across goals (semi-static tier). The only cache-invalidating changes are workspace shifts, memory updates, or environment changes — all inherently infrequent.
+
+### 2. User Message Envelope
+
+Every `LoopHumanMessage` sent to CoreAgent follows a standard XML envelope. **Goal and step instruction come first**; **secondary per-turn context** (hints, timestamps, language hint) is grouped after a fixed delimiter so the model reads task-before-metadata and prompt prefixes stay stable.
+
+```xml
+<CURRENT_GOAL>
+  Goal text (verbatim user goal; no iteration suffix)
+</CURRENT_GOAL>
+
+<USER_QUERY>
+  Actual user message or orchestration instruction
+</USER_QUERY>
+
+--- Context ---
+
+<DYNAMIC_CONTEXT>
+  <EXECUTION_HINTS>
+    Step-specific guidance from StrangeLoop (previously appended by ExecutionHintsMiddleware); omitted when empty
+  </EXECUTION_HINTS>
+  <CONTEXT_INFO>
+    <timestamp>2026-05-08T14:30:00+00:00</timestamp>
+    <date>2026-05-08</date>
+    <response_language_hint>...</response_language_hint>
+    <workspace_state>lightweight diff summary for this turn (optional)</workspace_state>
+  </CONTEXT_INFO>
+</DYNAMIC_CONTEXT>
+
+<RETRIEVED_KNOWLEDGE>
+  <MEMORY>
+    Per-turn recalled memories (short-term, situational recall — distinct from
+    the long-term MEMORY_SUMMARY in the system prompt)
+  </MEMORY>
+  <RAG_DOCS>
+    Per-turn retrieved documents
+  </RAG_DOCS>
+</RETRIEVED_KNOWLEDGE>
+```
+
+**Slash-skill goals:** When the orchestration goal was expanded from a `/skill:` line, `LoopState.goal_user_submission` holds that original line. Execute-step and plan-context envelopes then repeat the short trailing user text inside `<USER_PRIMARY_QUERY>` before `<FULL_GOAL_AND_SKILL_CONTEXT>` (the long composed skill prompt). Plain goals without a slash-skill submission keep a single flat `<CURRENT_GOAL>` / `Goal:` line layout.
+
+`<RETRIEVED_KNOWLEDGE>` is optional and may be omitted when there is nothing to inject for that turn. When present, it follows `<DYNAMIC_CONTEXT>` (same overall human message).
+
+**Memory split semantics:**
+
+- **System prompt `<MEMORY_SUMMARY>`**: Long-term user persona, persistent preferences, semi-static facts. These change rarely and cache well. The LLM treats these as authoritative background.
+- **User message `<MEMORY>`**: Per-turn situational recall — things remembered from recent conversations relevant to the current query. These change every turn and must not pollute the system prompt's cache boundary.
+
+### 3. Complete StrangeLoop Ledger
+
+The `loop_messages` ledger is a complete record of the entire StrangeLoop conversation across all phases — not just execute steps.
+
+**Ledger records all phases:**
+
+| Phase | `LoopHumanMessage.phase` | `LoopAIMessage.phase` | Recorded in ledger | Injected into CoreAgent thread |
+|-------|--------------------------|------------------------|-------------------|-------------------------------|
+| plan-assess | `"plan_assess"` | `"plan_assess"` | Yes | **No** |
+| plan-generate | `"plan_generate"` | `"plan_generate"` | Yes | **No** |
+| execute-step | `"execute_step"` | `"execute_step"` | Yes | Yes |
+
+**Why record plan-phase messages in the ledger:**
+
+1. **Cache maximization**: Prior plan-assess and plan-generate turns from previous iterations appear in the ledger portion of subsequent plan prompts. This increases the unchanged prefix between plan calls — the model sees its own prior reasoning as native message turns, and they cache.
+2. **Complete audit trail**: The ledger is the single source of truth for the full StrangeLoop conversation. Checkpoint recovery, debugging, and observability all benefit from a complete history.
+3. **Iteration continuity**: When the planner re-assesses after an execute wave, it sees its own prior assessment and plan as preceding turns, not as a flattened summary.
+
+**CoreAgent isolation**: Plan-phase messages are excluded from execute graph input — CoreAgent never sees planning reasoning in its thread. **Parallel branch checkpoints** (§3.1) use a fresh isolated namespace per step; read-side **execute-step ledger projection** (IG-542) injects prior context as native Human/AI rows plus a lightweight current-step envelope. Prior-goal **full** execute history is not replayed — only terminal completion units at goal boundaries (see §3.1).
+
+**Ledger Structure:**
+
+The ledger contains ONLY orchestration-visible messages in adjacent pairs:
+- Each `LoopHumanMessage` immediately followed by its `LoopAIMessage`
+- Both messages in pair share same `step_id` (for execute-step phase)
+- Both messages in pair share same `iteration` (for plan phases)
+- Order: plan-assess pair → plan-generate pair → execute step A pair → step B pair → ...
+- NO tool messages, NO internal reasoning traces, NO subgraph traffic
+
+### 3.1 Parallel execute branches and LangGraph checkpoint isolation
+
+When several steps run in one wave with **independent** LangGraph checkpoints per step, the runtime uses a **derived** `thread_id` for CoreAgent (for example `{logical_thread}__step_{step_id}`) so each step’s checkpoint stays isolated from siblings. A new namespace starts with an **empty** CoreAgent message list even though the orchestration ledger (`LoopState.loop_messages`) already holds prior execute turns on the **logical** thread.
+
+**Requirement:** Dependency-ordered work must still see completed predecessor **execute** evidence without sibling cross-talk.
+
+#### Execute-step graph input (IG-542)
+
+Branched namespaces start empty. The executor assembles CoreAgent `messages[]` as **three read-side slices** (persisted ledger unchanged):
+
+```
+[Slice A — cross-goal completion units]   # goal_boundary only, always K when prior goals exist
+[Slice B — intra-goal predecessor execute_step pairs]   # when step has DAG dependencies
+[Slice C — current LoopHumanMessage envelope]
+```
+
+**Projection modes** (parallel to planner `new_goal` / `mid_goal`):
+
+| Mode | Condition | Slice A | Slice B |
+|------|-----------|---------|---------|
+| `goal_boundary` | `iteration == 0` and no `step_results` | **Always K** prior-goal completion units when `continue_loop` / prior goals on thread | If step has `dependencies` |
+| `mid_goal` | otherwise | — | If step has `dependencies` |
+| `solo` | mid_goal, no deps | — | — |
+
+**Slice A — cross-goal (prior goals on same loop thread):**
+
+- Always project up to **K** prior-goal completion units (`execute_prompt_ledger.cross_goal_completion_tail`, default `3`).
+- Each unit is **one** terminal Human/AI pair per prior goal, resolved in order:
+  1. **Synthesized:** last `goal_completion` Human/AI pair in that goal’s segment.
+  2. **Ledger-direct:** last `execute_step` Human/AI pair when synthesis did not append `goal_completion` rows (`CompletionStrategy.LEDGER_DIRECT`).
+- Do **not** replay full prior-goal execute history in Slice A.
+- Apply shared `plan_prompt_ledger` caps after collection.
+
+**Slice B — intra-goal (DAG `dependencies`):**
+
+- Deep-copy transitive-predecessor `execute_step` Human/AI rows from `loop_messages` (chronological, capped).
+- Envelope carries `PRIOR STEPS` metadata only (desc + status + “see prior assistant message”).
+
+**Slice C — current envelope:**
+
+- `EXECUTION TASK`, optional `PRIOR STEPS`, optional `PRIOR GOALS` tree at boundary, `EXPECTED OUTPUT`, `INSTRUCTIONS`, `EXECUTION METADATA` (step id + TUI card title).
+- **Dedup (IG-538 rule):** when Slice A is non-empty, omit inline `PRIOR GOAL COMPLETION` from the envelope; optional `PRIOR GOALS` tree may list desc/status with outcome hints only.
+
+**Loop-continuation bootstrap** (RFC-LOOP-014): first execute at `goal_boundary` with `continue_loop=True` uses Slice A ledger projection instead of a fat inline completion block. When caps trim Slice A to empty, fall back to capped inline `PRIOR GOAL COMPLETION` (same as planner dedup fallback).
+
+When `continue` has actionable recommendations in the prior completion report, `plan_assess` may escalate to `plan_generate` instead of bootstrap (RFC-LOOP-015).
+
+`StepResult` and ledger appends continue to use the **logical** `thread_id`; only the LangGraph stream/checkpoint namespace may use the derived id.
+
+### 4. StrangeLoop Plan Prompt Structure
+
+The Plan phase follows P6: one assembler (`assemble_planner_prompt`), three parts, two projection modes. All planner calls share this shape; only the system fragment and task `TASK:` line differ by call kind.
+
+#### 4.1 Assembly entry point
+
+```python
+def assemble_planner_prompt(
+    call_kind: Literal["continuation", "assess", "generate"],
+    state: LoopState,
+    ce: ContextEngine,
+    context: PlanContext,
+    checkpoint: StrangeLoopCheckpoint | None,
+    config: SootheConfig,
+) -> list[BaseMessage]:
+    mode = "new_goal" if state.iteration == 0 and not state.step_results else "mid_goal"
+    return [
+        SystemMessage(build_planner_system(call_kind, context, config)),
+        *project_planner_ledger(ce.ledger, mode, config.agent.loop.plan_prompt_ledger),
+        LoopHumanMessage(build_planner_task_envelope(...), phase=...),
+    ]
+```
+
+- `PromptBuilder.build_plan_messages` delegates here for `assess` / `generate`.
+- RFC-LOOP-015 `assess_continuation` delegates here for `continuation` (no separate inline prompt string).
+
+#### 4.2 System prompt (static + semi-static)
+
+| Call kind | Static blocks |
+|-----------|---------------|
+| `continuation` | Continuation discriminator instructions (bootstrap vs plan_generate criteria) |
+| `assess` | Plan assess instructions |
+| `generate` | Execution policies + plan generate instructions |
+
+Shared semi-static blocks (when applicable): follow-up policy, environment, workspace metadata, workspace rules (generate only), Context Engine agent/memory instructions. Goal text is **not** in the system prompt.
+
+#### 4.3 Ledger projection (read-side)
+
+Projection is applied at consumption time (IG-380 caps). The persisted CE ledger remains complete and append-only.
+
+**`new_goal` mode** (first plan moment of a goal — including RFC-LOOP-015 continuation at iter=0):
+
+| Rule | Value |
+|------|-------|
+| Phases included | `plan_assess`, `plan_generate`, `goal_completion` |
+| Phases excluded (default) | `execute_step` — outcomes are already summarized in `goal_completion` AI messages |
+| Optional config | `new_goal_include_execute_tail: int` — include last K execute pairs per prior goal (default `0`) |
+| Caps | `PlanPromptLedgerConfig` (tail message count, total chars, per-message chars) |
+
+**`mid_goal` mode** (replan / status check after execution):
+
+| Rule | Value |
+|------|-------|
+| Phases included | all phases |
+| Caps | same as today |
+
+**Important:** At `new_goal`, **assess and generate project the same ledger slice.** Do not skip ledger for plan_generate at a goal boundary (prior ad-hoc `is_continuation_first_plan` skip is removed). Identical prior messages are the cache-friendly prefix.
+
+#### 4.4 Task envelope (plain text)
+
+The final `LoopHumanMessage` uses plain-text sections (same style as today's `UserMessageBuilder`). No tables, ref IDs, or metadata annotations in model-facing text. Goals are named **`GOAL: {description}`** — a short label from Context Engine, not CE internal IDs.
+
+**All calls:**
+
+```text
+GOAL:
+{active goal description, truncated — CE GoalNode.description preview}
+
+TASK:
+{one call-specific directive}
+```
+
+**`TASK:` lines:**
+
+| Call kind | TASK |
+|-----------|------|
+| `continuation` | Decide bootstrap vs plan_generate for this follow-up goal. |
+| `assess` | Assess goal completion: return status, goal_progress, assessment_reasoning. |
+| `generate` | Generate the execution plan for this goal. |
+
+**`new_goal` when prior goals exist** — append a nested list (plain markdown):
+
+```text
+PRIOR GOALS:
+
+- GOAL: analyze architecture (completed)
+  - 01 explore codebase (completed)
+  - 02 write architecture report (completed)
+  - outcome: see prior assistant message
+
+- GOAL: review ledger model (completed)
+  - 01 read RFC-LOOP-006 (completed)
+  - outcome: one-line preview when ledger caps dropped the completion turn
+```
+
+Population rules:
+
+- Tree from CE `GoalStepDAG` (terminal prior goals, bounded by projection config).
+- Step lines: `{id} {description} ({status})`.
+- **Outcome line:** if projected ledger includes that goal's `goal_completion` AI message → `outcome: see prior assistant message`. Otherwise → one-line preview from checkpoint `goal_completion`.
+- **Do not** paste full completion reports in the envelope when `goal_completion` turns are already in the projected ledger (dedup rule).
+
+**Removed at `new_goal`:** standalone `PRIOR GOAL COMPLETION:` wall-of-text blocks when completion is present in ledger above.
+
+**`mid_goal` only** — retain existing blocks: `PRIOR PROGRESS:` (RFC-LOOP-016), `DAG STATUS:`, `STEP ID HINT:` (generate), `SKILL REFERENCE:` when present. No `PRIOR GOALS:` tree mid-goal; narrative is in the ledger tail.
+
+Slash-skill goals may retain existing envelope variants for execute and plan contexts; semantics unchanged.
+
+#### 4.5 Message list layout
+
+**Mid-goal example (iteration 2):**
+
+```
+[0]  SystemMessage         — call-kind instructions + semi-static context
+[1]  LoopHumanMessage      — ledger: plan-assess user (iteration 1)
+[2]  LoopAIMessage         — ledger: plan-assess AI response (iteration 1)
+[3]  LoopHumanMessage      — ledger: plan-generate user (iteration 1)
+[4]  LoopAIMessage         — ledger: plan-generate AI response (iteration 1)
+[5]  LoopHumanMessage      — ledger: execute step input (iteration 1)
+[6]  LoopAIMessage         — ledger: execute step output (iteration 1)
+...
+[N]  LoopHumanMessage      — task envelope (GOAL + context + TASK)
+```
+
+**New goal after prior goals completed:**
+
+```
+[0]  SystemMessage         — call-kind instructions
+[1..M]  projected prior plan + goal_completion pairs (no execute by default)
+[N]  LoopHumanMessage      — GOAL + PRIOR GOALS tree + TASK
+```
+
+Assess, continuation, and generate on the same turn share ledger messages `[1..M]`; only system fragment and `TASK:` differ.
+
+#### 4.6 Cache behavior
+
+- **Message identity**: Providers cache identical message (or block) content. Prior ledger turns that are byte-identical across calls contribute to prefix cache hits.
+- **Within one planning episode** (continuation → assess → generate at `new_goal`): shared ledger prefix; volatility isolated to system call-kind suffix and final task envelope.
+- **Across iterations**: Ledger grows append-only; existing prefix still caches.
+- **Dedup**: Repeating completion or execute transcripts in the task envelope **and** the ledger wastes tokens and breaks dedup — envelope carries structure; ledger carries narrative.
+- `<PRIOR_CONVERSATION>` remains eliminated — prior thread content is native ledger turns when needed.
+
+### 5. Execute Phase Contract
+
+**Batch Execution Model:**
+
+StrangeLoop may execute multiple steps in one CoreAgent invocation ("wave") for latency efficiency. The ledger records each step's turn individually.
+
+**Input to CoreAgent (Batch):**
+
+StrangeLoop sends N `LoopHumanMessage` instances, one per step, each using the user message envelope format:
+
+```python
+LoopHumanMessage(
+    content=ENVELOPE_TEMPLATE.format(
+        dynamic_context=...,
+        retrieved_knowledge=...,
+        user_query="Step A: Query database for user records"
+    ),
+    thread_id="<user_thread>",
+    iteration=<current_iteration>,
+    goal_summary="<goal_text>",
+    phase="execute_step",
+    step_id="step_a_uuid"
+)
+```
+
+**Output Processing and Ledger Recording:**
+
+When batch execution completes, StrangeLoop:
+
+1. Collects all `AIMessage` instances from the stream
+2. Identifies the final `AIMessage` for each step as the user-visible outcome
+3. Promotes each final `AIMessage` to a `LoopAIMessage` keyed by `step_id`
+4. Records N `(LoopHumanMessage, LoopAIMessage)` pairs in ledger
+
+**Message Selection Rule:** The final `AIMessage` in the stream is the step outcome. Default rule suffices for 95% of cases; explicit markers (`metadata["step_id"]`, `metadata["is_outcome"]`) are added when execution semantics require.
+
+**Partial Failure Handling:**
+
+If batch execution fails mid-stream:
+- Completed steps: ledger records full pairs
+- Failed step: ledger records pair with error outcome
+- Unstarted steps: ledger records skip messages OR omitted (configurable)
+
+### 6. Reference-Based Message Dedup
+
+**Current problem**: StrangeLoop's `loop_messages` and CoreAgent's checkpoint messages contain overlapping content. When the Executor wraps a CoreAgent `AIMessage` into a `LoopAIMessage`, the content is duplicated. Plan-phase projections and checkpoint recovery both pay for this.
+
+**Solution — reference-based dedup:**
+
+- `LoopHumanMessage` gains `core_agent_message_id: str | None`
+- `LoopAIMessage` gains `core_agent_message_id: str | None`
+- When the Executor wraps CoreAgent responses into ledger entries, it records the original message ID
+- Ledger projection skips messages whose `core_agent_message_id` matches a message already present in CoreAgent's thread state
+- CoreAgent continues to own its own message history — the ledger is a parallel index with orchestration metadata, not a replacement
+
+This preserves both stores (no data loss, no architectural upheaval) while eliminating redundant content when projecting for plan prompts or recovering from checkpoints.
+
+### 7. Checkpoint Persistence
+
+**StrangeLoop checkpoints** (SQLite / PostgreSQL per RFC-PERS-003) persist:
+
+**Metadata Fields:**
+- Loop status, thread health metrics
+- Goal metadata: `goal_id`, `goal_text`, status, iteration counters
+- Plan metadata: latest plan state, reasoning, next actions
+- Step metadata: ordered `StepAction` records with lifecycle status
+
+**Loop Ledger Field:**
+```python
+loop_messages: list[LoopHumanMessage | LoopAIMessage]  # Ordered, unbounded, adjacent pairs
+```
+
+**Persistence Requirements:**
+1. Serialized using LangGraph serde (canonical allowlist path)
+2. Round-trip must preserve types, NOT deserialize as `dict`
+3. Ledger is append-only during execution (no retroactive edits)
+4. Adjacent Human-AI pairs: each Human message followed by its AI response
+5. Unbounded growth: no truncation, no summarization in the ledger itself (projection applies caps at consumption time)
+
+**Legacy fields removed:**
+- `reason_history` — replaced by plan-phase ledger entries
+- `act_history` — replaced by execute-step ledger entries
+- `StepExecutionRecord.output` string blobs — replaced by `LoopAIMessage`
+- `derive_plan_conversation()` — replaced by ledger projection
+
+---
+
+## Data Flow
+
+```
+User input
+  |
+  +-- Memory recall (parallel) ----> recalled_memories (short-term)
+  +-- Context projection -----------> ContextBundle (RFC-SDK-002)
+  |
+  v
+StrangeLoop (Plan — continuation | assess | generate)
+  |
+  +-- assemble_planner_prompt(call_kind, mode)  (§4.1, P6)
+  +-- System: call-kind instructions + semi-static workspace/memory
+  +-- Ledger: project_planner_ledger(mode=new_goal|mid_goal)
+  +-- Task: GOAL + optional PRIOR GOALS tree + TASK
+  |
+  v  Plan LLM response
+  |
+  +-- Record plan-assess / plan-generate user/AI pair in ledger (assess/generate only)
+  +-- Continuation discriminator: not recorded in ledger by default (routing-only)
+  +-- Plan-phase messages NOT injected into CoreAgent thread
+  |
+  v
+StrangeLoop (Execute phase)
+  |
+  +-- Build LoopHumanMessage envelope (phase="execute_step"):
+  |     <CURRENT_GOAL> + <USER_QUERY>  (task first)
+  |     --- Context --- + <DYNAMIC_CONTEXT>  hints + CONTEXT_INFO
+  |     <RETRIEVED_KNOWLEDGE> memory + RAG (optional)
+  |
+  v
+CoreAgent.astream(messages)
+  |
+  +-- System prompt (two tiers):
+  |     Static: identity + tools + policies + directives
+  |     Semi-static: workspace rules + workspace + environment + memory summary + context + thread + protocols
+  +-- Message list: execute-step ledger projection (see §3); on **parallel branch** namespaces,
+  |     dependent steps: single current envelope with `PRIOR STEP EVIDENCE` (§3.1);
+  |     loop-continuation bootstrap: envelope `PRIOR GOAL COMPLETION` only (§3.1)
+  +-- CoreAgent thread (per checkpoint namespace) receives only that projection + envelope — never plan-phase rows
+  |
+  v
+CoreAgent response (AIMessage)
+  |
+  +-- Wrapped into LoopAIMessage(phase="execute_step") with core_agent_message_id
+  +-- Appended to loop_messages ledger
+  |
+  v
+Checkpoint save (complete loop_messages ledger + CoreAgent state)
+```
+
+---
+
+## Gap Analysis (Current Implementation → Target)
+
+### G1: Batched Execution Not Properly Recorded in Ledger
+
+**Current**: One aggregated `LoopHumanMessage` for multiple steps. No per-step `step_id` pairing.
+
+**Target**: N `LoopHumanMessage` instances (one per step) with envelope format. N `(LoopHumanMessage, LoopAIMessage)` pairs keyed by `step_id`.
+
+### G2: Step Outcomes Not Stored as LoopAIMessage
+
+**Current**: Outcomes are string blobs (`StepResult.to_evidence_string()`). No first-class `LoopAIMessage` in persisted state.
+
+**Target**: Extract final `AIMessage` per step. Promote to `LoopAIMessage` with `step_id`. Persist in `loop_messages` ledger field.
+
+### G3: Plan Context Assembled from Multiple Parallel Sources
+
+**Current**: `PromptBuilder._build_human_message` concatenates goal, `CONCRETE EVIDENCE`, `working_memory`, `<PRIOR_CONVERSATION>`, previous assessment.
+
+**Target**: Plan reads directly from `loop_messages` ledger (all phases). System prompt contains only static + semi-static content. `<PRIOR_CONVERSATION>` eliminated — prior thread messages are native ledger turns.
+
+### G4: StrangeLoop Checkpoint Schema Missing Message Ledger
+
+**Current**: `GoalExecutionRecord` stores `reason_history` and `act_history`. No `loop_messages` field.
+
+**Target**: `GoalExecutionRecord` stores `loop_messages: list[LoopHumanMessage | LoopAIMessage]`. Legacy fields removed.
+
+### G5: CoreAgent Checkpoint Dependency in Plan
+
+**Current**: Plan indirectly depends on overlapping content from LangGraph state.
+
+**Target**: Plan reads only from StrangeLoop ledger. LangGraph checkpoints remain for CoreAgent resume/debug only.
+
+### G6: Serde Allowlist Path Mismatch
+
+**Current**: Allowlist paths don't match implementation paths. Messages deserialize as `dict`.
+
+**Target**: Fix allowlist paths. Round-trip preserves types.
+
+### G7: Plan Phase Turns Not in Ledger
+
+**Current**: Plan turns are generic `HumanMessage`/`AIMessage`, not `LoopHumanMessage`/`LoopAIMessage`. Plan reasoning not captured in ledger.
+
+**Target**: `LoopHumanMessage(phase="plan_assess")` / `LoopAIMessage(phase="plan_assess")` and `LoopHumanMessage(phase="plan_generate")` / `LoopAIMessage(phase="plan_generate")`. All plan turns in ledger.
+
+### G8: Special Flows Outside Ledger Model
+
+**Current**: Synthesis, thread checks, and parallel branches historically used ad hoc context (e.g. empty branch checkpoints without predecessor execute history).
+
+**Target**: `LoopAIMessage(phase="goal_completion")`, `LoopHumanMessage(phase="thread_check")`. All orchestration turns in ledger. **Parallel branches:** dependent steps receive predecessor output only inside the current envelope’s `PRIOR STEP EVIDENCE` block (§3.1); loop-continuation bootstrap may still replay prior-goal execute rows; logical ledger remains canonical.
+
+### G9: Volatile Content in System Prompt Breaks Caching
+
+**Current**: Date line, execution hints, and per-turn memories are appended to the system prompt. Every turn invalidates the cache for the entire prompt suffix.
+
+**Target**: Volatile content moves to user message envelope. System prompt contains only static + semi-static tiers. Cache hits on the stable prefix across turns.
+
+### G10: Execution Hints Injected via Middleware Suffix
+
+**Current**: `ExecutionHintsMiddleware` appends hints to `state['system_prompt']` as a suffix. `SystemPromptOptimizationMiddleware._append_execution_hints_suffix()` copies this onto the system prompt.
+
+**Target**: Execution hints move to `<EXECUTION_HINTS>` in the user message envelope. No middleware suffix needed. `ExecutionHintsMiddleware` sets `state['execution_hints']` instead of mutating the system prompt.
+
+### G11: Memory Injection Lacks Semantic Separation
+
+**Current**: All recalled memories injected as `<memory>` XML in the system prompt (up to 5 items, 200 chars each). No distinction between long-term persona and situational recall.
+
+**Target**: Long-term persona/preference memories → `<MEMORY_SUMMARY>` in system prompt (semi-static tier). Per-turn situational recall → `<MEMORY>` in user message envelope. Different cache volatility, different LLM treatment.
+
+---
+
+## Implementation Order
+
+Foundation: add `core_agent_message_id` fields, fix serde allowlist (G6), add `loop_messages` to checkpoint (G4). Then complete the ledger: record plan-phase pairs (G7), filter execute-step projection for CoreAgent, wire unified planner assembly (P6, §4) including `assemble_planner_prompt` and `PRIOR GOALS` tree. Then volatility-tiered prompts: restructure CoreAgent system prompt into static/semi-static tiers, introduce the user message envelope in the executor, wire `assemble_planner_prompt` for all three call kinds, move execution hints to envelope (G10). Then split memory injection (G11) into long-term `<MEMORY_SUMMARY>` (system) vs per-turn `<MEMORY>` (envelope). Finally: wire ledger dedup via `core_agent_message_id`, remove legacy fields (`reason_history`, `act_history`, `StepExecutionRecord.output`, `derive_plan_conversation()`, `CONCRETE EVIDENCE`, `<PRIOR_CONVERSATION>`, `working_memory`).
+
+---
+
+## Amendment: RFC-CORE-005 (Dynamic System Context)
+
+**Change**: Add volatility-tiered ordering to `SystemPromptOptimizationMiddleware`.
+
+- **Current**: Sections injected in order: base prompt → ENVIRONMENT → context/memory (conditional) → subagent directive → output contract → dynamic sections → date line.
+- **New**: Sections injected in volatility order: base prompt + tool guides + policies (static) → workspace rules + workspace + environment + memory summary + context + thread + protocols (semi-static). Date line, execution hints, and per-turn memories removed from system prompt entirely.
+- **Preserved**: All `<SOOTHE_*>` XML tags, classification-driven depth (minimal/medium/complex), `ToolTriggerRegistry` mechanism.
+- **Removed from system prompt**: `_current_date_line()`, execution hints suffix, per-turn memory injection.
+
+## Amendment: RFC-LOOP-002 (Hierarchical Prompt Architecture)
+
+**Change**: The `USER_TASK` layer is replaced by the user message envelope.
+
+- **Current**: `USER_TASK` contains `<GOAL>`, `<PRIOR_CONVERSATION>`, `<EVIDENCE>` as XML inside a single human message.
+- **New**: `USER_TASK` becomes the user message envelope: `<CURRENT_GOAL>` and `<USER_QUERY>` first, then `--- Context ---` and `<DYNAMIC_CONTEXT>` (hints + `<CONTEXT_INFO>`), optionally `<RETRIEVED_KNOWLEDGE>`. No `<PRIOR_CONVERSATION>` or `<EVIDENCE>` blocks — these are replaced by native ledger turns in the message list.
+- **Preserved**: `SYSTEM_CONTEXT` layer (now split into static + semi-static tiers), `INSTRUCTIONS` layer, `PromptBuilder` fragment composition.
+- **Removed**: `<PRIOR_CONVERSATION>`, `CONCRETE EVIDENCE`, `<EVIDENCE>`, `WORKING_MEMORY` sections from all prompt construction.
+
+## Amendment: RFC-LOOP-007 (Goal Context Management)
+
+**Change**: `GoalContextManager.get_plan_context()` is superseded by the complete ledger.
+
+- **Current**: `get_plan_context()` returns previous goal summaries as XML blocks injected into the Plan-phase user message. `get_execute_briefing()` returns a condensed briefing on thread switch.
+- **New**: Plan-phase reads the complete ledger, which already contains prior plan-assess/plan-generate/execute-step turns from previous iterations. `get_plan_context()` is no longer needed — goal history is native ledger turns.
+- **Preserved**: `get_execute_briefing()` (thread-switch injection into Execute phase). The ledger records orchestration turns but does not carry cross-thread goal summaries, so thread-switch briefings remain necessary.
+- **Removed**: `get_plan_context()`, `inject_previous_goal_context()`, `<previous_goal>` XML blocks in Plan prompts.
+
+---
+
+## Non-Goals
+
+1. **Replace LangGraph as CoreAgent Runtime**: LangGraph remains the execution runtime. The ledger model is an orchestration-level abstraction.
+2. **Change User-Thread Streaming Wire Format**: RFC-CLNT-008 handles streaming wire format. This RFC concerns internal orchestration state.
+3. **Analytics Structures Are Derived, Not Primary**: Legacy fields (`reason_history`, `act_history`) are removed from persistence. Analytics tools derive them from ledger if needed.
+4. **Address Subagent Output Quality**: RFC-LOOP-005 handles reasoning quality. This RFC ensures consistent context propagation.
+5. **Change Tool Result Shaping**: RFC-LOOP-004 handles tool output compression. This RFC concerns message structure, not content compression.
+
+---
+
+## Success Criteria
+
+### Functional Requirements
+
+1. **Plan reconstruction without LangGraph dependency**: Given a resumed StrangeLoop checkpoint, Plan can reconstruct full context from ledger + metadata alone.
+2. **Deterministic step-outcome pairing**: Each completed step has exactly one `(LoopHumanMessage, LoopAIMessage)` pair in the ledger.
+3. **Serde round-trip fidelity**: Checkpoint serialization preserves `LoopHumanMessage`/`LoopAIMessage` types, never deserializes as `dict`.
+4. **CoreAgent isolation**: Execute graph input contains projected prior-goal completion units (Slice A), transitive-predecessor execute rows (Slice B), and the current-step envelope (Slice C). Plan-phase reasoning never leaks into CoreAgent context except via bounded cross-goal completion projection at goal boundaries (§3.1).
+
+### Cache Performance
+
+5. **Static tier cache hit rate**: The static tier (identity + tools + policies) achieves cache hits across 100% of turns within a session.
+6. **Semi-static tier cache hit rate**: The semi-static tier achieves cache hits across all turns within a goal (cache invalidates only on workspace/memory changes).
+7. **Plan prompt prefix reuse**: Between plan-assess and plan-generate within the same iteration, the message prefix (system + all prior ledger turns) is identical and fully cached. At `new_goal`, assess, continuation, and generate share the same projected ledger prefix (§4.5–§4.6).
+
+### Prompt Efficiency
+
+8. **Plan prompt token reduction**: Ledger-based Plan prompts use ~50% fewer tokens than legacy multi-source prompts (eliminates duplicate evidence strings, XML excerpts, overlapping LangGraph content).
+9. **Envelope dedup**: Task envelope does not repeat `goal_completion` or execute bodies already present in projected ledger messages above (§4.4 dedup rule).
+
+---
+
+## Changelog
+
+| Date | Change |
+|------|--------|
+| 2026-05-03 | Initial draft (unified ledger model, execute-step contract, gap analysis G1-G8) |
+| 2026-05-08 | Major revision: volatility-tiered prompt architecture, user message envelope, complete ledger with plan-assess/plan-generate phases, CoreAgent isolation, reference-based dedup, cache optimization, G9-G11, amendments to RFC-CORE-005/206/217 |
+| 2026-05-13 | Execute-step envelope layout: `<CURRENT_GOAL>` + `<USER_QUERY>` before `--- Context ---` + `<DYNAMIC_CONTEXT>` (goal no longer nested under `<DYNAMIC_CONTEXT>`). `<CURRENT_GOAL>` omits iteration suffixes (stripped if present on stored goal text); execute iteration is not duplicated in the envelope — use ledger / message metadata. |
+| 2026-05-13 | §3.1 **Parallel execute branches:** isolated LangGraph `thread_id` per concurrent step; executor injects transitive-predecessor `execute_step` ledger replay before the step envelope so branches see dependency history without sibling cross-talk. G8 target text aligned. |
+| 2026-07-01 | §3.1 **Dependent-step deduplication:** same-goal DAG dependents ground predecessors only via `PRIOR STEP EVIDENCE` in the execute envelope (single Human message to CoreAgent). Removed predecessor Human/AI ledger replay for dependent steps — it duplicated AI bodies already embedded in the envelope. **Loop-continuation bootstrap** now uses envelope `PRIOR GOAL COMPLETION` only (no `prior_loop_execute_messages()` replay). G8 and success-criterion §4 aligned. |
+| 2026-07-02 | §3.1 **Execute-step ledger projection (IG-542):** three-slice graph input — Slice A (K cross-goal completion units: synthesized `goal_completion` or ledger-direct terminal `execute_step` per prior goal), Slice B (transitive-predecessor execute replay + `PRIOR STEPS` metadata), Slice C (current envelope). Inline `PRIOR GOAL COMPLETION` omitted when Slice A projected. Supersedes envelope-only `PRIOR STEP EVIDENCE` / bootstrap-only completion injection. |
+| 2026-07-01 | **§4 Unified planner assembly (P6):** All planner calls use `assemble_planner_prompt` — three parts (system, projected ledger, task envelope), two projection modes (`new_goal` / `mid_goal`). RFC-LOOP-015 continuation discriminator uses the same assembler. At `new_goal`, ledger includes plan + goal_completion phases (execute excluded by default); assess and generate share identical ledger prefix. Task envelope: plain `GOAL:` + optional `PRIOR GOALS:` nested list + `TASK:`; no inlined completion walls when ledger already carries them. Config: `new_goal_include_execute_tail`, `goal_preview_chars`. Design draft: `docs/archive/drafts/2026-07-01-unified-planner-prompt-projection-design.md`. |

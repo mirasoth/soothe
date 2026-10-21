@@ -33,14 +33,14 @@ Soothe operates through a hierarchical execution model with three distinct level
 └─────────────────────────────────────────────────────────────┘
                           ↓ PERFORM (full delegation)
 ┌─────────────────────────────────────────────────────────────┐
-│ StrangeLoop: Agentic Goal Execution (RFC-201)                 │
+│ StrangeLoop: Agentic Goal Execution (RFC-LOOP-001)                 │
 │ • Scope: Single-goal execution through iterative refinement   │
 │ • Loop: Plan → Execute (max iterations: ~8)                  │
 │ • Delegation: EXECUTE invokes CoreAgent for execution         │
 └─────────────────────────────────────────────────────────────┘
                           ↓ EXECUTE (step execution)
 ┌─────────────────────────────────────────────────────────────┐
-│ CoreAgent: Runtime (RFC-100)                                │
+│ CoreAgent: Runtime (RFC-CORE-001)                                │
 │ • Foundation: create_soothe_agent() → CompiledStateGraph     │
 │ • Execution: Model → Tools → Model loop (LangGraph native)   │
 └─────────────────────────────────────────────────────────────┘
@@ -86,7 +86,7 @@ Soothe operates through a hierarchical execution model with three distinct level
 
 5. **Durable by default** -- Agent state is persistable and resumable. Crashes recover from the last persisted state. The durability protocol abstracts over the persistence backend (could be LangGraph Checkpointer, a database, or a file).
 
-6. **Plan-driven execution** -- Complex goals are decomposed into plans with steps. The planner (`LLMPlanner`) uses two-phase architecture (`StatusAssessment` then conditional `PlanGeneration`, merged into `PlanResult`; RFC-604, IG-372 prompt split, IG-329 trimmed plan-generate schema) for token efficiency across all complexity levels. Architectural evolution: IG-150 removed multiple planner tiers (`AutoPlanner`, `ClaudePlanner`, `SubagentPlanner`) and consolidated to `LLMPlanner`, merging the planning module into `soothe.core.strange_loop` (Python package; wire events may still use the `soothe.cognition.*` prefix per RFC-403). Simple queries bypass planning entirely.
+6. **Plan-driven execution** -- Complex goals are decomposed into plans with steps. The planner (`LLMPlanner`) uses two-phase architecture (`StatusAssessment` then conditional `PlanGeneration`, merged into `PlanResult`; RFC-LOOP-021, IG-372 prompt split, IG-329 trimmed plan-generate schema) for token efficiency across all complexity levels. Architectural evolution: IG-150 removed multiple planner tiers (`AutoPlanner`, `ClaudePlanner`, `SubagentPlanner`) and consolidated to `LLMPlanner`, merging the planning module into `soothe.core.strange_loop` (Python package; wire events may still use the `soothe.cognition.*` prefix per RFC-DAEM-002). Simple queries bypass planning entirely.
 
 7. **Least-privilege delegation** -- Every tool invocation and subagent spawn passes through a policy protocol. Permissions are structured (category + action + scope), enabling fine-grained control down to individual shell commands or file paths. Subagents inherit a narrower permission set than their parent.
 
@@ -98,7 +98,7 @@ Soothe operates through a hierarchical execution model with three distinct level
 
 11. **Three-level execution architecture** -- Soothe operates through three distinct levels: GoalEngine (autonomous goal management), StrangeLoop (agentic goal execution), and CoreAgent (foundational runtime). Each level has distinct responsibilities, clear delegation boundaries, and explicit integration contracts. Higher levels delegate to lower levels through well-defined interfaces.
 
-12. **Architectural component isolation** -- Each level maintains clear architectural component boundaries: StrangeLoop is the Plan → Execute loop runner (not consciousness), ContextProtocol is the consciousness (unbounded knowledge ledger with bounded projections), GoalEngine manages goal lifecycle. These are separate architectural components with distinct ownership boundaries. Consciousness lives in ContextProtocol, not in StrangeLoop or GoalEngine. This separation prevents confusion from design brainstorming sessions that assign consciousness to StrangeLoop. **See also**: RFC-201 §50-60 (StrangeLoop role clarification), RFC-201 §61-66 (retrieval authority clarification), RFC-001 §14-47 (ContextProtocol consciousness concept).
+12. **Architectural component isolation** -- Each level maintains clear architectural component boundaries: StrangeLoop is the Plan → Execute loop runner (not consciousness), ContextProtocol is the consciousness (unbounded knowledge ledger with bounded projections), GoalEngine manages goal lifecycle. These are separate architectural components with distinct ownership boundaries. Consciousness lives in ContextProtocol, not in StrangeLoop or GoalEngine. This separation prevents confusion from design brainstorming sessions that assign consciousness to StrangeLoop. **See also**: RFC-LOOP-001 §50-60 (StrangeLoop role clarification), RFC-LOOP-001 §61-66 (retrieval authority clarification), RFC-001 §14-47 (ContextProtocol consciousness concept).
 
 ## Core Abstractions
 
@@ -167,7 +167,7 @@ Controls parallel execution of plan steps, subagents, and tools. Steps declare d
 5. Every tool call and subagent spawn passes through `PolicyProtocol` before execution.
 6. Agent state (including context ledger) is persistable via `DurabilityProtocol`; production deployments MUST enable persistence.
 7. Subagents receive a permission set that is a subset of their parent's.
-8. Remote agents are indistinguishable from local subagents at the delegation interface. Current deviation: remote agents are accessed via direct protocol. ACP integration is analyzed and designed (IG-770): ACP-Client will wrap external ACP agents as `CompiledSubAgent`, preserving the uniform delegation envelope; the deviation note will be removed when the ACP-Client implementation lands.
+8. Remote agents are indistinguishable from local subagents at the delegation interface. Current deviation: remote agents are accessed via direct protocol. ACP integration is analyzed and designed (IG-DAEM-001): ACP-Client will wrap external ACP agents as `CompiledSubAgent`, preserving the uniform delegation envelope; the deviation note will be removed when the ACP-Client implementation lands.
 9. `PlannerProtocol` is optional -- simple queries bypass it and use deepagents' standard agent loop.
 10. Conversation history compression is handled by deepagents' `SummarizationMiddleware`; cognitive context accumulation is handled by `ContextProtocol`. These are complementary, not overlapping.
 11. MCP session lifecycle is managed alongside thread lifecycle (created on thread start, cleaned up on suspend/archive).
@@ -210,7 +210,7 @@ This is the foundational Conceptual Design spec. All subsequent Architecture Des
 
 - [RFC Standard](./templates/rfc-standard.md) - Specification kinds and process
 - [RFC Index](./rfc-index.md) - All RFCs
-- [RFC-201](./RFC-201-strangeloop-plan-execute-loop.md) - StrangeLoop agentic goal execution
-- [RFC-302](./RFC-302-context-protocol-architecture.md) through [RFC-306](./RFC-306-durability-protocol-architecture.md) - Core protocol architecture set
+- [RFC-LOOP-001](./loop/RFC-LOOP-001-strangeloop-plan-execute-loop.md) - StrangeLoop agentic goal execution
+- [RFC-PROT-002](./protocol/RFC-PROT-002-context-protocol-architecture.md) through [RFC-PROT-006](./protocol/RFC-PROT-006-durability-protocol-architecture.md) - Core protocol architecture set
 
 **Note**: RFC consolidation completed 2026-04-17. Canonical merged RFCs are maintained in `docs/specs/`; legacy files are retained for historical context with explicit redirects.

@@ -1,0 +1,540 @@
+# RFC-SLP-002: Sloop Recursive Step Decomposition
+
+**RFC**: 904
+**Title**: Sloop Recursive Step Decomposition
+**Status**: Proposed
+**Kind**: Architecture Design
+**Created**: 2026-08-19
+**Authors**: Soothe Team
+**Updated**: 2026-08-29
+**Depends on**: RFC-LOOP-010, RFC-SDK-002, RFC-LOOP-025, RFC-SLP-001, RFC-LOOP-023
+**Revises**: RFC-LOOP-010 §Loop Graph Topology (plan/eval/execute stations); RFC-LOOP-001 §Plan-Execute structure (upfront plan waves); RFC-LOOP-005 (per-iteration assess+generate pair); RFC-SDK-002 §StepDAG / Step Anchor Registry; RFC-LOOP-025 §Pass 2 scope classification and complexity-tiered planning routes
+**Related**: RFC-LOOP-003, RFC-LOOP-006, RFC-LOOP-002, RFC-SLP-003
+**Partially Superseded By**: RFC-SLP-003 (§ROOT_EVAL assess-only / MUST NOT `decompose_task`; GapResult new-root continuation)
+**Design draft**: `docs/archive/drafts/2026-08-19-sloop-recursive-decomposition-design.md`
+
+---
+
+> **Partial Implementation Note (2026-08-19)**: The **deletion portion** of
+> this RFC has landed via
+> [IG-SLP-002](../../impl/sloop/IG-SLP-002-delete-legacy-plan-spine.md) (plan-spine station
+> removal — `generate_plan` / `assess` / `evaluate` / `gather_evidence` /
+> `commit_plan` / `check_limits`; clarification resume remapped to DISPATCH;
+> iteration budget gate re-homed onto DISPATCH) and
+> [IG-SLP-003](../../impl/sloop/IG-SLP-003-delete-llm-planner.md) (`LLMPlanner` / `PlanPhase`
+> removal; `resolve_planner` → None; pass2 prompt stack, `plan_evaluate_*` /
+> `plan_structural_keep_*` config, and `StatusAssessment` /
+> `PlanGapAnalysis` / `ContinuationAssessment` deletion).
+>
+> The **recursive decomposition topology** — DISPATCH / THREAD / RECONCILE /
+> ROOT_EVAL stations, executor-bound `decompose_task`, CE reconciliation
+> (deterministic + conflict LLM), B-lazy failure replacement, ROOT_EVAL gap
+> handling, and StepDAG schema extensions (`parent_step_id`,
+> `replacement_of`, `decomposed` / `superseded` statuses) — remains
+> **Proposed** and is not yet implemented.
+>
+> RFC status stays **Proposed** pending topology implementation. The deletion
+> landings are tracked under IG-SLP-002 / IG-SLP-003 rather than advancing this RFC
+> to Implemented.
+>
+> **Supersession note (RFC-SLP-003, 2026-08-20):** Coverage at tree-green is no
+> longer assess-only and **MUST NOT** `decompose_task`. RFC-SLP-003 defines Eval
+> as an engine-injected `kind=eval` StepNode (fresh readonly CoreAgent thread
+> + `decompose_task`). GapResult new-root re-dispatch (P4) is **not** the
+> continuation mechanism. DISPATCH / THREAD / RECONCILE / `tree_green` /
+> B-lazy remain normative here.
+
+## Abstract
+
+StrangeLoop single-goal execution **must** replace the rigid
+plan/exec/eval station spine with **recursive, LLM-driven step decomposition**
+where the Context Engine (CE) is the active source of truth for a goal's
+`StepDAG`.
+
+After intake **pass1** (chitchat vs task), a task becomes the **root step** of
+its StepDAG. Each step thread either **completes** or calls executor-bound
+**`decompose_task`**, which emits a `DecompositionProposal`. CE **reconciles**
+proposals (deterministic by default; LLM only on conflict) and commits
+children. Completions/failures land immediately; only proposals wait on the
+reconcile barrier. Interior failure uses **B-lazy** replacement nodes.
+Coverage is assessed when the **action tree** is green via **ROOT_EVAL** as
+an insert/skip **gate** for an Eval step ([RFC-SLP-003](RFC-SLP-003-sloop-eval-thread.md));
+in-scope continuation is Eval `decompose_task`, not GapResult new-root.
+
+**Pass2** (trivial/simple/complex) is **removed**. **Pass1** is **retained**.
+CoreAgent **`write_todos`** remains intra-step UX and **must not** create
+StepDAG nodes. LoopRail goal-level decomposition (`apply_llm_subgoals`) is
+unchanged and unmerged.
+
+---
+
+## Motivation
+
+1. **Rigid topology** — Adding phases requires `builder.py` / `routing.py` /
+   `stations.py` changes; the loop cannot adapt structure at runtime.
+2. **Upfront planning** — Full plan waves commit before evidence; correction
+   waits for iteration boundaries.
+3. **Disconnected decomposition** — LoopRail goal trees and sloop step
+   plans do not recurse into each other; step recursion was never wired.
+4. **Pass2 pre-classifies scope** — Complexity is guessed before execution;
+   pass1 chitchat gating remains valuable and is kept.
+5. **Stub confusion** — CE `apply_directives("decompose")` is goal-level and
+   stubbed; it is not the step tool this RFC defines.
+
+---
+
+## Non-Goals
+
+1. Merging goal-level and step-level decomposition (RFC-LOOP-017 §17 stays separate).
+2. Replacing CoreAgent.
+3. Wholesale Wire/TUI event schema rewrites (additive events only).
+4. Implementing goal-directive `"decompose"` as step children.
+5. Removing clarification, checkpoint, or durability (RFC-LOOP-023 / RFC-PERS-003).
+6. Removing intake pass1.
+7. Fully incremental CE reconcile in v1.
+
+---
+
+## Guiding Principles
+
+1. **CE owns the StepDAG** — Threads propose; CE reconciles and commits.
+2. **Do-or-decompose** — Scope is discovered in execution, not by pass2.
+3. **B-lazy interior, root-verify** — Happy-path interior nodes are not
+   re-invoked; coverage eval runs when the action tree is green and Eval is
+   required (RFC-SLP-003).
+4. **Proposal barrier, completion immediacy** — Completions unblock
+   dependents ASAP; proposals never race mid-reconcile.
+5. **Tool authority split** — `decompose_task` ≠ `write_todos`.
+6. **LoopNode contract** — New stations are RFC-SLP-001 `LoopNode` subclasses.
+7. **No keyword heuristics** on user text (RFC-LOOP-025 / RFC-LOOP-025 discipline).
+
+---
+
+## Supersedes and Obsolete Surface
+
+When RFC-SLP-002 is **Accepted** / feature flag cut over:
+
+| Artifact | Effect |
+|---------|--------|
+| RFC-LOOP-010 topology | Plan/eval/evidence/record/check_limits stations **obsolete** as distinct nodes; replaced by DISPATCH / THREAD / RECONCILE / ROOT_EVAL work-queue |
+| RFC-LOOP-001 upfront plan waves | Partially superseded — goal-as-root + recursive decompose replaces planner-emitted full waves |
+| RFC-LOOP-005 | Per-iteration assess+generate pair obsolete; generate folds into `decompose_task`; coverage assess survives as RFC-SLP-003 Eval thread (not assess-only ROOT_EVAL) |
+| RFC-SDK-002 StepDAG | Extended statuses/fields; Step Anchor Registry retired in favor of Step Context Registry; CE gains reconcile |
+| RFC-LOOP-025 | **Pass2** and complexity-tiered plan routes obsolete; **pass1** retained as sole intake classifier for chitchat vs task |
+| RFC-SLP-001 | Remains; topology shrinks further on the same `LoopNode` / `RouteDecision` contract |
+| CE `apply_directives("decompose")` | Remains out of scope (goal DAG); must not be implemented as this RFC's step tool |
+
+Feature flag: removed — recursive decomposition is always on for StrangeLoop
+step THREADS. Budgets live under `agent.loop.decompose.*` (no `enabled` gate).
+
+---
+
+## Architecture Overview
+
+```text
+INTAKE (pass1)
+  ├─ chitchat → social_response → END
+  └─ task → ENTER_LOOP → DISPATCH ⇄ THREAD* → RECONCILE → …
+                                  │              ├─ ready? → DISPATCH
+                                  │              └─ action-tree green → ROOT_EVAL gate
+                                  │                     ├─ eval required → kind=eval THREAD → …
+                                  │                     └─ skip / eval complete → FINALIZE
+                                  └─ ask_user → AWAIT_USER → resume THREAD
+```
+
+Settled decisions:
+
+| Fork | Decision |
+|------|----------|
+| Intent | Keep pass1; delete pass2 |
+| Eval | B-lazy interior + RFC-SLP-003 Eval thread (readonly + `decompose_task`) |
+| DAG | Real DAG + lineage metadata; scheduler uses `dependencies` only |
+| Finalization | CE reconciles proposals; completions write-through |
+| Barrier | Proposal barrier; completions immediate |
+| Gaps | RFC-SLP-003 Eval thread / in-scope `decompose_task` (not GapResult new-root) |
+| B-lazy identity | New `StepNode` + `replacement_of` (not same-id reset) |
+| Merged failure | Primary-only recompose |
+| Reconcile LLM | Conflict-triggered; degraded → deterministic |
+| `decompose_task` home | Executor-bound tool in `soothe` (not nano middleware) |
+
+---
+
+## Intake (Pass1 Only)
+
+**MUST** retain `IntakePass1Classifier` / pass1 coordinator path:
+
+- `is_task=False` → `social_response`; **MUST NOT** create root StepNode.
+- `is_task=True` → ENTER_LOOP; no scope label required.
+
+**MUST** remove pass2 classifier and trivial/simple/complex routing into
+plan/skip stations (migration may delete modules after cutover).
+
+---
+
+## Topology
+
+### Deleted stations
+
+As distinct graph nodes: `GATHER_EVIDENCE`, per-iteration `EVALUATE`,
+`GENERATE_PLAN`, `COMMIT_PLAN`, `RECORD_PROGRESS`, `CHECK_LIMITS`.
+
+### New / surviving stations
+
+| Station | Role |
+|---------|------|
+| INTAKE | Pass1 only |
+| ENTER_LOOP | Create root `StepNode`; project predecessor ledger |
+| DISPATCH | Claim `pending` steps; spawn threads |
+| THREAD | CoreAgent: action do-or-decompose, or RFC-SLP-003 `kind=eval` (readonly + `decompose_task`) |
+| RECONCILE | Proposal barrier → CE commit |
+| ROOT_EVAL | Action-tree-green **gate**: insert `kind=eval` or FINALIZE (RFC-SLP-003). Not assess-only. |
+| FINALIZE | Goal completion synthesis (RFC-LOOP-009) |
+| AWAIT_USER | Clarification sidecar (RFC-LOOP-023) |
+
+DELEGATE remains a THREAD execution mode, not a plan-time station.
+
+### Intake planner handoff (RFC-LOOP-027)
+
+The intake-only ``planner`` wire subagent remains outside the DISPATCH spine.
+On operator **Approve**, StrangeLoop **MUST** route to **DISPATCH** (not
+``plan_generate``) and **MUST** ground the goal root THREAD with the approved
+solution report:
+
+1. Persist ``approved_plan_path`` / ``approved_plan_markdown`` on ``LoopState``.
+2. DISPATCH stamps the body into the root ``StepNode.full_description``
+   (one-shot; then clear the LoopState fields).
+3. THREAD envelope **MAY** also surface an ``APPROVED PLAN`` section while the
+   fields remain set (belt-and-suspenders for no-CE fallbacks).
+4. THREAD prompts **SHOULD** prefer ``decompose_task`` along the plan's Changes
+   rather than re-planning from scratch.
+
+Reject / More-comments behavior is unchanged from RFC-LOOP-027.
+
+New stations **MUST** be `LoopNode` subclasses (RFC-SLP-001).
+
+### Wave / barrier
+
+| Event | DAG visibility | Claimable |
+|-------|---------------|-----------|
+| complete / fail | Immediate | Dependents may ready on next DISPATCH |
+| `DecompositionProposal` | After RECONCILE commit | Children only post-commit |
+
+RECONCILE **MUST** run when the proposal barrier clears (claim-set finished
+with proposals, or early when no in-flight proposers remain with a non-empty
+queue). Zero proposals → no-op. v1 **MUST NOT** reconcile while sibling
+proposers in the same claim-set still run.
+
+`plan_iteration` increments on Eval-spawned continuation waves (RFC-SLP-003)
+and **MUST NOT** increment on ordinary action DISPATCH waves.
+
+---
+
+## Goal = Root Step
+
+ENTER_LOOP **MUST** create a root `StepNode`:
+
+| Field | Value |
+|-------|--------|
+| `description` / `full_description` | Task query |
+| `dependencies` | `[]` |
+| `parent_step_id` | `None` (wave 0); prior root on gap re-dispatch |
+| `plan_iteration` | 0, then N+1 on gap waves |
+
+Goal-level `depends_on` remains loop-rail-owned.
+
+### Step status extensions
+
+`StepStatus` **MUST** add:
+
+- `decomposed` — proposal committed; children own work; does not block tree-green
+- `superseded` — replaced (B-lazy / planner replace); not claimable
+
+Only `pending` is claimable.
+
+### StepNode schema additions
+
+| Field | Purpose |
+|-------|---------|
+| `parent_step_id` | Primary lineage |
+| `secondary_parent_step_ids` | Merge accounting |
+| `replacement_of` | Prior node this replaces |
+| `full_description`, `expected_output`, `execution_hint` | THREAD prompting / routing |
+| `recompose_count` | B-lazy budget accounting |
+
+---
+
+## `decompose_task` Tool
+
+### Binding (normative)
+
+`decompose_task` **MUST** be bound by the StrangeLoop **step executor** when a
+step THREAD starts (loop-scoped). It **MUST NOT** be implemented as CoreAgent
+/ nano middleware analogous to `TodoListMiddleware`.
+
+Tool body **MUST** enqueue a `DecompositionProposal` on a host proposal sink
+and return a terminal result. Executor **MUST** map that to
+`step_outcome=decompose` and end the thread. The tool **MUST NOT** commit the
+StepDAG directly.
+
+The tool body **MUST** be a pure validation-and-enqueue step: it accepts
+explicit `subtasks` from the main model, enforces the branch cap, and queues
+the proposal. The tool **MUST NOT** make LLM calls (no auto-generation, no
+grounding critic) and **MUST NOT** track or collect evidence (no evidence
+counter, no evidence corpus). Grounding is guided by THREAD system prompts
+(self-hygiene: look before you split) but not enforced by a gate; the executor's
+`read_only_streak_limit` hard stop is the sole stuck-gathering backstop. See
+the simplification design draft
+(`docs/drafts/2026-08-29-decompose-task-simplification-design.md`) for the
+removed apparatus and its rationale.
+
+Optional thin **sloop** turn-guard (at-most-one decompose; reject same-turn
+conflicts) **MAY** ship later; P1 **SHOULD** rely on envelope + tool
+description first.
+
+### `step_outcome`
+
+| Value | Meaning |
+|-------|---------|
+| `complete` | CE `complete_step` |
+| `decompose` | `decompose_task` called |
+| `blocked` | Clarification / hard block |
+
+### Branch caps (defaults)
+
+| Level | Max children | Config |
+|-------|--------------|--------|
+| Root | 5 | `agent.loop.decompose.max_branch_root` |
+| Inner | 3 | `agent.loop.decompose.max_branch_inner` |
+
+Over-cap → **truncate** to the cap and queue the prefix (the return message
+reflects the post-truncation count). Rejecting the whole proposal wastes a
+queued turn and forces the model to re-propose; truncation is cheaper and the
+model sees the result immediately. (Prior design rejected; changed 2026-08-29
+per the simplification design.)
+
+### Tool args
+
+```text
+decompose_task(
+  task: str,
+  subtasks: list[{            # required — no auto-generation
+    description, full_description, expected_output,
+    execution_hint,  # tool | subagent | remote | auto
+    depends_on_local: list[int] | None
+  }]
+)
+```
+
+`subtasks` is **required** — the tool makes no LLM calls and cannot
+auto-generate subtasks. `depends_on_local` is in-proposal only. Cross-subtree
+edges are reconciler-only.
+
+### vs goal-directive decompose
+
+| Surface | Level | This RFC |
+|---------|-------|----------|
+| `decompose_task` | Step StepDAG | **In scope** |
+| `GoalDirective(action="decompose")` | Goal DAG | **Out of scope** |
+
+---
+
+## `decompose_task` vs `write_todos`
+
+| | `decompose_task` | `write_todos` |
+|--|------------------|---------------|
+| Owner | StrangeLoop + CE | CoreAgent middleware |
+| Mutates | StepDAG after reconcile | Thread-local todos |
+| Terminal | Yes | No |
+| Creates StepNodes | Yes (post-commit) | Never |
+
+THREAD **MUST** override `TodoListMiddleware` prompts so `write_todos` is
+**intra-step only**. Stock LangChain “break down objectives into steps” wording
+**MUST NOT** remain on StrangeLoop step threads (collides with `decompose_task`).
+
+Non-StrangeLoop CoreAgent sessions **MAY** keep stock `write_todos` prompts.
+
+THREAD **system** prompts **MUST** include finish-vs-split / write_todos /
+tool-hygiene policy (`THREAD_POLICY_SYSTEM_ADDENDUM`). User envelopes stay
+instance-focused (EXECUTION TASK, evidence, EXPECTED OUTPUT) with at most a
+one-line finish/split reminder. Normative copy lives in
+`soothe.prompts` (XML under `soothe.prompts.fragments/decompose/`).
+
+---
+
+## CE Reconciliation
+
+CE **MUST**:
+
+1. Exact-dedup proposals (always).
+2. Semantic dedup / cross-subtree deps via LLM **only on conflict** (overlap,
+   cross-refs, or forced debug flag).
+3. Assign lineage (primary + secondaries; primary = earliest proposer).
+4. Normalize deps (`plan_dag_normalizer`).
+5. Enforce depth / total-step / branch budgets.
+6. Commit atomically; proposers → `decomposed`.
+
+On LLM failure: deterministic commit + `loop.reconcile_degraded`. Prefer
+duplicate work over silent wrong merges.
+
+---
+
+## ROOT_EVAL and Gaps
+
+### Tree-green
+
+```text
+tree_green iff
+  no pending/active steps
+  AND no unresolved failed leaves
+  AND every non-superseded leaf is completed
+  AND decomposed/superseded parents do not block
+```
+
+Unresolved failure after recompose budget → **FAIL** before ROOT_EVAL.
+
+**Action-tree green** (RFC-SLP-003) ignores pending eval insertion and treats
+`kind=eval` separately from action / `ask_user` leaves. See RFC-SLP-003 for the
+predicate used to insert Eval.
+
+### ROOT_EVAL
+
+> **Removed 2026-10-07 — superseded by RFC-SLP-003.** The historical assess-only
+> ROOT_EVAL contract (`MUST NOT` `decompose_task`; recoverable gaps → new root
+> via `GapResult`) is withdrawn; it is **not** the continuation mechanism.
+
+**Normative (RFC-SLP-003):** ROOT_EVAL is the **gate** that inserts `kind=eval`
+or routes FINALIZE. The Eval **thread** **MAY** call `decompose_task`.
+Oscillation control is Eval continuation fingerprint + `max_eval_rounds`,
+not GapResult fingerprint.
+
+`plan_iteration` **MAY** increment on Eval-spawned continuation waves
+(RFC-SLP-003); it is no longer only “root gap re-dispatch”.
+
+---
+
+## B-lazy Failure
+
+Happy path: decompose once → `decomposed` → no re-invoke.
+
+On child failure:
+
+1. Mark child `failed`; supersede exclusive descendants.
+2. Primary owner only (secondaries: projection note only).
+3. If budget remains: create **new** parent `StepNode` with `replacement_of`,
+   incremented `recompose_count`, failure projected.
+4. Old parent → `superseded` when replacement proposal commits (preferred).
+5. Rewire dependents onto replacements.
+6. Budget exhausted → propagate or FAIL at root.
+
+---
+
+## Budgets
+
+| Budget | Default | Config |
+|--------|---------|--------|
+| Max lineage depth | 5 | `agent.loop.decompose.max_depth` |
+| Max steps / goal | 50 | `agent.loop.decompose.max_steps` |
+| Max recompose | 2 | `agent.loop.decompose.max_recompose` |
+| Max gap waves | 10 | `agent.loop.decompose.max_waves` |
+| Branch root/inner | 5 / 3 | `max_branch_root` / `max_branch_inner` |
+| Reconcile model | verifier tier | `reconcile_model_role` |
+
+Depth = longest `parent_step_id` chain. Exhaustion → FAIL up to loop-rail/parent.
+
+---
+
+## Clarification, Checkpoint, FINALIZE
+
+- Clarification: RFC-LOOP-023 / AWAIT_USER unchanged; resume same step.
+- Checkpoint: prefer post-RECONCILE or clarification park; resume DISPATCH from
+  ready `pending`. Map retired resume origins via `clarification.origins`.
+- FINALIZE: RFC-LOOP-009; ledger-direct vs synthesize keys off tree shape, not
+  “single plan wave”.
+
+---
+
+## Observability
+
+Additive events (catalog at impl): `step.decompose_proposed`,
+`step.decompose_committed`, `step.superseded`, `step.replaced`,
+`loop.reconcile`, `loop.reconcile_degraded`, `loop.root_eval`,
+`loop.wave_boundary`. Retain existing step lifecycle events. Pass1 events
+unchanged.
+
+---
+
+## Migration
+
+| Phase | Deliverable |
+|-------|-------------|
+| P0 | Schema: statuses, lineage, `replacement_of`, proposal types |
+| P1 | Executor-bound `decompose_task` + THREAD prompts / `write_todos` override |
+| P2 | Deterministic RECONCILE behind flag (prefer skip long dual-write) |
+| P3 | Graph cutover; pass1 kept; pass2 bypassed |
+| P4 | Conflict LLM reconcile; B-lazy. ROOT_EVAL GapResult **withdrawn** — coverage continuation is RFC-SLP-003 Eval thread |
+| P5 | Delete pass2 + dead plan-generate; docs sync |
+
+---
+
+## Testing Requirements
+
+- Pass1 chitchat bypasses ENTER_LOOP; task enters root.
+- THREAD prompt authority split; `write_todos` creates no StepNodes.
+- Completion readiness before sibling proposal commit.
+- B-lazy `replacement_of`; primary-only recompose.
+- Reconcile LLM skipped when disjoint.
+- Identical Eval continuation fingerprint → FAIL (RFC-SLP-003; replaces gap fingerprint).
+- Clarification park/resume; checkpoint after reconcile.
+- LoopRail `apply_llm_subgoals` unaffected.
+
+Do not weaken tests to match a broken `tree_green`.
+
+---
+
+## Deprecation and Future Archival
+
+RFC-SLP-002 **partially supersedes** sections of several active RFCs. Those RFCs
+**MUST remain** in `docs/specs/` until their *entire* normative surface is
+obsolete. Do **not** archive them solely because this RFC exists.
+
+| RFC | Obsolete surface (after cutover) | Remains normative | Archive eligibility |
+|------|-----------------------------------|-------------------|---------------------|
+| RFC-LOOP-010 | Plan/eval/evidence/record/check_limits spine | Two-graphs-two-keys, CoreAgent isolation, checkpoint identity | After cutover Implemented: mark obsolete sections Deprecated in-header; whole-RFC archive **only** if a follow-on RFC absorbs remaining norms |
+| RFC-LOOP-001 | Upfront plan-wave Plan→Execute model | CoreAgent delegation concepts (until absorbed) | Same — partial only |
+| RFC-LOOP-005 | Per-iteration assess+generate pair | Historical gap-schema discussion; coverage is RFC-SLP-003 | Prefer keep until RFC-SLP-003 Implemented; do not reintroduce `PlanGapAnalysis` for ROOT_EVAL |
+| RFC-SDK-002 | Step Anchor Registry; pre-reconcile StepDAG-only growth | Goal+Step DAG, projection, persistence, goal APIs | Never archive for RFC-SLP-002 alone — CE remains SoT |
+| RFC-LOOP-025 | Pass 2 + complexity-tiered plan routes | Pass 1 chitchat vs task | After cutover: revise body or split; archive only if replaced by a pass1-only RFC |
+| RFC-SLP-001 | None (further shrink only) | `LoopNode`, `RouteDecision` | Not deprecated |
+
+**Design draft:** Archived at
+`docs/archive/drafts/2026-08-19-sloop-recursive-decomposition-design.md` after
+formalization (historical reference; RFC-SLP-002 is normative).
+
+**Process when cutover is Implemented:**
+
+1. Add/confirm supersession notices on each row above (already started).
+2. Optionally set status `Deprecated` on a RFC **only** if no active norms remain.
+3. After ≥90 days Deprecated → move to `docs/archive/specs/`.
+4. Update `../rfc-index.md` and referencing docs/IGs.
+
+---
+
+## Open Items (impl-time)
+
+1. `proposing` as CE status vs ExecutionState scratch.
+2. Exact Step Context Registry layout beyond the THREAD system policy addendum.
+3. Supersede old parent at replacement claim vs commit (lean: on commit).
+5. Optional sloop turn-guard timing (lean: after observed violations).
+
+---
+
+## Change History
+
+| Date | Change |
+|------|---------|
+| 2026-08-19 | Proposed from approved design draft; draft archived under `docs/archive/drafts/` |
+| 2026-08-19 | Documented deprecation/archive eligibility for related RFCs (partial supersession; no premature archive) |
+| 2026-08-19 | Intake planner Approve → DISPATCH root grounding (approved plan → root THREAD) |
+| 2026-08-19 | Added Partial Implementation Note: deletion portion landed via IG-SLP-002/IG-SLP-003; recursive decomposition topology remains Proposed |
+| 2026-08-29 | Simplify `decompose_task`: tool body is pure validation+enqueue (no LLM calls, no evidence collection). Branch cap: reject → truncate. `subtasks` required. Grounding guided by prompts, not enforced by gate. Per `docs/drafts/2026-08-29-decompose-task-simplification-design.md` |
+| 2026-10-07 | Removed superseded ROOT_EVAL/GapResult historical contract (per RFC-SLP-003). |

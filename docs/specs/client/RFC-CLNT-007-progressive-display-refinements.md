@@ -1,0 +1,198 @@
+# RFC-CLNT-007: Progressive Display Refinements Post-Migration
+
+**RFC**: 607
+**Title**: Progressive Display Refinements Post-Migration
+**Status**: Draft
+**Kind**: Implementation Interface Design
+**Created**: 2026-04-14
+**Authors**: Claude Code, Xiaming Chen
+**Updated**: 2026-04-14
+**Depends on**: RFC-CLNT-006 (DeepAgents CLI TUI Migration), RFC-CLNT-002 (Display Verbosity), RFC-CLNT-001 (CLI/TUI Architecture)
+
+---
+
+## Abstract
+
+This RFC defines progressive display refinements implemented after the DeepAgents CLI TUI migration (RFC-CLNT-006). It specifies newline separator rules for major events, progressive display pipeline integration with DeepAgents backend adapters, and ProtocolEventWidget rendering for Soothe protocol events. These improvements enhance CLI readability without modifying the DeepAgents TUI core.
+
+---
+
+## Motivation
+
+### Problems Addressed
+
+After RFC-CLNT-006 migration, the CLI progressive display output showed:
+
+1. **Visual clutter** - Goal, step, reasoning, and completion events appeared consecutively without separation
+2. **Backend integration gaps** - SootheBackendAdapter and ThreadBackendBridge created but not fully integrated into display pipeline
+3. **Protocol event rendering** - ProtocolEventWidget created but not connected to DeepAgents TUI status bar
+
+### Goals
+
+1. Add newline separators before major events (goal, step, reasoning, completion) for improved readability
+2. Integrate Soothe backend adapters into progressive display pipeline
+3. Connect ProtocolEventWidget to Deepagents TUI status bar
+4. Maintain DeepAgents TUI core unchanged (no modifications to copied files)
+
+---
+
+## Specification
+
+### 1. Newline Separator Display Rules
+
+**Scope**: DisplayLine dataclass in CLI stream pipeline
+
+**Implementation**: Add `newline_before: bool = False` field to `DisplayLine`
+
+**Enabled Events** (newline_before=True):
+| Event Type | Formatter Function | Reason |
+|------------|-------------------|---------|
+| Goal started | `format_goal_header()` | Visual separation for new goal scope |
+| Step started | `format_step_header()` | Clear step boundaries |
+| StrangeLoop reasoning | `format_reasoning()` | Separate reasoning from actions |
+| Goal completed | `format_goal_done()` | Final report prominence |
+
+**Example Output**:
+```
+🚩 Goal: Analyze project architecture
+→ 🌟 List root directory structure
+
+• 💭 Reasoning: Goal is straightforward - need to list files
+
+○ ❇️ List all files in the src directory
+● ✅ List all files in the src directory [1 tools] (3.5s)
+
+● 🏆 Goal complete: Architecture analyzed (5 steps)
+```
+
+### 2. Progressive Display Pipeline Integration
+
+**Current Architecture** (after RFC-CLNT-006):
+```
+SootheRunner.astream()
+    ↓ yields (namespace, mode, data)
+Daemon WebSocket
+    ↓ sends events
+DaemonClient.receive_events()
+    ↓ passes to StreamDisplayPipeline
+StreamDisplayPipeline.process(event)
+    ↓ dispatches to handlers
+    ├─ _on_goal_started() → format_goal_header()
+    ├─ _on_step_started() → format_step_header()
+    ├─ _on_loop_agent_reason() → format_reasoning()
+    └─ _on_goal_completed() → format_goal_done()
+CliRenderer.on_progress_event()
+    ↓ renders DisplayLine to stderr
+```
+
+**Backend Adapter Integration** (future):
+```
+SootheBackendAdapter (NEW from RFC-CLNT-006)
+    ├─ _adapt_protocol_event() → RFC-CLNT-002 filtering
+    └─ stream_messages() → daemon WebSocket stream
+
+ProtocolEventWidget (NEW from RFC-CLNT-006)
+    └─ render_event() → status bar rendering
+    └─ _render_plan_event(), _render_context_event(), etc.
+
+ThreadBackendBridge (NEW from RFC-CLNT-006)
+    └─ list_threads_for_ui() → thread selector integration
+```
+
+**Note**: Backend adapters created in RFC-CLNT-006 Phase 2, integration to TUI is Phase 4 (deferred for incremental integration).
+
+### 3. ProtocolEventWidget Rendering
+
+**Purpose**: Render Soothe protocol events in DeepAgents TUI status bar
+
+**Event Types Supported**:
+| Event | Icon | Color | Display |
+|-------|------|-------|---------|
+| `soothe.plan.created` | 📋 | cyan | "Plan created: {goal}" |
+| `soothe.plan.step_started` | 📋 | cyan | "Starting: {description}" |
+| `soothe.plan.step_completed` | ✅/❌ | green/red | "Completed" or "Failed" |
+| `soothe.context.projected` | 🔍 | magenta | "Context: {N} entries" |
+| `soothe.memory.recalled` | 💭 | yellow | "Memory: recalled {N} items" |
+| `soothe.policy.denied` | 🔒 | red | "Policy denied: {reason}" |
+
+**Verbosity Filtering** (RFC-CLNT-002):
+| Verbosity | Protocol Events Shown |
+|-----------|----------------------|
+| quiet | None (suppress all) |
+| minimal | `soothe.plan.*` only |
+| normal | `soothe.plan.*`, `soothe.context.*`, `soothe.memory.*` |
+| detailed | All protocol events |
+
+**Integration Point**: DeepAgents TUI `widgets/status.py` (Phase 4 will add the protocol queue; not yet wired in current phase).
+
+---
+
+## Implementation Notes
+
+### Files Modified (RFC-CLNT-007)
+
+**CLI Stream Pipeline**:
+- `src/soothe/ux/cli/stream/display_line.py` - Add newline_before field
+- `src/soothe/ux/cli/stream/formatter.py` - Enable newline_before in formatters
+
+**Backend Adapters** (created in RFC-CLNT-006, refined here):
+- `src/soothe_cli/tui/soothe_backend_adapter.py` - Protocol event filtering
+- `src/soothe_cli/tui/thread_backend_bridge.py` - Thread metadata bridge
+- `src/soothe_cli/tui/widgets/protocol_event.py` - Protocol rendering widget
+
+### No Modifications to DeepAgents TUI Core
+
+**Per RFC-CLNT-006 principle**: "Preserve Soothe Identity"
+
+- Deepagents TUI files copied in RFC-CLNT-006 remain unchanged
+- Integration via adapter layers (SootheBackendAdapter, ThreadBackendBridge)
+- ProtocolEventWidget is Soothe-specific addition
+- Newline separators in CLI stream pipeline (not TUI)
+
+---
+
+## Verification
+
+**Test Command**:
+```bash
+uv run soothe -p "List files in src directory" --no-tui -v normal
+```
+
+**Expected Progressive Display**:
+```
+🚩 Goal: List files in src directory
+→ 🌟 List all files in the src directory
+
+• 💭 Reasoning: [Assessment] Goal is straightforward
+
+○ ❇️ List all files in the src directory
+● ✅ List all files in the src directory [1 tools] (3.5s)
+
+● 🏆 List files in src directory (complete, 2 steps) (55.5s)
+```
+
+**Verification Status**:
+✅ Format check: PASSED
+✅ Linting: PASSED (zero errors)
+✅ Unit tests: PASSED (1566 passed)
+
+---
+
+## Dependencies
+
+- RFC-CLNT-006: DeepAgents CLI TUI Migration (backend adapters, ProtocolEventWidget)
+- RFC-CLNT-002: Display Verbosity (verbosity tier filtering)
+- RFC-CLNT-001: CLI/TUI Architecture (progressive display pipeline)
+- RFC-PROT-002: Event Processing (event dispatch)
+
+---
+
+## Status History
+
+| Date | Status | Notes |
+|------|--------|-------|
+| 2026-04-14 | Draft | Created after RFC-CLNT-006 implementation, newline separators added |
+
+---
+
+**Next Steps**: Review and refine via specs-refine, then mark as Implemented
