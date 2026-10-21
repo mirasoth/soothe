@@ -2,7 +2,7 @@
 
 **RFC**: 224
 **Title**: Automatic Context Window Management
-**Status**: Draft
+**Status**: Implemented
 **Kind**: Architecture Design
 **Created**: 2026-05-27
 **Authors**: Soothe Team

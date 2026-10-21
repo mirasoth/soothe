@@ -2,7 +2,7 @@
 
 **RFC**: 803
 **Title**: StrangeLoop Checkpoint Backend Architecture
-**Status**: Draft
+**Status**: Implemented (partial)
 **Kind**: Architecture Design
 **Created**: 2026-04-22
 **Authors**: Claude Sonnet 4.6

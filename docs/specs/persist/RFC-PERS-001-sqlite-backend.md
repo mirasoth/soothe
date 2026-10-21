@@ -2,7 +2,7 @@
 
 **RFC**: 801
 **Title**: SQLite Backend for Persistence, Durability, and Vector Store
-**Status**: Draft
+**Status**: Implemented (partial)
 **Kind**: Architecture Design + Implementation Interface Design
 **Created**: 2026-04-04
 **Authors**: Soothe Team

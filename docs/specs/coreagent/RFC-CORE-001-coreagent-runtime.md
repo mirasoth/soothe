@@ -2,7 +2,7 @@
 
 **RFC**: 100
 **Title**: CoreAgent Runtime Architecture
-**Status**: Implemented (partial)
+**Status**: Implemented
 **Kind**: Architecture Design
 **Created**: 2026-03-29
 **Authors**: Soothe Team

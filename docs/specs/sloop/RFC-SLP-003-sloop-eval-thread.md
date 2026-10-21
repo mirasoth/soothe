@@ -2,7 +2,7 @@
 
 **RFC**: 905
 **Title**: StrangeLoop Eval Thread
-**Status**: Draft
+**Status**: Implemented (partial)
 **Kind**: Architecture Design
 **Created**: 2026-08-20
 **Authors**: Soothe Team

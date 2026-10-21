@@ -2,7 +2,7 @@
 
 **RFC**: 629
 **Title**: Client Library — Core Upgrade and Appkit Architecture (Python + Go + TypeScript + Rust)
-**Status**: Draft
+**Status**: Implemented (partial)
 **Kind**: Architecture Design
 **Created**: 2026-06-30
 **Updated**: 2026-07-29
@@ -364,7 +364,7 @@ LoopSessionStore {
 - [RFC-000](./../RFC-000-system-conceptual-design.md) - Conceptual Design
 - [RFC-DAEM-005](./../daemon/RFC-DAEM-005-daemon-communication-protocol.md) - Daemon Communication Protocol (protocol-1)
 - [RFC-CLNT-008](./RFC-CLNT-008-unified-streaming-messaging.md) - Unified Daemon → Client Streaming Messaging
-- [RFC-SDK-001](./../sdk/RFC-SDK-001-sdk-module-structure-refactoring.md) - SDK Module Structure Refactoring
+- [RFC-SDK-001](../../archive/specs/RFC-SDK-001-sdk-module-structure-refactoring.md) - SDK Module Structure Refactoring
 - [IG-612](../../archive/impl/IG-612-python-client-layer0-extract.md) - Python client extract (reference)
 - [IG-617](../../archive/impl/IG-617-typescript-client-production-parity.md) - TypeScript production parity
 - [IG-619](../../archive/impl/IG-619-cross-client-api-parity.md) - Cross-client API parity (active)

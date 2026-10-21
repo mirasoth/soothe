@@ -2,7 +2,7 @@
 
 **RFC**: 211
 **Title**: Layer 2 Tool Result Optimization
-**Status**: Draft
+**Status**: Implemented (partial)
 **Kind**: Architecture Design
 **Created**: 2026-04-10
 **Authors**: Soothe Team

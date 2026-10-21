@@ -2,7 +2,7 @@
 
 **RFC**: 450
 **Title**: Unified Daemon Communication Protocol for WebSocket IPC
-**Status**: Draft
+**Status**: Implemented
 **Kind**: Architecture Design + Protocol Specification
 **Created**: 2026-03-19
 **Authors**: Soothe Team

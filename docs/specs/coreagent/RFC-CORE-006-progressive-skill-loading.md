@@ -2,7 +2,7 @@
 
 **RFC**: 105
 **Title**: Progressive Skill Loading
-**Status**: Implemented (partial)
+**Status**: Implemented
 **Kind**: Implementation Interface Design
 **Created**: 2026-05-29
 **Authors**: Platonic brainstorming session

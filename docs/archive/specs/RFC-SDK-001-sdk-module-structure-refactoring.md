@@ -2,11 +2,13 @@
 
 **RFC**: 610
 **Title**: SDK Module Structure Refactoring
-**Status**: Draft
+**Status**: Archived
 **Kind**: Architecture Design
 **Created**: 2026-04-17
 **Authors**: Soothe Team
-**Updated**: 2026-04-17
+**Updated**: 2026-04-17 (archived 2026-10-21)
+**Archived Date**: 2026-10-21
+**Superseded By**: soothe-sdk package dissolved 2026-10-13 (commit 23b14a4c7); contracts moved to soothe-nano (PyPI) agent-axis + soothe host-axis
 **Depends on**: RFC-PLUG-001, RFC-PROT-002
 **Related**: RFC-174, RFC-175
 

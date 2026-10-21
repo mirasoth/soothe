@@ -2,11 +2,13 @@
 
 **RFC**: 606
 **Title**: DeepAgents CLI TUI Migration
-**Status**: Draft
+**Status**: Archived
 **Kind**: Architecture Design + Implementation Interface Design
 **Created**: 2026-04-13
 **Authors**: Soothe Team
-**Updated**: 2026-04-13
+**Updated**: 2026-04-13 (archived 2026-10-21)
+**Archived Date**: 2026-10-21
+**Superseded By**: Soothe-native TUI (RFC-CLNT-009 step cards, RFC-CLNT-003 presentation engine); deepagents migration withdrawn (IG-166 archived)
 **Depends on**: RFC-PROT-002, RFC-CLNT-001, RFC-CLNT-002, RFC-203, RFC-PROT-003
 **Related**: RFC-PLUG-001
 

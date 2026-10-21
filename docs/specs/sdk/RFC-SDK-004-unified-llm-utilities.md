@@ -2,7 +2,7 @@
 
 **RFC**: 627
 **Title**: Unified LLM Utilities Module — Consolidated LLM Calling and Adaptation
-**Status**: Implemented
+**Status**: Implemented (partial)
 **Kind**: Architecture Design
 **Created**: 2026-06-17
 **Authors**: Soothe Team

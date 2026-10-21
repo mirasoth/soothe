@@ -2,7 +2,7 @@
 
 **RFC**: 902
 **Title**: Same-File Edit Concurrency and Optimization
-**Status**: Draft
+**Status**: Implemented (partial)
 **Kind**: Architecture Design
 **Created**: 2026-06-28
 **Authors**: Soothe Team

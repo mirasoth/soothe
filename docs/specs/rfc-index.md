@@ -1,7 +1,7 @@
 # RFC Index
 
 **Last Updated**: 2026-10-21
-**Total RFCs**: 94 (79 active, 15 archived)
+**Total RFCs**: 96 (77 active, 19 archived)
 
 This index is the canonical catalog of all RFCs in the Soothe project. It also
 serves as the deprecation list and archived-RFC table.
@@ -9,9 +9,8 @@ serves as the deprecation list and archived-RFC table.
 > **Namespace Partition (2026-10-21)**: Active specs were partitioned into 9
 > namespaces (`coreagent`, `loop`, `protocol`, `daemon`, `client`, `plugin`, `sdk`, `persist`, `sloop`). Active IDs use the
 > qualified form `RFC-<PREFIX>-NNN`; cross-cutting RFCs (RFC-000, RFC-001)
-> stay at the specs root. Archived RFCs keep their pre-partition RFC-NNN
-> identifiers (frozen historical IDs). The full old-ID to new-ID mapping is
-> recorded in `rfc-history.md`.
+> stay at the specs root. Archived RFCs keep the IDs they held at archival time.
+> The full old-ID to new-ID mapping is recorded in `rfc-history.md`.
 
 > **⚠️ Autopilot Cleansing (2026-10-07)**: The legacy `soothe-autopilot`
 > subsystem has been replaced in code by **LoopRail** (RFC-LOOP-017) +
@@ -51,13 +50,13 @@ serves as the deprecation list and archived-RFC table.
 
 | Namespace | Prefix | RFCs | Description |
 |-----------|--------|------|-------------|
-| [`coreagent/](coreagent/rfc-index.md) | CORE | 9 | CoreAgent runtime - tools, workspace, filesystem security, context injection |
+| [`coreagent/](coreagent/rfc-index.md) | CORE | 10 | CoreAgent runtime - tools, workspace, filesystem security, context injection |
 | [`loop/](loop/rfc-index.md) | LOOP | 28 | StrangeLoop plan-execute loop - cognition, prompting, context, intake, middleware |
 | [`protocol/](protocol/rfc-index.md) | PROT | 7 | Protocol architectures (context, memory, planner, policy, durability, identity) |
 | [`daemon/](daemon/rfc-index.md) | DAEM | 8 | Daemon - events, MCP, channels, thread management, IPC |
-| [`client/](client/rfc-index.md) | CLNT | 11 | Client & presentation - TUI, display, appkit, streaming, widgets |
+| [`client/](client/rfc-index.md) | CLNT | 9 | Client & presentation - TUI, display, appkit, streaming, widgets |
 | [`plugin/](plugin/rfc-index.md) | PLUG | 4 | Plugin & subagent ecosystem |
-| [`sdk/](sdk/rfc-index.md) | SDK | 4 | SDK module structure & shared utilities |
+| [`sdk/](sdk/rfc-index.md) | SDK | 3 | SDK module structure & shared utilities |
 | [`persist/](persist/rfc-index.md) | PERS | 3 | Persistence backends |
 | [`sloop/](sloop/rfc-index.md) | SLP | 3 | Sloop graph topology, recursive decomposition & eval threads |
 
@@ -74,28 +73,23 @@ Non-RFC root docs: [`rest-api-spec.md`](rest-api-spec.md) (daemon REST API contr
 
 | Status | Count |
 |---|---|
-| Draft | 37 |
+| Implemented (partial) | 39 |
 | Implemented | 30 |
-| Implemented (partial) | 8 |
-| Implemented (Partially Superseded) | 1 |
-| Accepted | 1 |
-| Proposed | 1 |
-| Proposed (deletion portion landed via IG-752/IG-753; recursive topology not yet implemented) | 1 |
+| Draft | 8 |
 
 ## RFC Kind Summary
 
 | Kind | Count |
 |---|---|
-| Architecture Design | 57 |
-| Implementation Interface Design | 17 |
-| Architecture Design + Implementation Interface Design | 2 |
-| Conceptual Design | 1 |
+| Architecture Design | 58 |
+| Implementation Interface Design | 16 |
 | Architecture Design + Protocol Specification | 1 |
-| Feature Enhancement | 1 |
+| Architecture Design + Implementation Interface Design | 1 |
+| Conceptual Design | 1 |
 
 ## Archived RFCs
 
-Archived specs live in `docs/archive/specs/` and keep their pre-partition IDs.
+Archived specs live in `docs/archive/specs/` and keep the IDs they held at archival time.
 
 - **RFC-200**: Autonomous Goal Management Loop - archived; Superseded By: RFC-222 (control flow), RFC-625 (GoalEngine architecture)
 - **RFC-203**: StrangeLoop State & Memory Architecture - archived; Superseded By: RFC-SDK-003
@@ -112,3 +106,7 @@ Archived specs live in `docs/archive/specs/` and keep their pre-partition IDs.
 - **RFC-613**: Explore Agent — LLM-Orchestrated Iterative Search - archived; Superseded By: -
 - **RFC-625**: AutopilotMonitor and ContextEngine Unification - archived; Superseded By: RFC-LOOP-017 (§17 CE `GoalNode.report` commit + `goal_report_committed`), RFC-SDK-002 (Context Engine)
 - **RFC-700**: Desktop App Product Redesign - archived; Superseded By: RFC-CLNT-010 (client library architecture)
+- **RFC-CLNT-006**: DeepAgents CLI TUI Migration - archived 2026-10-21; Superseded By: Soothe-native TUI (RFC-CLNT-009 step cards, RFC-CLNT-003 presentation engine); deepagents migration withdrawn (IG-166 archived)
+- **RFC-CLNT-007**: Progressive Display Refinements Post-Migration - archived 2026-10-21; Superseded By: RFC-CLNT-009 (step-card display) and RFC-CLNT-003 (runtime presentation engine); StreamDisplayPipeline removed by IG-348
+- **RFC-LOOP-020**: Reasoning Quality & Progressive Actions - archived 2026-10-21; Superseded By: RFC-SLP-002 (decompose_task) and RFC-LOOP-021; LLMPlanner removed by IG-SLP-003
+- **RFC-SDK-001**: SDK Module Structure Refactoring - archived 2026-10-21; Superseded By: soothe-sdk package dissolved 2026-10-13 (commit 23b14a4c7); contracts moved to soothe-nano (PyPI) agent-axis + soothe host-axis

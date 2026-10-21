@@ -2,7 +2,7 @@
 
 **RFC**: 232
 **Title**: Flat WavePlan Wire Ingest (Semi-Structured, No Nesting)
-**Status**: Draft
+**Status**: Implemented (partial)
 **Kind**: Architecture Design
 **Created**: 2026-08-07
 **Updated**: 2026-10-07

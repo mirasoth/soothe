@@ -2,7 +2,7 @@
 
 **RFC**: 630
 **Title**: Start-Phase LLM Intake and Branch Routing
-**Status**: Draft
+**Status**: Implemented (partial)
 **Kind**: Architecture Design
 **Authors**: Xiaming Chen
 **Created**: 2026-06-30

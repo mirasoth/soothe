@@ -2,11 +2,12 @@
 
 **RFC**: 226
 **Title**: Continuation-Aware plan_assess and Post-Execute Fast Exit
-**Status**: Implemented
+**Status**: Implemented (partial)
 **Kind**: Architecture Design
 **Authors**: xiaming
 **Created**: 2026-05-29
 **Updated**: 2026-05-29
+**Partially Superseded By**: RFC-SLP-002 (plan-assess spine replaced by decompose_task)
 **Depends on**: RFC-LOOP-010, RFC-LOOP-014
 **Related**: RFC-LOOP-006, RFC-LOOP-007, RFC-LOOP-021
 

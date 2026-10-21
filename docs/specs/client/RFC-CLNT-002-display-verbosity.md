@@ -2,7 +2,7 @@
 
 **RFC**: 501
 **Title**: Display & Verbosity
-**Status**: Draft
+**Status**: Implemented (partial)
 **Kind**: Implementation Interface Design
 **Created**: 2026-03-31
 **Updated**: 2026-08-08

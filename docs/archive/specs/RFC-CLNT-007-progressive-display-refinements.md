@@ -2,11 +2,13 @@
 
 **RFC**: 607
 **Title**: Progressive Display Refinements Post-Migration
-**Status**: Draft
+**Status**: Archived
 **Kind**: Implementation Interface Design
 **Created**: 2026-04-14
 **Authors**: Claude Code, Xiaming Chen
-**Updated**: 2026-04-14
+**Updated**: 2026-04-14 (archived 2026-10-21)
+**Archived Date**: 2026-10-21
+**Superseded By**: RFC-CLNT-009 (step-card display) and RFC-CLNT-003 (runtime presentation engine); StreamDisplayPipeline removed by IG-348
 **Depends on**: RFC-CLNT-006 (DeepAgents CLI TUI Migration), RFC-CLNT-002 (Display Verbosity), RFC-CLNT-001 (CLI/TUI Architecture)
 
 ---

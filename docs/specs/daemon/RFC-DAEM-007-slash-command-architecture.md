@@ -2,7 +2,7 @@
 
 **RFC**: 454
 **Title**: Slash Command Architecture
-**Status**: Draft
+**Status**: Implemented (partial)
 **Kind**: Architecture Design
 **Created**: 2026-04-16
 **Updated**: 2026-08-08

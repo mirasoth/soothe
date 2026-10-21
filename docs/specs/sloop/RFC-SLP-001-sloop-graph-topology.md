@@ -2,7 +2,7 @@
 
 **RFC**: 903
 **Title**: Sloop Graph Topology and Node Lifecycle
-**Status**: Proposed
+**Status**: Implemented (partial)
 **Kind**: Architecture Design
 **Created**: 2026-08-18
 **Authors**: Soothe Team

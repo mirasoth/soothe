@@ -2,7 +2,7 @@
 
 **RFC**: 103
 **Title**: Thread-Aware Workspace
-**Status**: Draft
+**Status**: Implemented
 **Kind**: Implementation Interface Design
 **Created**: 2026-03-31
 **Authors**: Design brainstorming session

@@ -2,7 +2,7 @@
 
 **RFC**: 214
 **Title**: Volatility-Tiered Prompt Architecture & Unified Message Ledger
-**Status**: Draft
+**Status**: Implemented (partial)
 **Kind**: Architecture Design
 **Created**: 2026-05-03
 **Authors**: Soothe Team

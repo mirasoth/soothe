@@ -2,7 +2,7 @@
 
 **RFC**: 219
 **Title**: Goal Completion Module Architecture
-**Status**: Implemented
+**Status**: Implemented (partial)
 **Kind**: Architecture Design
 **Created**: 2026-04-28
 **Authors**: Soothe Team

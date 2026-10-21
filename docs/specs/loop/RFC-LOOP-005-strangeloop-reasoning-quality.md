@@ -2,7 +2,7 @@
 
 **RFC**: 213
 **Title**: StrangeLoop Reasoning Quality & Robustness
-**Status**: Draft
+**Status**: Implemented (partial)
 **Kind**: Architecture Design
 **Created**: 2026-04-17
 **Updated**: 2026-08-20
