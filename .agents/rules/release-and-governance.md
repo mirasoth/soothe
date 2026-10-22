@@ -8,8 +8,8 @@ AI agents MUST NOT add AI tools or assistants as co-authors, reviewers, or attri
 ## Drift Governance (MUST)
 Spec↔code drift is tracked through **canonical documentation mechanisms only** — not ad-hoc dashboards, cron jobs, or parallel tracking systems.
 - **No drift-refresh cron infrastructure** — do not re-introduce `DriftRefreshConfig`, `DriftTriggerHook`, `builtin:drift-refresh-*` cron jobs, or drift-dashboard data dictionaries. They duplicated the design doc review process.
-- **Gap-tracking scripts** (`scripts/auto_gap_report.py`, `scripts/create_drift_backlog_issues.sh`) MUST write output into `docs/impl/` with a design doc prefix and be triaged through the standard design doc lifecycle — never a separate dashboard or backlog.
-- **Drift findings are design docs, not dashboards** — file `IG-XXX-gap-*.md` in `docs/impl/`. Do not create standalone drift-tracking documents outside the numbered design doc process.
+- **Gap-tracking scripts** (`scripts/auto_gap_report.py`, `scripts/create_drift_backlog_issues.sh`) MUST write output into `.platonic/impl/` with a design doc prefix and be triaged through the standard design doc lifecycle — never a separate dashboard or backlog.
+- **Drift findings are design docs, not dashboards** — file `IG-XXX-gap-*.md` in `.platonic/impl/`. Do not create standalone drift-tracking documents outside the numbered design doc process.
 - **Config fields** — do not add `cron.drift_refresh` or equivalent drift-dashboard blocks to any packaged template or `config/templates/` symlink. Drift governance is a documentation process, not a runtime config concern.
 - **Wiki/docs** — deployment guides and troubleshooting indexes MUST NOT link to drift runbooks or dashboards. Document drift content under the design doc that addresses the specific gap.
 - **Incidental "drift" mentions** — the word "drift" describing unrelated concepts (timestamp drift, message-shape drift, pin drift) in comments/docstrings/errors is fine. This rule governs spec↔code drift infrastructure only.
@@ -38,7 +38,7 @@ A **release** = cutting a new version across the monorepo-owned packages and pub
 4. **PyPI-only deps must be live before releasing owned packages** — before tagging any owned package release, verify that `soothe-nano` and `soothe-deepagents` have their latest versions already published on PyPI **and** that the monorepo's pinned floors (`packages/*/pyproject.toml`) match or are below the latest PyPI version. Query `https://pypi.org/pypi/<pkg>/json` for each. If a pinned floor exceeds what is live on PyPI, the release will be uninstallable — release the upstream package from its own repo first, then proceed.
 
 ### Version bump + changelog
-5. **Bump the root `VERSION` file** — `soothe`, `soothe-daemon`, and `soothe-cli` all read from the root `VERSION` (via `tool.hatch.version` → `../../VERSION`). `soothe-sdk` keeps its own `packages/soothe-sdk/VERSION` on an independent 1.x line and is **not** touched by monorepo releases unless the SDK itself is being released. (`soothe-autopilot` is no longer a separate package — see [IG-779](../../docs/impl/IG-779-rfc-autopilot-cleansing-and-mode-alignment.md).)
+5. **Bump the root `VERSION` file** — `soothe`, `soothe-daemon`, and `soothe-cli` all read from the root `VERSION` (via `tool.hatch.version` → `../../VERSION`). `soothe-sdk` keeps its own `packages/soothe-sdk/VERSION` on an independent 1.x line and is **not** touched by monorepo releases unless the SDK itself is being released. (`soothe-autopilot` is no longer a separate package — see [IG-779](../../.platonic/impl/IG-779-rfc-autopilot-cleansing-and-mode-alignment.md).)
 6. **Promote the `[Unreleased]` block** in `CHANGELOG.md` into a dated `## [vX.Y.Z] - YYYY-MM-DD` entry with a `[Compare with previous version]` link, and reset `[Unreleased]` to empty. Follow the Keep a Changelog format.
 7. **Commit the bump** — e.g. `chore(release): bump to X.Y.Z` touching only `VERSION` + `CHANGELOG.md`.
 

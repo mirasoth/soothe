@@ -483,7 +483,7 @@ Implements: RFC-222
 ### When to Create IG
 
 **Substantial work** (multi-step, cross-module, new features):
-- Create `docs/impl/NNN-brief-title.md`
+- Create `.platonic/impl/NNN-brief-title.md`
 - Track scope, decisions, progress
 
 **Minor changes** (bugfixes, single-file, trivial config):
@@ -493,7 +493,7 @@ Implements: RFC-222
 ### IG Naming
 
 - `NNN-brief-title.md` (NNN = sequential number)
-- Example: `docs/impl/IG-295-loop-graph-refactor.md`
+- Example: `.platonic/impl/IG-295-loop-graph-refactor.md`
 
 ### IG Template
 

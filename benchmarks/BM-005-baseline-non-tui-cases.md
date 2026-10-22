@@ -15,12 +15,12 @@
 The last 10 lines of the project README.md file are:
 
 ```
-- [RFC-600](docs/specs/RFC-600-plugin-extension-system.md) - Plugin system design
+- [RFC-600](.platonic/specs/RFC-600-plugin-extension-system.md) - Plugin system design
 
 ### 🛠️ For Developers
 
 - **[CLAUDE.md](CLAUDE.md)** - Development guide for AI agents
-- **[Implementation Guides](docs/impl/)** - Detailed implementation documentation
+- **[Implementation Guides](.platonic/impl/)** - Detailed implementation documentation
 
 ## License
 

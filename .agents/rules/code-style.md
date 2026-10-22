@@ -5,7 +5,7 @@
 ## Terminology
 - NEVER use "layer N" — use concrete names (CoreAgent, StrangeLoop, GoalEngine).
 - NEVER expose internal design doc identifiers (e.g. IG-XXX/RFC-XXX) in user-facing text (logs, CLI, errors, config descriptions). Internal only — allowed in comments and internal docs, never in docstrings.
-- Only `docs/specs/` (specifications) and `docs/impl/` (design docs) are active references. `docs/archive/` is historical only.
+- Only `.platonic/specs/` (specifications) and `.platonic/impl/` (design docs) are active references. `docs/archive/` is historical only.
 
 ## No Keyword Heuristics
 Prefer **structured light-LLM fields** or **declarative config rules** over keyword/regex content-judgment heuristics.

@@ -1,0 +1,427 @@
+# RFC-DAEM-002: Unified Event Naming Semantics
+
+**RFC**: 403
+**Title**: Unified Event Naming Semantics
+**Status**: Draft
+**Kind**: Implementation Interface Design
+**Created**: 2026-04-15
+**Updated**: 2026-05-01
+**Authors**: Platonic Brainstorming Session
+**Depends on**: -
+
+---
+
+## 1. Abstract
+
+This RFC defines unified semantics for Soothe's event naming system, establishing present progressive tense grammar, function-based semantic domains, and clear extension guidelines for third-party developers. This formalization eliminates naming inconsistencies, clarifies domain boundaries, and provides a scalable foundation for future event system growth.
+
+---
+
+## 2. Scope and Non-Goals
+
+### 2.1 Scope
+
+This RFC defines:
+
+* **Grammar rules**: Present progressive tense for actions, approved state nouns for reports
+* **Semantic domains**: 9 function-based domains with clear scope definitions
+* **Namespace hierarchy**: `soothe.<domain>.<component>.<action_or_state>` format
+* **Plugin extension rules**: Third-party namespace conventions with vendor prefixes
+* **Approved vocabularies**: Lists of approved verbs and state nouns
+* **Migration strategy**: Systematic approach for renaming existing events
+* **Validation rules**: Grammar and semantics validation criteria
+
+### 2.2 Non-Goals
+
+This RFC does **not** define:
+
+* Event processing architecture (see RFC-PROT-002)
+* Event registry implementation (see RFC-PROT-002)
+* VerbosityTier classification (see RFC-CLNT-002)
+* Transport or filtering mechanisms (see RFC-PROT-002, RFC-PROT-002)
+* Specific event type definitions (see event-catalog.md)
+
+---
+
+## 3. Background & Motivation
+
+### 3.1 Current Problems
+
+| Problem | Impact | Example |
+|---------|--------|---------|
+| **Tense inconsistency** | Developer confusion, unclear grammar | `created` (past), `started` (present), `report` (noun) |
+| **Domain ambiguity** | Unclear where new events belong | `cognition` vs `protocol` boundaries unclear |
+| **Extension confusion** | Plugin developers lack guidelines | Third-party events risk collisions |
+| **Future scalability risk** | Naming drift compounds confusion | New protocols/subagents add inconsistencies |
+
+### 3.2 Design Goals
+
+1. **Grammar consistency**: Single tense rule for all action events
+2. **Semantic clarity**: Function-based domains, not implementation location
+3. **Extension guidelines**: Clear rules for third-party plugin events
+4. **Future scalability**: Domain decision tree prevents ambiguity
+5. **Tooling support**: Grammar validation in CI/pre-commit hooks
+
+---
+
+## 4. Naming Semantics
+
+### 4.1 Grammar Rules
+
+**Core principle**: All action verbs use **present progressive tense** to represent ongoing event emission, matching RFC-0015's "progress events" concept.
+
+#### 4.1.1 Grammar Categories
+
+| Category | Tense/Form | Examples |
+|----------|-----------|----------|
+| **Lifecycle actions** | Present progressive | `started`, `resumed`, `saving`, `ended` |
+| **Operation actions** | Present progressive | `running`, `checking`, `recalling`, `creating`, `reflecting`, `storing` |
+| **Capability actions** | Present progressive | `started`, `dispatching`, `running`, `completed`, `failed` |
+| **State nouns** | Noun (not action) | `report`, `heartbeat`, `snapshot`, `status_changed`, `loaded`, `unloaded`, `health_checked` |
+
+#### 4.1.2 Tense Transformation Rules
+
+| Old Tense | New Tense | Context | Reason |
+|-----------|-----------|---------|--------|
+| `created` | `started` | Lifecycle begin events | Thread/process boundaries use `started` |
+| `created` | `creating` | Cognitive planning events | Planning operations use present progressive |
+| `recalled` | `recalling` | Protocol memory operations | Protocol operations use present progressive |
+| `stored` | `storing` | Protocol memory operations | Storage operations use present progressive |
+| `dispatched` | `started` | Capability invocation begin | Invocation begin uses `started` |
+| `completed` | `completed` | Already present progressive | Keep unchanged |
+| `failed` | `failed` | Already present progressive | Keep unchanged |
+| `report` | `report` | State noun | Keep as state noun |
+| `heartbeat` | `heartbeat` | State noun | Keep as state noun |
+| `snapshot` | `snapshot` | State noun | Keep as state noun |
+| `status_changed` | `status_changed` | State noun | Keep as state noun |
+
+### 4.2 Semantic Domain Taxonomy
+
+#### 4.2.1 Domain Definitions
+
+**9 function-based domains** organized by functional purpose, not implementation location:
+
+| Domain | Functional Scope | Examples |
+|--------|------------------|----------|
+| `lifecycle` | Thread/process lifecycle boundaries | `thread.started`, `checkpoint.saving`, `iteration.completed` |
+| `protocol` | Protocol operations (memory, policy, context, durability) | `memory.recalling`, `policy.checking`, `durability.storing` |
+| `cognition` | Cognitive reasoning and decision-making | `plan.creating`, `goal.creating`, `strange_loop.completed`, `reason.running` |
+| `capability` | External capability naming (draft taxonomy; not used for built-in subagent wire) | Hypothetical `soothe.capability.*` names—**obsolete for built-ins** (IG-339 uses `soothe.subagent.*`) |
+| `output` | User-facing content delivery | `final_report.reporting`, `autonomous.displaying` (duplicate `soothe.output.*` assistant bodies removed; use `messages` + `phase` per RFC-CLNT-008) |
+| `system` | System-level operations (daemon, loop-rail) | `daemon.heartbeat`, `loop_rail.status_changed` |
+| `error` | Error and exception events | `general.failed`, `protocol.violated` |
+| `plugin` | Plugin lifecycle (core-managed) | `plugin.loaded`, `plugin.failed`, `plugin.health_checked` |
+| `plugin.<vendor>` | Third-party plugin extension namespace | `plugin.acme.collector.started`, `plugin.dataflow.pipeline.running` |
+
+#### 4.2.2 Domain Decision Rules
+
+**Decision tree for placing events in domains**:
+
+1. Is it a thread/process boundary event? → `lifecycle`
+2. Is it a protocol implementation operation? → `protocol`
+3. Is it a cognitive reasoning/decision event? → `cognition`
+4. Is it delegated subagent sparse UX on the wire? → `subagent` (built-in: IG-339 allowlist); optional RFC-DAEM-002 **`capability`** domain remains for other “external capability” naming drafts—not used for built-in subagent progress (see §8.4)
+5. Is it user-facing output? → `output`
+6. Is it system-level infrastructure? → `system`
+7. Is it an error/exception? → `error`
+8. Is it plugin lifecycle managed by core? → `plugin`
+9. Is it a third-party plugin event? → `plugin.<vendor>`
+
+**Examples**:
+
+```python
+# Correct domain placement
+soothe.lifecycle.thread.started           # Thread boundary → lifecycle
+soothe.protocol.memory.recalling          # Memory protocol → protocol
+soothe.cognition.plan.creating            # Planning decision → cognition
+soothe.subagent.browser.started          # Delegated subagent wire → subagent (IG-339)
+soothe.output.telemetry.line            # Ancillary capture → output (example only)
+soothe.system.daemon.heartbeat            # Daemon system → system
+soothe.plugin.acme.collector.started      # Third-party → plugin.<vendor>
+```
+
+**IG-317 note:** The `soothe.output.*` line above illustrates **domain placement** (`output`) for optional telemetry-style names. Core-loop assistant answer bodies use the LangGraph **`messages`** stream with a loop **`phase`** field (see RFC-CLNT-008 / `soothe_sdk.ux.loop_stream`).
+
+### 4.3 Namespace Hierarchy
+
+#### 4.3.1 Format
+
+```
+soothe.<domain>.<component>.<action_or_state>
+```
+
+#### 4.3.2 Component Naming Rules
+
+1. Use **singular form**: `thread` (not `threads`), `plan` (not `plans`)
+2. Use **snake_case**: `strange_loop`, `final_report`
+3. **Hierarchical components** allowed for nested operations:
+   ```
+   soothe.cognition.strange_loop.step.started
+   soothe.cognition.plan.step.completed
+   ```
+
+#### 4.3.3 Action Naming Rules
+
+1. Actions must be from **approved verb list** (present progressive) OR **approved state noun list**
+2. Use consistent action semantics across components:
+   - Begin events: `started`, `creating`, `dispatching`
+   - Progress events: `running`, `checking`, `recalling`, `reflecting`
+   - End events: `completed`, `failed`, `ended`
+   - State reports: `report`, `heartbeat`, `snapshot`, `status_changed`
+
+### 4.4 Approved Vocabularies
+
+#### 4.4.1 Approved Domains
+
+```
+lifecycle, protocol, cognition, capability, output, system, error, plugin
+```
+
+#### 4.4.2 Approved Verbs (Present Progressive)
+
+```
+started, resumed, saving, ended, running, checking, recalling,
+creating, reflecting, storing, dispatching, completed, failed,
+displaying, emitting, analyzing, synthesizing, reasoning, deferring,
+applying, validating, suspending, blocking, detecting, sending
+```
+
+#### 4.4.3 Approved State Nouns
+
+```
+report, heartbeat, snapshot, status_changed, loaded, unloaded,
+health_checked
+```
+
+---
+
+## 5. Plugin Extension Rules
+
+### 5.1 Third-Party Plugin Namespace
+
+**Format**: `soothe.plugin.<vendor>.<component>.<action_or_state>`
+
+### 5.2 Vendor Naming Rules
+
+1. Use **vendor/organization prefix**: `acme`, `dataflow`, `enterprise`, `monitoring`
+2. Use **snake_case** for vendor and component names
+3. **Avoid reserved core domains**: lifecycle, protocol, cognition, capability, output, system, error, plugin
+4. **Prefix vendor-specific components** to avoid collisions with core components
+
+### 5.3 Examples
+
+```python
+# Third-party plugin events
+soothe.plugin.acme_analytics.collector.started
+soothe.plugin.dataflow.pipeline.running
+soothe.plugin.enterprise_support.ticket.dispatching
+soothe.plugin.monitoring.alert.checking
+```
+
+### 5.4 Core Plugin Lifecycle Events
+
+Core-managed plugin lifecycle events remain in top-level `plugin` domain:
+
+```python
+soothe.plugin.loaded          # Plugin successfully loaded
+soothe.plugin.failed          # Plugin failed to load
+soothe.plugin.health_checked  # Plugin health check completed
+soothe.plugin.unloaded        # Plugin unloaded
+```
+
+### 5.5 Extension Guidelines for Plugin Developers
+
+**Documentation requirements**:
+
+1. Use `soothe.plugin.<your_vendor>.<your_component>.<action>` namespace
+2. Follow present progressive tense grammar for actions
+3. Use approved state nouns for status reports
+4. Register events using `register_event()` API
+5. Choose vendor prefix that uniquely identifies your organization
+
+**Example**:
+
+```python
+from soothe.events import register_event
+from soothe_sdk.events import SootheEvent
+
+class MyPluginEvent(SootheEvent):
+    type: str = "soothe.plugin.mycompany.processor.started"
+    data: str
+
+register_event(
+    MyPluginEvent,
+    summary_template="Processing: {data}",
+)
+```
+
+---
+
+## 6. Validation Rules
+
+### 6.1 Grammar Validation
+
+Enforced via `scripts/validate_event_names.py`:
+
+1. **Namespace format**: Must match `soothe.<domain>.<component>.<action_or_state>`
+2. **Domain validation**: Domain must be from approved domain list
+3. **Action validation**: Action must be from approved verb list OR approved state noun list
+4. **Plugin namespace**: Third-party events must start with `soothe.plugin.<vendor>`
+5. **No duplicates**: No duplicate type strings across codebase
+
+### 6.2 CI Integration
+
+Add validation script to CI pipeline:
+
+```yaml
+# .github/workflows/ci.yml
+- name: Validate event naming
+  run: python scripts/validate_event_names.py
+```
+
+### 6.3 Pre-commit Hook
+
+```yaml
+# .pre-commit-config.yaml
+- repo: local
+  hooks:
+    - id: validate-event-names
+      name: Validate event names
+      entry: python scripts/validate_event_names.py
+      language: system
+      types: [python]
+```
+
+---
+
+## 7. Migration Strategy
+
+**Direct migration with no backward compatibility.** Forces immediate adoption of unified semantics and eliminates maintenance burden. Migration tooling: `scripts/migrate_event_names.py` (find-and-replace across Python files, dry-run supported) and `scripts/validate_event_names.py` (grammar/domain/action validation, run as CI check and pre-commit hook).
+
+---
+
+## 8. Complete Migration Map
+
+### 8.1 Lifecycle Events
+
+| Old Type | New Type | Notes |
+|----------|----------|-------|
+| `soothe.lifecycle.thread.created` | `soothe.lifecycle.thread.started` | Lifecycle begin |
+| `soothe.lifecycle.thread.saved` | `soothe.lifecycle.thread.saving` | Saving action |
+| `soothe.lifecycle.checkpoint.saved` | `soothe.lifecycle.checkpoint.saving` | Saving action |
+| `soothe.lifecycle.daemon.heartbeat` | `soothe.system.daemon.heartbeat` | Domain migration |
+
+### 8.2 Protocol Events
+
+| Old Type | New Type | Notes |
+|----------|----------|-------|
+| `soothe.protocol.memory.recalled` | `soothe.protocol.memory.recalling` | Present progressive |
+| `soothe.protocol.memory.stored` | `soothe.protocol.memory.storing` | Present progressive |
+| `soothe.protocol.policy.checked` | `soothe.protocol.policy.checking` | Present progressive |
+
+### 8.3 Cognitive Events
+
+| Old Type | New Type | Notes |
+|----------|----------|-------|
+| `soothe.cognition.plan.created` | `soothe.cognition.plan.creating` | Present progressive |
+| `soothe.cognition.plan.step_started` | `soothe.cognition.plan.step.started` | Hierarchical component |
+| `soothe.cognition.plan.reflected` | `soothe.cognition.plan.reflecting` | Present progressive |
+| `soothe.cognition.goal.created` | `soothe.cognition.goal.creating` | Present progressive |
+| `soothe.cognition.goal.directives_applied` | `soothe.cognition.goal.directives_applying` | Present progressive |
+| `soothe.cognition.goal.deferred` | `soothe.cognition.goal.deferring` | Present progressive |
+| `soothe.cognition.strange_loop.reason` | `soothe.cognition.strange_loop.reasoning` | Present progressive |
+
+### 8.4 Subagent delegated UX (`soothe.subagent.*`, IG-339)
+
+Built-in subagents emit **only** allowlisted, metadata-only progress types under `soothe.subagent.<agent>.<signal>`. The allowlist and field caps live in **`soothe_sdk.core.subagent_wire`** (`ALLOWLISTED_SUBAGENT_EVENT_TYPES`, `clip_wire_event_payload`). Full prompts, raw HTML, and unconstrained transcripts stay off the custom stream; use LangGraph **`messages`** where the subgraph exposes LangChain tool calls and assistant text.
+
+**Historical note**: An interim `soothe.capability.*` naming experiment appeared in early migration drafts. It was **never** the stable wire contract and has been **removed** from producers and clients. Do not subscribe to `soothe.capability.*` for built-in subagents.
+
+| Agent | Curated custom-stream types (examples) | Purpose |
+|-------|------------------------------------------|---------|
+| Community web delegate | `soothe.subagent.browser.started`, `…step.completed`, `…completed` | Lifecycle + step metadata |
+| Community coding delegate | `…claude.started`, `…completed`, `…failed` | Lifecycle + outcome |
+| Explore | `…explore.started`, `…milestone`, `…completed` | Lifecycle + assessment milestone + done |
+| Research | `…research.started`, `…gather.summary`, `…completed` | Lifecycle + gather batch + done |
+
+Run-level completion uses types ending in `.completed` but **not** `*.step.completed` (step lines are activity milestones).
+
+### 8.4.1 Archived migration table (pre-IG-339, obsolete)
+
+The following table recorded an abandoned rename toward `soothe.capability.*`. **Ignore for integration work**; retained only as archaeology.
+
+| Old Type | Superseded direction (obsolete) | Notes |
+|----------|----------------------------------|-------|
+| `soothe.subagent.<id>.dispatched` | *(never shipped as stable)* | Use curated `soothe.subagent.<id>.*` |
+| `soothe.subagent.<id>.text` | *(removed from wire)* | Assistant text → `messages` stream |
+| `soothe.subagent.research.analyze` | *(removed from wire)* | Use curated research types |
+
+### 8.5 System Events
+
+| Old Type | New Type | Notes |
+|----------|----------|-------|
+| legacy `autopilot.*` events | `soothe.system.loop_rail.*` | Domain migration + legacy naming retired (IG-LOOP-013) |
+| legacy `autopilot.goal_created` | `soothe.system.loop_rail.goal.creating` | Domain + hierarchical + present progressive |
+| legacy `autopilot.dreaming_entered` | *(retired — dreaming was removed, IG-LOOP-013)* | Dreaming subsystem retired |
+| legacy `autopilot.relationship_detected` | `soothe.system.loop_rail.relationship.detecting` | Domain + present progressive |
+
+### 8.6 Output domain (ancillary naming only)
+
+**IG-317:** Core-loop assistant prose is **not** named under `soothe.output.*`. The table below is a **style reference** for optional `soothe.output.*` telemetry if you introduce new ancillary events—not a migration checklist for assistant answers.
+
+| Old Type (example) | New Type (example) | Notes |
+|----------|----------|-------|
+| `soothe.output.telemetry.pending` | `soothe.output.telemetry.reporting` | Present progressive |
+| `soothe.output.batch.summary` | `soothe.output.batch.summary.reporting` | Hierarchical + present progressive |
+
+---
+
+## 9. Implementation Checklist
+
+Migration is complete when the validation script finds no violations, the daemon produces correct event streams, TUI/CLI render all new event types, and plugin developers can register events following the new guidelines. Pre-commit hook runs `validate_event_names.py` to prevent drift.
+
+---
+
+## 10. Relationship to Other RFCs
+
+* **RFC-DAEM-001 (Event Processing)**: Architecture and registry implementation; RFC-DAEM-002 defines naming semantics
+* **RFC-CLNT-002 (Display & Verbosity)**: VerbosityTier classification for events
+* **RFC-PLUG-001 (Plugin Extension System)**: Plugin lifecycle managed by core
+* **event-catalog.md**: Complete event type registry using RFC-PROT-003 naming
+
+---
+
+## 11. Open Questions
+
+1. **Policy events**: Should `soothe.protocol.policy.checked` become `checking` (action) or keep `checked` (state)? **Resolution**: Use `checking` as present progressive action.
+
+2. **Verb consistency**: Should "completed" events become `completing`? **Resolution**: Keep `completed` as it represents present progressive result state.
+
+3. **Tool events**: Should `soothe.tool.*` migrate under a `capability` domain? **Resolution (superseded by IG-339)**: Main-graph tools remain `soothe.tool.*` where used; delegated subagent **sparse** UX signals use **`soothe.subagent.*`** only—not `soothe.capability.*`.
+
+4. **Internal vs external (subagents)**: **Resolution (IG-339)**: Curated **`soothe.subagent.<agent>.<signal>`** for sparse progress; step-like activity uses explicit names (e.g. `browser.step.completed`), not generic `.running` churn. Rich transcripts stay on **`messages`**.
+
+5. **Domain decision**: Where do new protocol/backend events belong? **Resolution**: Protocol implementation operations → `protocol` domain.
+
+---
+
+## 12. Conclusion
+
+This RFC establishes unified semantics for Soothe's event naming:
+
+- Present progressive tense grammar eliminates confusion
+- Function-based domains clarify semantic boundaries
+- Plugin extension namespace prevents collisions
+- Approved vocabularies enforce consistency
+- Validation rules prevent drift
+- Systematic migration ensures correctness
+
+> **Unified semantics, clear domains, scalable extension.**
+
+---
+
+## 13. References
+
+* Design draft: `docs/archive/drafts/2026-04-15-event-naming-semantics-unification-design.md`
+* Event catalog: `.platonic/specs/event-catalog.md`
+* RFC-PROT-002: Event Processing & Filtering

@@ -93,7 +93,7 @@ soothe autopilot top   # live jobs / goals / loops dashboard
 | [Quick Start](docs/wiki/getting-started/Quick-Start.md) | Install, daemon, first prompt |
 | [Language clients](docs/wiki/clients.md) | Python / TypeScript / Go / Rust WebSocket SDKs |
 | [Configuration guide](docs/wiki/configuration-guide/) | YAML, env vars, zero-config |
-| [RFCs](docs/specs/) | Architecture specs |
+| [RFCs](.platonic/specs/) | Architecture specs |
 | [AGENTS.md](AGENTS.md) | AI agent dev guide |
 
 ## License

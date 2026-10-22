@@ -22,12 +22,12 @@ packages/
 > package has been removed. Rails (LoopRail + Rail Exec) live under
 > `packages/soothe/src/soothe/rails/`; the report-commit judgment pattern
 > and `LoopRailService` runtime are normative in RFC-231. See
-> [IG-779](../../docs/impl/IG-779-rfc-autopilot-cleansing-and-mode-alignment.md)
+> [IG-LOOP-013](../../.platonic/impl/loop/IG-LOOP-013-rfc-autopilot-cleansing-and-mode-alignment.md)
 > for the full migration mapping.
 
 Do **not** run monorepo format/lint/test/publish against submodule trees. Bump submodule pins / PyPI floors when consuming new upstream versions; release those packages from their repositories.
 
-**Key docs**: see `docs/specs/` for architecture and plugin extension design.
+**Key docs**: see `.platonic/specs/` for architecture and plugin extension design.
 
 ## Quick Reference
 
@@ -39,7 +39,7 @@ Do **not** run monorepo format/lint/test/publish against submodule trees. Bump s
 | Host config | `packages/soothe/src/soothe/config/settings.py` |
 | Shared protocols | `packages/soothe-sdk/src/soothe_sdk/protocols/` |
 | Loop protocols | `packages/soothe/src/soothe/protocols/` |
-| Design docs | `docs/impl/` |
+| Design docs | `.platonic/impl/` |
 | Debug guide | `docs/wiki/howto_debug.md` |
 | Archived docs | `docs/archive/` (historical only) |
 

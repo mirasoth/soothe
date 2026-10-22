@@ -97,4 +97,4 @@ multi-step `do:` L0 recipes.
 **YAML tip:** use ``event:`` for triggers (not ``on:`` — YAML 1.1 treats bare
 ``on`` as a boolean). Legacy ``on`` is still accepted and rewritten to ``event``.
 
-Internal protocol: `docs/specs/RFC-231-looprail-rail-exec.md`.
+Internal protocol: `.platonic/specs/RFC-231-looprail-rail-exec.md`.

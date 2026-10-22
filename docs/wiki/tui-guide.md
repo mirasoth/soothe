@@ -157,7 +157,7 @@ Click the card to manually collapse or expand the body. Cards do **not** auto-co
 ```
 ● Survey RFCs and update wiki
 ⎿ ✓ Explore(enumerate docs)
-⎿   ○ ReadFile(docs/specs/RFC-628…)
+⎿   ○ ReadFile(.platonic/specs/RFC-628…)
 ⎿   ○ Glob(**/*.md)
 ⎿   ⠋ Running... (8s) · 2 tools
 ⎿ ○ Grep(pattern="step card")

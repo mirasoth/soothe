@@ -454,7 +454,7 @@ The debug guide covers:
 3. Check logs: `~/.soothe/logs/soothed.log`, `~/.soothe/logs/soothe.log`, `~/.soothe/logs/soothe-cli.log`
 4. Review configuration: check `~/.soothe/config/nano.yml`
 5. Check the [documentation](../) for detailed guides
-6. Review RFCs and implementation guides in `docs/specs/` and `docs/impl/`
+6. Review RFCs and implementation guides in `.platonic/specs/` and `.platonic/impl/`
 
 ## Related Guides
 

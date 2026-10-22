@@ -247,4 +247,4 @@ soothe --log-level DEBUG
 - Autopilot jobs: [inspect-autopilot-job](../inspect-autopilot-job/SKILL.md)
 - Debug guide: `docs/wiki/howto_debug.md`
 - CLI: `soothe loop list|show|tree|continue`
-- Example writeups: `docs/impl/archive/IG-509-loop-7cba-hang-analysis.md`
+- Example writeups: `.platonic/impl/archive/IG-509-loop-7cba-hang-analysis.md`

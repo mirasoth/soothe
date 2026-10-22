@@ -10,7 +10,7 @@
 > - **Client axis (client copies)**: `soothe-client-python` ≥1.1 — wire codec/protocol, core event constants, display parse side, ux render helpers, tools display metadata, utils, paths. `soothe-cli` consumes these and depends on nothing else first-party.
 > - The two axes couple **only via the wire protocol** (RFC-450) — the same model as the Go/Rust clients. Cross-axis copies are kept aligned by contract tests, not shared code.
 >
-> **Cleansing note (2026-10-07):** `soothe-autopilot` is no longer a separate package. Rails (LoopRail + Rail Exec) and the ContextEngine live under `soothe`; the daemon runtime (`LoopRailService`, worker dispatch, cron) lives under `soothe-daemon`. See [IG-779](../../docs/impl/IG-779-rfc-autopilot-cleansing-and-mode-alignment.md).
+> **Cleansing note (2026-10-07):** `soothe-autopilot` is no longer a separate package. Rails (LoopRail + Rail Exec) and the ContextEngine live under `soothe`; the daemon runtime (`LoopRailService`, worker dispatch, cron) lives under `soothe-daemon`. See [IG-779](../../.platonic/impl/IG-779-rfc-autopilot-cleansing-and-mode-alignment.md).
 
 ## Placement (where new code goes)
 

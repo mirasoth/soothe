@@ -3,7 +3,7 @@
 > Binding rules for how work is planned, implemented, and verified. Compliance is mandatory.
 
 ## Design Docs
-- **Substantial work**: Create a design doc in `docs/impl/` (`IG-XXX-brief-title.md`)
+- **Substantial work**: Create a design doc in `.platonic/impl/` (`IG-XXX-brief-title.md`)
 - **Minor changes**: No design doc — commit/PR context suffices
 
 ## Ecosystem First

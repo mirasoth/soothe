@@ -34,7 +34,7 @@ def test_compact_execute_human_content_uses_brief_and_expected_output() -> None:
     step = StepAction(
         id="01",
         description="Discover RFCs",
-        full_description="Search docs/specs for autopilot RFC files and list scope areas.",
+        full_description="Search .platonic/specs for autopilot RFC files and list scope areas.",
         expected_output="RFC list with scope summaries",
     )
     out = compact_execute_human_content(step)
