@@ -8,14 +8,14 @@ uploader for each run.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from soothe.workspace.sync.cas import CASCache
 from soothe.workspace.sync.checkpoint import CheckpointManager
 from soothe.workspace.sync.debouncer import CheckpointDebouncer
-from soothe.workspace.sync.dirty_tracker import DirtyTracker
+from soothe.workspace.sync.dirty_tracker import DirtyTracker, _normalize_watched_subdirs
 from soothe.workspace.sync.uploader import BackgroundUploader
 from soothe.workspace.sync.workspace import Workspace
 from soothe.workspace.sync.workspace_sync import WorkspaceSyncBackend
@@ -47,6 +47,9 @@ class WorkspaceManager:
             dual-source sync: content files materialize into the workspace
             at open and dirty writes/deletes mirror back at checkpoint.
             Return `None` to disable content mirroring for a run.
+        watched_subdirs: Workspace-relative subtrees tracked by the dirty
+            tracker (and pre-created at workspace open). `None` keeps the
+            engine defaults (`input`, `working`, `output`).
     """
 
     def __init__(
@@ -57,13 +60,26 @@ class WorkspaceManager:
         backend: WorkspaceSyncBackend | None = None,
         state_store_factory: Callable[..., WorkspaceStateStore] | None = None,
         content_backend_factory: Callable[[str], WorkspaceSyncBackend | None] | None = None,
+        watched_subdirs: Sequence[str] | None = None,
     ) -> None:
-        """Initialize the sync manager with workspace/CAS roots and optional backend."""
+        """Initialize the sync manager with workspace/CAS roots and optional backend.
+
+        Args:
+            workspaces_root: Root directory holding per-run workspaces.
+            cas_root: Root directory for the content-addressed cache.
+            backend: Remote sync backend; `None` disables remote checkpointing.
+            state_store_factory: Optional factory for per-run state stores.
+            content_backend_factory: Optional factory for per-run content backends.
+            watched_subdirs: Workspace-relative subtrees tracked by the dirty
+                tracker (and pre-created at workspace open). `None` keeps the
+                engine defaults (`input`, `working`, `output`).
+        """
         self._workspaces_root = workspaces_root
         self._cas_root = cas_root
         self._backend = backend
         self._state_store_factory = state_store_factory
         self._content_backend_factory = content_backend_factory
+        self._watched_subdirs = list(watched_subdirs) if watched_subdirs is not None else None
         self._workspaces: dict[str, Workspace] = {}
 
     def _workspace_root(self, run_id: str) -> Path:
@@ -84,6 +100,11 @@ class WorkspaceManager:
         (root / "working").mkdir(parents=True, exist_ok=True)
         (root / "output").mkdir(parents=True, exist_ok=True)
         (root / ".workspace").mkdir(parents=True, exist_ok=True)
+        # Configured extra subtrees (e.g. "deliverables") are pre-created so
+        # agents can rely on them and the dirty tracker walks them from the
+        # first scan. Unsafe entries fail loud here (ValueError).
+        for subdir in _normalize_watched_subdirs(self._watched_subdirs):
+            (root / subdir).mkdir(parents=True, exist_ok=True)
         return root
 
     async def open(self, run_id: str) -> Workspace:
@@ -108,7 +129,10 @@ class WorkspaceManager:
                 workspace_dir=root,
             )
 
-        dirty_tracker = DirtyTracker(workspace_root=root)
+        dirty_tracker = DirtyTracker(
+            workspace_root=root,
+            watched_subdirs=self._watched_subdirs,
+        )
 
         backend = self._backend
         if backend is None:

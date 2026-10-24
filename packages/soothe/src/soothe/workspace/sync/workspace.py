@@ -193,6 +193,11 @@ class Workspace:
         keep = {rel for rel in remote_rel_paths}
         keep.update(p.strip("/") for p in protected if p)
         keep_roots = {"input", "working", "output", ".workspace"}
+        # Configured watched subtrees (e.g. "deliverables") are engine-managed
+        # roots too — an empty one must survive reconcile pruning.
+        watched = getattr(self._dirty_tracker, "watched_subdirs", None)
+        if watched:
+            keep_roots.update(watched)
         removed: list[Path] = []
 
         for path in sorted(self.root.rglob("*")):

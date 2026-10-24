@@ -83,3 +83,41 @@ class TestWorkspaceManager:
         ws = await manager.open_from_uri("run-001", backend=backend)
         assert ws._backend is backend
         await ws.close()
+
+    async def test_open_creates_default_dirs_only(self, tmp_path: Path) -> None:
+        """Without watched_subdirs, only the engine defaults are created."""
+        manager = WorkspaceManager(
+            workspaces_root=tmp_path / "workspaces",
+            cas_root=tmp_path / "cas",
+        )
+        ws = await manager.open("run-001")
+        assert (ws.root / "deliverables").exists() is False
+        assert ws._dirty_tracker.watched_subdirs == ("input", "working", "output")
+        await ws.close()
+
+    async def test_open_with_watched_subdirs_precreates_and_wires(self, tmp_path: Path) -> None:
+        """Configured watched subdirs are pre-created and reach the tracker."""
+        manager = WorkspaceManager(
+            workspaces_root=tmp_path / "workspaces",
+            cas_root=tmp_path / "cas",
+            watched_subdirs=("input", "working", "output", "deliverables"),
+        )
+        ws = await manager.open("run-001")
+        assert (ws.root / "deliverables").is_dir()
+        assert ws._dirty_tracker.watched_subdirs == (
+            "input",
+            "working",
+            "output",
+            "deliverables",
+        )
+        await ws.close()
+
+    async def test_open_with_unsafe_watched_subdirs_fails_loud(self, tmp_path: Path) -> None:
+        """Unsafe watched subdir entries raise at open (bad config fails fast)."""
+        manager = WorkspaceManager(
+            workspaces_root=tmp_path / "workspaces",
+            cas_root=tmp_path / "cas",
+            watched_subdirs=("../escape",),
+        )
+        with pytest.raises(ValueError, match="unsafe watched subdir"):
+            await manager.open("run-001")

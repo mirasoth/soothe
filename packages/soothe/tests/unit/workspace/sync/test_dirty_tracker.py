@@ -18,6 +18,7 @@ import pytest
 from soothe.workspace.sync.dirty_tracker import (
     DirtyTracker,
     FileEventKind,
+    _normalize_watched_subdirs,
 )
 
 
@@ -224,4 +225,72 @@ class TestSymlinkDetection:
         tracker.mark_dirty("working/sub/evil.txt")
 
         assert tracker.dirty_files["working/sub/evil.txt"].status == "rejected_symlink"
+        await tracker.stop()
+
+
+# ---------------------------------------------------------------------------
+# Configurable watched subdirs
+# ---------------------------------------------------------------------------
+
+
+class TestConfigurableWatchedSubdirs:
+    """Configured watched subdirs replace the engine defaults."""
+
+    def test_normalize_none_keeps_defaults(self) -> None:
+        assert _normalize_watched_subdirs(None) == ("input", "working", "output")
+
+    def test_normalize_empty_keeps_defaults(self) -> None:
+        assert _normalize_watched_subdirs([]) == ("input", "working", "output")
+        assert _normalize_watched_subdirs(["", "   "]) == ("input", "working", "output")
+
+    def test_normalize_replaces_and_dedupes(self) -> None:
+        assert _normalize_watched_subdirs(["deliverables"]) == ("deliverables",)
+        assert _normalize_watched_subdirs(["a", "a", " b ", "./c/"]) == ("a", "b", "c")
+
+    def test_normalize_rejects_unsafe_entries(self) -> None:
+        for bad in ("../escape", "/abs", "a/../b", "a\\b", ".."):
+            with pytest.raises(ValueError, match="unsafe watched subdir"):
+                _normalize_watched_subdirs([bad])
+
+    @pytest.mark.asyncio
+    async def test_custom_subdir_tracked(self, tmp_path: Path) -> None:
+        """Files under a configured subdir are detected as dirty."""
+        workspace = tmp_path / "workspace"
+        (workspace / "input").mkdir(parents=True)
+        (workspace / "deliverables").mkdir()
+        tracker = DirtyTracker(
+            workspace_root=workspace,
+            watched_subdirs=("input", "working", "output", "deliverables"),
+        )
+        tracker.start()
+        (workspace / "deliverables" / "report.md").write_text("final")
+        tracker._scan_and_diff()
+        assert "deliverables/report.md" in tracker.dirty_files
+        await tracker.stop()
+
+    @pytest.mark.asyncio
+    async def test_unconfigured_subdir_not_tracked(self, tmp_path: Path) -> None:
+        """Default tracker does not track a non-default top-level folder."""
+        workspace = tmp_path / "workspace"
+        (workspace / "deliverables").mkdir(parents=True)
+        tracker = DirtyTracker(workspace_root=workspace)
+        tracker.start()
+        (workspace / "deliverables" / "report.md").write_text("final")
+        tracker._scan_and_diff()
+        assert "deliverables/report.md" not in tracker.dirty_files
+        await tracker.stop()
+
+    @pytest.mark.asyncio
+    async def test_root_files_still_tracked_with_custom_subdirs(self, tmp_path: Path) -> None:
+        """Root-level files remain tracked when subdirs are configured."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir(parents=True)
+        tracker = DirtyTracker(
+            workspace_root=workspace,
+            watched_subdirs=("deliverables",),
+        )
+        tracker.start()
+        (workspace / "notes.md").write_text("scratch")
+        tracker._scan_and_diff()
+        assert "notes.md" in tracker.dirty_files
         await tracker.stop()

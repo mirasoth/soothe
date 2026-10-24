@@ -13,8 +13,9 @@ import logging
 import os
 import stat
 import sys
+from collections.abc import Sequence
 from enum import StrEnum
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -26,7 +27,46 @@ _DEFAULT_POLL_INTERVAL = 2.0  # seconds
 
 _EXCLUDED_DIRS = frozenset({".workspace", "__pycache__", ".git"})
 
-_WATCHED_SUBDIRS = ("input", "working", "output")
+# Engine default tracked subtrees (workspace root files are always tracked).
+_DEFAULT_WATCHED_SUBDIRS = ("input", "working", "output")
+
+
+def _normalize_watched_subdirs(
+    watched_subdirs: Sequence[str] | None,
+) -> tuple[str, ...]:
+    """Normalize configured watched subdirs; `None` keeps the engine defaults.
+
+    Entries are slash-separated workspace-relative paths (e.g. ``deliverables``).
+    Blank entries are dropped and duplicates removed (order preserved). Unsafe
+    entries — absolute paths, backslashes, or traversal segments — raise
+    `ValueError` so a bad deployment config fails loud at workspace open.
+
+    Args:
+        watched_subdirs: Configured entries, or `None` for the defaults.
+
+    Returns:
+        Normalized tuple of watched subdir paths.
+    """
+    if watched_subdirs is None:
+        return _DEFAULT_WATCHED_SUBDIRS
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw in watched_subdirs:
+        entry = str(raw).strip()
+        if not entry:
+            continue
+        if "\\" in entry or PurePosixPath(entry).is_absolute():
+            raise ValueError(f"unsafe watched subdir: {raw!r}")
+        parts = tuple(p for p in PurePosixPath(entry).parts if p not in ("", "."))
+        if not parts or ".." in parts:
+            raise ValueError(f"unsafe watched subdir: {raw!r}")
+        joined = "/".join(parts)
+        if joined not in seen:
+            seen.add(joined)
+            normalized.append(joined)
+    if not normalized:
+        return _DEFAULT_WATCHED_SUBDIRS
+    return tuple(normalized)
 
 
 class FileEventKind(StrEnum):
@@ -83,7 +123,8 @@ class FileEvent:
 class DirtyTracker:
     """Hybrid platform-adaptive dirty file tracker.
 
-    Watches `input/`, `working/`, and `output/` directories under
+    Watches the configured subdirectories (engine defaults: `input/`,
+    `working/`, and `output/`) plus workspace-root files under
     `workspace_root`.  On platforms with native watchers, uses them;
     otherwise falls back to stat-scan polling.
 
@@ -93,6 +134,9 @@ class DirtyTracker:
             mode).  Must be ≤ the debounce window.
         on_dirty: Optional callback invoked when the dirty set changes.
             Called with no arguments.
+        watched_subdirs: Workspace-relative subtrees to track instead of
+            the engine defaults (`input`, `working`, `output`). `None`
+            keeps the defaults; unsafe entries raise `ValueError`.
 
     Example:
         >>> tracker = DirtyTracker(workspace_root="/ws/run-1")
@@ -107,17 +151,24 @@ class DirtyTracker:
         workspace_root: str | Path,
         poll_interval: float = _DEFAULT_POLL_INTERVAL,
         on_dirty: Callable[[], None] | None = None,
+        watched_subdirs: Sequence[str] | None = None,
     ) -> None:
         """Initialize the tracker with workspace root and poll interval."""
         self._root = Path(workspace_root).resolve()
         self._poll_interval = poll_interval
         self._on_dirty = on_dirty
+        self._watched_subdirs = _normalize_watched_subdirs(watched_subdirs)
         self._dirty_files: dict[str, FileEvent] = {}
         self._deleted_files: set[str] = set()
         self._running = False
         self._task: asyncio.Task[None] | None = None
         self._native_available = _detect_native_watcher()
         self._baseline: dict[str, tuple[float, int]] = {}
+
+    @property
+    def watched_subdirs(self) -> tuple[str, ...]:
+        """Return the tracked workspace-relative subtrees."""
+        return self._watched_subdirs
 
     @property
     def dirty_files(self) -> dict[str, FileEvent]:
@@ -311,7 +362,7 @@ class DirtyTracker:
                     pass
         except OSError:
             pass
-        for subdir in _WATCHED_SUBDIRS:
+        for subdir in self._watched_subdirs:
             dirpath = self._root / subdir
             if not dirpath.exists():
                 continue
