@@ -94,7 +94,7 @@ def build_intake_system_prompt(
         ctx = prompt_datetime_context()
     format_ctx = {
         "assistant_name": name,
-        "assistant_creator": "Dr. Xiaming Chen",
+        "assistant_byline": "",
         "assistant_role": "a helpful AI assistant",
         "assistant_vendor_denylist": _format_vendor_denylist(
             ["Claude", "ChatGPT", "Gemini", "Anthropic", "OpenAI", "Google"]
@@ -102,7 +102,8 @@ def build_intake_system_prompt(
         **ctx,
     }
     if identity is not None:
-        format_ctx["assistant_creator"] = identity.creator.strip() or "Dr. Xiaming Chen"
+        creator = identity.creator.strip()
+        format_ctx["assistant_byline"] = f" invented by {creator}" if creator else ""
         format_ctx["assistant_role"] = identity.role_description.strip() or "a helpful AI assistant"
         format_ctx["assistant_vendor_denylist"] = _format_vendor_denylist(
             list(identity.vendor_denylist)

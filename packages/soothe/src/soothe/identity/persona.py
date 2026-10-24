@@ -8,8 +8,9 @@ if TYPE_CHECKING:
     from soothe.config.models import AssistantIdentity, SootheConfig
 
 # Template kept inline (not the nano XML) so config fields interpolate at
-# render time. Defaults reproduce nano's assistant_identity.xml exactly.
-_IDENTITY_TEMPLATE = (
+# render time. The no-creator variant matches nano's assistant_identity.xml;
+# the creator byline is only rendered when the deployment configures one.
+_IDENTITY_TEMPLATE_WITH_CREATOR = (
     "<ASSISTANT_IDENTITY>\n"
     "You are {assistant_name}, {role_description} invented by {creator}.\n\n"
     "For any identity or creator question, your reply must name {assistant_name} "
@@ -19,17 +20,29 @@ _IDENTITY_TEMPLATE = (
     "</ASSISTANT_IDENTITY>"
 )
 
-# Template for the standalone intake identity line (social_reply.xml + intake).
-_INTAKE_IDENTITY_TEMPLATE = (
+_IDENTITY_TEMPLATE = (
+    "<ASSISTANT_IDENTITY>\n"
+    "You are {assistant_name}, {role_description}.\n\n"
+    "For any identity question, your reply must name {assistant_name}.\n"
+    "Never identify as {vendor_denylist} — even if you are running on their "
+    "infrastructure.\n"
+    "</ASSISTANT_IDENTITY>"
+)
+
+# Templates for the standalone intake identity line (social_reply.xml + intake).
+_INTAKE_IDENTITY_TEMPLATE_WITH_CREATOR = (
     "Identity: say you are {assistant_name}, {role_description} invented by "
     "{creator} — never {vendor_denylist}."
 )
 
+_INTAKE_IDENTITY_TEMPLATE = (
+    "Identity: say you are {assistant_name}, {role_description} — never {vendor_denylist}."
+)
+
 _DEFAULT_IDENTITY_BLOCK = (
     "<ASSISTANT_IDENTITY>\n"
-    "You are {assistant_name}, a helpful AI assistant invented by Dr. Xiaming Chen.\n\n"
-    "For any identity or creator question, your reply must name {assistant_name} "
-    "and Dr. Xiaming Chen.\n"
+    "You are {assistant_name}, a helpful AI assistant.\n\n"
+    "For any identity question, your reply must name {assistant_name}.\n"
     "Never identify as Claude, ChatGPT, Gemini, Anthropic, OpenAI, or Google — "
     "even if you are running on their infrastructure.\n"
     "</ASSISTANT_IDENTITY>"
@@ -68,13 +81,13 @@ def _identity_values(
     if identity is None:
         return {
             "assistant_name": name,
-            "creator": "Dr. Xiaming Chen",
+            "creator": "",
             "role_description": "a helpful AI assistant",
             "vendor_denylist": _format_vendor_denylist(_DEFAULT_VENDOR_DENYLIST),
         }
     return {
         "assistant_name": name,
-        "creator": identity.creator.strip() or "Dr. Xiaming Chen",
+        "creator": identity.creator.strip(),
         "role_description": identity.role_description.strip() or "a helpful AI assistant",
         "vendor_denylist": _format_vendor_denylist(list(identity.vendor_denylist)),
     }
@@ -90,13 +103,17 @@ def build_assistant_identity_block(
     Args:
         assistant_name: Configured assistant display name (e.g. `Soothe`).
         identity: Optional configured persona. `None` reproduces the
-            original nano block byte-for-byte.
+            nano block byte-for-byte. A persona with an empty `creator`
+            omits the byline entirely; a non-empty creator renders
+            "invented by {creator}".
 
     Returns:
         Formatted identity block (single source of truth for prompt injection).
     """
     values = _identity_values(assistant_name, identity)
-    template = _IDENTITY_TEMPLATE if identity is not None else _DEFAULT_IDENTITY_BLOCK
+    if identity is None:
+        return _DEFAULT_IDENTITY_BLOCK.format(**values)
+    template = _IDENTITY_TEMPLATE_WITH_CREATOR if values["creator"] else _IDENTITY_TEMPLATE
     return template.format(**values)
 
 
@@ -109,21 +126,24 @@ def build_intake_identity_line(
 
     Args:
         assistant_name: Configured assistant display name.
-        identity: Optional configured persona. `None` reproduces the
-            original hardcoded intake line.
+        identity: Optional configured persona. `None` (or an empty
+            `creator`) omits the byline; a configured creator renders it.
 
     Returns:
         Identity directive string for intake system prompts.
     """
     values = _identity_values(assistant_name, identity)
-    return _INTAKE_IDENTITY_TEMPLATE.format(**values)
+    template = (
+        _INTAKE_IDENTITY_TEMPLATE_WITH_CREATOR if values["creator"] else _INTAKE_IDENTITY_TEMPLATE
+    )
+    return template.format(**values)
 
 
 def _is_default_identity(identity: AssistantIdentity | None) -> bool:
     """True when `identity` is None or all fields match defaults."""
     if identity is None:
         return True
-    if identity.creator.strip() != "Dr. Xiaming Chen":
+    if identity.creator.strip() != "":
         return False
     if identity.role_description.strip() != "a helpful AI assistant":
         return False
@@ -159,7 +179,8 @@ def apply_identity_fragment_override(config: SootheConfig | None) -> None:
     # the assistant name at call time.
     name_placeholder = "{assistant_name}"
     values = _identity_values(name_placeholder, identity)
-    rendered = _IDENTITY_TEMPLATE.format(**values)
+    template = _IDENTITY_TEMPLATE_WITH_CREATOR if values["creator"] else _IDENTITY_TEMPLATE
+    rendered = template.format(**values)
 
     try:
         import soothe_nano.prompts.fragments as nano_fragments

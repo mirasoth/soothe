@@ -41,13 +41,15 @@ def test_build_intake_system_prompt_includes_identity_and_timestamp() -> None:
 def test_build_intake_system_prompt_formats_assistant_name_in_examples() -> None:
     prompt = build_intake_system_prompt(INTAKE_CLASSIFY_SYSTEM_PROMPT, "Soothe")
 
-    assert "I'm Soothe, a helpful AI assistant invented by Dr. Xiaming Chen" in prompt
-    assert "我是Soothe" in prompt
+    assert "I'm Soothe, a helpful AI assistant. How can I help you today?" in prompt
+    assert "我是Soothe。" in prompt
+    assert "invented by" not in prompt
     assert "FORBIDDEN identity reply" in prompt
     assert "never output this" in prompt
     assert "(per ASSISTANT_IDENTITY)" not in prompt
     assert "{assistant_name}" not in prompt
     assert "{assistant_creator}" not in prompt
+    assert "{assistant_byline}" not in prompt
     assert "{assistant_role}" not in prompt
     assert "{assistant_vendor_denylist}" not in prompt
 

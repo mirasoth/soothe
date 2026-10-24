@@ -233,10 +233,7 @@ class TestIntakeClassifier:
         classifier = IntentClassifier(model=MagicMock(), assistant_name="Soothe")
         mock_result = self._mock_intake_result(
             is_task=False,
-            social_response=(
-                "I'm Soothe, an AI assistant invented by Dr. Xiaming Chen. "
-                "How can I help you today?"
-            ),
+            social_response=("I'm Soothe, a helpful AI assistant. How can I help you today?"),
         )
         with patch.object(
             classifier._coordinator, "classify", new_callable=AsyncMock
@@ -246,7 +243,7 @@ class TestIntakeClassifier:
         mock_classify.assert_awaited_once()
         assert result.intake_label == IntakeLabel.CHITCHAT
         assert result.chitchat_response == (
-            "I'm Soothe, an AI assistant invented by Dr. Xiaming Chen. How can I help you today?"
+            "I'm Soothe, a helpful AI assistant. How can I help you today?"
         )
 
     async def test_fallback_defaults_to_complex(self) -> None:

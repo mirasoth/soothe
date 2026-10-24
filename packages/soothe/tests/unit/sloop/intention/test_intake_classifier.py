@@ -105,7 +105,7 @@ async def test_technical_entity_references_are_task(query: str) -> None:
         ("hello", "Hello! How can I help you today?"),
         ("thanks!", "You're welcome!"),
         ("thank you", "You're welcome!"),
-        ("who are you", "I'm Soothe, created by Dr. Xiaming Chen."),
+        ("who are you", "I'm Soothe, a helpful AI assistant."),
     ],
 )
 async def test_social_queries_have_response(query: str, expected_response: str) -> None:
@@ -297,11 +297,11 @@ async def test_generate_social_response_after_empty_first_call() -> None:
         with patch.object(
             classifier,
             "_generate_social_response",
-            new=AsyncMock(return_value="Dr. Xiaming Chen invented me."),
+            new=AsyncMock(return_value="I'm Soothe, a helpful AI assistant."),
         ) as mock_generate:
             result = await classifier.classify("who is your daddy")
     assert result.is_task is False
-    assert result.social_response == "Dr. Xiaming Chen invented me."
+    assert result.social_response == "I'm Soothe, a helpful AI assistant."
     mock_generate.assert_awaited_once()
 
 

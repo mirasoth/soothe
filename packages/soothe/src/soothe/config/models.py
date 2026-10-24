@@ -97,8 +97,11 @@ class AssistantIdentity(BaseModel):
     """Configurable assistant persona for identity blocks and intake replies."""
 
     creator: str = Field(
-        default="Dr. Xiaming Chen",
-        description="Attribution rendered as 'invented by {creator}' in identity blocks.",
+        default="",
+        description=(
+            "Optional attribution rendered as 'invented by {creator}' in identity "
+            "blocks. Empty (default) omits the byline entirely."
+        ),
     )
     role_description: str = Field(
         default="a helpful AI assistant",

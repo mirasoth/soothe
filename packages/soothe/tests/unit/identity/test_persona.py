@@ -52,8 +52,9 @@ def test_default_block_contains_expected_literals():
     """Default block renders the original hardcoded identity strings."""
     block = build_assistant_identity_block("Soothe")
     assert "<ASSISTANT_IDENTITY>" in block
-    assert "Dr. Xiaming Chen" in block
+    assert "You are Soothe, a helpful AI assistant." in block
     assert "a helpful AI assistant" in block
+    assert "invented by" not in block
     assert "Never identify as Claude, ChatGPT, Gemini, Anthropic, OpenAI, or Google" in block
 
 
@@ -85,10 +86,23 @@ def test_custom_block_single_vendor_denylist():
     assert "or" not in block.split("Never identify as ")[1].split(" —")[0]
 
 
+def test_custom_block_empty_creator_omits_byline():
+    """Explicit identity with empty creator omits the byline entirely."""
+    custom = AssistantIdentity(
+        role_description="a coding agent",
+        vendor_denylist=["GPT-4"],
+    )
+    block = build_assistant_identity_block("Soothe", identity=custom)
+    assert "You are Soothe, a coding agent." in block
+    assert "invented by" not in block
+    assert "Never identify as GPT-4" in block
+
+
 def test_intake_identity_line_default():
-    """Default intake identity line contains the original creator and denylist."""
+    """Default intake identity line carries the role and denylist, no byline."""
     line = build_intake_identity_line("Soothe")
-    assert "Dr. Xiaming Chen" in line
+    assert "Identity: say you are Soothe, a helpful AI assistant — never" in line
+    assert "invented by" not in line
     assert "Claude" in line
     assert "Google" in line
 
@@ -160,11 +174,13 @@ def test_intake_prompt_default_unresolved_placeholders():
     """Default intake prompt (no identity) resolves all identity placeholders."""
     prompt = build_intake_system_prompt(INTAKE_CLASSIFY_SYSTEM_PROMPT, "Soothe")
     assert "{assistant_creator}" not in prompt
+    assert "{assistant_byline}" not in prompt
     assert "{assistant_role}" not in prompt
     assert "{assistant_vendor_denylist}" not in prompt
     assert "{assistant_name}" not in prompt
-    assert "Dr. Xiaming Chen" in prompt
-    assert "a helpful AI assistant invented by Dr. Xiaming Chen" in prompt
+    assert "Dr. Xiaming Chen" not in prompt
+    assert "invented by" not in prompt
+    assert "say you are Soothe, a helpful AI assistant — never" in prompt
 
 
 def test_intake_prompt_custom_identity():
@@ -183,6 +199,7 @@ def test_intake_prompt_custom_identity():
     assert prompt.startswith("<ASSISTANT_IDENTITY>")
     # Unresolved placeholders must not leak
     assert "{assistant_creator}" not in prompt
+    assert "{assistant_byline}" not in prompt
     assert "{assistant_role}" not in prompt
 
 
@@ -193,6 +210,7 @@ def test_social_reply_prompt_custom_identity():
     assert "invented by Acme" in prompt
     assert "Dr. Xiaming Chen" not in prompt
     assert "{assistant_creator}" not in prompt
+    assert "{assistant_byline}" not in prompt
 
 
 def test_intake_prompt_structure_preserved():
