@@ -7,8 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.2.2] - 2026-10-24
+
 ### Changed
+- Bump `soothe-nano` floor to `>=2.0.2` (pulls in upstream fixes).
 - Platonic Coding layout migration: RFC specs, implementation guides, and design drafts moved from `docs/` to the skill-default paths — `docs/specs/` → `.platonic/specs/`, `docs/impl/` → `.platonic/impl/`, `docs/drafts/` → `.platonic/drafts/`, archived specs `docs/archive/specs/` → `.platonic/specs/archive/`. No IDs, statuses, or content changed (relocation recorded in `.platonic/specs/rfc-history.md`); live references across rules files, benchmarks, wiki, and code docstrings rewritten, while archived IGs and past CHANGELOG entries keep their historical paths. `docs/archive/impl/` stays in place as a historical record.
+
+### Fixed
+- Restore the `docs/changelogs/` landing page deleted during the spec partition, so the GitHub Pages build verification passes again and the "Versioned Changelogs" nav link resolves.
+
+[Compare with previous version]: https://github.com/mirasoth/soothe/compare/v1.2.1...v1.2.2
 
 ## [v1.2.1] - 2026-10-21
 
