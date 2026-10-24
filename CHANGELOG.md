@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.2.3] - 2026-10-24
+
+### Changed
+
+- Bump `soothe-nano` floor to `>=2.0.3`, pulling in the operation-guard fix that anchors relative tool paths to the workspace root (previously denied as outside-workspace whenever the process CWD differed from the workspace root, e.g. flowjet server sessions).
+
+[Compare with previous version]: https://github.com/mirasoth/soothe/compare/v1.2.2...v1.2.3
+
 ## [v1.2.2] - 2026-10-24
 
 ### Changed
