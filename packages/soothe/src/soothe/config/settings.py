@@ -1124,6 +1124,9 @@ class SootheConfig(BaseSettings):
             self.agent.name,
         )
         body = f"{base_prompt}\n\nToday's date is {current_date} ({tz_label})."
+        host_rules = SystemTemplates.format_host_rules(self.agent.rules)
+        if host_rules:
+            body = f"{body}\n\n{host_rules}"
         return PromptIdentity.prepend_identity(body, self.agent.name)
 
     def propagate_env(self) -> None:
