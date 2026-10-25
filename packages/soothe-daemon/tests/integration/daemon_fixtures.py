@@ -633,6 +633,11 @@ async def stop_daemon_safely(
     forces the channel manager (WebSocket server) to stop, releasing file
     descriptors that would otherwise accumulate and cause
     ``[Errno 24] Too many open files`` in subsequent tests.
+
+    The PID singleton lock is released unconditionally — ``daemon.stop()``
+    only releases it at the very end of a long shutdown sequence, so a
+    timeout would leave it held and poison every subsequent test with
+    ``RuntimeError: Another Soothe daemon is already running``.
     """
     if daemon is None:
         return
@@ -650,6 +655,32 @@ async def stop_daemon_safely(
         if executor is not None:
             with contextlib.suppress(Exception):
                 executor.shutdown(wait=False)
+    finally:
+        # Release the singleton PID lock regardless of whether stop()
+        # completed. daemon.stop() releases it last; if it timed out or
+        # raised, the lock would otherwise remain held and block every
+        # later daemon.start() in the same pytest session.
+        _release_daemon_pid_lock(daemon)
+
+
+def _release_daemon_pid_lock(daemon: Any) -> None:
+    """Release the daemon's PID lock if still held.
+
+    Idempotent: safe to call when ``daemon.stop()`` already released it
+    (the fd attribute is cleared after release).
+    """
+    from soothe_daemon.bootstrap.singleton import cleanup_pid, release_pid_lock
+
+    fd = getattr(daemon, "_pid_lock_fd", None)
+    if fd is not None:
+        with contextlib.suppress(OSError):
+            release_pid_lock(fd)
+        try:
+            daemon._pid_lock_fd = None  # type: ignore[union-attr]
+        except Exception:
+            pass
+    else:
+        cleanup_pid()
 
 
 async def close_client_safely(

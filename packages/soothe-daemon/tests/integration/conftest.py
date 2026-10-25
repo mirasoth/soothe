@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import gc
+import resource
+
+import pytest
+
 from tests.integration.daemon_fixtures import (  # noqa: F401
     integration_config,
     llm_idle_timeout,
@@ -30,3 +35,24 @@ from tests.integration.test_timeouts import (  # noqa: F401
     timeout_subscribe,
     timeout_unit_wait,
 )
+
+
+@pytest.fixture(autouse=True)
+def _raise_fd_limit_and_gc():
+    """Raise the per-process FD soft limit and GC between tests.
+
+    Integration tests spawn many short-lived WebSocket connections and daemon
+    subprocesses.  On macOS the default soft limit is 256, which is too low
+    for the full suite — FDs leaked by a timed-out ``daemon.stop()`` accumulate
+    and eventually cause ``[Errno 24] Too many open files`` mid-suite.  Raising
+    the soft limit to the hard limit gives headroom, and ``gc.collect()``
+    releases closed-socket objects that Python hasn't finalized yet.
+    """
+    try:
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        if soft < hard:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (hard, hard))
+    except (ValueError, OSError):
+        pass
+    yield
+    gc.collect()

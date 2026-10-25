@@ -1471,11 +1471,39 @@ class SootheDaemon(DaemonHandlersMixin):
             )
 
     async def stop(self) -> None:
-        """Shut down the daemon gracefully."""
+        """Shut down the daemon gracefully.
+
+        The singleton PID lock is released in a ``finally`` block so it is
+        always freed — even when a background-task cancellation or pool
+        teardown raises mid-shutdown. Without this, a timed-out ``stop()``
+        leaves the lock held and poisons every subsequent ``start()`` with
+        ``RuntimeError: Another Soothe daemon is already running``.
+        """
         self._readiness_state = "stopped"
         self._readiness_message = None
         self._running = False
 
+        try:
+            await self._stop_internal()
+        finally:
+            # Release singleton lock and clean up files unconditionally.
+            # ``_stop_internal`` may raise (e.g. CancelledError from a stuck
+            # pool worker), but the PID lock must still be released so the
+            # next daemon can start.
+            if self._pid_lock_fd is not None:
+                release_pid_lock(self._pid_lock_fd)
+                self._pid_lock_fd = None
+            else:
+                cleanup_pid()
+        logger.info("Soothe daemon stopped")
+
+    async def _stop_internal(self) -> None:
+        """Perform the graceful shutdown steps (everything except PID lock release).
+
+        Raises propagate to :meth:`stop`, which releases the PID lock in its
+        ``finally`` block. Keeping the lock release out of this method ensures
+        a partial shutdown never strands the singleton lock.
+        """
         # Stop memory profiler if running
         if self._memory_profiler is not None:
             self._memory_profiler.stop()
@@ -1642,14 +1670,6 @@ class SootheDaemon(DaemonHandlersMixin):
         if hasattr(self, "_default_executor") and self._default_executor:
             self._default_executor.shutdown(wait=True)
             logger.debug("Default executor shut down")
-
-        # Release singleton lock and clean up files
-        if self._pid_lock_fd is not None:
-            release_pid_lock(self._pid_lock_fd)
-            self._pid_lock_fd = None
-        else:
-            cleanup_pid()
-        logger.info("Soothe daemon stopped")
 
     # -- broadcast ----------------------------------------------------------
 
