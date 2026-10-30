@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Sandboxed backends can opt out of hard security denies. `security.hard_deny_severities: []` (requires `soothe-nano >= 2.0.5`) now degrades every rule hit — `command.dangerous.rm_root`, `sudo_rm_rf`, device writes, daemon self-protection and critical filesystem writes included — to an audited `risk_hint`, so the autopilot gate routes it to the veritas leg instead of the deterministic inline reject and the command can actually run. Intended only where an outer sandbox boundary owns the blast radius; user `tool_approval.deny_rules` stay absolute, and the default `["critical"]` posture is unchanged. Documented under "Sandboxed Backend Posture" in the security hardening guide.
+
 ## [v1.2.4] - 2026-10-30
 
 ### Changed

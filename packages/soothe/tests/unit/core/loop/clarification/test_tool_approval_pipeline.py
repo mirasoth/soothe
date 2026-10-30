@@ -10,6 +10,8 @@ escalation, rule-family override; sub-critical matches surface as
 
 from __future__ import annotations
 
+import pytest
+
 from soothe.config.models import ToolApprovalConfig, ToolApprovalRule
 from soothe.sloop.clarification.tool_approval_pipeline import (
     ToolApprovalPipeline,
@@ -505,3 +507,92 @@ class TestRuleLevelOverride:
         )
         assert result.decision == "escalate"
         assert result.stage == "safety_check"
+
+
+def _nano_honors_empty_hard_set() -> bool:
+    """True when the installed nano treats `hard_deny_severities: []` as opt-out.
+
+    Floor guard: `soothe-nano` releases before 2.0.5 silently fall back to the
+    `{"critical"}` default, so the sandbox-posture assertions below skip until
+    the dependency floor moves past it.
+    """
+    from soothe_nano.config.models import SecurityConfig
+    from soothe_nano.protocols.operation_security import (
+        OperationSecurityContext,
+        OperationSecurityRequest,
+    )
+    from soothe_nano.security.operation_guard import WorkspaceToolOperationSecurity
+
+    decision = WorkspaceToolOperationSecurity().evaluate(
+        OperationSecurityRequest(
+            action_type="tool_call",
+            tool_name="run_command",
+            tool_args={"command": "rm -rf /"},
+            operation_kind="shell_execute",
+            command="rm -rf /",
+        ),
+        OperationSecurityContext(security_config=SecurityConfig(hard_deny_severities=set())),
+    )
+    return decision.verdict == "risk_hint"
+
+
+_SANDBOX_POSTURE = pytest.mark.skipif(
+    not _nano_honors_empty_hard_set(),
+    reason="requires the soothe-nano empty hard_deny_severities opt-out",
+)
+
+
+class TestSandboxPosture:
+    """`security.hard_deny_severities: []` is an explicit hard-deny opt-out.
+
+    Sandboxed backends run throwaway state behind an outer boundary, so the
+    operator can let critical rules degrade to audited hints instead of the
+    autopilot inline reject.
+    """
+
+    @staticmethod
+    def _sandbox_pipeline() -> ToolApprovalPipeline:
+        from soothe_nano.config.models import SecurityConfig
+
+        return ToolApprovalPipeline(
+            _DEFAULT_CONFIG, security_config=SecurityConfig(hard_deny_severities=set())
+        )
+
+    @_SANDBOX_POSTURE
+    def test_critical_command_becomes_hint(self) -> None:
+        result = self._sandbox_pipeline().evaluate_action(
+            "run_command", {"command": "rm -rf /root/.cache/pip"}
+        )
+        assert result.decision == "approve"
+        assert result.stage == "default_approve"
+        assert result.risk_hints == ("command.dangerous.rm_root",)
+
+    @_SANDBOX_POSTURE
+    def test_critical_system_path_write_becomes_hint(self) -> None:
+        result = self._sandbox_pipeline().evaluate_action(
+            "write_file", {"file_path": "/etc/nginx/nginx.conf"}
+        )
+        assert result.decision == "approve"
+        assert result.risk_hints == ("filesystem.sensitive_system_path",)
+
+    def test_default_posture_still_escalates(self) -> None:
+        from soothe_nano.config.models import SecurityConfig
+
+        pipeline = ToolApprovalPipeline(_DEFAULT_CONFIG, security_config=SecurityConfig())
+        result = pipeline.evaluate_action("run_command", {"command": "rm -rf /root/.cache/pip"})
+        assert result.decision == "escalate"
+        assert result.rule_id == "command.dangerous.rm_root"
+
+    @_SANDBOX_POSTURE
+    def test_user_deny_rules_stay_absolute(self) -> None:
+        from soothe_nano.config.models import SecurityConfig
+
+        pipeline = ToolApprovalPipeline(
+            ToolApprovalConfig(
+                deny_rules=[ToolApprovalRule(tool="run_command", pattern="rm -rf*")]
+            ),
+            security_config=SecurityConfig(hard_deny_severities=set()),
+        )
+        result = pipeline.evaluate_action("run_command", {"command": "rm -rf /root/.cache/pip"})
+        assert result.decision == "reject"
+        assert result.stage == "deny_rule"

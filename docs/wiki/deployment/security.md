@@ -512,7 +512,30 @@ security:
   denied_file_types: [.env, .key, .pem, .credentials]
 ```
 
-### Workspace Isolation (Multi-Team)
+### Sandboxed Backend Posture
+
+When the agent runs behind a sandbox boundary (microVM / container jail owning
+throwaway state), the boundary — not the command rule registry — is the
+containment layer. Operators can then turn the hard-deny tier off, instead of
+relying on the model to phrase commands that happen to dodge a rule:
+
+```yaml
+security:
+  hard_deny_severities: []   # explicit opt-out: no severity hard-denies
+```
+
+Every rule hit then degrades to an audited `risk_hint` — `command.dangerous.rm_root`
+/ `sudo_rm_rf` / device writes / daemon self-protection included: the tool layer
+allows it with a warning, and the autopilot gate routes it to the veritas
+judgment leg instead of the deterministic inline reject. User-configured
+`tool_approval.deny_rules` stay absolute in every posture.
+
+Requires `soothe-nano >= 2.0.5`; earlier releases treat the empty set as unset
+and keep hard-denying `critical`.
+
+**Do not set this on a host that shares state with the operator's machine.** The
+empty set also relaxes `denied_paths` and the workspace write boundary — the
+default `["critical"]` is what stops `rm -rf /` on real hardware.
 
 ### Workspace Isolation (Multi-Team)
 
