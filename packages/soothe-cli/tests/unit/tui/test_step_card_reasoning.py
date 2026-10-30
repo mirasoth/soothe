@@ -104,9 +104,14 @@ def test_render_reasoning_truncates_long_lines() -> None:
     assert long_line not in text
 
 
-def test_render_reasoning_caps_line_count() -> None:
-    """Reasoning with more lines than the preview limit shows '+N more lines'."""
-    lines = [f"line {i}" for i in range(STEP_CARD_REASONING_PREVIEW_LINES + 5)]
+def test_render_reasoning_keeps_latest_lines() -> None:
+    """Reasoning longer than the preview limit keeps the LAST N lines.
+
+    Reasoning accumulates while a step runs, so the tail is what matters; the
+    earliest lines scroll off and no "+N more lines" footer is emitted.
+    """
+    total = STEP_CARD_REASONING_PREVIEW_LINES + 5
+    lines = [f"L{i:02d}" for i in range(total)]
     content = StepActivityTree.render(
         step_id="s1",
         step_status="running",
@@ -120,7 +125,38 @@ def test_render_reasoning_caps_line_count() -> None:
         reasoning_preview_lines=STEP_CARD_REASONING_PREVIEW_LINES,
     )
     text = str(content)
-    assert "+5 more lines" in text
+
+    # Newest N lines are shown, in order.
+    for i in range(total - STEP_CARD_REASONING_PREVIEW_LINES, total):
+        assert f"L{i:02d}" in text
+    # Oldest 5 lines dropped.
+    for i in range(5):
+        assert f"L{i:02d}" not in text
+    # Order preserved (last line comes after the first shown line).
+    first_shown = total - STEP_CARD_REASONING_PREVIEW_LINES
+    assert text.index(f"L{first_shown:02d}") < text.index(f"L{total - 1:02d}")
+    assert "more line" not in text
+
+
+def test_render_reasoning_short_input_shows_all_lines() -> None:
+    """Reasoning within the preview limit renders unchanged (no dropping)."""
+    lines = [f"L{i:02d}" for i in range(STEP_CARD_REASONING_PREVIEW_LINES - 3)]
+    content = StepActivityTree.render(
+        step_id="s1",
+        step_status="running",
+        index=_empty_index(),
+        subagent_notes=[],
+        subagent_notes_by_task={},
+        spinner_position=0,
+        colors=None,
+        g=get_glyphs(),
+        reasoning="\n".join(lines),
+        reasoning_preview_lines=STEP_CARD_REASONING_PREVIEW_LINES,
+    )
+    text = str(content)
+    for ln in lines:
+        assert ln in text
+    assert "more line" not in text
 
 
 def test_render_reasoning_empty_string_no_section() -> None:

@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Step card Reasoning sections now render the **latest** `STEP_CARD_REASONING_PREVIEW_LINES` (8) lines instead of the first 8 followed by a `+N more lines` footer. Reasoning accumulates while a step runs, so the tail tracks the model's current train of thought; the footer is gone because it pushed fresh text out of the preview without adding anything actionable. Per-line `reasoning_line_max_chars` truncation is unchanged.
 - Bump the `soothe-nano` floor to `>=2.0.6`, pulling in the opt-in `partial` flag on `tool_call_update_event` that partial-arg emission relies on. On 2.0.5 the tracker's emission raises `TypeError`, so the floor is now enforced.
 - Daemon stream delivery now flushes debounce-eligible `tool_call_updates_batch` buffers on an idle tick (50ms) instead of only on the next stream chunk. Previously, while a tool executed (no chunks flow in `messages` mode) the last partial-arg update sat buffered until the `ToolMessage` force-flush — i.e. until the tool finished; the tick bounds that delay to `tool_batch_interval_ms`. Batch flushes also log DEBUG enqueue→flush latency (`soothe_daemon.query.stream_delivery`) for diagnostics.
 - `partial=True` tool updates now upgrade the buffered `tool_call_updates_batch` row in place instead of being silently suppressed: recovered in-flight args land in the batch, so clients get the richer kwargs on flush without a duplicate wire event.

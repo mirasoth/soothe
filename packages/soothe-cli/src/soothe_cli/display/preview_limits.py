@@ -14,9 +14,9 @@ STEP_CARD_TOOL_ACTIVITY_PREVIEW_COUNT: Final[int] = 5
 # are file-write tool rows for the step.
 STEP_CARD_FILE_EDIT_PREVIEW_COUNT: Final[int] = 5
 
-# Reasoning branch on step cards: max lines of captured thinking-token content
-# shown in the Reasoning section. Long reasoning is truncated to this many
-# lines with a "+N more lines" suffix.
+# Reasoning branch on step cards: max lines shown in the Reasoning section.
+# Reasoning accumulates while a step runs, so the section renders the *latest*
+# this many lines and drops older ones (no "+N more lines" footer).
 STEP_CARD_REASONING_PREVIEW_LINES: Final[int] = 8
 
 # Reasoning branch: max characters per line before truncation (width-aware

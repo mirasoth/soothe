@@ -890,10 +890,13 @@ class StepActivityTree:
         The File-edit branch is always rendered when file-write tool rows exist
         for the step; it is no longer config-gated.
 
-        The Reasoning section shows captured thinking-token content (from
-        ``additional_kwargs["reasoning_content"]`` on ``AIMessageChunk``)
-        truncated to ``reasoning_preview_lines`` lines with a "+N more lines"
-        suffix when longer.
+        The Reasoning section shows the *latest* ``reasoning_preview_lines``
+        lines of reasoning (captured thinking tokens from
+        ``additional_kwargs["reasoning_content"]`` plus untagged CoreAgent
+        step text). Older lines scroll off: reasoning grows while the step
+        runs, so the tail is what the user wants to read. Each line is
+        truncated to ``reasoning_line_max_chars`` (or ``max_cols`` when
+        narrower) with a trailing ellipsis.
         """
         section_gutter = _card_body_gutter(glyph_override)
         item_gutter = _card_item_indent(1, glyph_override=glyph_override)
@@ -940,14 +943,17 @@ class StepActivityTree:
                     shown_lines.append(stripped_ln[: char_limit - 1] + "…")
                 else:
                     shown_lines.append(stripped_ln)
-            hidden_reasoning = len(shown_lines) - reasoning_preview_lines
-            for ln in shown_lines[:reasoning_preview_lines]:
+            # Reasoning accumulates while the step runs: keep the newest lines
+            # so the card tracks the model's current train of thought instead of
+            # freezing on whatever it opened with. Older lines are dropped
+            # silently — a "+N more" footer would push the fresh text off the
+            # preview and adds no information the user can act on.
+            tail_lines = (
+                shown_lines[-reasoning_preview_lines:] if reasoning_preview_lines > 0 else []
+            )
+            for ln in tail_lines:
                 parts.append("\n")
                 parts.append(Content.styled(f"{item_gutter}· {ln}", theme.SECONDARY_TEXT_STYLE))
-            if hidden_reasoning > 0:
-                label = f"+{hidden_reasoning} more line{'s' if hidden_reasoning != 1 else ''}"
-                parts.append("\n")
-                parts.append(Content.styled(f"{item_gutter}· {label}", theme.SECONDARY_TEXT_STYLE))
 
         # --- To-do (all todo items) ---
         if todo_items:
