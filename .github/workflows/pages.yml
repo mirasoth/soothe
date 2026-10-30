@@ -29,7 +29,10 @@ jobs:
       - name: Setup Ruby
         uses: ruby/setup-ruby@v1
         with:
-          ruby-version: '3.3.6'
+          # Track the latest 3.3.x the runner image provides: newer ubuntu
+          # images only build the newest patch of each series, so an exact
+          # patch pin breaks whenever the image rolls forward.
+          ruby-version: '3.3'
           bundler-cache: true
 
       - name: Sync wiki CHANGELOG from repository root
