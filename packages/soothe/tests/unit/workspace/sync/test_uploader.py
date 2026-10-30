@@ -1,4 +1,4 @@
-"""Tests for the background uploader (§32, P10).
+"""Tests for the background uploader.
 
 Tests verify:
     - Pending checkpoints are uploaded FIFO.

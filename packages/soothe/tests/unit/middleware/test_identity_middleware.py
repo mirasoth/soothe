@@ -1,4 +1,4 @@
-"""Unit tests for IdentityMiddleware (RFC-307 §Middleware Integration).
+"""Unit tests for IdentityMiddleware (RFC-307).
 
 Tests WebSocket token validation, external channel identity resolution,
 unmapped sender policies, and disabled-state passthrough.

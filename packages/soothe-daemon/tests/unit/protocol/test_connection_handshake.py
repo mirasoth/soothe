@@ -1,4 +1,4 @@
-"""Unit tests for the connection_init / connection_ack handshake (RFC-450 §8.2, phase 3).
+"""Unit tests for the connection_init / connection_ack handshake (RFC-450, phase 3).
 
 Covers:
 - ``connection_init`` with valid params → ``connection_ack`` with ``readiness_state: "ready"``

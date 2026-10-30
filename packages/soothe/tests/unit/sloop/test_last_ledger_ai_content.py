@@ -1,4 +1,4 @@
-"""Tests for ``last_ledger_ai_content`` phase exclusion (RFC-214, RFC-222 §Goal-Report-Pair).
+"""Tests for ``last_ledger_ai_content`` phase exclusion (RFC-214, RFC-222).
 
 Preamble AI turns (ancestor goal-report pairs) must not be surfaced as final
 user-facing output in ``ledger_direct`` completion mode — they are context,

@@ -1,4 +1,4 @@
-"""Tests for Pydantic param models and PARAMS_REGISTRY (RFC-450 §6.2, Phase 8).
+"""Tests for Pydantic param models and PARAMS_REGISTRY (RFC-450, Phase 8).
 
 Covers:
 - Every params model validates correctly with valid input
@@ -179,7 +179,7 @@ class TestParamsRegistryCompleteness:
         )
 
     def test_loop_input_registered_for_both_request_and_notification(self) -> None:
-        """loop_input must be valid as both request and notification (RFC-450 §9.2)."""
+        """loop_input must be valid as both request and notification (RFC-450)."""
         assert ("request", "loop_input") in PARAMS_REGISTRY
         assert ("notification", "loop_input") in PARAMS_REGISTRY
 

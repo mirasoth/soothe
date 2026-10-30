@@ -364,7 +364,7 @@ async def await_event_type(readable, expected_type: str, timeout: float = 3.0) -
 def unwrap_next(event: dict | None) -> dict | None:
     """Unwrap a protocol-1 ``next`` envelope to its ``payload.data`` frame.
 
-    Under protocol-1 (RFC-450 §9.3) the daemon wraps every legacy streaming
+    Under protocol-1 (RFC-450) the daemon wraps every legacy streaming
     frame (status/event/command_response/subscription ack) in a
     ``{proto, type:"next", payload:{namespace, mode, data}}`` envelope. This
     helper returns the inner ``data`` dict (the original frame) so tests can
@@ -438,7 +438,7 @@ async def await_subscribe_ack(
 ) -> dict:
     """Wait for the protocol-1 subscribe-ack ``next`` envelope for ``loop_id``.
 
-    Under protocol-1 (RFC-450 §9.3) the daemon confirms a ``loop_events``
+    Under protocol-1 (RFC-450) the daemon confirms a ``loop_events``
     subscription with a ``next`` envelope whose ``payload.event == "subscribed"``
     and ``payload.loop_id`` matches. Returns the ``payload`` dict.
 

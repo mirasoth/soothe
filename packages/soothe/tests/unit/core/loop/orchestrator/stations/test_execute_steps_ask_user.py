@@ -592,7 +592,7 @@ async def test_synth_path_persists_qa_pair_to_goal_record() -> None:
 async def test_synth_answer_flows_through_record_iteration_without_fatal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Regression (IG-762): after a clarification answer resume, the synth path
+    """Regression: after a clarification answer resume, the synth path
     populates scratch so node_record_iteration records the iteration instead of
     fatally erroring with 'Record iteration without plan/decision'."""
     from unittest.mock import AsyncMock
@@ -716,7 +716,7 @@ async def test_synth_answer_flows_through_record_iteration_without_fatal(
 async def test_ask_user_answer_resume_uses_command_resume(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """IG-763: a CoreAgent ask_user answer resume delivers the answers via
+    """A CoreAgent ask_user answer resume delivers the answers via
     ``Command(resume={iid: {"answers": [...]}})`` — the ask_user tool returns
     the Q&A in-thread and the agent continues its turn on the original step
     thread."""

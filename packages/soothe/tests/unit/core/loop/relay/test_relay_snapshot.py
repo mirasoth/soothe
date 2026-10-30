@@ -1,4 +1,4 @@
-"""Tests for the relay snapshot predicates (IG-775)."""
+"""Tests for the relay snapshot predicates."""
 
 from __future__ import annotations
 

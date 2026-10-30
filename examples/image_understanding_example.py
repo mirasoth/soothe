@@ -2,7 +2,7 @@
 
 This example shows how to send an image to the Soothe daemon for analysis
 using the WebSocket client from soothe-client-python. The daemon performs vision
-preflight (IG-327) to extract visual information before main processing.
+preflight to extract visual information before main processing.
 
 Usage:
     # From project root:

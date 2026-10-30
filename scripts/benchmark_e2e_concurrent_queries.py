@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Soothe Daemon End-to-End Concurrent Query Benchmark (IG-258).
+"""Soothe Daemon End-to-End Concurrent Query Benchmark.
 
 Real production-like benchmark that tests against a running Soothe daemon:
 1. Requires daemon running on ws://127.0.0.1:8765

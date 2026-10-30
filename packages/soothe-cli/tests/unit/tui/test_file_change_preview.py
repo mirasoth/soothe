@@ -93,7 +93,7 @@ def test_file_change_labels_support_pending_and_success_tense() -> None:
 
 
 def test_file_change_preview_uses_stream_card_bottom_margin() -> None:
-    """File edit cards match cognition/assistant inter-card spacing (RFC-501 §10.3)."""
+    """File edit cards match cognition/assistant inter-card spacing (RFC-501)."""
     assert "margin: 0 0 1 0;" in FileChangePreviewWidget.DEFAULT_CSS
     assert "margin: 0 0 1 0;" in DiffMessage.DEFAULT_CSS
 

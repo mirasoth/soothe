@@ -1,4 +1,4 @@
-"""Unit tests for IdentityService (RFC-307 §Protocol Interface implementation).
+"""Unit tests for IdentityService (RFC-307).
 
 Tests user management, AKSK provisioning, JWT authentication, token rotation,
 revocation, and external identity mapping.

@@ -867,7 +867,7 @@ class SootheDaemon(DaemonHandlersMixin):
         accept_proto: list[str] | None = None,
         client_capabilities: list[str] | None = None,
     ) -> dict[str, Any]:
-        """Build a `connection_ack` message §8.2.
+        """Build a `connection_ack` message.
 
         Negotiates protocol version and capabilities, then returns the
         ack envelope with daemon readiness state and heartbeat interval.

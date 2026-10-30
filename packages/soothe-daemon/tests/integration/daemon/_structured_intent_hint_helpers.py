@@ -17,7 +17,7 @@ WORD_REPLY_SCHEMA: dict[str, Any] = {
 def _unwrap_next(event: dict[str, Any] | None) -> dict[str, Any] | None:
     """Unwrap a protocol-1 ``next`` envelope to its inner ``data`` frame.
 
-    Under protocol-1 (RFC-450 §9.3) streamed ``event`` frames arrive wrapped as
+    Under protocol-1 (RFC-450) streamed ``event`` frames arrive wrapped as
     ``{proto, type:"next", payload:{namespace, mode, data}}``. This helper
     returns the inner ``data`` dict (the legacy ``{type:"event", mode, data}``
     frame) so the extraction helpers can branch on the legacy shape. Non-``next``

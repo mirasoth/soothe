@@ -223,7 +223,7 @@ async def test_answer_defer_true_parks() -> None:
 async def test_defer_persists_ce_before_graph_ends() -> None:
     """The park path must save the CE: execute→await_user skips
     record_iteration, the only other CE save. Without the save the step DAG
-    is lost and the resume turn fatals in root_eval (IG-762)."""
+    is lost and the resume turn fatals in root_eval."""
 
     class _SaveTrackingCE:
         def __init__(self) -> None:
@@ -245,7 +245,7 @@ async def test_defer_persists_ce_before_graph_ends() -> None:
 async def test_interactive_pause_persists_ce_before_interrupt() -> None:
     """The interactive policy pauses on a LangGraph interrupt inside
     ``policy.answer`` — the CE (dispatch's step DAG) must be saved before
-    that pause or the resume loads an empty DAG (IG-762)."""
+    that pause or the resume loads an empty DAG."""
 
     class _SaveTrackingCE:
         def __init__(self) -> None:

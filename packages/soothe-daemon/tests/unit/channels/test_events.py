@@ -1,4 +1,4 @@
-"""Unit tests for Channel events (RFC-620 §2.2)."""
+"""Unit tests for Channel events (RFC-620)."""
 
 from __future__ import annotations
 

@@ -252,7 +252,7 @@ async def test_debounced_flush_coalesces_rapid_ingests(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_ingest_stream_tuple_returns_before_flush_completes(monkeypatch) -> None:
-    """Stream ingest must not block on ledger flush (§2.3)."""
+    """Stream ingest must not block on ledger flush."""
     manager = LoopCardManager(
         SimpleNamespace(_runner=MagicMock()),
         flush_debounce_ms=50,
@@ -330,7 +330,7 @@ async def test_ingest_overflow_preserves_frames(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_overflow_emits_stream_degraded(monkeypatch) -> None:
-    """First overflow frame notifies clients via stream_degraded (RFC-450 §14)."""
+    """First overflow frame notifies clients via stream_degraded (RFC-450)."""
     from soothe_daemon.display.loop_card_manager import (
         reset_card_ingest_overflow_metrics,
     )

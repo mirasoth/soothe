@@ -104,7 +104,7 @@ async def test_await_pool_waits_through_reset_to_see_reopened_pool(
 async def test_reset_pool_does_not_deadlock_on_reentry(monkeypatch: pytest.MonkeyPatch) -> None:
     """reset_pool must not re-enter open() on the non-reentrant asyncio.Lock.
 
-    Before IG-706, reset_pool held ``_init_lock`` and called ``self.open()``,
+    Previously, reset_pool held ``_init_lock`` and called ``self.open()``,
     which re-acquires ``_init_lock`` → permanent deadlock (asyncio.Lock is not
     reentrant). The fix routes reopen through ``_open_locked`` instead.
     """

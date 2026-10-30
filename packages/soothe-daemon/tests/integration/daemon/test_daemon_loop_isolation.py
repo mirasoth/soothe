@@ -36,7 +36,7 @@ from tests.integration.daemon_fixtures import (
 
 
 async def _connect_and_drain_handshake(client: WebSocketClient) -> None:
-    """Connect and complete the protocol-1 handshake (RFC-450 §8.2)."""
+    """Connect and complete the protocol-1 handshake (RFC-450)."""
     await client.connect()
     await client.request_connection_init()
     await client.wait_for_connection_ack()

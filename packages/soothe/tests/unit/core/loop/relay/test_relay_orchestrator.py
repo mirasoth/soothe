@@ -1,4 +1,4 @@
-"""Tests for the LoopRelay orchestrator (IG-775).
+"""Tests for the LoopRelay orchestrator.
 
 Covers the full interrupt → park → resume lifecycle: capture from a
 ``GraphInterrupt``, origin-aware routing, resume command building (live

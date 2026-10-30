@@ -132,7 +132,7 @@ class Workspace:
             reconcile: When true, after the restore pass delete local files
                 that no longer exist in the content tree and are not
                 `protected` (the delete half of the read path — backend-side
-                deletions must not linger in the workspace, RFC-RD-607 §4.3).
+                deletions must not linger in the workspace, RFC-RD-607).
 
         Returns:
             Number of files downloaded (unchanged files are skipped).

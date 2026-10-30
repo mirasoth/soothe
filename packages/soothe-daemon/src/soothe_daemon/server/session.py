@@ -299,7 +299,7 @@ class ClientSessionManager:
     ) -> StreamDeliveryMode:
         """Return stream shaping mode for a client or loop.
 
-        §3.2: Preference is stored on `ClientSession`, not a shared
+        Preference is stored on `ClientSession`, not a shared
         per-loop map. When `client_id` is provided, that session's mode wins.
         Otherwise resolve via the client that owns in-flight work on `loop_id`.
 

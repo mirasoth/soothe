@@ -1,4 +1,4 @@
-"""Unit tests for executor-bound decompose_task (IG-751 P1)."""
+"""Unit tests for executor-bound decompose_task."""
 
 from __future__ import annotations
 

@@ -236,7 +236,7 @@ class LoopCardManager:
         mode: str,
         data: Any,
     ) -> None:
-        """Queue one stream tuple for background card binding (§2.3).
+        """Queue one stream tuple for background card binding.
 
         Never blocks the daemon stream hot path. Failures are logged in the
         per-loop ingest worker.

@@ -1,6 +1,6 @@
 """Plan-review clarification widget (plan_mode_review) — unified widget tests.
 
-After IG-767, plan-review and tool-approval HITL gates render through
+Plan-review and tool-approval HITL gates render through
 ``StructuredAskUserWidget`` with ``allow_custom=False`` and prefilled
 options (Approve / Refine or Edit / Reject).
 """

@@ -1,4 +1,4 @@
-"""IG-713: email HTML render includes progress, not full goal dump."""
+"""Email HTML render includes progress, not full goal dump."""
 
 from __future__ import annotations
 

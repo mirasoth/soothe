@@ -173,7 +173,7 @@ class TestStepDAGProperties:
 
 
 class TestStepDAGDecomposeStatuses:
-    """RFC-904 / IG-751 status and tree_green helpers."""
+    """RFC-904 status and tree_green helpers."""
 
     def test_decomposed_not_ready(self) -> None:
         dag = StepDAG()

@@ -1,4 +1,4 @@
-"""Unit tests for the identity service CLI (RFC-307 §CLI Commands).
+"""Unit tests for the identity service CLI (RFC-307).
 
 Exercises the ``soothed identity`` Typer sub-app end-to-end against a real
 ``IdentityService`` backed by a temp SQLite database:

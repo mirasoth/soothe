@@ -1,4 +1,4 @@
-"""Unit tests for streaming support (RFC-620 §6.3)."""
+"""Unit tests for streaming support (RFC-620)."""
 
 from __future__ import annotations
 

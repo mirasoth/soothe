@@ -1,4 +1,4 @@
-"""Tests for /clear cancelling in-flight queries (§1.1)."""
+"""Tests for /clear cancelling in-flight queries."""
 
 from __future__ import annotations
 

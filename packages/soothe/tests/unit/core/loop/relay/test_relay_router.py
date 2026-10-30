@@ -1,4 +1,4 @@
-"""Tests for the relay origin router (IG-775)."""
+"""Tests for the relay origin router."""
 
 from __future__ import annotations
 

@@ -1,7 +1,7 @@
-"""Unit tests for the numeric error code registry (RFC-450 §7, phase 2).
+"""Unit tests for the numeric error code registry (RFC-450, phase 2).
 
 Covers:
-- All 37 ErrorCode members have the correct numeric values per RFC-450 §7.3
+- All 37 ErrorCode members have the correct numeric values per RFC-450
 - ErrorCode is an IntEnum (ints, comparable, JSON-friendly)
 - Reserved range boundaries are respected
 - RpcProtocolError carries code/message/data/severity and serializes via to_dict
@@ -90,7 +90,7 @@ def test_error_code_count() -> None:
 
 @pytest.mark.parametrize("name, value", sorted(EXPECTED_VALUES.items(), key=lambda kv: kv[1]))
 def test_error_code_values(name: str, value: int) -> None:
-    """Each ErrorCode member has the RFC-450 §7.3 numeric value."""
+    """Each ErrorCode member has the RFC-450 numeric value."""
     member = getattr(ErrorCode, name)
     assert member.name == name
     assert int(member) == value
@@ -254,7 +254,7 @@ SEVERITY_EXPECTED: dict[str, str] = {
 
 @pytest.mark.parametrize("name, expected", sorted(SEVERITY_EXPECTED.items()))
 def test_severity_of(name: str, expected: str) -> None:
-    """severity_of returns the RFC-450 §7.2 tag for every code."""
+    """severity_of returns the RFC-450 tag for every code."""
     assert severity_of(getattr(ErrorCode, name)) == expected
 
 
@@ -509,7 +509,7 @@ def test_internal_error_constructor() -> None:
 
 
 def test_error_always_has_code_and_message() -> None:
-    """Every to_dict/to_envelope result carries error.code and error.message (RFC-450 §7.1)."""
+    """Every to_dict/to_envelope result carries error.code and error.message (RFC-450)."""
     for code in ErrorCode:
         err = RpcProtocolError(code, "msg")
         d = err.to_dict()

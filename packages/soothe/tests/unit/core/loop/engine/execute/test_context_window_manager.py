@@ -320,7 +320,7 @@ class TestContextCompactionResult:
 
 
 class TestEstimateCheckpointTokensUnifiedAPI:
-    """IG-761: estimate_checkpoint_tokens_sync uses the unified estimate_token_usage API."""
+    """estimate_checkpoint_tokens_sync uses the unified estimate_token_usage API."""
 
     def test_uses_actual_usage_metadata_when_present(self) -> None:
         """When AI messages carry usage_metadata, the real total is used (no estimation)."""

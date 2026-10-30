@@ -1,7 +1,7 @@
 """Verify daemon broadcast events from raw daemon API without TUI logic.
 
 This script connects to the daemon via SDK WebSocket client and verifies:
-1. Unified tool call IDs (IG-416 format)
+1. Unified tool call IDs
 2. Task delegation and step association
 3. Tool call and task instance association
 4. Stream tool wire events (soothe.stream.tool_call.update)

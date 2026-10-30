@@ -67,7 +67,7 @@ def test_extract_token_usage_sums_all_ai_turns() -> None:
 
 
 def test_estimate_token_usage_host_alias_actual_first() -> None:
-    """IG-761: host re-export of the unified estimate_token_usage API (actual-first)."""
+    """Host re-export of the unified estimate_token_usage API (actual-first)."""
     from langchain_core.messages import AIMessage, HumanMessage
 
     messages = [
@@ -87,7 +87,7 @@ def test_estimate_token_usage_host_alias_actual_first() -> None:
 
 
 def test_estimate_token_usage_host_alias_estimates_on_fallback() -> None:
-    """IG-761: host re-export estimates input + output when no usage_metadata."""
+    """Host re-export estimates input + output when no usage_metadata."""
     from langchain_core.messages import AIMessage, HumanMessage
 
     messages = [

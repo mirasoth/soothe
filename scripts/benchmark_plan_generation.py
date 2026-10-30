@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Plan Generation Performance Benchmark (IG-536).
+"""Plan Generation Performance Benchmark.
 
 Benchmarks LLMPlanner latency and accuracy using real system prompts and
 simulated tasks with ground truth plans.

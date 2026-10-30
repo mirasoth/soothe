@@ -141,7 +141,7 @@ def test_aggregate_metrics_empty_results(mock_core_agent, config, state):
 def test_aggregate_metrics_context_window_estimation(mock_core_agent, config, state):
     """Metrics aggregation estimates context window usage (input + output).
 
-    IG-761: the fallback path estimates BOTH input and output tokens via the
+    the fallback path estimates BOTH input and output tokens via the
     unified ``estimate_token_usage`` API, never output alone. With no
     ``usage_metadata`` present, the estimate covers prompt + response.
     """
@@ -298,7 +298,7 @@ def test_aggregate_metrics_multiple_cap_hits(mock_core_agent, config, state):
 
 
 def test_aggregate_metrics_no_double_counting_with_actual_usage(mock_core_agent, config, state):
-    """IG-761: when actual usage_metadata is present, no estimated counts are added."""
+    """When actual usage_metadata is present, no estimated counts are added."""
     from langchain_core.messages import AIMessage, HumanMessage
 
     executor = Executor(mock_core_agent, config=config)
@@ -331,7 +331,7 @@ def test_aggregate_metrics_no_double_counting_with_actual_usage(mock_core_agent,
 
 
 def test_aggregate_metrics_estimates_input_and_output_on_fallback(mock_core_agent, config, state):
-    """IG-761: fallback estimates BOTH input and output, not output alone."""
+    """Fallback estimates BOTH input and output, not output alone."""
     from langchain_core.messages import AIMessage, HumanMessage
 
     executor = Executor(mock_core_agent, config=config)

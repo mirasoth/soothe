@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Remove RFC-XXX/IG-XXX references from docstrings and description fields.
+"""Drop IG references and RFC section numbers from docstrings and description fields.
 
-Keeps references in comments (# ...) and internal docs. Per AGENTS.md §17:
-"Never reference external design docs, reports, or category taxonomies
-(e.g. "report 5.3", "category I", IG-XXX/RFC-XXX) in docstrings;
-docstrings must stand alone."
+Per operator policy: docstrings may cite RFC identifiers (provenance), but must
+not cite IG docs or RFC section numbers — those rot as documents are revised.
+Comments (# ...) are never touched.
+
+Matches both numbering schemes: `RFC-634`/`IG-774` and the namespaced
+`RFC-LOOP-030`/`IG-LOOP-014`/`RFC-CORE-008`.
 """
 
 from __future__ import annotations
@@ -13,98 +15,89 @@ import os
 import re
 import sys
 
+# One design-doc identifier: RFC-123, IG-456, RFC-LOOP-030, IG-LOOP-014, ...
+_IG = r"[Ii][Gg]-(?:[A-Z][A-Za-z]+-)?\d+(?:[ \t]+P\d+)?"
+_SECTION = r"§[\w/-]+(?:\.\d+)*"
+_KEEP_POINTER = re.compile(r"(AGENTS\.md|README\.md)[ \t]*§\d+")
+
 
 def remove_rfc_ig_refs(text: str) -> str:
-    """Remove RFC-XXX and IG-XXX references from a text string.
+    """Remove IG references and section numbers from a text string.
 
-    Only modifies text that contains RFC- or IG- references.
-    Preserves surrounding whitespace/indentation.
+    RFC identifiers are kept. Only modifies text that contains an IG
+    reference or a section marker; leading indentation is preserved.
     """
-    if "RFC-" not in text and "IG-" not in text:
+    if "IG-" not in text and "§" not in text:
         return text
 
     result = text
 
-    # Pattern: (RFC-XXX / IG-XXX) or (IG-XXX / RFC-XXX) etc - parenthetical with multiple refs
+    # `AGENTS.md §10` style pointers stay (in-repo doc, not an RFC/IG).
+    result = _KEEP_POINTER.sub(lambda m: m.group(0).replace("§", "\x01"), result)
+
+    # Parenthetical whose only content is refs: "(IG-751)", "(§32, P10)", ...
+    def _paren(match: re.Match[str]) -> str:
+        inner = match.group(1)
+        if "IG-" not in inner and "§" not in inner:
+            return match.group(0)
+        rest = re.sub(_SECTION, "", inner)
+        rest = re.sub(_IG, "", rest)
+        rest = re.sub(r"(?i)\bP\d+\b", "", rest)
+        rest = re.sub(r"[\s,;:—–-]", "", rest)
+        return "\x00" if rest == "" else match.group(0)
+
+    result = re.sub(r"[ \t]*\(([^()]*)\)", _paren, result, flags=re.S)
+
+    # `RFC-450 §6.3` -> `RFC-450`
+    result = re.sub(rf"(RFC-[A-Za-z0-9_-]+)[ \t]*{_SECTION}", r"\1", result)
+
+    # Remaining IG references, with the phrasing they were embedded in.
+    result = re.sub(rf"Regression \({_IG}\):", "Regression:", result)
+    result = re.sub(rf"Before {_IG},[ \t]*", "Previously, ", result)
+    result = re.sub(rf"After {_IG},[ \t]*(\w)", lambda m: m.group(1).upper(), result)
+    result = re.sub(rf"[ \t]*/[ \t]*{_IG}", "", result)
+    result = re.sub(_IG, "\x00", result)
+
+    # Section numbers not attached to an RFC id.
     result = re.sub(
-        r"\s*\([Rr][Ff][Cc]-\d+[Ss§]*[\d\.]*\s*"
-        r"(?:[/,]\s*)?"
-        r"(?:[Rr][Ff][Cc]-\d+[Ss§]*[\d\.]*\s*)*"
-        r"(?:[/,]\s*)?"
-        r"(?:[Ii][Gg]-\d+\s*)*"
-        r"(?:[/,]\s*)?"
-        r"(?:[Rr][Ff][Cc]-\d+[Ss§]*[\d\.]*\s*)*\)",
-        "",
-        result,
+        rf"(?m)^([ \t]*){_SECTION}\.[ \t]+", lambda m: m.group(1) + "\x00", result
     )
+    result = re.sub(rf"[ \t]*{_SECTION}[ \t]*:[ \t]*", "\x00", result)
+    result = re.sub(rf"[ \t]*{_SECTION}", "\x00", result)
 
-    # Pattern: (IG-XXX) or (RFC-XXX) - simple parenthetical
-    result = re.sub(r"\s*\((?:RFC-\d+[Ss§]*[\d\.]*|IG-\d+)\)", "", result)
+    # Tidy only the lines that lost something.
+    out = []
+    for line in result.split("\n"):
+        if "\x00" not in line:
+            out.append(line)
+            continue
+        stripped = line.lstrip(" ")
+        indent = line[: len(line) - len(stripped)]
+        s = stripped.replace("\x00", "")
+        s = re.sub(r"[ \t]+\.(?!\.)", ".", s)
+        s = re.sub(r"[ \t]+,(?!,)", ",", s)
+        s = re.sub(r"[ \t]{2,}", " ", s)
+        s = re.sub(r'^""":[ \t]*', '"""', s)
+        s = re.sub(r"^:[ \t]+", "", s)
+        s = s.rstrip()
+        if s == "" and stripped.strip() == "":
+            continue
+        out.append(indent + s)
 
-    # Pattern: (RFC-XXX ... anything ... ) where it starts with RFC or IG
-    result = re.sub(r"\s*\((?:RFC-\d+[^)]*|IG-\d+[^)]*)\)", "", result)
-
-    # Pattern: per RFC-XXX
-    result = re.sub(r"\s+per\s+RFC-\d+", "", result, flags=re.IGNORECASE)
-
-    # Pattern: RFC-XXX: at start or after whitespace
-    result = re.sub(r"RFC-\d+\s*§[\d\w]*\s*[:\s]*", "", result)
-
-    # Pattern: RFC-XXX §...
-    result = re.sub(r"RFC-\d+\s*§[\d\.\w]*", "", result)
-
-    # Pattern: RFC-XXX revised
-    result = re.sub(r"RFC-\d+\s+revised", "", result)
-
-    # Pattern: RFC-XXX Phase X
-    result = re.sub(r"RFC-\d+\s+Phase\s+\d+[Ss]?", "", result)
-
-    # Pattern: RFC-XXX,
-    result = re.sub(r"RFC-\d+\s*,\s*", "", result)
-
-    # Pattern: RFC-XXX (standalone or followed by space)
-    result = re.sub(r"RFC-\d+\s*", " ", result)
-
-    # Pattern: IG-XXX (standalone or followed by space)
-    result = re.sub(r"IG-\d+\s*", " ", result)
-
-    # Clean up: remove double spaces (but preserve leading whitespace)
-    stripped = result.lstrip()
-    leading_ws = result[: len(result) - len(stripped)]
-    result = leading_ws + re.sub(r"  +", " ", stripped)
-
-    # Clean up: trailing space before closing punctuation
-    result = re.sub(r"\s+\.", ".", result)
-    result = re.sub(r"\s+,", ",", result)
-
-    # Clean up: dangling comma after removing ref: "(read-only, )" -> "(read-only)"
-    result = re.sub(r",\s*\)", ")", result)
-
-    # Clean up: "whether  requires" -> "whether requires" (double space already handled above)
-
-    # Clean up: trailing space
-    result = result.rstrip()
-
-    # Clean up: leading dash on content (after whitespace)
-    result = re.sub(r"^(\s*)—\s*", r"\1", result)
-    result = re.sub(r"^(\s*)\.\s*", r"\1", result)
-
-    # Clean up: trailing " — " with nothing after (leftover dash)
-    result = re.sub(r"\s+—\s*$", "", result)
-
+    result = "\n".join(out).replace("\x01", "§")
     return result
 
 
 def fix_file(filepath: str, dry_run: bool = False) -> tuple[bool, int]:
-    """Fix RFC-/IG- references in docstrings and description fields.
+    """Fix IG/§-references in docstrings and description fields.
 
     Returns (changed, fix_count).
 
     Strategy: use a state machine to track whether we're inside a
     triple-quoted string (docstring). Only modify lines that are:
-    1. Inside a triple-quoted docstring AND contain RFC-/IG-
-    2. description="..." fields with RFC-/IG-
-    3. Lines that are part of multi-line string literals with RFC-/IG-
+    1. Inside a triple-quoted docstring AND contain IG-/§-
+    2. description="..." fields with IG-/§-
+    3. Lines that are part of multi-line string literals with IG-/§-
 
     Comments (# ...) are always preserved.
     """
@@ -136,8 +129,8 @@ def fix_file(filepath: str, dry_run: bool = False) -> tuple[bool, int]:
                 before = line[:idx]
                 after = line[idx + len(docstring_char) :]
 
-                # Fix the content part (before the closing quotes) only if it has RFC-/IG-
-                if "RFC-" in before or "IG-" in before:
+                # Fix the content part (before the closing quotes) only if it has IG-/§-
+                if "IG-" in before or "§" in before:
                     fixed_before = remove_rfc_ig_refs(before)
                     if fixed_before != before:
                         fix_count += 1
@@ -153,7 +146,7 @@ def fix_file(filepath: str, dry_run: bool = False) -> tuple[bool, int]:
                 continue
             else:
                 # Inside docstring, fix the line only if it has RFC-/IG-
-                if "RFC-" in line or "IG-" in line:
+                if "IG-" in line or "§" in line:
                     fixed_line = remove_rfc_ig_refs(line)
                     if fixed_line != line:
                         fix_count += 1
@@ -166,7 +159,7 @@ def fix_file(filepath: str, dry_run: bool = False) -> tuple[bool, int]:
 
         # Check for description="..." or description='...' (single line)
         desc_match = re.search(r'(description\s*=\s*)(["\'])(.*?)(\2)', line)
-        if desc_match and ("RFC-" in desc_match.group(3) or "IG-" in desc_match.group(3)):
+        if desc_match and ("IG-" in desc_match.group(3) or "§" in desc_match.group(3)):
             prefix = desc_match.group(1)
             quote = desc_match.group(2)
             content_str = desc_match.group(3)
@@ -195,7 +188,7 @@ def fix_file(filepath: str, dry_run: bool = False) -> tuple[bool, int]:
                     content = line[first_idx + len(tq) : last_idx]
                     after = line[last_idx:]
 
-                    if "RFC-" in content or "IG-" in content:
+                    if "IG-" in content or "§" in content:
                         fixed_content = remove_rfc_ig_refs(content)
                         if fixed_content != content:
                             fix_count += 1
@@ -211,8 +204,8 @@ def fix_file(filepath: str, dry_run: bool = False) -> tuple[bool, int]:
                     before_open = line[:last_tq_idx]
                     after_open = line[last_tq_idx + len(tq) :]
 
-                    # Fix the content after opening quote only if it has RFC-/IG-
-                    if "RFC-" in after_open or "IG-" in after_open:
+                    # Fix the content after opening quote only if it has IG-/§-
+                    if "IG-" in after_open or "§" in after_open:
                         fixed_after = remove_rfc_ig_refs(after_open)
                         if fixed_after != after_open:
                             fix_count += 1
@@ -238,9 +231,11 @@ def fix_file(filepath: str, dry_run: bool = False) -> tuple[bool, int]:
 
 def main():
     dry_run = "--dry-run" in sys.argv
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     packages = [
-        "/Users/chenxm/Workspace/soothe/packages/soothe/src",
-        "/Users/chenxm/Workspace/soothe/packages/soothe-daemon/src",
+        os.path.join(repo_root, "packages/soothe/src"),
+        os.path.join(repo_root, "packages/soothe-daemon/src"),
+        os.path.join(repo_root, "packages/soothe-cli/src"),
     ]
 
     total_files = 0
@@ -256,9 +251,7 @@ def main():
                     if changed:
                         total_files += 1
                         total_fixes += fixes
-                        changed_files.append(
-                            filepath.replace("/Users/chenxm/Workspace/soothe/", "")
-                        )
+                        changed_files.append(os.path.relpath(filepath, repo_root))
 
     mode = "DRY RUN" if dry_run else "APPLIED"
     print(f"\n{mode}: {total_files} files changed, {total_fixes} lines fixed")

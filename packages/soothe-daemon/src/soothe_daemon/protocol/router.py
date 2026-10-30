@@ -2004,11 +2004,11 @@ class MessageRouter:
         loop_id: str,
         sync_source: str,
     ) -> str | None:
-        """Open a remote-sync workspace for a new loop (RFC-906 §51).
+        """Open a remote-sync workspace for a new loop (RFC-906).
 
         Constructs the sync backend, opens a local workspace via the daemon's
         ``WorkspaceManager``, and returns the local root path. The agent
-        sees an ordinary filesystem path — never the remote URI (§52).
+        sees an ordinary filesystem path — never the remote URI.
 
         Args:
             client_id: Client connection identifier (for error responses).

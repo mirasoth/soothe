@@ -197,7 +197,7 @@ async def test_pipeline_propagates_processor_errors() -> None:
 
 
 def test_turn_apply_batcher_flushes_on_high_priority() -> None:
-    """§3.4: HIGH priority chunks bypass batch accumulation."""
+    """HIGH priority chunks bypass batch accumulation."""
     batcher: TurnApplyBatcher[str] = TurnApplyBatcher(max_batch_size=10, max_batch_delay_ms=50)
 
     @dataclass

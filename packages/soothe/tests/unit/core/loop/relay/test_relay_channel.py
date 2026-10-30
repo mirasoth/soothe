@@ -1,4 +1,4 @@
-"""Tests for the relay channel projection / hydration (IG-775).
+"""Tests for the relay channel projection / hydration.
 
 Covers the single reentrancy boundary: ``LoopPhaseScratch`` projection into
 the ``relay_state`` graph channel and its inverse hydration on a fresh worker

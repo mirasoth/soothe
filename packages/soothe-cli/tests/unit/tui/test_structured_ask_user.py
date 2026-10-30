@@ -1,4 +1,4 @@
-"""Unit tests for ``StructuredAskUserWidget`` (RFC-622 §9c)."""
+"""Unit tests for ``StructuredAskUserWidget`` (RFC-622)."""
 
 from __future__ import annotations
 

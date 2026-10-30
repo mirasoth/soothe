@@ -1,4 +1,4 @@
-"""Tests for DecomposeTaskMiddleware tool injection (IG-751)."""
+"""Tests for DecomposeTaskMiddleware tool injection."""
 
 from __future__ import annotations
 

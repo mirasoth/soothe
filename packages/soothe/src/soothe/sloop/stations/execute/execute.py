@@ -121,7 +121,7 @@ def _maybe_record_gate_answer(chunk: Any, state: Any) -> bool:
     Returns True when the chunk is a `clarification_auto_answered` custom
     event (consumed here — not forwarded as a stream event). The entry shape
     matches `await_clarification`'s history append so later veritas calls
-    see prior gate Q&A (RFC-635 §5).
+    see prior gate Q&A (RFC-635).
     """
     if not (isinstance(chunk, tuple) and len(chunk) == _STREAM_CHUNK_LEN):
         return False

@@ -1,4 +1,4 @@
-"""Unit tests for deterministic decompose reconcile (IG-751 P2)."""
+"""Unit tests for deterministic decompose reconcile."""
 
 from __future__ import annotations
 

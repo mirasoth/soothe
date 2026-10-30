@@ -69,7 +69,7 @@ async def subscribe_loop_stream(
 ) -> dict[str, Any]:
     """Subscribe to a loop stream and return the protocol-1 subscribe-ack.
 
-    Under protocol-1 (RFC-450 §9.3) the daemon confirms a ``loop_events``
+    Under protocol-1 (RFC-450) the daemon confirms a ``loop_events``
     subscription with a ``next`` envelope carrying ``payload.event == "subscribed"``
     and the subscription ``id``. The SDK ``subscribe()`` already waits for that
     ack (or an error); this helper drains it from the inbound queue so callers

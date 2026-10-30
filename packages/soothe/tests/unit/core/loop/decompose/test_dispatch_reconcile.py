@@ -1,4 +1,4 @@
-"""Unit tests for DISPATCH / RECONCILE / ROOT_EVAL stations (IG-751 P3)."""
+"""Unit tests for DISPATCH / RECONCILE / ROOT_EVAL stations."""
 
 from __future__ import annotations
 

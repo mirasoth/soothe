@@ -1,4 +1,4 @@
-"""IG-713: NotifyDispatcher + email/webhook/feishu sinks."""
+"""NotifyDispatcher + email/webhook/feishu sinks."""
 
 from __future__ import annotations
 

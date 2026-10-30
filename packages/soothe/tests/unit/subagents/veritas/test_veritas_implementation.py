@@ -337,7 +337,7 @@ async def test_structured_dict_questions_do_not_crash(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """RFC-622 §9c: clarification questions may be QuestionSpec.model_dump() dicts.
+    """RFC-622: clarification questions may be QuestionSpec.model_dump() dicts.
 
     Regression: in auto clarification mode, ``_preview_questions`` eagerly formatted
     dict questions into the debug log and crashed with

@@ -1,4 +1,4 @@
-"""Unit tests for credentials module (RFC-307 §AKSKPair).
+"""Unit tests for credentials module (RFC-307).
 
 Tests AKSK credential generation, hashing, validation, and format checking.
 """

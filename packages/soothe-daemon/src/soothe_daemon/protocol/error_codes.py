@@ -171,8 +171,8 @@ class RpcProtocolError(Exception):
     def to_dict(self) -> dict[str, Any]:
         """Serialize the error object to a wire-ready envelope.
 
-        Produces the `{type:'error', error:{code, message, data?}}` envelope
-        §7.1. The nested `error` object always carries `code`
+        Produces the `{type:'error', error:{code, message, data?}}` envelope.
+        The nested `error` object always carries `code`
         and `message`; `data` is omitted when empty (no extra context).
 
         Returns:

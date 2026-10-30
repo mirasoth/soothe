@@ -189,7 +189,7 @@ async def test_low_confidence_degrades_to_fallback_when_enabled() -> None:
 
 @pytest.mark.asyncio
 async def test_explicit_defer_degrades_to_fallback_when_enabled() -> None:
-    """IG-768: explicit defer now also degrades to manual when a fallback is wired."""
+    """Explicit defer now also degrades to manual when a fallback is wired."""
     fallback = _AnnounceFallback()
     policy = AutoClarificationPolicy(
         _veritas_returning(
@@ -207,7 +207,7 @@ async def test_explicit_defer_degrades_to_fallback_when_enabled() -> None:
 
 @pytest.mark.asyncio
 async def test_answer_was_question_degrades_to_fallback_when_enabled() -> None:
-    """IG-768: answer_was_question now also degrades to manual when a fallback is wired."""
+    """answer_was_question now also degrades to manual when a fallback is wired."""
     fallback = _AnnounceFallback()
     policy = AutoClarificationPolicy(
         _veritas_returning(
@@ -228,7 +228,7 @@ async def test_answer_was_question_degrades_to_fallback_when_enabled() -> None:
 
 @pytest.mark.asyncio
 async def test_empty_answers_degrades_to_fallback_when_enabled() -> None:
-    """IG-768: empty veritas answers also degrade to manual when a fallback is wired."""
+    """Empty veritas answers also degrade to manual when a fallback is wired."""
     fallback = _AnnounceFallback()
     policy = AutoClarificationPolicy(
         _veritas_returning(
@@ -479,7 +479,7 @@ async def test_force_manual_origin_uses_fallback_and_skips_veritas() -> None:
 
 @pytest.mark.asyncio
 async def test_force_manual_origin_defers_without_fallback() -> None:
-    """IG-768: force-manual origin without fallback now retries (autopilot default).
+    """Force-manual origin without fallback now retries (autopilot default).
     Use autopilot_retry_on_fail=False to get the legacy hard defer."""
 
     async def _veritas(_req: ClarificationRequest) -> VeritasAnswerSchema:
@@ -499,7 +499,7 @@ async def test_force_manual_origin_defers_without_fallback() -> None:
 
 @pytest.mark.asyncio
 async def test_force_manual_origin_autopilot_retry_without_fallback() -> None:
-    """IG-768: force-manual origin in autopilot returns retry instead of hard defer."""
+    """Force-manual origin in autopilot returns retry instead of hard defer."""
 
     async def _veritas(_req: ClarificationRequest) -> VeritasAnswerSchema:
         raise AssertionError("veritas must not run for force-manual origins")

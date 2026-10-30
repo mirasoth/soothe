@@ -90,7 +90,7 @@ def test_validate_message_invoke_skill_missing_skill() -> None:
 
 
 def test_validate_message_unknown_type() -> None:
-    """Test message with unknown type is rejected (RFC-450 §6.3)."""
+    """Test message with unknown type is rejected (RFC-450)."""
     msg = {"type": "custom", "data": "test"}
     errors = validate_message(msg)
     assert len(errors) == 1
@@ -111,7 +111,7 @@ def test_validate_message_size_large() -> None:
 
 
 def test_protocol_error_creation() -> None:
-    """Test RpcProtocolError creation with numeric code (RFC-450 §7.4)."""
+    """Test RpcProtocolError creation with numeric code (RFC-450)."""
     error = RpcProtocolError(
         ErrorCode.INVALID_REQUEST,
         "Invalid message structure",
@@ -155,7 +155,7 @@ def test_protocol_error_to_dict_no_data() -> None:
 
 
 def test_build_error_response() -> None:
-    """Test build_error_response helper produces wire envelope (RFC-450 §7.1)."""
+    """Test build_error_response helper produces wire envelope (RFC-450)."""
     response = build_error_response(
         ErrorCode.INVALID_REQUEST,
         "Invalid message",

@@ -1,4 +1,4 @@
-"""Unit tests for the structured coverage_verdict Eval tool (IG-780)."""
+"""Unit tests for the structured coverage_verdict Eval tool."""
 
 from __future__ import annotations
 

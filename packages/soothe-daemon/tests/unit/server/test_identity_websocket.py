@@ -1,4 +1,4 @@
-"""WebSocket auth integration tests (RFC-307 §Authentication Flow).
+"""WebSocket auth integration tests (RFC-307).
 
 Covers the full WebSocket auth flow end-to-end against a real
 ``IdentityService`` + ``AuthHandler`` + ``MessageRouter``:

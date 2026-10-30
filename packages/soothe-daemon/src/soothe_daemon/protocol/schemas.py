@@ -263,8 +263,7 @@ class JobDagParams(ParamsBase):
 class JobGuidanceParams(ParamsBase):
     """Params for method=job_guidance, type=request.
 
-    The canonical field name for the guidance text is `content` (
-    §10.1).
+    The canonical field name for the guidance text is `content`.
     """
 
     job_id: str = Field(..., min_length=1)

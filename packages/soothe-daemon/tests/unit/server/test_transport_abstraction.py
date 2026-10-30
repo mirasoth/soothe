@@ -48,7 +48,7 @@ class TestProtocolV2:
         assert "cmd" in errors[0]
 
     def test_validate_resume_thread_message_rejected(self) -> None:
-        """resume_thread is not a known protocol-1 type — rejected (RFC-450 §6.3)."""
+        """resume_thread is not a known protocol-1 type — rejected (RFC-450)."""
         msg = {"type": "resume_thread", "thread_id": "abc123"}
         errors = validate_message(msg)
         assert len(errors) == 1
@@ -67,7 +67,7 @@ class TestProtocolV2:
         assert errors == []
 
     def test_validate_unknown_message_type_rejected(self) -> None:
-        """Unknown message types are rejected per RFC-450 §6.3."""
+        """Unknown message types are rejected per RFC-450."""
         msg = {"type": "future_message_type", "data": "value"}
         errors = validate_message(msg)
         assert len(errors) == 1

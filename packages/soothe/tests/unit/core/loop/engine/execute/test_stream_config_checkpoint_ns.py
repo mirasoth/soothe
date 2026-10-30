@@ -1,7 +1,7 @@
 """The execute stream config must not inherit the parent graph's checkpoint
 coordinates — doing so nests the CoreAgent under the StrangeLoop execute-node
-task namespace, where interrupts are unreachable by ``Command(resume)``
-(IG-763, loops 573f / d491). The config-injected checkpointer must be
+task namespace, where interrupts are unreachable by ``Command(resume)``.
+The config-injected checkpointer must be
 preserved: the execution twin graph is compiled without one (lazy pool init)
 and receives it via the config (loop 776b regression)."""
 

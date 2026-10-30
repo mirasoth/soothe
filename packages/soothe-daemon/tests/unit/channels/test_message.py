@@ -1,4 +1,4 @@
-"""Unit tests for ChannelMessage dataclass (RFC-620 §2.1)."""
+"""Unit tests for ChannelMessage dataclass (RFC-620)."""
 
 from __future__ import annotations
 

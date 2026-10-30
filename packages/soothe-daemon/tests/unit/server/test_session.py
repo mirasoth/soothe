@@ -84,7 +84,7 @@ async def test_subscribe_loop_preserves_stream_delivery_when_omitted():
 
 @pytest.mark.asyncio
 async def test_stream_delivery_isolated_per_client_on_same_loop():
-    """§3.2: subscribing client B must not overwrite client A's preference."""
+    """Subscribing client B must not overwrite client A's preference."""
     bus = EventBus()
     manager = ClientSessionManager(bus)
 

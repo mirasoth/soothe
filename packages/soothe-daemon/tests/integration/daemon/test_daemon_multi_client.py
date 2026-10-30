@@ -21,7 +21,7 @@ from tests.integration.daemon_fixtures import (
 
 
 async def _connect_and_drain_handshake(client: WebSocketClient) -> None:
-    """Connect and complete the protocol-1 handshake (RFC-450 §8.2)."""
+    """Connect and complete the protocol-1 handshake (RFC-450)."""
     await client.connect()
     await client.request_connection_init()
     await client.wait_for_connection_ack()
@@ -30,7 +30,7 @@ async def _connect_and_drain_handshake(client: WebSocketClient) -> None:
 async def _first_event_with_client_id(client: WebSocketClient, *, timeout_s: float = 10.0) -> dict:
     """Read until a wire frame carries a ``client_id`` field.
 
-    Under protocol-1 (RFC-450 §9.3) the daemon confirms a ``loop_events``
+    Under protocol-1 (RFC-450) the daemon confirms a ``loop_events``
     subscription with a ``next`` envelope whose ``payload`` carries
     ``client_id``; generic status frames do not. The helper unwraps ``next``
     envelopes and accepts any wire shape so it stays robust to protocol

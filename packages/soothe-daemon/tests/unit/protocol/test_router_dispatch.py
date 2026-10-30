@@ -1,4 +1,4 @@
-"""Tests for the registry-based MessageRouter dispatch (RFC-450 §6/§9, Phase 4).
+"""Tests for the registry-based MessageRouter dispatch (RFC-450, Phase 4).
 
 Covers:
 - ``HANDLER_REGISTRY`` covers all message types previously dispatched via if-chain

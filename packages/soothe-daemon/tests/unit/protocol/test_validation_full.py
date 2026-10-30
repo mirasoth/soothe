@@ -1,4 +1,4 @@
-"""Tests for validate_message covering ALL message types (RFC-450 §6.3, Phase 8).
+"""Tests for validate_message covering ALL message types (RFC-450, Phase 8).
 
 For each (type, method) pair in PARAMS_REGISTRY, this file tests:
 - Valid params → empty error list
@@ -99,7 +99,7 @@ class TestEnvelopeValidation:
         assert "Unknown method" in errors[0] or "Unknown" in errors[0]
 
     def test_valid_types_includes_all_message_classes(self) -> None:
-        """VALID_TYPES must include all RFC-450 §9.1 message classes."""
+        """VALID_TYPES must include all RFC-450 message classes."""
         for t in (
             "connection_init",
             "connection_ack",

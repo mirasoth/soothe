@@ -289,7 +289,7 @@ class _MockDaemon:
         accept_proto: list[str] | None = None,
         client_capabilities: list[str] | None = None,
     ) -> dict[str, Any]:
-        """Build a ``connection_ack`` message per RFC-450 §8.2."""
+        """Build a ``connection_ack`` message per RFC-450."""
         daemon_caps = ["streaming", "batch", "heartbeat"]
         client_caps = client_capabilities or []
         negotiated = [c for c in daemon_caps if c in client_caps]
