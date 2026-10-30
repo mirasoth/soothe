@@ -59,9 +59,7 @@ def remove_rfc_ig_refs(text: str) -> str:
     result = re.sub(_IG, "\x00", result)
 
     # Section numbers not attached to an RFC id.
-    result = re.sub(
-        rf"(?m)^([ \t]*){_SECTION}\.[ \t]+", lambda m: m.group(1) + "\x00", result
-    )
+    result = re.sub(rf"(?m)^([ \t]*){_SECTION}\.[ \t]+", lambda m: m.group(1) + "\x00", result)
     result = re.sub(rf"[ \t]*{_SECTION}[ \t]*:[ \t]*", "\x00", result)
     result = re.sub(rf"[ \t]*{_SECTION}", "\x00", result)
 
