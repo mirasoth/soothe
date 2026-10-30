@@ -6,7 +6,7 @@
 **Kind**: Architecture Design
 **Created**: 2026-06-02
 **Authors**: Soothe Team
-**Updated**: 2026-08-27
+**Updated**: 2026-10-30
 **Depends on**: RFC-LOOP-010, RFC-LOOP-017, RFC-PLUG-001, RFC-PLUG-002, RFC-DAEM-002
 **Supersedes**: Empty-answer auto-resume behavior previously encoded in `sloop/engine/graph_interrupt.py::build_auto_resume_payload` for `type=="ask_user"` interrupts.
 
@@ -965,6 +965,12 @@ Integration:
 
 ## Changelog
 
+- 2026-10-30: `tool_approval` decision flow superseded by the RFC-LOOP-030
+  four-layer funnel (severity-tiered nano hard rules → loop-scoped grants →
+  veritas with the built-in Jev decision fast path → human relay). Relay
+  architecture, origins, protocol, and the daemon → UI human-delivery path
+  are unchanged; an interrupt reaching the station still means a human
+  decision is wanted.
 - 2026-10-07: Terminology cleanse "autopilot" → "loop-rail runs" / "headless runs" / "LoopRailService" throughout; semantics unchanged. RFC-222 dependency replaced by RFC-LOOP-017 (RFC-222 archived 2026-10-07; CE report-commit boundary now normative in RFC-LOOP-017 §4/§17).
 - 2026-08-27: §9b.5a Manual-mode pipeline pre-filter + `manual_scope`; force-manual `tool_approval` skips allow rules; §9b.5, §9b.8, §12 updated. `ToolApprovalPipeline.evaluate` gains `include_allow_rules` kwarg; `InteractiveClarificationPolicy` gains `tool_approval_pipeline` / `manual_allow_rules` init args.
 - 2026-08-27: §9c Structured `ask_user` schema + `StructuredAskUserWidget` (tab navigation, inline long-desc per option, 4th custom free-text row, persistent Submit/Abandon footer). Applies to generic execute render path only; HITL plan-review and tool-approval modes untouched.

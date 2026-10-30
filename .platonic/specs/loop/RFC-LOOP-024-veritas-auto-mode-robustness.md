@@ -5,7 +5,7 @@
 **Status**: Implemented
 **Kind**: Implementation Interface Design
 **Created**: 2026-06-03
-**Updated**: 2026-08-19
+**Updated**: 2026-10-30
 **Authors**: Soothe Team
 **Depends on**: RFC-LOOP-023, RFC-LOOP-010, RFC-DAEM-002
 **Supersedes**: ---
@@ -383,3 +383,17 @@ Same scenario but a TUI is attached: `_runner_strange_loop` wired `emit`, so `in
 RFC-LOOP-024 closes a structured-output reliability gap in the RFC-LOOP-023 auto-mode clarification relay. By migrating veritas onto the shared `invoke_structured_chat` helper and enforcing the *exactly N non-empty answers or defer* contract directly in the JSON Schema sent to the model, the empty-but-not-deferred failure mode that prematurely defers loops becomes structurally impossible. A defer-kind taxonomy and an opt-in interactive fallback give operators the visibility and the recovery path that auto mode was missing.
 
 > Auto mode is only useful if veritas can actually answer; veritas can only answer if the structured-output path enforces the contract upfront. RFC-LOOP-024 makes that contract first-class.
+
+---
+
+## Changelog
+
+- 2026-10-30: RFC-LOOP-030 adds a decision fast path ahead of the LLM call:
+  requests carrying a decision subject are first classified by the Jev
+  calibrated model (allow/reject resolve inline with
+  `source="decision_model"`; trusted `escalate` and untrusted/unavailable
+  verdicts fall through to the LLM, `escalate` with the risk hint embedded
+  in the prompt). `VeritasAnswerSchema` gains a `source` field; the
+  structured-output contract, defer taxonomy, and fallback ladder defined
+  here are unchanged, and the `min_confidence` gate continues to apply to
+  LLM-sourced results only.

@@ -1,6 +1,6 @@
 # loop RFC Index (LOOP)
 
-**Last Updated**: 2026-10-21  |  **RFCs**: 28
+**Last Updated**: 2026-10-30  |  **RFCs**: 29
 
 | ID | Title | Kind | Status |
 |----|-------|------|--------|
@@ -32,3 +32,4 @@
 | [RFC-LOOP-027](RFC-LOOP-027-planner-plan-artifact-and-human-review.md) | Planner Plan Artifact and Human Review | Architecture Design | Implemented |
 | [RFC-LOOP-028](RFC-LOOP-028-automode-middleware.md) | AutoModeMiddleware — Inline Tool-Approval Gate (Phase 1) | Implementation Interface Design | Implemented |
 | [RFC-LOOP-029](RFC-LOOP-029-askuser-gate-middleware.md) | AskUserGateMiddleware — Inline Veritas Fast Path for `ask_user` | Implementation Interface Design | Implemented |
+| [RFC-LOOP-030](RFC-LOOP-030-risk-tiered-security-and-clarification-automation.md) | Risk-Tiered Security, Loop Grants, and the Veritas Decision Fast Path | Implementation Interface Design | Proposed |

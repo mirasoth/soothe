@@ -2,8 +2,8 @@
 
 This document tracks the chronological evolution of RFCs in the Soothe project.
 
-**Last Updated**: 2026-10-07
-**Total RFCs**: 97 (81 active + 16 archived)
+**Last Updated**: 2026-10-30
+**Total RFCs**: 97 (78 active + 19 archived)
 
 > Summary statistics (by status and kind) live in [rfc-index.md](rfc-index.md).
 > The RFC lifecycle (Draft → Proposed → Accepted → Implemented → Deprecated →
@@ -11,6 +11,43 @@ This document tracks the chronological evolution of RFCs in the Soothe project.
 > `rfc-index.md`.
 
 ## Recent Changes
+
+### 2026-10-30 (RFC-LOOP-030 + risk-tiered security spec updates)
+
+- **RFC-LOOP-030 — Added**: Risk-Tiered Security, Loop Grants, and the
+  Veritas Decision Fast Path (Implementation Interface Design, Proposed).
+  Cross-repo spec (soothe-nano + soothe) for autoresearch-oriented
+  clarification automation:
+  - Security rules consolidate into a single severity-tiered nano registry;
+    only `critical` rules hard-deny by default (`hard_deny_severities`,
+    uniform for all downstream consumers). Sub-critical matches return a new
+    `risk_hint` verdict that downstream consumers without a judgment layer
+    treat as allow-with-audit.
+  - soothe's built-in `tool_approval.deny_rules` migrate into nano (path
+    rules dropped as duplicates); user-configured deny rules remain the
+    host-side extension point.
+  - The Jev calibrated classifier is inherited into veritas as a built-in
+    fast path (Jev first, LLM second; untrusted/unavailable falls to the
+    LLM; trusted `escalate` goes to the LLM with a risk hint).
+  - Loop-scoped grants (`LoopGrantStore`, 256-record cap) generalize veritas
+    / Jev approvals to prefix/family matches so repeated shapes cost zero
+    model calls; a normative model-call budget is specified.
+  - daemon → UI clarification relay unchanged (guaranteed human-delivery
+    path).
+  - Implementation guide: [IG-LOOP-014](../impl/loop/IG-LOOP-014-risk-tiered-security-and-veritas-decision-fast-path.md).
+- **RFC-LOOP-023 — Updated**: changelog entry; `tool_approval` decisions now
+  flow through the RFC-LOOP-030 four-layer funnel. Relay architecture and
+  daemon → UI path unchanged.
+- **RFC-LOOP-024 — Updated**: changelog section added; veritas gains the
+  RFC-LOOP-030 decision fast path ahead of the LLM call
+  (`VeritasAnswerSchema.source`); structured-output contract and defer
+  taxonomy unchanged.
+- **RFC-LOOP-028 — Updated**: changelog section added; §4 Phase 2 pointer
+  now resolves to RFC-LOOP-030 (realized as a veritas leg, not a direct
+  classifier consult in the gate).
+- **RFC-CORE-008 — Updated**: `OperationSecurityDecision` verdict set gains
+  `risk_hint` with a `severity` field; `hard_deny_severities` on
+  `SecurityConfig` defaults to `{"critical"}`.
 
 ### 2026-10-07 (RFC-900 + methodology-guide deletion + templates cleanup + specs-refine)
 

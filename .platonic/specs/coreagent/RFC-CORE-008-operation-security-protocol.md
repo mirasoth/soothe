@@ -6,7 +6,7 @@
 **Kind**: Architecture Design
 **Created**: 2026-04-30
 **Authors**: Soothe Team
-**Updated**: 2026-04-30
+**Updated**: 2026-10-30
 **Depends on**: RFC-CORE-003, RFC-CORE-004, RFC-PROT-005, RFC-613
 **Note**: Reclassified from 6xx to 9xx segment (security/policy specs consolidation).
 
@@ -69,9 +69,10 @@ class OperationSecurityProtocol(Protocol):
   - `security_config`: optional security configuration object
 
 - `OperationSecurityDecision`
-  - `verdict`: `allow`, `deny`, `need_approval`
+  - `verdict`: `allow`, `deny`, `need_approval`, `risk_hint`
   - `reason`: human-readable reason
   - `rule_id`: optional stable rule id for auditing
+  - `severity`: optional rule risk level (`critical`, `high`, `medium`)
 
 ---
 
@@ -82,9 +83,18 @@ Operation security is evaluated before profile permission matching:
 1. Normalize operation kind from tool metadata.
 2. Apply operation-specific rules:
    - Filesystem operation -> path and file-type checks (RFC-CORE-003 semantics).
-   - Execution operation -> command safety deny checks.
-3. Return decision:
+   - Execution operation -> command safety checks.
+3. Map the matched rule's severity through `security.hard_deny_severities`
+   (default `{"critical"}`):
+   - severity in the hard set (or an operator-configured match) -> `deny`.
+   - sub-critical match -> `risk_hint` carrying `rule_id` + `severity`.
+4. Return decision:
    - `deny` or `need_approval` short-circuits permission matching.
+   - `risk_hint` is a hard-rule miss with advisory metadata: enforcement
+     points without a judgment layer treat it as **allow-with-audit** (the
+     action executes; the decision carries the rule id / severity and logs a
+     warning). Judgment-capable hosts (soothe) consume the hint as dynamic
+     routing input instead of allowing blindly.
    - `allow` proceeds to existing `PolicyProtocol` permission checks.
 
 ---
@@ -97,6 +107,11 @@ Operation security is evaluated before profile permission matching:
 - Path must match allowed patterns (`security.allowed_paths`).
 - Workspace boundary enforced using dynamic workspace (`context.workspace`) first.
 - File-type deny and approval lists are applied.
+- Severity is operation-kind aware: sensitive system paths and the workspace
+  boundary are `critical` on write and advisory (`high`/`medium`) on read;
+  dangerous path components (`.git`, `.env*`, shell rc, …) are `high` on
+  write, `medium` on read. Operator-configured matches stay absolute
+  (`critical`).
 
 ### Execution Rules
 
@@ -104,6 +119,12 @@ Operation security is evaluated before profile permission matching:
 - Rules apply consistently to command-bearing host execution tools:
   - `run_command` (SDK display aliases: `shell`, `bash`)
   - `run_background`
+- Only `critical` rules (irreversible system destruction, device writes,
+  pipe-to-shell, daemon/process self-protection) hard-deny by default; the
+  remainder (privileged execution, recursive permission changes, package
+  installs, force-push, …) surface as `risk_hint`. The rule registry is the
+  single source of truth — soothe's built-in host-side deny list has been
+  consolidated here (RFC-LOOP-030 §4.4).
 
 ---
 
@@ -124,7 +145,13 @@ Operation security is evaluated before profile permission matching:
 
 - Existing `PolicyProtocol` public contracts remain unchanged.
 - Existing profile names and permission sets remain unchanged.
-- New behavior is additive and strengthens pre-existing security decisions.
+- Rules inside the hard set (`critical`, plus operator-configured matches)
+  keep their existing deny semantics.
+- **Posture change (RFC-LOOP-030)**: sub-critical rule matches no longer
+  hard-deny by default — they return `risk_hint` and downstream consumers
+  without a judgment layer treat them as allow-with-audit. Operators restore
+  the previous behavior by setting `hard_deny_severities` to include `high`
+  and `medium`.
 
 ---
 
@@ -142,3 +169,16 @@ Operation security is evaluated before profile permission matching:
 - RFC-CORE-004: Thread-Aware Workspace
 - RFC-PROT-005: PolicyProtocol Architecture
 - RFC-613: Explore Agent LLM-Orchestrated Search
+- RFC-LOOP-030: Risk-Tiered Security, Loop Grants, and the Veritas Decision
+  Fast Path (severity tiers, `risk_hint` consumption, grant write-back)
+
+---
+
+## Changelog
+
+- 2026-10-30: RFC-LOOP-030 adds severity tiering to the rule registry and a
+  `risk_hint` verdict; `OperationSecurityDecision` gains `severity`, and
+  `SecurityConfig` gains `hard_deny_severities` (default `{"critical"}`,
+  uniform for all downstream consumers). soothe's built-in tool-approval deny
+  rules consolidate into this registry. `allow` / `deny` / `need_approval`
+  semantics for rules inside the hard set are unchanged.

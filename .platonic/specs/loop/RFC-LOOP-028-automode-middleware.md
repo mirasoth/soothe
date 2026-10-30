@@ -5,7 +5,7 @@
 **Status**: Implemented
 **Kind**: Implementation Interface Design
 **Created**: 2026-09-20
-**Updated**: 2026-09-20
+**Updated**: 2026-10-30
 **Authors**: Soothe Team
 **Depends on**: RFC-LOOP-023, RFC-LOOP-024
 **Supersedes**: The station-side tool-approval pipeline evaluation (partial)
@@ -233,6 +233,10 @@ are dead paths.
 - No LLM classifier in the gate (the typesafe `AutoModeMiddleware` parity —
   calibrated-probability risk classification — is a Phase 2 extension point:
   the decision table's stage 5b would consult a classifier before allowing).
+  Phase 2 is specified by RFC-LOOP-030 and realized as a **veritas leg**
+  rather than a direct classifier consult: stage-5b calls route to the
+  shared veritas answerer, whose built-in Jev decision fast path screens
+  them first, with the LLM as fallback.
 - No changes to non-`tool_approval` origins (`execute`, `plan_mode_review`,
   `rail_pause`): veritas auto-answering, defer taxonomy, and the auto→manual
   upgrade path are untouched.
@@ -262,3 +266,19 @@ are dead paths.
 - Wiring: builder installs the gate and no longer passes `interrupt_on`;
   executor writes the new configurable keys.
 - Prompt tests: tool-approval prompt variants removed.
+
+---
+
+## Changelog
+
+- 2026-10-30: RFC-LOOP-030 supersedes the middleware's direct classifier
+  wiring. `classifier` / `classifier_config` constructor args and
+  `_apply_classification` are removed; stage-5b rule-unresolved calls route
+  to the shared veritas answerer (Jev decision fast path → LLM), with
+  prefix/family grant write-back on approve and defer falling to the existing
+  interrupt / autopilot-degrade ladder. Stage semantics otherwise change
+  only in that `escalate` means "hand to the dynamic layer" (severity-tiered
+  nano rules with `risk_hint` verdicts) instead of "find a human"; the
+  interrupt payload shape (§3.2) is unchanged. Built-in deny rules migrate
+  into the nano registry; `deny_rules` remains the user-configured
+  host-side extension point.

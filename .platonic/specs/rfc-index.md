@@ -1,7 +1,7 @@
 # RFC Index
 
-**Last Updated**: 2026-10-22
-**Total RFCs**: 96 (77 active, 19 archived)
+**Last Updated**: 2026-10-30
+**Total RFCs**: 97 (78 active, 19 archived)
 
 This index is the canonical catalog of all RFCs in the Soothe project. It also
 serves as the deprecation list and archived-RFC table.
@@ -51,7 +51,7 @@ serves as the deprecation list and archived-RFC table.
 | Namespace | Prefix | RFCs | Description |
 |-----------|--------|------|-------------|
 | [`coreagent/](coreagent/rfc-index.md) | CORE | 10 | CoreAgent runtime - tools, workspace, filesystem security, context injection |
-| [`loop/](loop/rfc-index.md) | LOOP | 28 | StrangeLoop plan-execute loop - cognition, prompting, context, intake, middleware |
+| [`loop/](loop/rfc-index.md) | LOOP | 29 | StrangeLoop plan-execute loop - cognition, prompting, context, intake, middleware |
 | [`protocol/](protocol/rfc-index.md) | PROT | 7 | Protocol architectures (context, memory, planner, policy, durability, identity) |
 | [`daemon/](daemon/rfc-index.md) | DAEM | 8 | Daemon - events, MCP, channels, thread management, IPC |
 | [`client/](client/rfc-index.md) | CLNT | 9 | Client & presentation - TUI, display, appkit, streaming, widgets |
@@ -76,13 +76,14 @@ Non-RFC root docs: [`rest-api-spec.md`](rest-api-spec.md) (daemon REST API contr
 | Implemented (partial) | 39 |
 | Implemented | 30 |
 | Draft | 8 |
+| Proposed | 1 |
 
 ## RFC Kind Summary
 
 | Kind | Count |
 |---|---|
 | Architecture Design | 58 |
-| Implementation Interface Design | 16 |
+| Implementation Interface Design | 17 |
 | Architecture Design + Protocol Specification | 1 |
 | Architecture Design + Implementation Interface Design | 1 |
 | Conceptual Design | 1 |
