@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.2.4] - 2026-10-30
+
 ### Changed
 
 - RFC-LOOP-030 risk-tiered security and clarification automation: the built-in `tool_approval.deny_rules` migrate into nano's severity-tiered registry (`command.restricted.*` at `high`; sensitive system paths stay `critical` on write), so `deny_rules` is now the user-defined extension point only (default empty). Sub-critical nano security matches surface as `risk_hints` on the pipeline's `default_approve` result instead of escalating to a human.
@@ -18,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Clarification relay no longer re-issues the same question on resume. `AutoClarificationPolicy._answer_gate_deferred` now respects the `resume_turn` marker (mirroring `_answer_tool_approval`) so a gate-deferred `ask_user` is consumed without re-announcing when a human answer is already in flight — the operator saw the identical card twice on every resume turn (loop a47a).
 - `LoopRelay.hydrate_from_channels` is now idempotent: it skips the inbox rebuild when the in-memory inbox already matches the checkpoint's interrupt-id sequence, so repeated node entries during a resume turn don't re-enqueue the same parked interrupt three times (loop a47a).
 - `TypeSafeRiskClassifier` now circuit-breaks on permanent HTTP failures (401/403/404/410/451): after the first such error the backend is marked unavailable for the rest of the run and subsequent `classify` calls short-circuit to `unavailable` verdicts instead of retrying the endpoint on every tool call (loop a47a: 75 redundant 451 round-trips).
+
+[Compare with previous version]: https://github.com/mirasoth/soothe/compare/v1.2.3...v1.2.4
 
 ## [v1.2.3] - 2026-10-24
 
