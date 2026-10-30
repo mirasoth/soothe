@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from soothe.sloop.clarification.risk_classifier import (
+from soothe.subagents.veritas.decision_model import (
     NullRiskClassifier,
     RiskQuery,
     TypeSafeRiskClassifier,

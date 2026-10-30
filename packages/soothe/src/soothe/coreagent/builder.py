@@ -79,10 +79,12 @@ class AgentBuilder(nano_builder.AgentBuilder):
     def _build_auto_mode_gate(self) -> Any | None:
         """Build the RFC-634 inline tool-approval gate from config.
 
-        The gate replaces the old ``interrupt_on`` HITL wiring: deny-rule and
+        The gate replaces the old `interrupt_on` HITL wiring: deny-rule and
         autopilot-safety rejects resolve inline; human-decision cases emit
-        the standard ``action_requests`` interrupt. Returns ``None`` when the
-        tool-approval block is disabled.
+        the standard `action_requests` interrupt. L1-unresolved calls
+        carrying risk hints route to the shared veritas answerer
+        (decision-model fast path first, LLM second) with loop-scoped grant
+        write-back. Returns `None` when the tool-approval block is disabled.
         """
         from soothe.sloop.clarification.tool_approval_pipeline import ToolApprovalPipeline
         from soothe.sloop.middleware import AutoModeMiddleware
@@ -95,11 +97,18 @@ class AgentBuilder(nano_builder.AgentBuilder):
         if not (ta_cfg.enabled and ta_cfg.inline_gate.enabled):
             return None
         pipeline = ToolApprovalPipeline(ta_cfg, security_config=self._config.security)
-        # Optional calibrated-probability classifier for rule-unresolved calls
-        # (nano-configured backend; null when disabled or misconfigured).
-        from soothe.sloop.clarification.risk_classifier import build_risk_classifier
 
-        classifier_cfg = getattr(self._config, "classifier", None)
+        # Shared veritas answerer for the RFC-LOOP-030 leg; built only when
+        # the fast path is reachable (veritas is enabled), otherwise the gate
+        # stays deterministic.
+        veritas_answer = None
+        veritas_cfg = getattr(self._config.agent, "veritas", None)
+        if veritas_cfg is not None:
+            from soothe.subagents.veritas.implementation import build_veritas_answerer
+
+            veritas_answer = build_veritas_answerer(self._config)
+
+        dynamic_cfg = getattr(ta_cfg, "dynamic_rules", None)
         return AutoModeMiddleware(
             pipeline,
             tools=ta_cfg.inline_gate.tools,
@@ -107,8 +116,11 @@ class AgentBuilder(nano_builder.AgentBuilder):
             default_clarification_mode=clar_cfg.default_mode,
             manual_scope=ta_cfg.manual_scope,
             force_manual_tool_approval="tool_approval" in (clar_cfg.force_manual_origins or ()),
-            classifier=build_risk_classifier(self._config),
-            classifier_config=classifier_cfg,
+            veritas_answer=veritas_answer,
+            dynamic_rules_enabled=bool(
+                dynamic_cfg is None or getattr(dynamic_cfg, "enabled", True)
+            ),
+            grant_cap=int(getattr(dynamic_cfg, "grant_cap", 256) or 256),
         )
 
     def _host_middleware_suffix(self) -> tuple:

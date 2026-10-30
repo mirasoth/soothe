@@ -1,19 +1,32 @@
 """Tool-approval evaluator shared by the `AutoModeMiddleware` inline gate.
 
-RFC-634: deterministic evaluation for a single tool call — deny rules →
-loop allowlist (exact signature) → nano operation security (with rule-family
+RFC-634: deterministic evaluation for a single tool call — deny rules → loop
+allowlist (exact signature) → nano operation security (with rule-family
 allowlist override). The middleware maps the result onto its decision table
 (auto/manual mode, bypass, human attachment) and owns all interrupt /
 inline-reject / allow behavior.
+
+Sub-critical security matches no longer escalate — they come back as
+`risk_hints` on the `default_approve` result so the middleware can route
+them to the veritas decision fast path instead of a human. The built-in
+deny rules live in nano's severity-tiered registry; only user-configured
+`deny_rules` are evaluated here (always absolute).
 """
 
 from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
+from soothe.sloop.clarification.dynamic_rules import (
+    approval_record,
+    command_prefix,
+    grant_hit,
+    rule_approved,
+    signature_for,
+)
 from soothe.sloop.clarification.tool_rule_matcher import (
     match_command_rule,
     match_path_rule,
@@ -27,65 +40,34 @@ logger = logging.getLogger(__name__)
 ApprovalDecision = Literal["approve", "reject", "escalate"]
 PipelineStage = Literal["deny_rule", "allowlist", "safety_check", "default_approve"]
 
-# Tool args fields that identify the action operand for allowlist signatures.
-_COMMAND_TOOLS = frozenset({"run_command"})
-_PATH_TOOLS = frozenset({"edit_file", "write_file", "delete"})
-
-
-def signature_for(tool_name: str, args: Mapping[str, Any]) -> str | None:
-    """Stable per-action signature (`command` or `file_path`), or `None`."""
-    if tool_name in _COMMAND_TOOLS:
-        return str(args.get("command") or "").strip() or None
-    if tool_name in _PATH_TOOLS:
-        return str(args.get("file_path") or args.get("path") or "").strip() or None
-    return None
-
-
-def approval_record(tool_name: str, args: Mapping[str, Any]) -> dict[str, str] | None:
-    """Allowlist record `{"tool", "signature"}`, or `None` if not signable."""
-    sig = signature_for(tool_name, args)
-    if sig is None:
-        return None
-    return {"tool": tool_name, "signature": sig}
-
-
-def rule_approved(
-    rule_id: str | None,
-    allowlist: list[Mapping[str, Any]],
-) -> bool:
-    """True when the human already approved this rule's family this loop."""
-    if not rule_id:
-        return False
-    from soothe_nano.security.operation_guard import rule_family
-
-    approved = rule_family(rule_id)
-    for rec in allowlist:
-        if isinstance(rec, Mapping) and str(rec.get("rule") or "") in approved:
-            return True
-    return False
-
 
 @dataclass(frozen=True)
 class ApprovalResult:
     """Evaluation outcome for one tool action.
 
-    `escalate` (safety-check hit without a prior human override) is the only
-    verdict that may need a human decision — the middleware decides whether
-    one is available and routes to an interrupt or an inline reject.
+    `escalate` (a hard-deny safety hit without a prior human override) is
+    the only verdict that may need a human decision — the middleware
+    decides whether one is available and routes to an interrupt or an
+    inline reject. Sub-critical security matches surface as `risk_hints`
+    on the `default_approve` result: judgment input for the veritas leg,
+    never a human interrupt on their own.
     """
 
     decision: ApprovalDecision
     stage: PipelineStage
     reason: str = ""
     rule_id: str | None = None
+    risk_hints: tuple[str, ...] = field(default_factory=tuple)
 
 
 class ToolApprovalPipeline:
     """Deny-list-first single-action evaluator.
 
-    Stage order (first deciding stage wins): deny rules → loop allowlist
-    (exact signature) → safety checks (rule-family allowlist override
-    honored). Deny rules are absolute; no allowlist entry overrides them.
+    Stage order (first deciding stage wins): user deny rules → loop
+    allowlist (signature / prefix / rule family) → safety checks
+    (rule-family allowlist override honored; sub-critical matches become
+    risk hints). User deny rules are absolute; no allowlist entry overrides
+    them.
     """
 
     def __init__(
@@ -114,13 +96,14 @@ class ToolApprovalPipeline:
             tool_name: Tool being called.
             args: Tool-call arguments.
             workspace_root: Per-request workspace root (`<workspace>` token).
-            allowlist: Loop-scoped `{"tool", "signature"}` / `{"rule"}` records
-                from prior human approvals.
+            allowlist: Loop-scoped records — human approvals (`{"tool",
+                "signature"}` / `{"rule"}`) and gate grants (`{"tool",
+                "prefix"}`) from the dynamic-rule layer.
             bypass: Skip the safety stage (deny rules still run).
         """
         allowlist = allowlist or []
 
-        # Stage 1: deny rules — absolute, never overridden.
+        # Stage 1: user deny rules — absolute, never overridden.
         if self._matches_any_rule(tool_name, args, self._deny_rules, workspace_root):
             return ApprovalResult(
                 "reject",
@@ -128,8 +111,8 @@ class ToolApprovalPipeline:
                 f"matched deny rule for {tool_name}",
             )
 
-        # Stage 2: loop allowlist — prior human approval of this exact action.
-        if allowlist and self._matches_allowlist(tool_name, args, allowlist):
+        # Stage 2: loop allowlist — prior human approval or grant for this action.
+        if allowlist and grant_hit(tool_name, args, allowlist):
             return ApprovalResult(
                 "approve",
                 "allowlist",
@@ -137,11 +120,30 @@ class ToolApprovalPipeline:
             )
 
         # Stage 3: safety checks (delegated to nano), with rule-family override.
+        risk_hints: tuple[str, ...] = ()
         if not bypass:
             safety_result = self._check_safety(tool_name, args, workspace_root)
             if safety_result is not None:
-                reason, rule_id = safety_result
-                if rule_approved(rule_id, allowlist):
+                reason, rule_id, verdict = safety_result
+                if verdict == "risk_hint":
+                    if rule_approved(rule_id, allowlist):
+                        # A prior human approval of this rule's family
+                        # suppresses re-judgment (e.g. the family's critical
+                        # rule was approved, covering its high siblings).
+                        logger.info(
+                            "[tool_approval] risk hint rule=%s overridden by prior human approval",
+                            rule_id,
+                        )
+                        return ApprovalResult(
+                            "approve",
+                            "allowlist",
+                            f"rule {rule_id} overridden by prior human approval",
+                            rule_id=rule_id,
+                        )
+                    # RFC-LOOP-030: sub-critical match — judgment input, not a
+                    # human interrupt.
+                    risk_hints = (rule_id,) if rule_id else ()
+                elif rule_approved(rule_id, allowlist):
                     logger.info(
                         "[tool_approval] safety rule=%s overridden by prior human approval",
                         rule_id,
@@ -152,43 +154,32 @@ class ToolApprovalPipeline:
                         f"rule {rule_id} overridden by prior human approval",
                         rule_id=rule_id,
                     )
-                return ApprovalResult(
-                    "escalate",
-                    "safety_check",
-                    reason,
-                    rule_id=rule_id,
-                )
+                else:
+                    return ApprovalResult(
+                        "escalate",
+                        "safety_check",
+                        reason,
+                        rule_id=rule_id,
+                    )
 
         return ApprovalResult(
             "approve",
             "default_approve",
             "no deny rule or safety check matched",
+            risk_hints=risk_hints,
         )
-
-    def _matches_allowlist(
-        self,
-        tool_name: str,
-        args: Mapping[str, Any],
-        allowlist: list[Mapping[str, Any]],
-    ) -> bool:
-        """True when `(tool_name, signature)` is in the loop allowlist."""
-        sig = signature_for(tool_name, args)
-        if sig is None:
-            return False
-        for rec in allowlist:
-            if not isinstance(rec, Mapping):
-                continue
-            if str(rec.get("tool") or "") == tool_name and str(rec.get("signature") or "") == sig:
-                return True
-        return False
 
     def _check_safety(
         self,
         name: str,
         args: Mapping[str, Any],
         workspace_root: str | None,
-    ) -> tuple[str, str | None] | None:
-        """Run safety checks via nano's OperationSecurity.  Returns `(reason, rule_id)` if denied."""
+    ) -> tuple[str, str | None, str] | None:
+        """Run safety checks via nano's OperationSecurity.
+
+        Returns `(reason, rule_id, verdict)` for `deny` and `risk_hint`
+        verdicts, `None` otherwise.
+        """
         from soothe_nano.protocols.operation_security import (
             OperationSecurityContext,
         )
@@ -205,8 +196,8 @@ class ToolApprovalPipeline:
             security_config=self._security_config,
         )
         decision = self._security_evaluator.evaluate(request, ctx)
-        if decision.verdict == "deny":
-            return decision.reason, decision.rule_id
+        if decision.verdict in ("deny", "risk_hint"):
+            return decision.reason, decision.rule_id, decision.verdict
         return None
 
     def _matches_any_rule(
@@ -242,6 +233,8 @@ __all__ = [
     "ApprovalResult",
     "ToolApprovalPipeline",
     "approval_record",
+    "command_prefix",
+    "grant_hit",
     "rule_approved",
     "signature_for",
 ]

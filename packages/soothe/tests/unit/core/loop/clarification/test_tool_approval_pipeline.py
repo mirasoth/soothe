@@ -1,14 +1,16 @@
-"""Unit tests for the deny-list-first tool-approval evaluator (RFC-634).
+"""Unit tests for the deny-list-first tool-approval evaluator (RFC-634,
+updated for RFC-LOOP-030 severity tiering).
 
-`evaluate_action` evaluates a single tool call: deny rules → loop allowlist
-(exact signature) → nano safety (with rule-family override). Interrupt /
-inline-reject / allow behavior lives in `AutoModeMiddleware` (see
-`tests/unit/sloop/middleware/test_auto_mode.py`).
+`evaluate_action` evaluates a single tool call: user deny rules → loop
+allowlist (signature / prefix / rule family) → nano safety (hard-deny
+escalation, rule-family override; sub-critical matches surface as
+`risk_hints`). Interrupt / inline-reject / allow behavior lives in
+`AutoModeMiddleware` (see `tests/unit/sloop/middleware/test_auto_mode.py`).
 """
 
 from __future__ import annotations
 
-from soothe.config.models import ToolApprovalConfig
+from soothe.config.models import ToolApprovalConfig, ToolApprovalRule
 from soothe.sloop.clarification.tool_approval_pipeline import (
     ToolApprovalPipeline,
     approval_record,
@@ -22,80 +24,120 @@ def _pipeline(config: ToolApprovalConfig | None = None) -> ToolApprovalPipeline:
     return ToolApprovalPipeline(config or _DEFAULT_CONFIG)
 
 
+def _deny_pipeline(*patterns: str) -> ToolApprovalPipeline:
+    return _pipeline(
+        ToolApprovalConfig(
+            deny_rules=[ToolApprovalRule(tool="run_command", pattern=p) for p in patterns]
+        )
+    )
+
+
 # ---------------------------------------------------------------------------
-# Stage 1: deny rules
+# Stage 1: user deny rules (the host extension point — RFC-LOOP-030 moved
+# the built-ins into nano's severity registry)
 # ---------------------------------------------------------------------------
 
 
 class TestDenyRules:
-    def test_su_rejected(self) -> None:
-        result = _pipeline().evaluate_action("run_command", {"command": "su root"})
-        assert result.decision == "reject"
-        assert result.stage == "deny_rule"
-
-    def test_doas_rejected(self) -> None:
-        result = _pipeline().evaluate_action("run_command", {"command": "doas cmd"})
-        assert result.decision == "reject"
-        assert result.stage == "deny_rule"
-
-    def test_chmod_recursive_rejected(self) -> None:
-        result = _pipeline().evaluate_action("run_command", {"command": "chmod -R 755 /opt"})
-        assert result.decision == "reject"
-        assert result.stage == "deny_rule"
-
-    def test_chown_recursive_rejected(self) -> None:
-        result = _pipeline().evaluate_action("run_command", {"command": "chown -R user:group /opt"})
-        assert result.decision == "reject"
-        assert result.stage == "deny_rule"
-
-    def test_shutdown_rejected(self) -> None:
-        result = _pipeline().evaluate_action("run_command", {"command": "shutdown -h now"})
-        assert result.decision == "reject"
-        assert result.stage == "deny_rule"
-
-    def test_reboot_rejected(self) -> None:
-        result = _pipeline().evaluate_action("run_command", {"command": "reboot"})
-        assert result.decision == "reject"
-        assert result.stage == "deny_rule"
-
-    def test_apt_rejected(self) -> None:
-        result = _pipeline().evaluate_action("run_command", {"command": "apt install foo"})
-        assert result.decision == "reject"
-        assert result.stage == "deny_rule"
-
-    def test_brew_rejected(self) -> None:
-        result = _pipeline().evaluate_action("run_command", {"command": "brew install foo"})
-        assert result.decision == "reject"
-        assert result.stage == "deny_rule"
-
-    def test_npm_global_rejected(self) -> None:
-        result = _pipeline().evaluate_action(
-            "run_command", {"command": "npm install -g typescript"}
+    def test_user_deny_rule_rejects(self) -> None:
+        result = _deny_pipeline("apt *").evaluate_action(
+            "run_command", {"command": "apt install foo"}
         )
         assert result.decision == "reject"
         assert result.stage == "deny_rule"
 
-    def test_fdisk_rejected(self) -> None:
-        result = _pipeline().evaluate_action("run_command", {"command": "fdisk /dev/disk0"})
-        assert result.decision == "reject"
-        assert result.stage == "deny_rule"
-
-    def test_diskutil_rejected(self) -> None:
-        result = _pipeline().evaluate_action(
-            "run_command", {"command": "diskutil eraseDisk JHFS+ foo /dev/disk0"}
+    def test_user_deny_rule_absolute_over_allowlist(self) -> None:
+        """Deny rules are never overridable — not by allowlist, not by grants."""
+        rec = approval_record("run_command", {"command": "apt install foo"})
+        result = _deny_pipeline("apt *").evaluate_action(
+            "run_command",
+            {"command": "apt install foo"},
+            allowlist=[rec],
         )
         assert result.decision == "reject"
         assert result.stage == "deny_rule"
 
-    def test_etc_edit_rejected(self) -> None:
-        result = _pipeline().evaluate_action("edit_file", {"file_path": "/etc/nginx/nginx.conf"})
-        assert result.decision == "reject"
-        assert result.stage == "deny_rule"
+    def test_default_deny_rules_empty(self) -> None:
+        """RFC-LOOP-030: built-ins live in nano; the host list is empty."""
+        assert ToolApprovalConfig().deny_rules == []
 
-    def test_system_path_write_rejected(self) -> None:
-        result = _pipeline().evaluate_action("write_file", {"file_path": "/usr/bin/evil"})
-        assert result.decision == "reject"
-        assert result.stage == "deny_rule"
+
+class TestMigratedBuiltins:
+    """The old built-in deny rules migrated into nano as `high` rules — they
+    no longer reject; they surface as risk hints for the veritas leg."""
+
+    @staticmethod
+    def _hint(tool: str, args: dict, rule_id: str, **kwargs):
+        result = _pipeline().evaluate_action(tool, args, **kwargs)
+        assert result.decision == "approve"
+        assert result.stage == "default_approve"
+        assert result.risk_hints == (rule_id,)
+        return result
+
+    def test_su_hint(self) -> None:
+        self._hint("run_command", {"command": "su root"}, "command.restricted.su")
+
+    def test_doas_hint(self) -> None:
+        self._hint("run_command", {"command": "doas cmd"}, "command.restricted.doas")
+
+    def test_chmod_recursive_hint(self) -> None:
+        self._hint(
+            "run_command", {"command": "chmod -R 755 /opt"}, "command.restricted.chmod_recursive"
+        )
+
+    def test_chown_recursive_hint(self) -> None:
+        self._hint(
+            "run_command",
+            {"command": "chown -R user:group ./src"},
+            "command.restricted.chown_recursive",
+        )
+
+    def test_shutdown_hint(self) -> None:
+        self._hint("run_command", {"command": "shutdown -h now"}, "command.restricted.shutdown")
+
+    def test_reboot_hint(self) -> None:
+        self._hint("run_command", {"command": "reboot"}, "command.restricted.reboot")
+
+    def test_apt_hint(self) -> None:
+        self._hint("run_command", {"command": "apt install foo"}, "command.restricted.apt")
+
+    def test_brew_hint(self) -> None:
+        self._hint("run_command", {"command": "brew install foo"}, "command.restricted.brew")
+
+    def test_npm_global_hint(self) -> None:
+        self._hint(
+            "run_command",
+            {"command": "npm install -g typescript"},
+            "command.restricted.npm_global_install",
+        )
+
+    def test_fdisk_hint(self) -> None:
+        self._hint("run_command", {"command": "fdisk /dev/disk0"}, "command.restricted.fdisk")
+
+    def test_diskutil_hint(self) -> None:
+        self._hint(
+            "run_command",
+            {"command": "diskutil eraseDisk JHFS+ foo /dev/disk0"},
+            "command.restricted.diskutil",
+        )
+
+    def test_etc_edit_is_critical_deny(self) -> None:
+        """Sensitive system path writes stay critical: hard escalate (the
+        production gate wires `security_config`; the path check needs it)."""
+        from soothe_nano.config.models import SecurityConfig
+
+        pipeline = ToolApprovalPipeline(_DEFAULT_CONFIG, security_config=SecurityConfig())
+        result = pipeline.evaluate_action("edit_file", {"file_path": "/etc/nginx/nginx.conf"})
+        assert result.decision == "escalate"
+        assert result.stage == "safety_check"
+
+    def test_system_path_write_is_critical_deny(self) -> None:
+        from soothe_nano.config.models import SecurityConfig
+
+        pipeline = ToolApprovalPipeline(_DEFAULT_CONFIG, security_config=SecurityConfig())
+        result = pipeline.evaluate_action("write_file", {"file_path": "/usr/bin/evil"})
+        assert result.decision == "escalate"
+        assert result.stage == "safety_check"
 
 
 # ---------------------------------------------------------------------------
@@ -105,17 +147,19 @@ class TestDenyRules:
 
 class TestSafetyChecks:
     def test_git_dir_rejected_by_safety(self) -> None:
-        """Path not matched by deny rules but caught by nano safety check."""
+        """RFC-LOOP-030: dangerous components are `high` on write — a risk
+        hint, not a hard escalation."""
         result = _pipeline().evaluate_action(
             "edit_file", {"file_path": "/workspace/.git/config"}, workspace_root="/workspace"
         )
-        assert result.decision == "escalate"
-        assert result.stage == "safety_check"
+        assert result.decision == "approve"
+        assert result.stage == "default_approve"
+        assert result.risk_hints == ("filesystem.dangerous_component",)
 
     def test_shred_caught_by_safety(self) -> None:
         result = _pipeline().evaluate_action("run_command", {"command": "shred /etc/passwd"})
-        assert result.decision == "escalate"
-        assert result.stage == "safety_check"
+        assert result.decision == "approve"
+        assert result.risk_hints == ("command.dangerous.shred",)
 
     def test_rm_rf_caught_by_safety(self) -> None:
         result = _pipeline().evaluate_action("run_command", {"command": "rm -rf /"})
@@ -124,25 +168,25 @@ class TestSafetyChecks:
 
     def test_rm_r_caught_by_safety(self) -> None:
         result = _pipeline().evaluate_action("run_command", {"command": "rm -r /tmp/stuff"})
-        assert result.decision == "escalate"
-        assert result.stage == "safety_check"
+        assert result.decision == "approve"
+        assert result.risk_hints == ("command.dangerous.rm_r",)
 
     def test_sudo_caught_by_safety(self) -> None:
         result = _pipeline().evaluate_action("run_command", {"command": "sudo apt install foo"})
-        assert result.decision == "escalate"
-        assert result.stage == "safety_check"
+        assert result.decision == "approve"
+        assert result.risk_hints == ("command.dangerous.sudo",)
 
     def test_chmod_777_caught_by_safety(self) -> None:
         result = _pipeline().evaluate_action("run_command", {"command": "chmod 777 /opt/app"})
-        assert result.decision == "escalate"
-        assert result.stage == "safety_check"
+        assert result.decision == "approve"
+        assert result.risk_hints == ("command.dangerous.chmod_777",)
 
     def test_git_force_push_caught_by_safety(self) -> None:
         result = _pipeline().evaluate_action(
             "run_command", {"command": "git push --force origin main"}
         )
-        assert result.decision == "escalate"
-        assert result.stage == "safety_check"
+        assert result.decision == "approve"
+        assert result.risk_hints == ("command.dangerous.git_force_push",)
 
     def test_dd_caught_by_safety(self) -> None:
         result = _pipeline().evaluate_action(
@@ -242,17 +286,27 @@ class TestCompoundCommands:
         assert result.stage == "default_approve"
 
     def test_compound_deny_rule_rejects(self) -> None:
-        """cd && apt install — deny rule fires on the apt sub-command."""
-        result = _pipeline().evaluate_action(
+        """cd && apt install — a user deny rule fires on the apt sub-command."""
+        result = _deny_pipeline("apt *").evaluate_action(
             "run_command", {"command": "cd /workspace && apt install foo"}
         )
         assert result.decision == "reject"
         assert result.stage == "deny_rule"
 
     def test_compound_safety_check_rejects(self) -> None:
-        """cd && shred — safety check fires on the shred sub-command (escalates)."""
+        """cd && shred — the sub-critical rule fires in the compound and
+        surfaces as a risk hint (RFC-LOOP-030)."""
         result = _pipeline().evaluate_action(
             "run_command", {"command": "cd /workspace && shred /etc/passwd"}
+        )
+        assert result.decision == "approve"
+        assert result.stage == "default_approve"
+        assert result.risk_hints == ("command.dangerous.shred",)
+
+    def test_compound_critical_still_escalates(self) -> None:
+        """cd && rm -rf / — a critical rule in a compound still escalates."""
+        result = _pipeline().evaluate_action(
+            "run_command", {"command": "cd /workspace && rm -rf /"}
         )
         assert result.decision == "escalate"
         assert result.stage == "safety_check"
@@ -275,7 +329,7 @@ class TestPipelineDisabled:
 
 
 class TestBypassMode:
-    """RFC-634 §8.1: bypass skips safety escalation; deny rules reject
+    """RFC-634: bypass skips safety escalation; deny rules reject
     across all modes (they are absolute by design)."""
 
     def test_bypass_approves_dangerous_command(self) -> None:
@@ -285,7 +339,7 @@ class TestBypassMode:
         assert result.stage == "default_approve"
 
     def test_bypass_approves_dangerous_path(self) -> None:
-        """Editing .git/config is approved in bypass mode."""
+        """Editing.git/config is approved in bypass mode."""
         result = _pipeline().evaluate_action(
             "edit_file",
             {"file_path": "/workspace/.git/config"},
@@ -295,8 +349,8 @@ class TestBypassMode:
         assert result.decision == "approve"
 
     def test_bypass_still_rejects_deny_rule_command(self) -> None:
-        """apt install (deny rule) is still rejected in bypass mode."""
-        result = _pipeline().evaluate_action(
+        """A user deny rule (apt install) is still rejected in bypass mode."""
+        result = _deny_pipeline("apt *").evaluate_action(
             "run_command", {"command": "apt install foo"}, bypass=True
         )
         assert result.decision == "reject"
@@ -346,10 +400,10 @@ class TestAllowlistMatching:
         assert result.stage == "allowlist"
 
     def test_allowlist_does_not_bypass_deny_rule(self) -> None:
-        """A deny-rule command (su) is rejected even if its signature is in
-        the allowlist — deny rules are absolute, never overridable."""
+        """A user deny-rule command (su) is rejected even if its signature is
+        in the allowlist — deny rules are absolute, never overridable."""
         rec = approval_record("run_command", {"command": "su root"})
-        result = _pipeline().evaluate_action(
+        result = _deny_pipeline("su *").evaluate_action(
             "run_command",
             {"command": "su root"},
             allowlist=[rec],
@@ -434,7 +488,7 @@ class TestRuleLevelOverride:
         assert result_second.stage == "allowlist"
 
     def test_approved_rm_root_suppresses_rm_rf(self) -> None:
-        """Approving rm_root (rm -rf /) suppresses escalation for rm_rf (rm -rf <folder>)."""
+        """Approving rm_root (rm -rf) suppresses escalation for rm_rf (rm -rf <folder>)."""
         result = _pipeline().evaluate_action(
             "run_command",
             {"command": "rm -rf /tmp/some_folder"},

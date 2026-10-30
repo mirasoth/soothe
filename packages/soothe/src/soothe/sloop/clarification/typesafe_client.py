@@ -8,7 +8,8 @@ owns its own question set — this module owns the shared resolution and gating.
 Current consumers (all use `Choice` for OOD detection, all fall back to LLM
 on any failure or unconfiguration):
 
-- Risk classification (`risk_classifier.py`) — tool-approval gate
+- Risk classification (`subagents/veritas/decision_model.py`) — the veritas
+  decision fast path
 - Intent classification (`typesafe_intent.py`) — intake routing
 - Eval coverage decision (`typesafe_eval_decision.py`) — coverage audit gate
 - Scenario classification (`scenario_typesafe.py`) — synthesis style selection

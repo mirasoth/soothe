@@ -5,6 +5,12 @@ hook. Deterministic verdicts resolve inline — deny-rule and safety rejects
 become instructive error `ToolMessage`s with no interrupt; auto-mode
 approvals execute silently. Only human-decision cases emit the standard
 `action_requests` interrupt.
+
+Rule-unresolved calls that carry security risk hints route to the veritas
+leg (`aafter_model`) — the decision-model fast path first, the LLM second —
+and an approve mints a loop-scoped grant so repeated shapes never pay for
+judgment again. Hint-free in-workspace mutations allow with zero model
+calls.
 """
 
 from __future__ import annotations
@@ -17,6 +23,9 @@ from langchain_core.messages import AIMessage, ToolCall, ToolMessage
 from langgraph.types import interrupt
 
 from soothe.events.catalog import TOOL_AUTO_GATE_REJECTED
+from soothe.sloop.clarification.dynamic_rules import DEFAULT_GRANT_CAP, LoopGrantStore
+from soothe.sloop.clarification.origins import ORIGIN_TOOL_APPROVAL
+from soothe.sloop.clarification.protocol import ClarificationRequest
 from soothe.sloop.clarification.tool_approval_pipeline import (
     ApprovalResult,
     ToolApprovalPipeline,
@@ -33,6 +42,13 @@ _SIGNATURE_PREVIEW_CHARS = 120
 # Verdicts for a single gated tool call.
 VerdictAction = Literal["allow", "reject", "escalate"]
 
+# Answer tokens the veritas leg maps onto gate outcomes.
+_APPROVE_TOKENS = frozenset({"approve", "allow", "proceed", "yes"})
+_DENY_TOKENS = frozenset({"deny", "reject", "pause", "stop", "no"})
+
+# Configurable key the executor writes the per-step LoopStateView under.
+_LOOP_VIEW_KEY = "soothe_veritas_loop_view"
+
 
 class _Verdict:
     """One tool call's gate verdict."""
@@ -44,17 +60,8 @@ class _Verdict:
         self.result = result
 
 
-# Argument keys worth sending to a classifier (bounded, low-risk of secrets).
-_CLASSIFY_ARG_KEYS: tuple[str, ...] = ("command", "file_path", "path", "directory")
-_CLASSIFY_PREVIEW_CHARS = 200
-_SECRET_ARG_MARKERS = ("token", "password", "secret", "api_key", "authorization")
-
-# Configurable key the executor writes the per-step LoopStateView under.
-_LOOP_VIEW_KEY = "soothe_veritas_loop_view"
-
-
 def _loop_view(ctx: AutoModeContext) -> Any | None:
-    """Read the per-step LoopStateView from configurable (classifier context)."""
+    """Read the per-step LoopStateView from configurable (veritas context)."""
     from soothe.sloop.clarification.protocol import LoopStateView
 
     view = ctx.configurable.get(_LOOP_VIEW_KEY)
@@ -73,13 +80,14 @@ class AutoModeMiddleware(AgentMiddleware):
         default_clarification_mode: str = "auto",
         manual_scope: str = "all",
         force_manual_tool_approval: bool = False,
-        classifier: Any | None = None,
-        classifier_config: Any | None = None,
+        veritas_answer: Any | None = None,
+        dynamic_rules_enabled: bool = True,
+        grant_cap: int = DEFAULT_GRANT_CAP,
     ) -> None:
         """Wire the evaluator and gate posture.
 
         Args:
-            pipeline: Shared `ToolApprovalPipeline` (deny rules + safety).
+            pipeline: Shared `ToolApprovalPipeline` (user deny rules + safety).
             tools: Gated tool names; all other tools pass through untouched.
             active_in_bypass: Keep deny rules absolute in bypass mode. Defaults
                 to `False` — all tool calls are permitted in bypass mode.
@@ -90,23 +98,153 @@ class AutoModeMiddleware(AgentMiddleware):
                 `ambiguous_only` auto-approves rule-unresolved calls.
             force_manual_tool_approval: `tool_approval` listed in
                 `force_manual_origins` — every gated call goes to the human.
-            classifier: Optional `RiskClassifier` consulted for rule-unresolved
-                (ambiguous) calls. `None` keeps the deterministic behaviour.
-            classifier_config: nano `ClassifierConfig` supplying strict /
-                per-turn limits for the classifier path.
+            veritas_answer: Optional shared veritas answerer (decision-model
+                fast path + LLM) consulted for L1-unresolved calls carrying
+                risk hints. `None` keeps the deterministic behaviour.
+            dynamic_rules_enabled: Mint loop-scoped grants on veritas
+                approves so repeated shapes skip judgment.
+            grant_cap: Upper bound on instance grant records per loop.
         """
         super().__init__()
         self._pipeline = pipeline
-        self._classifier = classifier
-        self._classifier_cfg = classifier_config
         self._tools = frozenset(tools)
         self._active_in_bypass = active_in_bypass
         self._default_mode = default_clarification_mode
         self._manual_scope = manual_scope
         self._force_manual_tool_approval = force_manual_tool_approval
+        self._veritas_answer = veritas_answer
+        self._dynamic_rules = dynamic_rules_enabled
+        self._grants = LoopGrantStore(cap=grant_cap)
 
     def after_model(self, state: Any, runtime: Any) -> dict[str, Any] | None:
         """Gate the last AIMessage's tool calls before they execute."""
+        prepared = self._prepare(state, runtime)
+        if prepared is None:
+            return None
+        _ctx, last_ai_msg, verdicts = prepared
+        return self._apply_verdicts(last_ai_msg, verdicts)
+
+    async def aafter_model(self, state: Any, runtime: Any) -> dict[str, Any] | None:
+        """Async gate: deterministic verdicts, then the veritas leg."""
+        prepared = self._prepare(state, runtime)
+        if prepared is None:
+            return None
+        ctx, last_ai_msg, verdicts = prepared
+
+        if self._veritas_answer is not None:
+            view = _loop_view(ctx)
+            if (
+                view is not None
+                and ctx.clarification_mode == "auto"
+                and not (ctx.bypass and not self._active_in_bypass)
+            ):
+                for i, (idx, tc, verdict) in enumerate(verdicts):
+                    if (
+                        verdict.action != "allow"
+                        or verdict.result is None
+                        or verdict.result.stage != "default_approve"
+                        or not verdict.result.risk_hints
+                    ):
+                        continue
+                    verdicts[i] = (
+                        idx,
+                        tc,
+                        await self._resolve_ambiguous(tc, ctx, view, verdict.result),
+                    )
+
+        return self._apply_verdicts(last_ai_msg, verdicts)
+
+    async def _resolve_ambiguous(
+        self,
+        tool_call: ToolCall,
+        ctx: AutoModeContext,
+        view: Any,
+        result: ApprovalResult,
+    ) -> _Verdict:
+        """Route one hint-carrying unresolved call through veritas.
+
+        The decision-model fast path screens first; trusted allow/reject
+        resolves inline, everything else falls to the LLM. An approve mints
+        a loop-scoped grant; a defer reaches the human when one is attached
+        and degrades to an instructive reject otherwise (autopilot parity).
+        """
+        name = str(tool_call.get("name") or "")
+        args = tool_call.get("args") or {}
+        if not isinstance(args, dict):
+            args = {}
+        request = ClarificationRequest(
+            questions=(f"Should the {name} tool call be approved for the current goal?",),
+            origin_node=ORIGIN_TOOL_APPROVAL,
+            origin_interrupt_id=f"auto:{tool_call.get('id') or name}",
+            loop_state=view,
+            metadata={"action_requests": [self._action_request(tool_call)]},
+        )
+        try:
+            answer = await self._veritas_answer(
+                request,
+                thread_id=str(ctx.configurable.get("thread_id") or "") or None,
+                loop_id=str(ctx.configurable.get("soothe_loop_id") or "") or None,
+            )
+        except Exception:  # noqa: BLE001 — never block the gate on veritas
+            logger.warning(
+                "[auto_mode] veritas leg failed on tool=%s; keeping deterministic outcome",
+                name,
+                exc_info=True,
+            )
+            return _Verdict("allow", result)
+
+        if answer.defer:
+            if not ctx.human_attached:
+                # Autopilot: no human to decide — degrade to instructive reject
+                # (parity with the deterministic escalate path in `_evaluate`).
+                reject = ApprovalResult(
+                    "reject",
+                    "default_approve",
+                    f"veritas deferred: {answer.rationale}",
+                    rule_id=result.rule_id or result.risk_hints[0],
+                )
+                self._notify_rejected(name, reject, args)
+                return _Verdict("reject", reject)
+            escalated = ApprovalResult(
+                "escalate",
+                "default_approve",
+                f"veritas deferred: {answer.rationale}",
+                rule_id=result.rule_id or result.risk_hints[0],
+            )
+            return _Verdict("escalate", escalated)
+
+        token = (answer.answers[0] if answer.answers else "").strip().lower()
+        if token in _APPROVE_TOKENS:
+            if self._dynamic_rules:
+                # Prefix (run_command) / signature (path tools) generalization —
+                # rule-family grants stay a human-approval concern (executor).
+                self._grants.record(name, args, source=answer.source)
+            return _Verdict("allow", result)
+
+        if token in _DENY_TOKENS:
+            reject = ApprovalResult(
+                "reject",
+                "default_approve",
+                f"veritas denied: {answer.rationale}",
+                rule_id=result.rule_id or (result.risk_hints[0] if result.risk_hints else None),
+            )
+            self._notify_rejected(name, reject, args)
+            return _Verdict("reject", reject)
+
+        # Unknown answer shape — treat as a defer.
+        logger.warning("[auto_mode] veritas returned an unmappable answer (%r); deferring", token)
+        if ctx.human_attached:
+            return _Verdict("escalate", result)
+        reject = ApprovalResult(
+            "reject",
+            "default_approve",
+            f"veritas unmappable answer: {answer.rationale}",
+        )
+        self._notify_rejected(name, reject, args)
+        return _Verdict("reject", reject)
+
+    def _prepare(self, state: Any, runtime: Any) -> tuple[AutoModeContext, AIMessage, list] | None:
+        """Evaluate gated calls against the deterministic stages."""
         try:
             messages = state["messages"] if state is not None else None
         except (KeyError, TypeError):
@@ -117,7 +255,7 @@ class AutoModeMiddleware(AgentMiddleware):
         if not last_ai_msg or not last_ai_msg.tool_calls:
             return None
 
-        gated: list[tuple[int, ToolCall]] = [
+        gated = [
             (idx, tc)
             for idx, tc in enumerate(last_ai_msg.tool_calls)
             if tc.get("name") in self._tools
@@ -130,6 +268,77 @@ class AutoModeMiddleware(AgentMiddleware):
         for idx, tc in gated:
             verdicts.append((idx, tc, self._evaluate(tc, ctx)))
 
+        return ctx, last_ai_msg, verdicts
+
+    def _evaluate(self, tool_call: ToolCall, ctx: AutoModeContext) -> _Verdict:
+        """Resolve one gated tool call per the decision table."""
+        name = str(tool_call.get("name") or "")
+        args = tool_call.get("args") or {}
+        if not isinstance(args, dict):
+            args = {}
+
+        # Bypass with gate deactivated → skip all evaluation.
+        if ctx.bypass and not self._active_in_bypass:
+            return _Verdict("allow")
+
+        allowlist = list(ctx.allowlist)
+        if self._dynamic_rules:
+            allowlist.extend(self._grants.records)
+
+        try:
+            result = self._pipeline.evaluate_action(
+                name,
+                args,
+                workspace_root=ctx.workspace,
+                allowlist=allowlist,
+                bypass=ctx.bypass,
+            )
+        except Exception:
+            # Fail-safe: pass the call through; the FS permission layer and
+            # nano's operation guard still run downstream as backstops.
+            logger.warning(
+                "[auto_mode] evaluator error on tool=%s; passing through (downstream guards apply)",
+                name,
+                exc_info=True,
+            )
+            return _Verdict("allow")
+
+        if result.decision == "reject":
+            self._notify_rejected(name, result, args)
+            return _Verdict("reject", result)
+
+        if result.decision == "escalate":
+            if not ctx.human_attached:
+                # Autopilot: no human at the other end — instructive reject
+                # (parity with the old station degrade-to-reject path).
+                self._notify_rejected(name, result, args)
+                return _Verdict("reject", result)
+            return _Verdict("escalate", result)
+
+        # approve: allowlist/grant override (signature, prefix, or rule family)
+        # never re-asks. Rule-unresolved actions route to the human when the
+        # mode demands a decision — hint-carrying calls included; in auto mode
+        # the hint calls instead go to the veritas leg in `aafter_model`.
+        if (
+            result.decision == "approve"
+            and result.stage == "default_approve"
+            and self._needs_human_for_ambiguous(ctx)
+        ):
+            return _Verdict("escalate", result)
+        return _Verdict("allow", result)
+
+    def _needs_human_for_ambiguous(self, ctx: AutoModeContext) -> bool:
+        """Whether a rule-unresolved gated call still needs a human decision."""
+        if self._force_manual_tool_approval:
+            return ctx.human_attached
+        if ctx.bypass:
+            return False
+        if ctx.clarification_mode == "manual":
+            return ctx.human_attached and self._manual_scope == "all"
+        return False
+
+    def _apply_verdicts(self, last_ai_msg: AIMessage, verdicts: list) -> dict[str, Any] | None:
+        """Interrupt for escalations, strip rejects, apply human decisions."""
         # Human decisions: interrupt once with the standard HITL payload.
         pending = [(tc, v) for _, tc, v in verdicts if v.action == "escalate"]
         decisions: list[dict[str, Any]] = []
@@ -181,226 +390,6 @@ class AutoModeMiddleware(AgentMiddleware):
             return None
         last_ai_msg.tool_calls = revised
         return {"messages": [last_ai_msg, *artificial]}
-
-    async def aafter_model(self, state: Any, runtime: Any) -> dict[str, Any] | None:
-        """Async gate: deterministic verdicts, then the optional classifier."""
-        result = self.after_model(state, runtime)
-        if self._classifier is None or self._classifier_cfg is None:
-            return result
-        if not self._classifier_cfg.enabled:
-            return result
-        return await self._apply_classification(state, runtime)
-
-    async def _apply_classification(self, state: Any, runtime: Any) -> dict[str, Any] | None:
-        """Classify ambiguous gated calls and act on trusted verdicts.
-
-        Only calls the deterministic stages left unresolved (`default_approve`)
-        reach the classifier, so most tool calls never pay for it. Verdicts
-        that are untrusted (distribution shift / near-tie) or unavailable
-        leave the deterministic outcome untouched unless `strict` is set.
-        """
-        from soothe.sloop.clarification.risk_classifier import RiskQuery
-
-        ctx = AutoModeContext.from_runtime(runtime, default_mode=self._default_mode)
-        view = _loop_view(ctx)
-        if view is None or ctx.clarification_mode != "auto":
-            return None
-
-        try:
-            messages = state["messages"]
-        except (KeyError, TypeError):
-            return None
-        last_ai_msg = next((msg for msg in reversed(messages) if isinstance(msg, AIMessage)), None)
-        if not last_ai_msg or not last_ai_msg.tool_calls:
-            return None
-
-        cfg = self._classifier_cfg
-        candidates: list[tuple[int, Any]] = []
-        for idx, tc in enumerate(last_ai_msg.tool_calls):
-            if tc.get("name") not in self._tools:
-                continue
-            if not self._is_ambiguous(tc, ctx):
-                continue
-            candidates.append((idx, tc))
-        if not candidates:
-            return None
-
-        bounded = candidates[: int(cfg.max_calls_per_turn)]
-        queries = [
-            RiskQuery(
-                tool=str(tc.get("name") or ""),
-                args_preview=self._args_preview(tc),
-                goal_summary=view.goal_description or None,
-            )
-            for _, tc in bounded
-        ]
-        try:
-            verdicts = await self._classifier.classify(queries)
-        except Exception:  # noqa: BLE001 — never block on the classifier
-            logger.warning("[auto_mode] classifier failed; keeping deterministic outcome")
-            return None
-
-        revised: list[Any] = []
-        artificial: list[ToolMessage] = []
-        verdict_by_idx = {idx: verdict for (idx, _), verdict in zip(bounded, verdicts)}
-        changed = False
-        for idx, tc in enumerate(last_ai_msg.tool_calls):
-            verdict = verdict_by_idx.get(idx)
-            if verdict is None or verdict.band in ("allow", "untrusted", "unavailable"):
-                if verdict is not None and cfg.strict:
-                    # strict: no trusted answer → do not allow silently.
-                    artificial.append(self._classifier_reject_message(tc, verdict))
-                    changed = True
-                    continue
-                revised.append(tc)
-                continue
-            if verdict.band == "reject":
-                artificial.append(self._classifier_reject_message(tc, verdict))
-                changed = True
-                continue
-            if not ctx.human_attached:
-                # Autopilot: no human to decide — degrade to instructive reject
-                # (parity with the deterministic escalate path in `_evaluate`).
-                artificial.append(self._classifier_reject_message(tc, verdict))
-                changed = True
-                continue
-            # escalate → human decision via the standard interrupt.
-            payload = {
-                "action_requests": [self._action_request(tc)],
-                "review_configs": [self._review_config(tc)],
-                "gate_deferred": True,
-                "gate_deferred_kind": "classifier_escalate",
-            }
-            resumed = interrupt(payload)
-            decisions = self._extract_decisions(resumed, expected=1)
-            edited = self._apply_decision(tc, decisions[0], artificial)
-            if edited is None:
-                changed = True
-                continue
-            tc = edited
-            revised.append(tc)
-
-        if not changed and not artificial:
-            return None
-        last_ai_msg.tool_calls = revised
-        return {"messages": [last_ai_msg, *artificial]}
-
-    def _is_ambiguous(self, tool_call: Any, ctx: AutoModeContext) -> bool:
-        """True when the deterministic stages left this call unresolved."""
-        if ctx.bypass and not self._active_in_bypass:
-            return False
-        args = tool_call.get("args") or {}
-        if not isinstance(args, dict):
-            args = {}
-        try:
-            result = self._pipeline.evaluate_action(
-                str(tool_call.get("name") or ""),
-                args,
-                workspace_root=ctx.workspace,
-                allowlist=list(ctx.allowlist),
-                bypass=ctx.bypass,
-            )
-        except Exception:  # noqa: BLE001
-            return False
-        return result.decision == "approve" and result.stage == "default_approve"
-
-    @staticmethod
-    def _args_preview(tool_call: Any) -> dict[str, Any]:
-        """Bounded, redacted argument preview for the classifier."""
-        args = tool_call.get("args") or {}
-        if not isinstance(args, dict):
-            return {}
-        preview: dict[str, Any] = {}
-        for key in _CLASSIFY_ARG_KEYS:
-            value = args.get(key)
-            if not isinstance(value, str) or not value.strip():
-                continue
-            if any(marker in key.lower() for marker in _SECRET_ARG_MARKERS):
-                continue
-            preview[key] = truncate_text(value.strip(), limit=_CLASSIFY_PREVIEW_CHARS)
-            break
-        return preview
-
-    @staticmethod
-    def _classifier_reject_message(tool_call: Any, verdict: Any) -> ToolMessage:
-        """Instructive reject citing the classifier verdict."""
-        from soothe.sloop.clarification.risk_classifier import RiskVerdict
-
-        detail = verdict.reason if isinstance(verdict, RiskVerdict) else str(verdict)
-        content = (
-            f"Tool call `{tool_call['name']}` was blocked by the tool-approval "
-            f"classifier ({detail}). The tool was not executed. Choose a "
-            "different action or adjust the arguments; do not retry this exact "
-            "call unless the goal changes."
-        )
-        return ToolMessage(
-            content=content,
-            name=tool_call["name"],
-            tool_call_id=tool_call["id"],
-            status="error",
-        )
-
-    def _evaluate(self, tool_call: ToolCall, ctx: AutoModeContext) -> _Verdict:
-        """Resolve one gated tool call per the decision table."""
-        name = str(tool_call.get("name") or "")
-        args = tool_call.get("args") or {}
-        if not isinstance(args, dict):
-            args = {}
-
-        # Bypass with gate deactivated → skip all evaluation.
-        if ctx.bypass and not self._active_in_bypass:
-            return _Verdict("allow")
-
-        try:
-            result = self._pipeline.evaluate_action(
-                name,
-                args,
-                workspace_root=ctx.workspace,
-                allowlist=list(ctx.allowlist),
-                bypass=ctx.bypass,
-            )
-        except Exception:
-            # Fail-safe: pass the call through; the FS permission layer and
-            # nano's operation guard still run downstream as backstops.
-            logger.warning(
-                "[auto_mode] evaluator error on tool=%s; passing through (downstream guards apply)",
-                name,
-                exc_info=True,
-            )
-            return _Verdict("allow")
-
-        if result.decision == "reject":
-            self._notify_rejected(name, result, args)
-            return _Verdict("reject", result)
-
-        if result.decision == "escalate":
-            if not ctx.human_attached:
-                # Autopilot: no human at the other end — instructive reject
-                # (parity with the old station degrade-to-reject path).
-                self._notify_rejected(name, result, args)
-                return _Verdict("reject", result)
-            return _Verdict("escalate", result)
-
-        # approve: allowlist override (exact signature or rule family) never
-        # re-asks. Only rule-unresolved actions route to the human when the
-        # mode demands a decision.
-        if (
-            result.decision == "approve"
-            and result.stage == "default_approve"
-            and self._needs_human_for_ambiguous(ctx)
-        ):
-            return _Verdict("escalate", result)
-        return _Verdict("allow", result)
-
-    def _needs_human_for_ambiguous(self, ctx: AutoModeContext) -> bool:
-        """Whether a rule-unresolved gated call still needs a human decision."""
-        if self._force_manual_tool_approval:
-            return ctx.human_attached
-        if ctx.bypass:
-            return False
-        if ctx.clarification_mode == "manual":
-            return ctx.human_attached and self._manual_scope == "all"
-        return False
 
     @staticmethod
     def _action_request(tool_call: ToolCall) -> dict[str, Any]:

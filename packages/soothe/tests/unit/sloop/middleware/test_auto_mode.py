@@ -90,9 +90,19 @@ def test_gate_respects_tools_filter() -> None:
 
 
 class TestDenyRuleReject:
+    """User-configured deny rules (the host extension point — RFC-LOOP-030
+    moved the built-ins into nano's severity-tiered registry)."""
+
+    @staticmethod
+    def _deny_pipeline() -> Any:
+        from soothe.config.models import ToolApprovalRule
+
+        cfg = ToolApprovalConfig(deny_rules=[ToolApprovalRule(tool="run_command", pattern="apt *")])
+        return _pipeline(cfg)
+
     def test_deny_rule_inline_reject(self) -> None:
         state = _state([_tc("run_command", {"command": "apt install foo"})])
-        result = _gate().after_model(state, _Runtime({}))
+        result = _gate(pipeline=self._deny_pipeline()).after_model(state, _Runtime({}))
         assert result is not None
         messages = result["messages"]
         tool_msg = next(m for m in messages if isinstance(m, ToolMessage))
@@ -106,7 +116,9 @@ class TestDenyRuleReject:
         """active_in_bypass=True: deny rules stay absolute in bypass mode."""
         state = _state([_tc("run_command", {"command": "apt install foo"})])
         runtime = _Runtime({"soothe_interaction_mode": "bypass"})
-        result = _gate(active_in_bypass=True).after_model(state, runtime)
+        result = _gate(pipeline=self._deny_pipeline(), active_in_bypass=True).after_model(
+            state, runtime
+        )
         assert result is not None
         tool_msg = next(m for m in result["messages"] if isinstance(m, ToolMessage))
         assert tool_msg.status == "error"
@@ -115,7 +127,9 @@ class TestDenyRuleReject:
         """active_in_bypass=False: all evaluation skipped in bypass."""
         state = _state([_tc("run_command", {"command": "apt install foo"})])
         runtime = _Runtime({"soothe_interaction_mode": "bypass"})
-        result = _gate(active_in_bypass=False).after_model(state, runtime)
+        result = _gate(pipeline=self._deny_pipeline(), active_in_bypass=False).after_model(
+            state, runtime
+        )
         assert result is None
 
     def test_bypass_permits_all_tool_calls_by_default(self) -> None:
@@ -127,8 +141,15 @@ class TestDenyRuleReject:
         assert cfg.active_in_bypass is False
         state = _state([_tc("run_command", {"command": "apt install foo"})])
         runtime = _Runtime({"soothe_interaction_mode": "bypass"})
-        result = _gate(active_in_bypass=False).after_model(state, runtime)
+        result = _gate(pipeline=self._deny_pipeline(), active_in_bypass=False).after_model(
+            state, runtime
+        )
         assert result is None
+
+    def test_builtin_deny_rules_migrated_to_nano(self) -> None:
+        """RFC-LOOP-030: the built-in rule list is empty by default — the
+        built-ins live in nano's severity registry."""
+        assert ToolApprovalConfig().deny_rules == []
 
 
 # ---------------------------------------------------------------------------
@@ -148,13 +169,13 @@ class TestSafetyEscalation:
         assert "blocked" in tool_msg.content
 
     def test_safety_hit_human_attached_interrupts(self, monkeypatch) -> None:
-        """Human attached: safety escalate emits the standard action_requests
-        interrupt (durable, routed through the station)."""
+        """Human attached: a critical safety escalate emits the standard
+        action_requests interrupt (durable, routed through the station)."""
         captured = _stub_interrupt(
             monkeypatch,
             {"decisions": [{"type": "approve"}]},
         )
-        state = _state([_tc("run_command", {"command": "rm -rf /tmp/x"})])
+        state = _state([_tc("run_command", {"command": "rm -rf /"})])
         runtime = _Runtime({"soothe_human_attached": True})
         result = _gate().after_model(state, runtime)
         assert len(captured) == 1
@@ -166,18 +187,18 @@ class TestSafetyEscalation:
 
     def test_safety_hit_allowlisted_signature_allows(self) -> None:
         """Prior exact-signature approval executes silently (no interrupt)."""
-        allowlist = [{"tool": "run_command", "signature": "rm -rf /tmp/x"}]
-        state = _state([_tc("run_command", {"command": "rm -rf /tmp/x"})])
+        allowlist = [{"tool": "run_command", "signature": "rm -rf /"}]
+        state = _state([_tc("run_command", {"command": "rm -rf /"})])
         runtime = _Runtime({"soothe_human_attached": True, "tool_approval_allowlist": allowlist})
         assert _gate().after_model(state, runtime) is None
 
     def test_safety_hit_rule_family_override_allows(self) -> None:
         """Prior rule-family approval suppresses re-escalation for a
         different command under the same rule."""
-        first = _pipeline().evaluate_action("run_command", {"command": "rm -rf /tmp/a"})
+        first = _pipeline().evaluate_action("run_command", {"command": "rm -rf /"})
         assert first.decision == "escalate"
         allowlist = [{"rule": first.rule_id}]
-        state = _state([_tc("run_command", {"command": "rm -rf /tmp/other"})])
+        state = _state([_tc("run_command", {"command": "rm -rf /tmp"})])
         runtime = _Runtime({"soothe_human_attached": True, "tool_approval_allowlist": allowlist})
         assert _gate().after_model(state, runtime) is None
 
@@ -245,6 +266,9 @@ class TestDecisionsAndBatches:
     def test_mixed_batch_rejects_deny_and_interrupts_safety(self, monkeypatch) -> None:
         """One deny-rule call and one safety call: the deny call strips
         inline; the safety call interrupts with the human."""
+        from soothe.config.models import ToolApprovalRule
+
+        cfg = ToolApprovalConfig(deny_rules=[ToolApprovalRule(tool="run_command", pattern="apt *")])
         captured = _stub_interrupt(
             monkeypatch,
             {"decisions": [{"type": "reject", "message": "no"}]},
@@ -252,12 +276,12 @@ class TestDecisionsAndBatches:
         state = _state(
             [
                 _tc("run_command", {"command": "apt install foo"}, call_id="c1"),
-                _tc("run_command", {"command": "rm -rf /tmp/x"}, call_id="c2"),
+                _tc("run_command", {"command": "rm -rf /"}, call_id="c2"),
                 _tc("read_file", {"file_path": "/w/y"}, call_id="c3"),
             ]
         )
         runtime = _Runtime({"soothe_human_attached": True})
-        result = _gate().after_model(state, runtime)
+        result = _gate(pipeline=_pipeline(cfg)).after_model(state, runtime)
         # Only the safety call reached the human.
         assert len(captured) == 1
         assert [ar["name"] for ar in captured[0]["action_requests"]] == ["run_command"]
@@ -275,7 +299,7 @@ class TestDecisionsAndBatches:
             monkeypatch,
             {"decisions": [{"type": "reject", "message": "not allowed"}]},
         )
-        state = _state([_tc("run_command", {"command": "rm -rf /tmp/x"})])
+        state = _state([_tc("run_command", {"command": "rm -rf /"})])
         runtime = _Runtime({"soothe_human_attached": True})
         result = _gate().after_model(state, runtime)
         tool_msg = next(m for m in result["messages"] if isinstance(m, ToolMessage))
@@ -297,7 +321,7 @@ class TestDecisionsAndBatches:
                 ]
             },
         )
-        state = _state([_tc("run_command", {"command": "rm -rf /tmp/x"})])
+        state = _state([_tc("run_command", {"command": "rm -rf /"})])
         runtime = _Runtime({"soothe_human_attached": True})
         result = _gate().after_model(state, runtime)
         ai = result["messages"][0]
@@ -308,7 +332,7 @@ class TestDecisionsAndBatches:
             monkeypatch,
             {"decisions": [{"type": "respond", "message": "answered"}]},
         )
-        state = _state([_tc("run_command", {"command": "rm -rf /tmp/x"})])
+        state = _state([_tc("run_command", {"command": "rm -rf /"})])
         runtime = _Runtime({"soothe_human_attached": True})
         result = _gate().after_model(state, runtime)
         tool_msg = next(m for m in result["messages"] if isinstance(m, ToolMessage))
@@ -321,8 +345,8 @@ class TestDecisionsAndBatches:
         captured = _stub_interrupt(monkeypatch, {"decisions": []})
         state = _state(
             [
-                _tc("run_command", {"command": "rm -rf /tmp/a"}, call_id="c1"),
-                _tc("run_command", {"command": "rm -rf /tmp/b"}, call_id="c2"),
+                _tc("run_command", {"command": "rm -rf /"}, call_id="c1"),
+                _tc("run_command", {"command": "rm -rf /etc"}, call_id="c2"),
             ]
         )
         runtime = _Runtime({"soothe_human_attached": True})
@@ -337,7 +361,7 @@ class TestDecisionsAndBatches:
     def test_malformed_resume_defaults_to_approve(self, monkeypatch) -> None:
         """A non-dict resume payload resolves to approve for all."""
         _stub_interrupt(monkeypatch, "garbage")
-        state = _state([_tc("run_command", {"command": "rm -rf /tmp/x"})])
+        state = _state([_tc("run_command", {"command": "rm -rf /"})])
         runtime = _Runtime({"soothe_human_attached": True})
         result = _gate().after_model(state, runtime)
         assert result is None or result["messages"][0].tool_calls != []
@@ -399,11 +423,11 @@ class TestAutoModeContext:
 
 
 # ---------------------------------------------------------------------------
-# Optional classifier pass (rule-unresolved calls only)
+# Veritas leg (RFC-LOOP-030: hint-carrying unresolved calls only)
 # ---------------------------------------------------------------------------
 
 
-def _classifier_runtime(human: bool = False) -> _Runtime:
+def _veritas_runtime(human: bool = False) -> _Runtime:
     def _loop_view() -> Any:
         from soothe.sloop.clarification.protocol import LoopStateView
 
@@ -430,135 +454,182 @@ def _classifier_runtime(human: bool = False) -> _Runtime:
     )
 
 
-class _StubClassifier:
-    """Returns canned verdicts and records the queries it received."""
+def _answer(schema: Any):
+    """Build a stub veritas answerer recording every request."""
+    calls: list[Any] = []
 
-    def __init__(self, band: str, confidence: float = 0.95) -> None:
-        from soothe.sloop.clarification.risk_classifier import RiskVerdict
+    async def _answerer(request: Any, *, thread_id: Any = None, loop_id: Any = None) -> Any:
+        calls.append(request)
+        return schema
 
-        self._verdict = RiskVerdict(
-            band=band, confidence=confidence, probabilities={band: 0.9}, reason=f"stub {band}"
-        )
-        self.queries: list[Any] = []
-
-    async def classify(self, items: list[Any]) -> list[Any]:
-        self.queries.extend(items)
-        return [self._verdict for _ in items]
+    return _answerer, calls
 
 
-def _classifier_cfg(**over: Any) -> Any:
-    from soothe_nano.config import ClassifierConfig
+def _approve() -> Any:
+    from soothe.subagents.veritas.schemas import VeritasAnswerSchema
 
-    return ClassifierConfig(enabled=True, **over)
+    return VeritasAnswerSchema(
+        defer=False,
+        answers=["approve"],
+        confidence=0.95,
+        rationale="fine",
+        answer_is_question=[False],
+        source="decision_model",
+    )
 
 
-class TestClassifierPass:
-    @staticmethod
-    def _gate(band: str, **cfg: Any) -> tuple[AutoModeMiddleware, _StubClassifier]:
-        clf = _StubClassifier(band)
-        gate = _gate(**{})  # type: ignore[arg-type]
-        gate._classifier = clf  # noqa: SLF001
-        gate._classifier_cfg = _classifier_cfg(**cfg)  # noqa: SLF001
-        return gate, clf
+def _deny() -> Any:
+    from soothe.subagents.veritas.schemas import VeritasAnswerSchema
+
+    return VeritasAnswerSchema(
+        defer=False,
+        answers=["deny"],
+        confidence=0.95,
+        rationale="too risky",
+        answer_is_question=[False],
+        source="decision_model",
+    )
+
+
+def _defer() -> Any:
+    from soothe.subagents.veritas.schemas import VeritasAnswerSchema
+
+    return VeritasAnswerSchema(defer=True, confidence=0.0, rationale="unsure", answers=[])
+
+
+# Commands hitting a sub-critical (high) nano rule produce risk hints; the
+# critical rm_root does not (it hard-denies / escalates deterministically).
+_HINT_COMMAND = "git push -f origin main"
+
+
+class TestVeritasLeg:
+    @pytest.mark.asyncio
+    async def test_hint_free_call_never_consults_veritas(self) -> None:
+        """Model-call budget: in-workspace, hint-free calls allow at L1."""
+        answerer, calls = _answer(_approve())
+        gate = _gate(veritas_answer=answerer)
+        state = _state([_tc("run_command", {"command": "pytest -xvs"})])
+        assert await gate.aafter_model(state, _veritas_runtime()) is None
+        assert calls == []
 
     @pytest.mark.asyncio
-    async def test_reject_verdict_blocks_inline(self, monkeypatch) -> None:
-        gate, clf = self._gate("reject")
-        state = _state([_tc("run_command", {"command": "pytest -xvs"})])
-        result = await gate.aafter_model(state, _classifier_runtime())
+    async def test_critical_hit_never_consults_veritas(self) -> None:
+        """Deterministic rejections/escalations never reach veritas."""
+        answerer, calls = _answer(_approve())
+        gate = _gate(veritas_answer=answerer)
+        state = _state([_tc("run_command", {"command": "rm -rf /"})])
+        result = await gate.aafter_model(state, _veritas_runtime())
+        assert result is not None
+        assert calls == []
+
+    @pytest.mark.asyncio
+    async def test_hint_call_with_approve_allows_and_mints_grant(self) -> None:
+        answerer, calls = _answer(_approve())
+        gate = _gate(veritas_answer=answerer)
+        state = _state([_tc("run_command", {"command": _HINT_COMMAND})])
+        assert await gate.aafter_model(state, _veritas_runtime()) is None
+        assert len(calls) == 1
+        # The decision subject travels with the request.
+        ar = calls[0].metadata["action_requests"][0]
+        assert ar["name"] == "run_command"
+        assert "git push" in ar["args"]["command"]
+        # A prefix grant was minted; a different command with the same first
+        # token now clears at L1 with zero further veritas calls.
+        state2 = _state([_tc("run_command", {"command": "git push -f origin other"})])
+        assert await gate.aafter_model(state2, _veritas_runtime()) is None
+        assert len(calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_hint_call_with_deny_rejects_inline(self) -> None:
+        answerer, _ = _answer(_deny())
+        gate = _gate(veritas_answer=answerer)
+        state = _state([_tc("run_command", {"command": _HINT_COMMAND})])
+        result = await gate.aafter_model(state, _veritas_runtime())
         assert result is not None
         tool_msg = next(m for m in result["messages"] if isinstance(m, ToolMessage))
         assert tool_msg.status == "error"
-        assert "classifier" in tool_msg.content
+        assert "veritas denied" in tool_msg.content
+        # The tool call is stripped from the AI message.
+        ai = result["messages"][0]
+        assert ai.tool_calls == []
 
     @pytest.mark.asyncio
-    async def test_allow_verdict_keeps_call(self, monkeypatch) -> None:
-        gate, _ = self._gate("allow")
-        state = _state([_tc("run_command", {"command": "pytest -xvs"})])
-        assert await gate.aafter_model(state, _classifier_runtime()) is None
-
-    @pytest.mark.asyncio
-    async def test_untrusted_verdict_falls_back_when_not_strict(self) -> None:
-        gate, _ = self._gate("untrusted")
-        state = _state([_tc("run_command", {"command": "pytest -xvs"})])
-        assert await gate.aafter_model(state, _classifier_runtime()) is None
-
-    @pytest.mark.asyncio
-    async def test_untrusted_verdict_rejects_when_strict(self) -> None:
-        gate, _ = self._gate("untrusted", strict=True)
-        state = _state([_tc("run_command", {"command": "pytest -xvs"})])
-        result = await gate.aafter_model(state, _classifier_runtime())
-        assert result is not None
-        tool_msg = next(m for m in result["messages"] if isinstance(m, ToolMessage))
-        assert tool_msg.status == "error"
-
-    @pytest.mark.asyncio
-    async def test_deny_rule_calls_are_not_classified(self) -> None:
-        """Deterministic rejections never reach the classifier."""
-        gate, clf = self._gate("allow")
-        state = _state([_tc("run_command", {"command": "apt install foo"})])
-        await gate.aafter_model(state, _classifier_runtime())
-        assert clf.queries == []
-
-    @pytest.mark.asyncio
-    async def test_args_preview_is_bounded_and_redacted(self) -> None:
-        gate, clf = self._gate("allow")
-        args = {"command": "curl https://x/y " + ("a" * 500), "token": "s3cr3t"}
-        state = _state([_tc("run_command", args)])
-        await gate.aafter_model(state, _classifier_runtime())
-        preview = clf.queries[0].args_preview
-        assert "token" not in preview
-        assert len(preview["command"]) <= 200
-
-    @pytest.mark.asyncio
-    async def test_missing_loop_view_skips_classification(self) -> None:
-        gate, clf = self._gate("reject")
-        state = _state([_tc("run_command", {"command": "pytest"})])
-        runtime = _Runtime({"soothe_clarification_mode": "auto"})
-        assert await gate.aafter_model(state, runtime) is None
-        assert clf.queries == []
-
-    @pytest.mark.asyncio
-    async def test_classifier_error_preserves_deterministic_outcome(self) -> None:
-        class _Boom:
-            async def classify(self, items: list[Any]) -> list[Any]:
-                raise RuntimeError("down")
-
-        gate = _gate()  # type: ignore[arg-type]
-        gate._classifier = _Boom()  # noqa: SLF001
-        gate._classifier_cfg = _classifier_cfg()  # noqa: SLF001
-        state = _state([_tc("run_command", {"command": "pytest -xvs"})])
-        assert await gate.aafter_model(state, _classifier_runtime()) is None
-
-    @pytest.mark.asyncio
-    async def test_escalate_verdict_interrupts_when_human_attached(self, monkeypatch) -> None:
-        """Classifier escalate with a human: standard action_requests interrupt."""
+    async def test_hint_call_defer_interrupts_when_human_attached(self, monkeypatch) -> None:
+        """Veritas defer with a human: standard action_requests interrupt."""
         captured = _stub_interrupt(
             monkeypatch,
             {"decisions": [{"type": "approve"}]},
         )
-        gate, _ = self._gate("escalate")
-        state = _state([_tc("run_command", {"command": "pytest -xvs"})])
-        result = await gate.aafter_model(state, _classifier_runtime(human=True))
+        answerer, _ = _answer(_defer())
+        gate = _gate(veritas_answer=answerer)
+        state = _state([_tc("run_command", {"command": _HINT_COMMAND})])
+        result = await gate.aafter_model(state, _veritas_runtime(human=True))
         assert len(captured) == 1
-        assert captured[0]["gate_deferred"] is True
-        assert captured[0]["gate_deferred_kind"] == "classifier_escalate"
+        # The hint rule rides along so a human approval can mint a rule override.
+        assert captured[0]["escalated_rule_id"]
         # Approved → tool call kept, no rewrite.
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_escalate_verdict_degrades_to_reject_in_autopilot(self) -> None:
-        """Classifier escalate without a human: instructive reject, no interrupt."""
-        gate, _ = self._gate("escalate")
-        state = _state([_tc("run_command", {"command": "pytest -xvs"})])
-        result = await gate.aafter_model(state, _classifier_runtime(human=False))
+    async def test_hint_call_defer_degrades_to_reject_in_autopilot(self) -> None:
+        """Veritas defer without a human: instructive reject, no interrupt."""
+        answerer, _ = _answer(_defer())
+        gate = _gate(veritas_answer=answerer)
+        state = _state([_tc("run_command", {"command": _HINT_COMMAND})])
+        result = await gate.aafter_model(state, _veritas_runtime(human=False))
         assert result is not None
         tool_msg = next(m for m in result["messages"] if isinstance(m, ToolMessage))
         assert tool_msg.status == "error"
-        assert "classifier" in tool_msg.content
-        # The tool call is stripped from the AI message.
+        assert "veritas deferred" in tool_msg.content
         ai = result["messages"][0]
         assert ai.tool_calls == []
+
+    @pytest.mark.asyncio
+    async def test_veritas_error_preserves_deterministic_outcome(self) -> None:
+        async def _boom(request: Any, **kwargs: Any) -> Any:
+            raise RuntimeError("down")
+
+        gate = _gate(veritas_answer=_boom)
+        state = _state([_tc("run_command", {"command": _HINT_COMMAND})])
+        assert await gate.aafter_model(state, _veritas_runtime()) is None
+
+    @pytest.mark.asyncio
+    async def test_missing_loop_view_skips_veritas_leg(self) -> None:
+        answerer, calls = _answer(_deny())
+        gate = _gate(veritas_answer=answerer)
+        state = _state([_tc("run_command", {"command": _HINT_COMMAND})])
+        runtime = _Runtime({"soothe_clarification_mode": "auto"})
+        assert await gate.aafter_model(state, runtime) is None
+        assert calls == []
+
+    @pytest.mark.asyncio
+    async def test_manual_mode_hint_call_goes_to_human_not_veritas(self, monkeypatch) -> None:
+        """Manual mode: the human decides hint-carrying calls, veritas does not."""
+        captured = _stub_interrupt(
+            monkeypatch,
+            {"decisions": [{"type": "approve"}]},
+        )
+        answerer, calls = _answer(_approve())
+        gate = _gate(veritas_answer=answerer)
+        state = _state([_tc("run_command", {"command": _HINT_COMMAND})])
+        runtime = _Runtime(
+            {
+                "soothe_clarification_mode": "manual",
+                "soothe_human_attached": True,
+                "soothe_veritas_loop_view": None,
+            }
+        )
+        result = gate.after_model(state, runtime)
+        assert len(captured) == 1
+        assert calls == []
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_no_veritas_answerer_keeps_sync_behaviour(self) -> None:
+        """Without an answerer the gate stays deterministic: hint calls allow."""
+        gate = _gate()
+        state = _state([_tc("run_command", {"command": _HINT_COMMAND})])
+        assert await gate.aafter_model(state, _veritas_runtime()) is None
 
 
 # ---------------------------------------------------------------------------

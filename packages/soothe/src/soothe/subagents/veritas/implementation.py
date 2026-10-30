@@ -1,11 +1,11 @@
-"""Veritas auto-answerer: single structured-output LLM call."""
+"""Veritas auto-answerer: decision-model fast path + single structured-output LLM call."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from typing import TYPE_CHECKING, Any
 
 from langchain_core.language_models import BaseChatModel
@@ -42,6 +42,11 @@ _DEFAULT_RETRY_BACKOFF_SECONDS = 2.0
 VeritasAnswerer = Callable[..., Awaitable[VeritasAnswerSchema]]
 """Bound veritas answerer: ``await answerer(request, thread_id=..., loop_id=...)``."""
 
+# Argument keys worth sending to the decision model (bounded, low secret risk).
+_CLASSIFY_ARG_KEYS: tuple[str, ...] = ("command", "file_path", "path", "directory")
+_CLASSIFY_PREVIEW_CHARS = 200
+_SECRET_ARG_MARKERS = ("token", "password", "secret", "api_key", "authorization")
+
 
 def build_veritas_answerer(
     soothe_config: SootheConfig,
@@ -53,18 +58,29 @@ def build_veritas_answerer(
     Both inline consumers share this constructor so model selection, context
     depth, retry policy, and confidence coercion stay in one place:
 
-    - `AskUserGateMiddleware` (RFC-635) — built once per CoreAgent graph,
+    `AskUserGateMiddleware` (RFC-635) — built once per CoreAgent graph,
       called per `ask_user` tool call with per-run trace ids.
-    - `AutoClarificationPolicy` (station) — built once per goal run for
+    `AutoClarificationPolicy` (station) — built once per goal run for
       rail_pause / planner-emitted questions and gate fail-safes.
+    `AutoModeMiddleware` — built once per CoreAgent graph,
+      called per L1-unresolved gated tool call.
+
+    When `agent.veritas.decision_fast_path` is enabled, the answerer first
+    consults the calibrated decision model (Jev) and only falls through to
+    the LLM for open questions, untrusted verdicts, and trusted escalates.
 
     Args:
         soothe_config: Config providing `agent.veritas` and the chat-model
             factory.
         model_role: Override for `agent.veritas.model_role`.
     """
+
     veritas_cfg = soothe_config.agent.veritas
     model = soothe_config.create_chat_model(model_role or veritas_cfg.model_role)
+    fast_path_cfg = getattr(veritas_cfg, "decision_fast_path", None)
+    decision_model = None
+    if fast_path_cfg is not None and getattr(fast_path_cfg, "enabled", False):
+        decision_model = _LazyRiskClassifier(soothe_config)
 
     async def _answerer(
         request: ClarificationRequest,
@@ -82,6 +98,7 @@ def build_veritas_answerer(
             max_retries=veritas_cfg.max_retries,
             retry_backoff_seconds=veritas_cfg.retry_backoff_seconds,
             coerced_confidence=veritas_cfg.coerced_confidence,
+            decision_model=decision_model,
         )
 
     return _answerer
@@ -98,8 +115,17 @@ async def answer(
     max_retries: int = _DEFAULT_MAX_RETRIES,
     retry_backoff_seconds: float = _DEFAULT_RETRY_BACKOFF_SECONDS,
     coerced_confidence: float = 0.7,
+    decision_model: Any | None = None,
 ) -> VeritasAnswerSchema:
-    """Produce a clarification answer grounded in goal intent and global context."""
+    """Produce a clarification answer grounded in goal intent and global context.
+
+    Decision fast path: when `decision_model` is provided and the request
+    carries an approval subject, the calibrated model is consulted first.
+    Trusted `allow` / `reject` verdicts resolve inline
+    (`source="decision_model"`); trusted `escalate` and everything unusable
+    (untrusted / unavailable / no subject) fall through to the LLM leg —
+    `escalate` with the risk assessment embedded in the prompt.
+    """
     view = request.loop_state
     n = len(request.questions)
 
@@ -119,6 +145,21 @@ async def answer(
     json_schema = build_veritas_response_schema(n)
     system_prompt = build_veritas_system_prompt()
     user_prompt = build_veritas_user_prompt(request, max_context_steps=max_context_steps)
+
+    fast = await _decision_fast_path(request, decision_model)
+    if fast is not None:
+        kind, payload = fast
+        if kind == "resolve":
+            return payload
+        # Trusted escalate: deep-judge with the LLM, embedding the risk hint.
+        user_prompt += (
+            "\n\n## Calibrated risk assessment (decision model)\n"
+            "The calibrated decision model classified this action as "
+            f"**escalate** (confidence={payload.confidence}, "
+            f"probabilities={payload.probabilities}). Weigh this assessment "
+            "against the goal context when answering."
+        )
+
     messages = [
         SystemMessage(content=system_prompt),
         HumanMessage(content=user_prompt),
@@ -278,6 +319,125 @@ def _any_answer_is_a_question(
     if answer_is_question:
         return any(answer_is_question)
     return False
+
+
+class _LazyRiskClassifier:
+    """Defers decision-model provider resolution until the first
+    decision-shaped request.
+
+    Keeps `build_veritas_answerer` cheap (no classifier client construction
+    at graph build) and keeps provider-resolution failures confined to the
+    fast path, where they degrade to the LLM leg.
+    """
+
+    def __init__(self, soothe_config: Any) -> None:
+        self._soothe_config = soothe_config
+        self._built: Any | None = None
+
+    async def classify(self, items: list[Any]) -> list[Any]:
+        if self._built is None:
+            from soothe.subagents.veritas.decision_model import build_risk_classifier
+
+            self._built = build_risk_classifier(self._soothe_config)
+        return await self._built.classify(items)
+
+
+async def _decision_fast_path(
+    request: ClarificationRequest,
+    classifier: Any | None,
+) -> tuple[str, Any] | None:
+    """RFC-LOOP-030 fast path: Jev first, LLM second.
+
+    Applicable only to requests carrying an approval subject — the
+    `tool_approval` origin's `action_requests` metadata. Open question
+    shapes (plain `ask_user`, rail pauses) have no subject and skip the
+    classifier entirely.
+
+    Returns:
+        `("resolve", VeritasAnswerSchema)` — trusted allow/reject resolved
+        inline with `source="decision_model"`.
+        `("escalate", RiskVerdict)` — trusted escalate; the LLM leg runs
+        with the risk assessment embedded in the prompt.
+        `None` — no subject / no classifier / untrusted / unavailable:
+            plain LLM path.
+    """
+    if classifier is None:
+        return None
+    action_requests = (request.metadata or {}).get("action_requests")
+    if not isinstance(action_requests, list) or not action_requests:
+        return None
+    subject = action_requests[0]
+    if not isinstance(subject, Mapping):
+        return None
+    tool = str(subject.get("name") or subject.get("id") or "")
+    if not tool:
+        return None
+
+    from soothe.subagents.veritas.decision_model import RiskQuery
+
+    raw_args = subject.get("args")
+    query = RiskQuery(
+        tool=tool,
+        args_preview=_bounded_args_preview(raw_args if isinstance(raw_args, dict) else {}),
+        goal_summary=getattr(request.loop_state, "goal_description", None) or None,
+    )
+    try:
+        verdicts = await classifier.classify([query])
+    except Exception:  # noqa: BLE001 — never block on the decision model
+        logger.warning("[veritas] decision fast path failed; using the LLM path", exc_info=True)
+        return None
+    if not verdicts:
+        return None
+    verdict = verdicts[0]
+
+    if verdict.band in ("allow", "reject"):
+        n = max(1, len(request.questions))
+        answer = "approve" if verdict.band == "allow" else "deny"
+        schema = VeritasAnswerSchema(
+            defer=False,
+            answers=[answer] * n,
+            confidence=float(verdict.confidence) if verdict.confidence is not None else 0.0,
+            rationale=f"decision model {verdict.band}: {verdict.reason}",
+            answer_is_question=[False] * n,
+            source="decision_model",
+        )
+        _log_call_stat(
+            model_name="decision-model",
+            goal_id=request.loop_state.goal_id,
+            origin=request.origin_node,
+            elapsed=0.0,
+            attempts=1,
+            outcome=f"decision_fast_path_{verdict.band}",
+            defer=False,
+            confidence=schema.confidence,
+            answers=n,
+            thread_id=None,
+        )
+        return ("resolve", schema)
+
+    if verdict.band == "escalate":
+        logger.info(
+            "[veritas] decision fast path escalate tool=%s; deep-judging with the LLM",
+            tool,
+        )
+        return ("escalate", verdict)
+
+    # untrusted / unavailable — the LLM leg decides.
+    return None
+
+
+def _bounded_args_preview(args: dict[str, Any]) -> dict[str, Any]:
+    """Bounded, redacted argument preview for the decision model."""
+    preview: dict[str, Any] = {}
+    for key in _CLASSIFY_ARG_KEYS:
+        value = args.get(key)
+        if not isinstance(value, str) or not value.strip():
+            continue
+        if any(marker in key.lower() for marker in _SECRET_ARG_MARKERS):
+            continue
+        preview[key] = truncate_text(value.strip(), limit=_CLASSIFY_PREVIEW_CHARS)
+        break
+    return preview
 
 
 def _preview_questions(questions: tuple) -> str:

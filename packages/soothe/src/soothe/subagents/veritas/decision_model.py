@@ -1,4 +1,7 @@
-"""Calibrated-probability risk classifier (nano-configured, swappable backend).
+"""Calibrated-probability decision model for the veritas fast path.
+
+The classifier is a built-in fast path inside the veritas answerer — Jev
+first, LLM second — rather than a separate middleware wiring.
 
 The classifier picks one of three labels — `allow`, `escalate`, `reject` —
 for a subject. Backends are configured in nano (`providers` entries with
@@ -147,7 +150,19 @@ class TypeSafeRiskClassifier:
         classifier_config: Any,
         max_states_per_request: int = 32,
     ) -> None:
-        """Build the langchain classifier for a resolved provider."""
+        """Build the langchain classifier for a resolved provider.
+
+        Args:
+            base_url: TypeSafe endpoint base URL (optional).
+            api_key: Endpoint credential; omitted when the provider supplies
+                none so the client falls back to `TYPESAFE_API_KEY` (and
+                fails closed to the null backend when unset).
+            model: Classifier model name (e.g. `jev-latest`).
+            timeout: Per-request timeout in seconds.
+            classifier_config: Nano `ClassifierConfig` supplying the trust /
+                decisiveness gates.
+            max_states_per_request: Batch bound for `abatch` calls.
+        """
         from langchain_typesafe import Choice, TypeSafeClassifier
 
         self._config = classifier_config
@@ -249,13 +264,13 @@ class TypeSafeRiskClassifier:
                     self._circuit_tripped = True
                     self._circuit_reason = f"HTTP {status}"
                     logger.warning(
-                        "[risk_classifier] backend permanently unavailable "
+                        "[decision_model] backend permanently unavailable "
                         "(HTTP %s); circuit tripped — subsequent calls short-circuit",
                         status,
                     )
                 else:
                     logger.warning(
-                        "[risk_classifier] classification unavailable (%s); falling back",
+                        "[decision_model] classification unavailable (%s); falling back",
                         exc,
                     )
                 verdicts.extend(
@@ -313,7 +328,7 @@ def build_risk_classifier(soothe_config: Any) -> RiskClassifier:
             max_states_per_request=kwargs.get("max_states_per_request") or 32,
         )
     except Exception as exc:  # noqa: BLE001 — missing dep / bad endpoint
-        logger.warning("[risk_classifier] backend unavailable: %s", exc)
+        logger.warning("[decision_model] backend unavailable: %s", exc)
         return NullRiskClassifier(f"backend unavailable: {exc}")
 
 

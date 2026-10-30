@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -16,6 +16,10 @@ class VeritasAnswerSchema(BaseModel):
     rationale: str = ""
     reasoning: str = ""
     answer_is_question: list[bool] = Field(default_factory=list)
+    source: Literal["llm", "decision_model"] = "llm"
+    """Which tier produced the answer: the decision-model
+    fast path or the LLM structured-output call. Provenance only — trust
+    gating already ran per tier."""
 
 
 def coerce_veritas_response(

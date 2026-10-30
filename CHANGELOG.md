@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- RFC-LOOP-030 risk-tiered security and clarification automation: the built-in `tool_approval.deny_rules` migrate into nano's severity-tiered registry (`command.restricted.*` at `high`; sensitive system paths stay `critical` on write), so `deny_rules` is now the user-defined extension point only (default empty). Sub-critical nano security matches surface as `risk_hints` on the pipeline's `default_approve` result instead of escalating to a human.
+- RFC-LOOP-030 veritas decision fast path: the calibrated risk classifier (`jev-latest` via TypeSafe) is inherited into the veritas answerer — `sloop/clarification/risk_classifier.py` relocates to `subagents/veritas/decision_model.py`. Approval-shaped requests (metadata `action_requests`) are screened by the decision model first; trusted allow/reject resolves inline with zero LLM calls (`VeritasAnswerSchema.source="decision_model"`), trusted `escalate` and everything unusable (untrusted / unavailable / no subject) falls through to the LLM leg — `escalate` with the risk assessment embedded in the prompt. `AutoModeMiddleware` drops its direct classifier wiring (`_apply_classification`) and routes hint-carrying unresolved calls through the shared answerer instead.
+- RFC-LOOP-030 loop-scoped grants: new `sloop/clarification/dynamic_rules.py` (`LoopGrantStore`) mints prefix (command first token) / signature / rule-family grants when veritas approves, so repeated shapes clear the gate with zero model calls (cap 256 per loop, configurable via `tool_approval.dynamic_rules`). Model-call budget is asserted in tests: hint-free in-workspace calls never consult veritas; a granted prefix never re-judges. The daemon → UI clarification relay is unchanged.
+- Pending release-train item: bump the `soothe-nano` floor to `>=2.1.0` once nano's severity-tiered registry ships (soothe degrades gracefully on 2.0.3 — `risk_hint` verdicts simply do not appear; local verification uses the nano source overlay).
+
 ### Fixed
 - Clarification relay no longer re-issues the same question on resume. `AutoClarificationPolicy._answer_gate_deferred` now respects the `resume_turn` marker (mirroring `_answer_tool_approval`) so a gate-deferred `ask_user` is consumed without re-announcing when a human answer is already in flight — the operator saw the identical card twice on every resume turn (loop a47a).
 - `LoopRelay.hydrate_from_channels` is now idempotent: it skips the inbox rebuild when the in-memory inbox already matches the checkpoint's interrupt-id sequence, so repeated node entries during a resume turn don't re-enqueue the same parked interrupt three times (loop a47a).

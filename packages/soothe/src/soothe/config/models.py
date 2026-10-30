@@ -476,8 +476,8 @@ class WorkspaceReservationConfig(BaseModel):
 class WorkspaceSyncConfig(BaseModel):
     """Durable object-store backend for agent workspace materialization.
 
-    **Disabled by default.**  Both `enabled` must be `True` *and*
-    `source_uri` must be set for sync to activate.  This ensures local
+    **Disabled by default.** Both `enabled` must be `True` *and*
+    `source_uri` must be set for sync to activate. This ensures local
     workspace sync is opt-in and never silently active from defaults alone.
 
     When enabled, the daemon constructs an
@@ -488,7 +488,7 @@ class WorkspaceSyncConfig(BaseModel):
 
     Args:
         enabled: Master switch for workspace sync. Defaults to `False`
-            (disabled).  Set to `True` and provide a `source_uri` to enable
+            (disabled). Set to `True` and provide a `source_uri` to enable
             remote object-store sync.
         source_uri: Object-store URI (e.g. `s3://bucket/prefix`).
             Only `s3`, `gs`, and `az` schemes are permitted.
@@ -1259,9 +1259,9 @@ class ToolApprovalRule(BaseModel):
 
     Pattern syntax (adapted from Claude Code's `shellRuleMatching`):
 
-    - `"exact"` — exact string match (e.g. `"git status"`)
-    - `"prefix:*"` — prefix match (e.g. `"grep:*"` matches `"grep -r foo"`)
-    - `"wildcard*"` — wildcard match, `*` = any sequence (e.g. `"pytest*"`)
+    `"exact"` — exact string match (e.g. `"git status"`)
+    `"prefix:*"` — prefix match (e.g. `"grep:*"` matches `"grep -r foo"`)
+    `"wildcard*"` — wildcard match, `*` = any sequence (e.g. `"pytest*"`)
 
     Path patterns support `**` recursive matching via `pathspec`
     (gitignore-style). The `<workspace>` token expands to the per-request
@@ -1273,49 +1273,27 @@ class ToolApprovalRule(BaseModel):
 
 
 def _default_deny_rules() -> list[ToolApprovalRule]:
-    """Default deny rules — absolute rejects enforced by `AutoModeMiddleware`.
+    """Default deny rules — user-defined overrides only.
 
-    RFC-634: the inline gate rejects these patterns outright (error
-    `ToolMessage`, no interrupt, no human input) across all modes. Stage 2
-    safety checks (nano's `WorkspaceToolOperationSecurity`) escalate to the
-    human relay.
-
-    Only operations that are high-risk AND not already caught by the safety
-    checks belong here.
+    RFC-LOOP-030: the built-in rules migrated into nano's severity-tiered
+    registry (`command.restricted.*` at `high`, sensitive system paths at
+    `critical` on write). Only user-configured rules belong here; they are
+    absolute rejects across all modes.
     """
-    return [
-        # --- Privilege escalation (sudo is caught by safety; su/doas are not) ---
-        ToolApprovalRule(tool="run_command", pattern="su *"),
-        ToolApprovalRule(tool="run_command", pattern="doas *"),
-        # --- Recursive permission changes (chmod -R 777 / is safety-caught) ---
-        ToolApprovalRule(tool="run_command", pattern="chmod -R *"),
-        ToolApprovalRule(tool="run_command", pattern="chown -R *"),
-        ToolApprovalRule(tool="run_command", pattern="chgrp -R *"),
-        # --- Disk / partition / device operations (mkfs/dd are safety-caught) ---
-        ToolApprovalRule(tool="run_command", pattern="fdisk*"),
-        ToolApprovalRule(tool="run_command", pattern="diskutil*"),
-        # --- System shutdown / halt ---
-        ToolApprovalRule(tool="run_command", pattern="shutdown *"),
-        ToolApprovalRule(tool="run_command", pattern="reboot *"),
-        ToolApprovalRule(tool="run_command", pattern="halt *"),
-        # --- System-level package installs ---
-        ToolApprovalRule(tool="run_command", pattern="apt *"),
-        ToolApprovalRule(tool="run_command", pattern="apt-get *"),
-        ToolApprovalRule(tool="run_command", pattern="brew *"),
-        ToolApprovalRule(tool="run_command", pattern="npm install -g*"),
-        # --- System file modification (safety only catches these when
-        #     security_config is wired; deny rule is a belt-and-suspenders) ---
-        ToolApprovalRule(tool="edit_file", pattern="/etc/**"),
-        ToolApprovalRule(tool="write_file", pattern="/etc/**"),
-        ToolApprovalRule(tool="edit_file", pattern="/System/**"),
-        ToolApprovalRule(tool="write_file", pattern="/System/**"),
-        ToolApprovalRule(tool="edit_file", pattern="/usr/**"),
-        ToolApprovalRule(tool="write_file", pattern="/usr/**"),
-        ToolApprovalRule(tool="edit_file", pattern="/bin/**"),
-        ToolApprovalRule(tool="write_file", pattern="/bin/**"),
-        ToolApprovalRule(tool="edit_file", pattern="/sbin/**"),
-        ToolApprovalRule(tool="write_file", pattern="/sbin/**"),
-    ]
+    return []
+
+
+class DynamicRulesConfig(BaseModel):
+    """Loop-scoped dynamic-rule layer for the tool-approval gate.
+
+    When enabled, veritas approves of L1-unresolved calls mint loop-scoped
+    grants (command-prefix for `run_command`, exact signature for path
+    tools) so repeated shapes clear the gate with zero model calls.
+    """
+
+    enabled: bool = True
+    grant_cap: int = Field(default=256, ge=1, le=4096)
+    """Upper bound on gate grant records per loop (oldest evicted)."""
 
 
 class InlineGateConfig(BaseModel):
@@ -1373,7 +1351,11 @@ class ToolApprovalConfig(BaseModel):
     the human.
     """
     deny_rules: list[ToolApprovalRule] = Field(default_factory=_default_deny_rules)
+    """User-defined absolute reject rules. Built-ins live in nano's
+    severity-tiered registry; only explicitly configured
+    rules are evaluated here."""
     inline_gate: InlineGateConfig = Field(default_factory=InlineGateConfig)
+    dynamic_rules: DynamicRulesConfig = Field(default_factory=DynamicRulesConfig)
 
 
 DEFAULT_FORCE_MANUAL_ORIGINS: tuple[str, ...] = ("plan_mode_review",)
@@ -1472,6 +1454,26 @@ class VeritasConfig(BaseModel):
     coerced_confidence: float = Field(default=0.7, ge=0.0, le=1.0)
     """Confidence value assigned when the model returns answers but omits
     `confidence`."""
+
+    decision_fast_path: DecisionFastPathConfig = Field(
+        default_factory=lambda: DecisionFastPathConfig()
+    )
+    """RFC-LOOP-030 calibrated decision-model fast path inside the answerer:
+    Jev first, LLM second."""
+
+
+class DecisionFastPathConfig(BaseModel):
+    """Calibrated decision-model fast path for the veritas answerer.
+
+    When enabled, approval-shaped requests (those carrying an
+    `action_requests` subject) are first classified by the calibrated
+    model. Trusted allow/reject verdicts resolve inline with zero LLM
+    calls; trusted escalates and everything unusable (untrusted /
+    unavailable / no subject) fall through to the LLM leg. Provider and
+    trust parameters come from the shared `classifier` block (nano).
+    """
+
+    enabled: bool = True
 
 
 class SkillifyConfig(BaseModel):
