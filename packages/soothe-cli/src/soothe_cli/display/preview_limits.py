@@ -23,6 +23,18 @@ STEP_CARD_REASONING_PREVIEW_LINES: Final[int] = 8
 # truncation also applies at render time via max_cols).
 STEP_CARD_REASONING_LINE_MAX_CHARS: Final[int] = 120
 
+# --- Step card activity panes (embedded windows, not a nested tree) ---
+# Panes always stack vertically in one column (tools → todo → files →
+# thinking) at every terminal width: a single column keeps the reading order
+# stable and avoids re-flowing the card when the terminal is resized.
+
+# Leading rule characters before a pane label (`──── tools ──── 22 · ⚠1`).
+STEP_CARD_PANE_LEAD_RULE_CHARS: Final[int] = 4
+
+# Todo rows kept inside the todo pane; overflow is summarized by an inline
+# `· +N more` footnote row inside the pane.
+STEP_CARD_PANE_ROWS_TODO: Final[int] = 4
+
 # TUI file-change preview cards (the standalone write/edit/delete diff cards
 # mounted in the chat transcript, NOT the step-card File-edit branch).
 # When False (default), the standalone file-change cards are suppressed so

@@ -17,23 +17,27 @@ from textual.content import Content
 
 from soothe_cli.commands.subagent_routing import get_subagent_display_name
 from soothe_cli.display import theme
-from soothe_cli.display.card import (
-    _card_body_gutter,
-    _card_item_indent,
-)
 from soothe_cli.display.preview_limits import (
     STEP_CARD_FILE_EDIT_PREVIEW_COUNT,
+    STEP_CARD_PANE_LEAD_RULE_CHARS,
+    STEP_CARD_PANE_ROWS_TODO,
     STEP_CARD_REASONING_LINE_MAX_CHARS,
     STEP_CARD_REASONING_PREVIEW_LINES,
     STEP_CARD_TOOL_ACTIVITY_PREVIEW_COUNT,
     TASK_DELEGATION_DESC_MAX_CHARS,
 )
 from soothe_cli.display.tool_display import (
+    abbreviate_tool_error_message,
     compact_arg_text,
     display_width,
+    format_step_tool_activity_command,
     format_step_tool_activity_line,
+    truncate_to_width,
 )
-from soothe_cli.runtime.presentation.duration_format import format_running_elapsed_compact
+from soothe_cli.runtime.presentation.duration_format import (
+    format_duration_ms,
+    format_running_elapsed_compact,
+)
 
 # Todo item status → phase_icon input.
 _TODO_STATUS_TO_PHASE: dict[str, str] = {
@@ -841,18 +845,188 @@ class StepCardStatusLine:
         return Content.assemble(*parts)
 
 
+# Activity panes (embedded windows — flat rows, not a nested tree)
+# ---------------------------------------------------------------------------
+#
+# A step card's activity is rendered as side-by-side / stacked *panes*
+# (`tools`, `todo`, `files`, `thinking`). Each pane is a bounded viewport:
+#
+#   ──── tools ────────────────────────────────────────────── 22 · ⚠1 ────
+#     ✓ Grep(jev, output_mode=files_with_matches)                    0.6s
+#
+# The header is a lightweight rule with the label and counters baked in, so it
+# carries information instead of just naming a section. Rows are flat (no
+# indentation hierarchy) with a right-aligned meta column, which is what makes
+# the card read as windows rather than a tree.
+
+
+@dataclass
+class PaneLine:
+    """One line inside an activity pane.
+
+    `segs` is the left content (icon + kind badge + body) as `(text, style)`
+    pairs; `meta` is right-aligned inside the pane width (duration / `live` /
+    failure marker). Rows never nest — the pane header is the only structure.
+    """
+
+    segs: list[tuple[str, str]] = field(default_factory=list)
+    meta: list[tuple[str, str]] = field(default_factory=list)
+
+
+@dataclass
+class ActivityPane:
+    """One rendered pane: label, accent color, header counter and body rows."""
+
+    label: str
+    color: str
+    lines: list[PaneLine] = field(default_factory=list)
+    counter: str = ""
+
+
+def _safe_colors(colors: Any) -> Any:
+    """Fallback palette for pure render calls that pass `colors=None`."""
+    return colors if colors is not None else theme.DARK_COLORS
+
+
+def _bold(color: str) -> str:
+    """Bold Textual style in `color` (pane headers and counters)."""
+    return f"bold {color}"
+
+
+def _thinking_tone(colors: Any) -> str:
+    """Italic muted tone for captured reasoning (draft-grade content)."""
+    return f"{colors.muted} italic"
+
+
+def _pane_header_line(
+    label: str,
+    counter: str,
+    *,
+    color: str,
+    width: int,
+    g: Any,
+    colors: Any,
+) -> PaneLine:
+    """Header line: a rule with the label and right-aligned counters on it.
+
+    `──── tools ──────────────────────────────── 22 · ⚠1 ────`
+    """
+    colors = _safe_colors(colors)
+    rule = g.box_horizontal
+    lead = f"{rule * STEP_CARD_PANE_LEAD_RULE_CHARS} "
+    counter_w = display_width(counter) if counter else 0
+    fill = max(0, width - display_width(lead) - display_width(label) - 1 - counter_w - 1)
+    segs = [
+        (lead, colors.card_border),
+        (f"{label} ", _bold(color)),
+        (rule * fill, colors.card_border),
+    ]
+    meta = [(counter, _bold(color))] if counter else []
+    return PaneLine(segs=segs, meta=meta)
+
+
+def _tool_row_meta(row: StepToolRow) -> str:
+    """Right-aligned meta for a tool row (duration / state / failure)."""
+    phase = (row.phase or "pending").strip().lower()
+    if phase == "success":
+        return format_duration_ms(row.duration_ms) if row.duration_ms > 0 else ""
+    if phase == "error":
+        return abbreviate_tool_error_message(str(row.output or "")) or "failed"
+    if phase == "running":
+        return "live"
+    if phase == "rejected":
+        return "rejected"
+    if phase == "skipped":
+        return "skipped"
+    return ""
+
+
+def _assemble_pane_line(line: PaneLine, width: int | None) -> list[tuple[str, str]]:
+    """Flatten one pane line: left segments, gap, right-aligned meta.
+
+    Truncates the left content (never the meta) when the pane is narrower than
+    the content, so every row stays on one line.
+    """
+    segs = [(t, s) for t, s in line.segs if t]
+    meta = [(t, s) for t, s in line.meta if t]
+    if width and width > 0:
+        meta_w = sum(display_width(t) for t, _ in meta)
+        avail = max(1, width - meta_w - (1 if meta else 0))
+        left_w = sum(display_width(t) for t, _ in segs)
+        if left_w > avail and segs:
+            text, style = segs[-1]
+            room = max(0, display_width(text) - (left_w - avail))
+            segs[-1] = (truncate_to_width(text, room), style)
+    if not meta:
+        return segs
+    left_w = sum(display_width(t) for t, _ in segs)
+    meta_w = sum(display_width(t) for t, _ in meta)
+    gap = max(1, (width or (left_w + meta_w + 1)) - left_w - meta_w)
+    return segs + [(" " * gap, theme.SECONDARY_TEXT_STYLE)] + meta
+
+
+def _render_pane(
+    pane: ActivityPane,
+    *,
+    width: int,
+    g: Any,
+    colors: Any,
+) -> list[list[tuple[str, str]]]:
+    """Render one pane (header + rows) into styled line segments."""
+    rows: list[list[tuple[str, str]]] = [
+        _assemble_pane_line(
+            _pane_header_line(
+                pane.label,
+                pane.counter,
+                color=pane.color,
+                width=width,
+                g=g,
+                colors=colors,
+            ),
+            width,
+        )
+    ]
+    for line in pane.lines:
+        rows.append(_assemble_pane_line(line, width))
+    return rows
+
+
+def _pane_content(rows: list[list[tuple[str, str]]]) -> Content:
+    """Assemble styled rows into one ``Content`` block."""
+    parts: list[object] = []
+    for row in rows:
+        if parts:
+            parts.append("\n")
+        for text, style in row:
+            if text:
+                parts.append(Content.styled(text, style or theme.SECONDARY_TEXT_STYLE))
+    return Content.assemble(*parts) if parts else Content("")
+
+
 # Activity tree renderer
 # ---------------------------------------------------------------------------
 
 
 class StepActivityTree:
-    """Pure render: To-do + Tool-use + File-edit sections under the step title.
+    """Pure render: activity panes (tools / todo / files / thinking).
 
-    Task rows are flat markers under Tool-use. While a task is running, the marker
-    line shows that task's subgraph tool count. Nested child tool lines are not
-    rendered. The File-edit branch shows the latest file-write tool rows with
-    action labels and line-change deltas; it is always rendered when file-write
-    rows exist for the step (no config gate).
+    Each pane is a bounded viewport rendered as flat rows beneath a
+    lightweight colored header rule::
+
+        ──── tools ────────────────────────────────────────────── 22 · ⚠1 ────
+          ✓ Grep(jev, output_mode=files_with_matches)                    0.6s
+
+    Rows carry no indentation hierarchy — kind comes from the row body and the
+    right-aligned meta column — so the card reads as windows rather than a
+    nested tree. The header rule doubles as the pane's information bar: it
+    carries the label, the row count, and the failure badge, so no line is
+    spent on a bare section name.
+
+    Task delegation rows stay flat markers inside the tools pane; while a task
+    runs, its line shows that task's subgraph tool count. The files pane shows
+    the latest file-write rows with action labels and line deltas (always
+    rendered when such rows exist — no config gate). The thinking pane shows
+    the latest reasoning lines in an italic muted tone.
     """
 
     @staticmethod
@@ -875,40 +1049,32 @@ class StepActivityTree:
         reasoning_preview_lines: int = STEP_CARD_REASONING_PREVIEW_LINES,
         reasoning_line_max_chars: int = STEP_CARD_REASONING_LINE_MAX_CHARS,
     ) -> Content:
-        """Reasoning section, To-do section, Tool-use section, then File-edit section.
+        """Render the step card activity body as one vertical column of panes.
 
-        `max_cols` bounds each rendered line to the terminal width so tool
-        rows never wrap; `None` preserves the prior fixed-cap behavior.
-        `glyph_override` is the card header glyph (subagent glyph for orphan
-        SubAgent cards) so the activity gutters align to the right of that dot.
+        Panes always stack in reading order (tools → todo → files → thinking)
+        at every terminal width; `max_cols` only bounds line width (rows are
+        truncated, never wrapped) and falls back to a 100-column budget when
+        `None` (pure-render tests / unmounted widgets). A single column keeps
+        the reading order stable and avoids re-flowing the card on resize.
 
-        Layout: the section header (`Reasoning` / `To-do` / `Tool-use` /
-        `File-edit`) sits on a `⎿` body-gutter line; its items (tool rows, todo
-        markers, notes, `+N more`) are indented one column beyond the section
-        label so they nest under the header without a tree glyph.
+        `glyph_override` is accepted for call compatibility; pane rows no
+        longer align to a card header glyph because rows are flat.
 
-        The File-edit branch is always rendered when file-write tool rows exist
-        for the step; it is no longer config-gated.
-
-        The Reasoning section shows the *latest* ``reasoning_preview_lines``
-        lines of reasoning (captured thinking tokens from
-        ``additional_kwargs["reasoning_content"]`` plus untagged CoreAgent
-        step text). Older lines scroll off: reasoning grows while the step
-        runs, so the tail is what the user wants to read. Each line is
-        truncated to ``reasoning_line_max_chars`` (or ``max_cols`` when
-        narrower) with a trailing ellipsis.
+        The thinking pane shows the *latest* ``reasoning_preview_lines`` lines
+        of reasoning (captured thinking tokens from
+        ``additional_kwargs["reasoning_content"]`` plus untagged CoreAgent step
+        text). Older lines scroll off: reasoning grows while the step runs, so
+        the tail is what the user wants to read.
         """
-        section_gutter = _card_body_gutter(glyph_override)
-        item_gutter = _card_item_indent(1, glyph_override=glyph_override)
-        parts: list[object] = []
+        colors = _safe_colors(colors)
         todo_items = list(todos or [])
 
         main_source = list(index.main_tools)
         if todo_items:
-            # Avoid duplicating write_todos when the Todo section is live.
+            # Avoid duplicating write_todos when the todo pane is live.
             main_source = [r for r in main_source if not is_write_todos_tool_name(r.tool_name)]
         if index.file_edit_rows:
-            # File-write rows render in the File-edit branch; exclude from Tool-use.
+            # File-write rows render in the files pane; exclude from tools.
             main_source = [r for r in main_source if not is_file_write_tool_name(r.tool_name)]
         main_preview = latest_preview_rows(main_source, preview_limit)
         has_tools = bool(
@@ -923,159 +1089,254 @@ class StepActivityTree:
         if not reasoning_text and not todo_items and not has_tools and not file_edit_rows:
             return Content("")
 
-        first_block = True
+        panes: list[ActivityPane] = []
 
-        # --- Reasoning (captured thinking tokens) ---
-        if reasoning_text:
-            first_block = False
-            parts.append(Content.styled(f"{section_gutter}Reasoning", theme.SECONDARY_TEXT_STYLE))
-            reasoning_lines = reasoning_text.splitlines()
-            # Truncate long lines first, then cap the total line count.
-            char_limit = reasoning_line_max_chars
-            if max_cols and max_cols > 0:
-                char_limit = min(char_limit, max_cols)
-            shown_lines: list[str] = []
-            for ln in reasoning_lines:
-                stripped_ln = ln.strip()
-                if not stripped_ln:
-                    continue
-                if len(stripped_ln) > char_limit:
-                    shown_lines.append(stripped_ln[: char_limit - 1] + "…")
-                else:
-                    shown_lines.append(stripped_ln)
-            # Reasoning accumulates while the step runs: keep the newest lines
-            # so the card tracks the model's current train of thought instead of
-            # freezing on whatever it opened with. Older lines are dropped
-            # silently — a "+N more" footer would push the fresh text off the
-            # preview and adds no information the user can act on.
-            tail_lines = (
-                shown_lines[-reasoning_preview_lines:] if reasoning_preview_lines > 0 else []
+        # --- tools pane ----------------------------------------------------
+        tool_lines: list[PaneLine] = []
+        animate_tools = step_status == "running"
+        failure_phases = ("error", "rejected", "failed")
+
+        for task_row in index.task_delegations:
+            task_key = task_delegation_dedupe_key(task_row, step_id)
+            task_phase = (task_row.phase or "pending").strip().lower()
+            if task_phase == "pending" and animate_tools:
+                task_phase = "running"
+            icon = phase_icon(
+                task_phase,
+                g,
+                spinner_position=spinner_position,
+                animate_running=task_phase == "running",
             )
-            for ln in tail_lines:
-                parts.append("\n")
-                parts.append(Content.styled(f"{item_gutter}· {ln}", theme.SECONDARY_TEXT_STYLE))
+            label = task_delegation_label(task_row)
+            if task_phase == "running":
+                child_count = count_distinct_tool_call_ids(index.children_by_task.get(task_key, []))
+                count_label = format_tool_count_label(child_count, singular="tool", plural="tools")
+                if count_label:
+                    label = f"{label} · {count_label}"
+            tone = task_tool_row_tone_for_phase(task_phase, colors)
+            meta = "live" if task_phase == "running" else ""
+            tool_lines.append(
+                PaneLine(
+                    segs=[("  ", tone), (icon, tone), (" ", tone), (label, tone)],
+                    meta=[(meta, tone)] if meta else [],
+                )
+            )
+            for note in subagent_notes_by_task.get(task_key, []):
+                text = (note or "").strip()
+                if not text:
+                    continue
+                tool_lines.append(
+                    PaneLine(
+                        segs=[
+                            ("  ", theme.SECONDARY_TEXT_STYLE),
+                            (f"· {text}", theme.SECONDARY_TEXT_STYLE),
+                        ]
+                    )
+                )
 
-        # --- To-do (all todo items) ---
+        # Consecutive identical calls collapse into `×N` so a burst of tool
+        # calls costs one row instead of one row per call.
+        grouped: list[tuple[StepToolRow, int]] = []
+        for row in main_preview:
+            command = format_step_tool_activity_command(row.tool_name, row.args or {})
+            if grouped:
+                prev, count = grouped[-1]
+                if format_step_tool_activity_command(
+                    prev.tool_name, prev.args or {}
+                ) == command and (prev.phase or "") == (row.phase or ""):
+                    grouped[-1] = (row, count + 1)
+                    continue
+            grouped.append((row, 1))
+        for row, count in grouped:
+            phase = (row.phase or "pending").strip().lower()
+            icon = phase_icon(
+                row.phase or "pending",
+                g,
+                spinner_position=spinner_position,
+                animate_running=animate_tools and phase == "running",
+            )
+            tone = task_tool_row_tone(row, colors)
+            body = format_step_tool_activity_command(row.tool_name, row.args or {})
+            if count > 1:
+                body = f"{body} ×{count}"
+            meta = _tool_row_meta(row)
+            tool_lines.append(
+                PaneLine(
+                    segs=[("  ", tone), (icon, tone), (" ", tone), (body, tone)],
+                    meta=[(meta, theme.SECONDARY_TEXT_STYLE)] if meta else [],
+                )
+            )
+
+        hidden_tools = len(main_source) - len(main_preview)
+        if hidden_tools > 0:
+            label = f"· +{hidden_tools} more tool{'s' if hidden_tools != 1 else ''}"
+            tool_lines.append(
+                PaneLine(
+                    segs=[("  ", theme.SECONDARY_TEXT_STYLE), (label, theme.SECONDARY_TEXT_STYLE)]
+                )
+            )
+        for note in subagent_notes:
+            text = (note or "").strip()
+            if not text:
+                continue
+            tool_lines.append(
+                PaneLine(
+                    segs=[
+                        ("  ", theme.SECONDARY_TEXT_STYLE),
+                        (f"· {text}", theme.SECONDARY_TEXT_STYLE),
+                    ]
+                )
+            )
+
+        if tool_lines:
+            tool_total = len(main_source) + len(index.task_delegations)
+            tool_failures = sum(
+                1
+                for r in (*main_source, *index.task_delegations)
+                if (r.phase or "").strip().lower() in failure_phases
+            )
+            counter = f"{tool_total}"
+            if tool_failures:
+                counter = f"{tool_total} · {g.warning} {tool_failures}"
+            panes.append(
+                ActivityPane(label="tools", color=colors.accent, lines=tool_lines, counter=counter)
+            )
+
+        # --- todo pane -----------------------------------------------------
         if todo_items:
-            first_block = False
-            parts.append(Content.styled(f"{section_gutter}To-do", theme.SECONDARY_TEXT_STYLE))
-            for item in todo_items:
+            todo_lines: list[PaneLine] = []
+            shown_todos = todo_items[:STEP_CARD_PANE_ROWS_TODO]
+            for item in shown_todos:
                 content = str(item.get("content") or "").strip()
                 if not content:
                     continue
-                status = str(item.get("status") or "pending")
-                phase = todo_status_phase(status)
-                animate = phase == "running" and step_status == "running"
+                phase = todo_status_phase(str(item.get("status") or "pending"))
                 icon = phase_icon(
                     phase,
                     g,
                     spinner_position=spinner_position,
-                    animate_running=animate,
+                    animate_running=phase == "running" and animate_tools,
                 )
                 tone = task_tool_row_tone_for_phase(phase, colors)
-                parts.append("\n")
-                parts.append(Content.styled(f"{item_gutter}{icon} {content}", tone))
-
-        # --- Tool-use (latest five) ---
-        if has_tools:
-            if not first_block:
-                parts.append("\n")
-            first_block = False
-            parts.append(Content.styled(f"{section_gutter}Tool-use", theme.SECONDARY_TEXT_STYLE))
-
-            for task_row in index.task_delegations:
-                parts.append("\n")
-                task_key = task_delegation_dedupe_key(task_row, step_id)
-                task_phase = (task_row.phase or "pending").strip().lower()
-                if task_phase == "pending" and step_status == "running":
-                    task_phase = "running"
-                task_icon = phase_icon(
-                    task_phase,
-                    g,
-                    spinner_position=spinner_position,
-                    animate_running=task_phase == "running",
+                meta = "live" if phase == "running" else ""
+                todo_lines.append(
+                    PaneLine(
+                        segs=[("  ", tone), (icon, tone), (" ", tone), (content, tone)],
+                        meta=[(meta, tone)] if meta else [],
+                    )
                 )
-                label = task_delegation_label(task_row)
-                if task_phase == "running":
-                    child_count = count_distinct_tool_call_ids(
-                        index.children_by_task.get(task_key, [])
+            hidden_todos = len(todo_items) - len(shown_todos)
+            if hidden_todos > 0:
+                todo_lines.append(
+                    PaneLine(
+                        segs=[
+                            ("  ", theme.SECONDARY_TEXT_STYLE),
+                            (f"· +{hidden_todos} more", theme.SECONDARY_TEXT_STYLE),
+                        ]
                     )
-                    count_label = format_tool_count_label(
-                        child_count, singular="tool", plural="tools"
-                    )
-                    if count_label:
-                        label = f"{label} · {count_label}"
-                task_tone = task_tool_row_tone_for_phase(task_phase, colors)
-                parts.append(
-                    Content.styled(
-                        f"{item_gutter}{task_icon} {label}",
-                        task_tone,
+                )
+            if todo_lines:
+                done = sum(
+                    1
+                    for item in todo_items
+                    if todo_status_phase(str(item.get("status") or "pending")) == "success"
+                )
+                panes.append(
+                    ActivityPane(
+                        label="todo",
+                        color=colors.cognition,
+                        lines=todo_lines,
+                        counter=f"{done}/{len(todo_items)}",
                     )
                 )
 
-                for note in subagent_notes_by_task.get(task_key, []):
-                    text = (note or "").strip()
-                    if not text:
-                        continue
-                    parts.append("\n")
-                    parts.append(
-                        Content.styled(f"{item_gutter}· {text}", theme.SECONDARY_TEXT_STYLE)
-                    )
-
-            if main_preview:
-                append_tool_activity_lines(
-                    parts,
-                    main_preview,
-                    gutter=item_gutter,
-                    g=g,
-                    colors=colors,
-                    spinner_position=spinner_position,
-                    animate_running=step_status == "running",
-                    max_cols=max_cols,
+        # --- files pane ----------------------------------------------------
+        files_lines: list[PaneLine] = []
+        for row in file_edit_rows:
+            phase = (row.phase or "pending").strip().lower()
+            icon = phase_icon(
+                row.phase or "pending",
+                g,
+                spinner_position=spinner_position,
+                animate_running=animate_tools and phase == "running",
+            )
+            action = file_edit_action_label(row.tool_name)
+            file_path = _file_path_from_args(row.args or {})
+            added, removed = compute_file_edit_line_changes(row.tool_name, row.args or {})
+            suffix = format_file_edit_line_suffix(added, removed)
+            body = f"{action} {file_path}"
+            tone = task_tool_row_tone(row, colors)
+            files_lines.append(
+                PaneLine(
+                    segs=[("  ", tone), (icon, tone), (" ", tone), (body, tone)],
+                    meta=[(suffix, theme.SECONDARY_TEXT_STYLE)] if suffix else [],
                 )
-                hidden_tools = len(main_source) - len(main_preview)
-                if hidden_tools > 0:
-                    label = f"+{hidden_tools} more tool{'s' if hidden_tools != 1 else ''}"
-                    parts.append("\n")
-                    parts.append(
-                        Content.styled(f"{item_gutter}· {label}", theme.SECONDARY_TEXT_STYLE)
-                    )
+            )
+        hidden_edits = len(index.file_edit_rows) - len(file_edit_rows)
+        if hidden_edits > 0:
+            label = f"· +{hidden_edits} more edit{'s' if hidden_edits != 1 else ''}"
+            files_lines.append(
+                PaneLine(
+                    segs=[("  ", theme.SECONDARY_TEXT_STYLE), (label, theme.SECONDARY_TEXT_STYLE)]
+                )
+            )
+        if files_lines:
+            stats = format_file_edit_stats_label(
+                len(index.file_edit_rows), index.file_edit_added, index.file_edit_removed
+            )
+            panes.append(
+                ActivityPane(
+                    label="files",
+                    color=colors.warning,
+                    lines=files_lines,
+                    counter=stats,
+                )
+            )
 
-            for note in subagent_notes:
-                t = (note or "").strip()
-                if not t:
+        # --- thinking pane -------------------------------------------------
+        thinking_lines: list[PaneLine] = []
+        if reasoning_text:
+            char_limit = reasoning_line_max_chars
+            if max_cols and max_cols > 0:
+                char_limit = min(char_limit, max_cols)
+            shown_lines: list[str] = []
+            for ln in reasoning_text.splitlines():
+                stripped = ln.strip()
+                if not stripped:
                     continue
-                parts.append("\n")
-                parts.append(Content.styled(f"{item_gutter}· {t}", theme.SECONDARY_TEXT_STYLE))
-
-        # --- File-edit (latest five) ---
-        if file_edit_rows:
-            if not first_block:
-                parts.append("\n")
-            first_block = False
-            parts.append(Content.styled(f"{section_gutter}File-edit", theme.SECONDARY_TEXT_STYLE))
-            for row in file_edit_rows:
-                parts.append("\n")
-                phase = (row.phase or "pending").strip().lower()
-                icon = phase_icon(
-                    row.phase or "pending",
-                    g,
-                    spinner_position=spinner_position,
-                    animate_running=step_status == "running" and phase == "running",
+                if len(stripped) > char_limit:
+                    shown_lines.append(stripped[: char_limit - 1] + "…")
+                else:
+                    shown_lines.append(stripped)
+            tail_lines = (
+                shown_lines[-reasoning_preview_lines:] if reasoning_preview_lines > 0 else []
+            )
+            tone = _thinking_tone(colors)
+            for ln in tail_lines:
+                thinking_lines.append(
+                    PaneLine(
+                        segs=[
+                            ("  ", theme.SECONDARY_TEXT_STYLE),
+                            (f"{g.bullet} ", tone),
+                            (ln, tone),
+                        ]
+                    )
                 )
-                action = file_edit_action_label(row.tool_name)
-                file_path = _file_path_from_args(row.args or {})
-                added, removed = compute_file_edit_line_changes(row.tool_name, row.args or {})
-                line_suffix = format_file_edit_line_suffix(added, removed)
-                line_text = f"{action} {file_path}"
-                if line_suffix:
-                    line_text = f"{line_text} {line_suffix}"
-                tone = task_tool_row_tone(row, colors)
-                parts.append(Content.styled(f"{item_gutter}{icon} {line_text}", tone))
-            hidden_edits = len(index.file_edit_rows) - len(file_edit_rows)
-            if hidden_edits > 0:
-                label = f"+{hidden_edits} more edit{'s' if hidden_edits != 1 else ''}"
-                parts.append("\n")
-                parts.append(Content.styled(f"{item_gutter}· {label}", theme.SECONDARY_TEXT_STYLE))
+        if thinking_lines:
+            panes.append(
+                ActivityPane(
+                    label="thinking",
+                    color=colors.muted,
+                    lines=thinking_lines,
+                )
+            )
 
-        return Content.assemble(*parts) if parts else Content("")
+        if not panes:
+            return Content("")
+
+        # --- layout: one vertical column of panes --------------------------
+        width = max_cols or 100
+        rows: list[list[tuple[str, str]]] = []
+        for pane in panes:
+            rows.extend(_render_pane(pane, width=width, g=g, colors=colors))
+        return _pane_content(rows)

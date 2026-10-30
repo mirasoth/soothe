@@ -43,8 +43,12 @@ def test_has_task_activity_body_false_with_whitespace_reasoning() -> None:
     assert not has_task_activity_body(index, [], {}, reasoning="   \n  ")
 
 
-def test_render_reasoning_section_appears_before_todo() -> None:
-    """Reasoning section header appears before To-do header."""
+def test_render_reasoning_section_appears_after_todo() -> None:
+    """The thinking pane header appears after the todo pane header.
+
+    Pane order follows information value: tools, todo, files, thinking — the
+    reasoning draft is last because it is the lowest-density pane.
+    """
     content = StepActivityTree.render(
         step_id="s1",
         step_status="running",
@@ -58,11 +62,11 @@ def test_render_reasoning_section_appears_before_todo() -> None:
         todos=[{"content": "Read file", "status": "pending"}],
     )
     text = str(content)
-    reasoning_pos = text.find("Reasoning")
-    todo_pos = text.find("To-do")
-    assert reasoning_pos >= 0
+    thinking_pos = text.find("──── thinking")
+    todo_pos = text.find("──── todo")
+    assert thinking_pos >= 0
     assert todo_pos >= 0
-    assert reasoning_pos < todo_pos
+    assert todo_pos < thinking_pos
 
 
 def test_render_reasoning_section_content_shown() -> None:
@@ -79,7 +83,7 @@ def test_render_reasoning_section_content_shown() -> None:
         reasoning="Let me analyze the code.",
     )
     text = str(content)
-    assert "Reasoning" in text
+    assert "──── thinking" in text
     assert "Let me analyze the code." in text
 
 
@@ -214,7 +218,7 @@ def test_render_reasoning_skips_empty_lines() -> None:
 
 
 def test_render_reasoning_with_tools_section_ordering() -> None:
-    """Reasoning appears before Tool-use when both are present."""
+    """The thinking pane appears after the tools pane when both are present."""
     from soothe_cli.tui.widgets.messages.cognition_step_activity import StepToolRow
 
     index = StepRowIndex(
@@ -239,11 +243,11 @@ def test_render_reasoning_with_tools_section_ordering() -> None:
         reasoning="I need to read the file first.",
     )
     text = str(content)
-    reasoning_pos = text.find("Reasoning")
-    tool_use_pos = text.find("Tool-use")
-    assert reasoning_pos >= 0
-    assert tool_use_pos >= 0
-    assert reasoning_pos < tool_use_pos
+    thinking_pos = text.find("──── thinking")
+    tools_pos = text.find("──── tools")
+    assert thinking_pos >= 0
+    assert tools_pos >= 0
+    assert tools_pos < thinking_pos
 
 
 def test_append_reasoning_delta_from_subgraph_namespace() -> None:
