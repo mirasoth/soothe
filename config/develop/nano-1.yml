@@ -1,0 +1,98 @@
+providers:
+  - name: dashscope
+    provider_type: openai
+    api_base_url: "${DASHSCOPE_BASE_URL}"
+    api_key: "${DASHSCOPE_API_KEY}"
+    models:
+      - glm-5.2
+      - qwen3.7-plus
+      - qwen3.6-flash
+      - kimi-k2.5
+      - MiniMax-M3
+      - text-embedding-v4
+
+  - name: omlx
+    provider_type: openai
+    api_base_url: "http://localhost:9642/v1"
+    api_key: "mirasoth"
+    models:
+      - Qwen3.6-27B-OptiQ-4bit
+      - GLM-4.6V-Flash-4bit
+      - PaddleOCR-VL-1.5-4bit
+      - DeepSeek-OCR-4bit
+      - nomicai-modernbert-embed-base-bf16
+
+  - name: typesafe-official
+    provider_type: typesafe
+    api_base_url: "https://api.typesafe.ai"
+    api_key: "${TYPESAFE_API_KEY}"
+    model: jev-latest
+    timeout_seconds: 5
+
+router_profiles:
+  - name: glm
+    router:
+      default: "dashscope:glm-5.2"
+      fast: "dashscope:qwen3.6-flash"
+      think: "dashscope:glm-5.2"
+      image: "dashscope:qwen3.7-plus"
+      ocr: "omlx:DeepSeek-OCR-4bit"
+
+  - name: qwen
+    router:
+      default: "omlx:Qwen3.8-27B-4bit"
+      image: "omlx:GLM-4.6V-Flash-4bit"
+      ocr: "omlx:DeepSeek-OCR-4bit"
+
+active_router_profile: glm
+
+embedding_profile:
+  model_role: dashscope:text-embedding-v4
+  embedding_dims: 1536
+
+classifier:
+  enabled: true
+  provider: typesafe-official
+
+persistence:
+  default_backend: sqlite
+
+vector_stores:
+  - name: sqlite_vec_dev
+    provider_type: sqlite_vec
+    dsn: null
+    index_type: hnsw
+    url: null
+    api_key: null
+    grpc_port: 50051
+
+vector_store_router:
+  default: sqlite_vec_dev:soothe_default
+
+tools:
+  wizsearch:
+    default_engines:
+      - duckduckgo
+      - bing
+
+workspace_sync:
+  source_uri: "s3://soothe/"
+  storage_options:
+    endpoint_url: "http://127.0.0.1:${SOOTHE_MINIO_PORT:-19100}"
+    key: "${SOOTHE_MINIO_ROOT_USER:-soothe}"
+    secret: "${SOOTHE_MINIO_ROOT_PASSWORD:-soothe@minio}"
+    anon: false
+
+observability:
+  log_file_level: DEBUG
+  langfuse:
+    public_key: pk-lf-soothe-local
+    secret_key: sk-lf-soothe-local
+    host: http://localhost:3300
+    trace_name: soothe-dev
+    tags:
+      - soothe
+
+security:
+  allow_paths_outside_workspace: true
+
