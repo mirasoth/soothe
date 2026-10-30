@@ -7259,7 +7259,7 @@ requires-dist = [
     { name = "s3fs", marker = "extra == 'all-backends'", specifier = ">=2025.0.0" },
     { name = "s3fs", marker = "extra == 'dev'", specifier = ">=2025.0.0" },
     { name = "s3fs", marker = "extra == 's3'", specifier = ">=2025.0.0" },
-    { name = "soothe-nano", specifier = ">=2.0.5,<3.0.0" },
+    { name = "soothe-nano", specifier = ">=2.0.6,<3.0.0" },
     { name = "watchdog", specifier = ">=3.0.0,<5.0.0" },
 ]
 provides-extras = ["all-backends", "azure", "dev", "gcs", "s3"]
@@ -7450,7 +7450,7 @@ wheels = [
 
 [[package]]
 name = "soothe-nano"
-version = "2.0.5"
+version = "2.0.6"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiofiles" },
@@ -7490,9 +7490,9 @@ dependencies = [
     { name = "tiktoken" },
     { name = "wcmatch" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d8/78/1323e3dc08942519e82501f6a71b1b68967c738110fa69a75ef55c663810/soothe_nano-2.0.5.tar.gz", hash = "sha256:16fd86d181e097cc8bcf68bcbdcec7404c285f543e224e88d4e322b12934996e", size = 1354029, upload-time = "2026-10-30T08:59:04.76Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e7/63/9d9d3299dadc7ae1782217b1022bcb74c44ef16cdbbd60a1f76150859ffa/soothe_nano-2.0.6.tar.gz", hash = "sha256:39a8b4b024b22c36cb0860854f6662fff6281590c2b23b1259701d677515aa0c", size = 1354286, upload-time = "2026-10-30T10:15:03.663Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f9/00/84707f9de65ce55f1da841a6b90f55612ee4b1795336f8f201db79887d20/soothe_nano-2.0.5-py3-none-any.whl", hash = "sha256:74557d167305f6f1d83bef91d7de9bd5d563a2c730cf118e4bd719243ad7bb57", size = 1614413, upload-time = "2026-10-30T08:59:03.233Z" },
+    { url = "https://files.pythonhosted.org/packages/bc/e2/c62e8ccd60ac50d85332ce84f46a4c35e1e8bd690202943b2d6ec4ddcdc6/soothe_nano-2.0.6-py3-none-any.whl", hash = "sha256:973f1efaff4c8c51111e0a0005cd3c65f5d59fca5add515739b2ee236f585e0d", size = 1614663, upload-time = "2026-10-30T10:15:01.998Z" },
 ]
 
 [[package]]

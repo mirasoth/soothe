@@ -809,6 +809,14 @@ class OutputStreamingConfig(BaseModel):
         default=True,
         description="Suppress soothe.stream.tool_call.update when covered by a pending batch",
     )
+    emit_complete_stream_tool_updates: bool = Field(
+        default=False,
+        description=(
+            "Skip the daemon-batch redundancy filter and emit "
+            "soothe.stream.tool_call.update events with complete args "
+            "(enable for direct stream consumers without the daemon, e.g. flowjet)"
+        ),
+    )
     skip_redundant_tool_message_wire: bool = Field(
         default=True,
         description="Suppress empty ToolMessage wire frames (keep false for full wire debug)",

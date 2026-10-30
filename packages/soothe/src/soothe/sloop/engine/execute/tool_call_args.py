@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -20,6 +22,30 @@ from soothe.sloop.engine.execute.tool_call_id import (
 )
 
 logger = logging.getLogger(__name__)
+
+#: Min interval between partial wire updates per tool call (args grow per token).
+WIRE_TOOL_UPDATE_MIN_INTERVAL_S = 0.2
+
+_PARTIAL_KV_RE = re.compile(r'"([^"\\]+)"\s*:\s*"((?:[^"\\]|\\.)*)(?:"|$)')
+
+
+def recover_partial_tool_call_args(args_str: str) -> dict[str, Any]:
+    """Recover key/value pairs from an open tool-args JSON stream.
+
+    Args stream as partial JSON, so ``json.loads`` fails until the object
+    closes; the last value may still be growing (live hint, not final args).
+    """
+    text = (args_str or "").strip()
+    if not text:
+        return {}
+    out: dict[str, Any] = {}
+    for match in _PARTIAL_KV_RE.finditer(text):
+        key, raw_val = match.group(1), match.group(2)
+        try:
+            out[key] = json.loads(f'"{raw_val}"')
+        except (TypeError, ValueError, json.JSONDecodeError):
+            out[key] = raw_val.replace('\\"', '"').replace("\\\\", "\\")
+    return out
 
 
 def _chunk_args_dict(chunk: dict[str, Any]) -> dict[str, Any]:
@@ -151,17 +177,17 @@ def filter_redundant_stream_tool_updates(
 ) -> list[dict[str, Any]]:
     """Drop stream tool updates when every entry already has complete invocation args.
 
-    Daemon `tool_call_updates_batch` carries the same kwargs; keep partial-arg updates
-    for providers that stream tool JSON incrementally.
-
-    Task delegations, `write_todos`, and `_subgraph_tool` placeholders are never
-    treated as complete — the TUI needs those wire events for subagent labels and
-    the step-card Todo section.
+    The daemon `tool_call_updates_batch` carries the same kwargs; placeholder and
+    `partial=True` frames are kept (they are the live-streaming signal). Task
+    delegations, `write_todos`, and `_subgraph_tool` placeholders are never
+    treated as complete — the TUI needs them for subagent labels and Todo cards.
     """
     if not updates:
         return []
     for upd in updates:
         if not isinstance(upd, dict):
+            return updates
+        if upd.get("partial"):
             return updates
         name = str(upd.get("name") or "").strip()
         if name in ("task", "write_todos"):
@@ -250,6 +276,65 @@ def format_todos_for_log(todos: Any, *, max_chars: int = 2000) -> str:
         lines.append(f"{idx}. [{status}] {content}")
     text = "\n  ".join(lines)
     return log_preview(text, chars=max_chars)
+
+
+@dataclass
+class ToolCallWireStreamTracker:
+    """Per Act-wave emitter of throttled ``partial=True`` wire updates.
+
+    Accumulates ``tool_call_chunks`` (delta and prefix semantics) and emits at
+    most one frame per ``WIRE_TOOL_UPDATE_MIN_INTERVAL_S`` per call while the
+    args JSON is still open; complete args stay on ``wire_updates_from_ai_message``.
+    """
+
+    pending: dict[str, dict[str, Any]] = field(default_factory=dict)
+    last_active_id: str = ""
+    last_emit: dict[str, float] = field(default_factory=dict)
+
+    def partial_updates_from_message(self, msg: BaseMessage) -> list[dict[str, Any]]:
+        """Emit throttled partial-arg updates for one streamed AI chunk."""
+        from soothe_nano.wire.stream_tool_wire import tool_call_update_event
+
+        if not isinstance(msg, (AIMessage, AIMessageChunk)):
+            return []
+        raw_chunks = getattr(msg, "tool_call_chunks", None) or []
+        chunks: list[dict[str, Any]] = [ch for ch in raw_chunks if isinstance(ch, dict)]
+        if not chunks:
+            return []
+        try:
+            from soothe.display.message_processing import accumulate_tool_call_chunks
+
+            self.last_active_id = accumulate_tool_call_chunks(
+                self.pending,
+                chunks,
+                last_active_id=self.last_active_id,
+            )
+        except Exception:
+            # Diagnostic path only — complete-args emission still works.
+            logger.debug("partial tool-arg accumulation failed", exc_info=True)
+            return []
+        now = time.monotonic()
+        out: list[dict[str, Any]] = []
+        for tc_id, entry in self.pending.items():
+            if not isinstance(entry, dict) or entry.get("is_complete_json"):
+                continue
+            args = recover_partial_tool_call_args(str(entry.get("args_str") or ""))
+            if not args:
+                continue
+            last = self.last_emit.get(tc_id)
+            if last is not None and (now - last) < WIRE_TOOL_UPDATE_MIN_INTERVAL_S:
+                continue
+            self.last_emit[tc_id] = now
+            name = str(entry.get("name") or "").strip() or "tool"
+            out.append(
+                tool_call_update_event(
+                    tool_call_id=tc_id,
+                    name=name,
+                    args=args,
+                    partial=True,
+                )
+            )
+        return out
 
 
 @dataclass
@@ -370,9 +455,12 @@ def enrich_wire_updates_with_collector(
 
 __all__ = [
     "ToolCallArgsCollector",
+    "ToolCallWireStreamTracker",
+    "WIRE_TOOL_UPDATE_MIN_INTERVAL_S",
     "enrich_wire_updates_with_collector",
+    "filter_redundant_stream_tool_updates",
     "format_args_for_log",
     "format_todos_for_log",
-    "filter_redundant_stream_tool_updates",
+    "recover_partial_tool_call_args",
     "wire_updates_from_ai_message",
 ]

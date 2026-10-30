@@ -35,6 +35,10 @@ _STREAM_CHUNK_LENGTH = 3
 _MSG_PAIR_LENGTH = 2
 # cap in-query assistant text accumulation (~100KB)
 _MAX_FULL_RESPONSE_CHARS = 100_000
+# Idle-tick period for flushing due tool_call_updates_batch buffers: no
+# chunks flow during tool execution, so ingest alone would buffer the last
+# partial-arg update until the ToolMessage force-flush.
+_TOOL_BATCH_TICK_S = 0.05
 
 
 async def _peek_goal_completion_from_ledger(card_manager: Any, loop_id: str) -> str:
@@ -1289,6 +1293,24 @@ class QueryEngine:
                     ),
                 )
 
+                # Idle-tick flusher for tool-batch debounce buffers; cancelled
+                # in the finally below.
+                tool_batch_tick: asyncio.Task[None] | None = None
+                if effective_loop_id and streaming_cfg.get("tool_batch_enabled", True):
+
+                    async def _flush_due_tool_batches() -> None:
+                        while True:
+                            await asyncio.sleep(_TOOL_BATCH_TICK_S)
+                            due_outputs = coalescer.flush_due()
+                            if due_outputs:
+                                await self._broadcast_coalescer_outputs(
+                                    effective_loop_id,
+                                    due_outputs,
+                                    coalescer=coalescer,
+                                )
+
+                    tool_batch_tick = asyncio.create_task(_flush_due_tool_batches())
+
                 async def _process_stream() -> None:
                     nonlocal chunk_count, warning_sent, full_response_chars, goal_completion_chars
                     nonlocal follow_on_exec
@@ -1453,11 +1475,15 @@ class QueryEngine:
                                     effective_loop_id,
                                 )
 
-                if timeout_enabled:
-                    async with asyncio.timeout(timeout_seconds):
+                try:
+                    if timeout_enabled:
+                        async with asyncio.timeout(timeout_seconds):
+                            await _process_stream()
+                    else:
                         await _process_stream()
-                else:
-                    await _process_stream()
+                finally:
+                    if tool_batch_tick is not None:
+                        tool_batch_tick.cancel()
 
             except TimeoutError:
                 # Query exceeded maximum duration

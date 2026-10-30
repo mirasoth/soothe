@@ -95,6 +95,7 @@ from soothe.sloop.engine.execute.step_wave_types import (
 from soothe.sloop.engine.execute.thread_selection import _select_thread_for_step
 from soothe.sloop.engine.execute.tool_call_args import (
     ToolCallArgsCollector,
+    ToolCallWireStreamTracker,
     enrich_wire_updates_with_collector,
     filter_redundant_stream_tool_updates,
     format_args_for_log,
@@ -376,6 +377,16 @@ class Executor:
         if self._config is None:
             return True
         return bool(self._config.agent.loop.token_continuation_enabled)
+
+    def _emit_complete_stream_tool_updates(self) -> bool:
+        """Whether complete-args wire updates bypass the redundancy filter.
+
+        The filter drops them because the daemon batch re-carries the same
+        kwargs; direct consumers without the daemon (flowjet) opt in here.
+        """
+        if self._config is None:
+            return False
+        return bool(self._config.agent.loop.output_streaming.emit_complete_stream_tool_updates)
 
     def _token_continuation_max(self) -> int:
         """Maximum continuation hops per Act-stream pass."""
@@ -3408,6 +3419,7 @@ class Executor:
         delegate_task_final_parts: list[str] = []
         delegate_task_ids_seen: set[str] = set()
         tool_args = ToolCallArgsCollector()
+        tool_wire_tracker = ToolCallWireStreamTracker()
         subgraph_task_binder = _SubgraphNamespaceTaskBinder()
 
         # Collect per-tool outcome metadata (structured, no filesystem cache)
@@ -3645,11 +3657,19 @@ class Executor:
                         wire_msg = _stringify_tool_call_chunk_args_on_message(enriched_msg)
                         if wire_msg is not msg0:
                             emit_chunk = (_ns_chunk, mode_chunk, (wire_msg, data_chunk[1]))
-                        tool_update_events = filter_redundant_stream_tool_updates(
-                            enrich_wire_updates_with_collector(
-                                wire_updates_from_ai_message(enriched_msg),
-                                tool_args,
+                        tool_update_events = enrich_wire_updates_with_collector(
+                            wire_updates_from_ai_message(enriched_msg),
+                            tool_args,
+                        )
+                        if not self._emit_complete_stream_tool_updates():
+                            # Daemon batch re-carries complete args; partial
+                            # frames are never redundant.
+                            tool_update_events = filter_redundant_stream_tool_updates(
+                                tool_update_events
                             )
+                        # Live args while the JSON is still streaming.
+                        tool_update_events.extend(
+                            tool_wire_tracker.partial_updates_from_message(enriched_msg)
                         )
                         # Suppress wire events for the re-emitted pre-interrupt
                         # root-graph AIMessage on a clarification resume.  Only

@@ -57,6 +57,17 @@ class TestSootheConfig:
         assert cfg.vector_stores[0].name == "sqlite_vec_default"
         assert cfg.vector_store_router.default == "sqlite_vec_default:soothe_default"
 
+    def test_output_streaming_tool_update_flags(self) -> None:
+        """Complete-args wire updates are opt-in; batch suppression stays default."""
+        cfg = SootheConfig()
+        assert cfg.agent.loop.output_streaming.emit_complete_stream_tool_updates is False
+        assert cfg.agent.loop.output_streaming.suppress_redundant_stream_tool_updates is True
+
+        from soothe.config.models import OutputStreamingConfig
+
+        osc = OutputStreamingConfig.model_validate({"emit_complete_stream_tool_updates": True})
+        assert osc.emit_complete_stream_tool_updates is True
+
     def test_legacy_autopilot_fields_are_removed(self) -> None:
         """Legacy autopilot-only fields are gone from RailConfig."""
         from soothe.config.models import RailConfig

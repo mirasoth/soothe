@@ -7,7 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- In-flight partial tool-arg wire updates: the Act-phase executor now emits `soothe.stream.tool_call.update` frames with `partial: true` while tool args are still streaming as JSON. Args are recovered from the open stream (closed pairs plus the still-growing value) by the new `ToolCallWireStreamTracker` — accumulated across chunks via `accumulate_tool_call_chunks`, rate-limited to one frame per `WIRE_TOOL_UPDATE_MIN_INTERVAL_S` (0.2s) per call so token-rate streams do not flood the wire. Clients can render the file path while a long `content` value is still generating; `filter_redundant_stream_tool_updates` never drops partial frames. Complete-arg events are unchanged. Flowjet consumes the frames through its throttled refresh path with no changes.
+- Opt-in complete-args tool wire updates: `agent.loop.output_streaming.emit_complete_stream_tool_updates` (default `false`) makes the Act-phase executor skip the redundancy filter that drops `soothe.stream.tool_call.update` events whose args are already complete — the daemon path relies on `tool_call_updates_batch` re-carrying those kwargs, but direct stream consumers without the daemon (flowjet) lose them; enabling the flag restores the events for those hosts.
+
 ### Changed
+
+- Bump the `soothe-nano` floor to `>=2.0.6`, pulling in the opt-in `partial` flag on `tool_call_update_event` that partial-arg emission relies on. On 2.0.5 the tracker's emission raises `TypeError`, so the floor is now enforced.
+- Daemon stream delivery now flushes debounce-eligible `tool_call_updates_batch` buffers on an idle tick (50ms) instead of only on the next stream chunk. Previously, while a tool executed (no chunks flow in `messages` mode) the last partial-arg update sat buffered until the `ToolMessage` force-flush — i.e. until the tool finished; the tick bounds that delay to `tool_batch_interval_ms`. Batch flushes also log DEBUG enqueue→flush latency (`soothe_daemon.query.stream_delivery`) for diagnostics.
+- `partial=True` tool updates now upgrade the buffered `tool_call_updates_batch` row in place instead of being silently suppressed: recovered in-flight args land in the batch, so clients get the richer kwargs on flush without a duplicate wire event.
 
 - Sandboxed backends can opt out of hard security denies. `security.hard_deny_severities: []` (requires `soothe-nano >= 2.0.5`) now degrades every rule hit — `command.dangerous.rm_root`, `sudo_rm_rf`, device writes, daemon self-protection and critical filesystem writes included — to an audited `risk_hint`, so the autopilot gate routes it to the veritas leg instead of the deterministic inline reject and the command can actually run. Intended only where an outer sandbox boundary owns the blast radius; user `tool_approval.deny_rules` stay absolute, and the default `["critical"]` posture is unchanged. Documented under "Sandboxed Backend Posture" in the security hardening guide.
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -22,6 +23,8 @@ from soothe_nano.wire.stream_tool_wire import (
     TOOL_CALL_UPDATES_BATCH,
     extract_tool_call_updates_from_wire_message,
 )
+
+logger = logging.getLogger(__name__)
 
 StreamDeliveryMode = Literal["batch", "adaptive", "streaming"]
 
@@ -60,6 +63,8 @@ class _ToolBatchBuffer:
     updates: list[dict[str, Any]] = field(default_factory=list)
     seen_ids: set[str] = field(default_factory=set)
     last_activity_monotonic: float = 0.0
+    # First enqueue wall clock (DEBUG latency diagnostics).
+    first_enqueued_monotonic: float = 0.0
 
 
 def _wire_update_args_displayable(args: Any) -> bool:
@@ -396,6 +401,10 @@ class StreamDeliveryCoalescer:
         if mode == "custom":
             if isinstance(data, dict) and not is_custom_stream_payload_client_visible(data):
                 return out_prefix + self._maybe_flush_tool_batch(ns, now, force=False)
+            if isinstance(data, dict):
+                # Recovered partial args upgrade the buffered row in place so
+                # the batch carries the richer kwargs on flush.
+                self._merge_partial_stream_tool_update(ns, data)
             if (
                 self._suppress_redundant_stream_tool_updates
                 and isinstance(data, dict)
@@ -559,6 +568,23 @@ class StreamDeliveryCoalescer:
         out.extend(self._flush_goal_completion(final=True))
         return out
 
+    def flush_due(self) -> list[tuple[tuple[str, ...], str, Any]]:
+        """Flush tool batches whose debounce interval has elapsed.
+
+        Ingest only checks due batches on the next chunk, and no chunks flow
+        while a tool executes, so the daemon's idle tick calls this to bound
+        the wait to ``tool_batch_interval_ms``.
+        """
+        now = time.monotonic()
+        out: list[tuple[tuple[str, ...], str, Any]] = []
+        for ns in list(self._tool_batches.keys()):
+            out.extend(self._maybe_flush_tool_batch(ns, now, force=False))
+        return out
+
+    def has_pending_tool_batches(self) -> bool:
+        """True when any namespace holds un-flushed tool wire updates."""
+        return any(buf.updates for buf in self._tool_batches.values())
+
     def _accumulate_tool_batch(
         self,
         namespace: tuple[str, ...],
@@ -586,7 +612,34 @@ class StreamDeliveryCoalescer:
             added_new = True
         if added_new:
             buf.last_activity_monotonic = now
+            if buf.first_enqueued_monotonic <= 0.0:
+                buf.first_enqueued_monotonic = now
         return added_new
+
+    def _merge_partial_stream_tool_update(
+        self,
+        namespace: tuple[str, ...],
+        data: dict[str, Any],
+    ) -> bool:
+        """Merge a ``partial=True`` custom update into its buffered row.
+
+        Partial frames carry kwargs recovered while the args JSON is still
+        streaming. When the id is already batched, upgrade the buffered row
+        in place instead of emitting a duplicate event — clients get the
+        richer args when the batch flushes.
+        """
+        from soothe_nano.wire.stream_tool_wire import STREAM_TOOL_CALL_UPDATE
+
+        if str(data.get("type", "")) != STREAM_TOOL_CALL_UPDATE or not data.get("partial"):
+            return False
+        tid = str(data.get("tool_call_id") or "").strip()
+        buf = self._tool_batches.get(namespace)
+        if not tid or buf is None or tid not in buf.seen_ids:
+            return False
+        existing = _find_batched_tool_update(buf, tid)
+        if existing is None:
+            return False
+        return _merge_tool_batch_update(existing, data)
 
     def _should_suppress_stream_tool_update(
         self,
@@ -643,6 +696,13 @@ class StreamDeliveryCoalescer:
         buf = self._tool_batches.pop(namespace, None)
         if buf is None or not buf.updates:
             return []
+        if logger.isEnabledFor(logging.DEBUG) and buf.first_enqueued_monotonic > 0.0:
+            logger.debug(
+                "tool_call_updates_batch flush: %d update(s), %.0f ms since first enqueue (ns=%s)",
+                len(buf.updates),
+                (time.monotonic() - buf.first_enqueued_monotonic) * 1000.0,
+                "/".join(namespace) or "(root)",
+            )
         return [
             (
                 namespace,

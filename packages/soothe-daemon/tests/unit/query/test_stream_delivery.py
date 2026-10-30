@@ -244,6 +244,58 @@ def test_tool_batch_merges_later_displayable_args_for_same_id() -> None:
     assert batch["updates"][0]["args"] == {"path": "/.platonic/specs/RFC-450.md"}
 
 
+def test_flush_due_flushes_elapsed_tool_batch_without_new_chunks() -> None:
+    """A due batch must flush on the idle tick, without waiting for a chunk.
+
+    No chunks flow during tool execution, so ingest alone would buffer a
+    pending batch until the ``ToolMessage`` force-flush.
+    """
+    coalescer = StreamDeliveryCoalescer("adaptive", tool_batch_interval_ms=50)
+    ns = ("execute:abc", "tools:sub")
+    partial = {
+        "type": "soothe.stream.tool_call.update",
+        "tool_call_id": "LWZ_01:t0:read_file:0",
+        "name": "read_file",
+        "args": {"_subgraph_tool": True},
+    }
+    # Same-id update with non-displayable args accumulates without a
+    # forced flush — exactly the state a tool-execution gap leaves behind.
+    assert coalescer._accumulate_tool_batch(ns, [partial], time.monotonic()) is True
+    assert coalescer.has_pending_tool_batches() is True
+
+    # Interval not elapsed yet → the idle tick has nothing to flush.
+    assert coalescer.flush_due() == []
+    assert coalescer.has_pending_tool_batches() is True
+
+    time.sleep(0.06)
+    due = coalescer.flush_due()
+    assert len(due) == 1
+    assert due[0][0] == ns
+    assert due[0][1] == "custom"
+    assert due[0][2]["type"] == "tool_call_updates_batch"
+    assert due[0][2]["updates"][0]["tool_call_id"] == "LWZ_01:t0:read_file:0"
+    assert coalescer.has_pending_tool_batches() is False
+    assert coalescer.flush_due() == []
+
+
+def test_tool_batch_flush_logs_enqueue_latency(caplog: Any) -> None:
+    """DEBUG diagnostics: flush records milliseconds since first enqueue."""
+    import logging
+
+    coalescer = StreamDeliveryCoalescer("adaptive", tool_batch_interval_ms=50)
+    partial = {
+        "type": "soothe.stream.tool_call.update",
+        "tool_call_id": "LWZ_01:t0:read_file:0",
+        "name": "read_file",
+        "args": {"_subgraph_tool": True},
+    }
+    coalescer._accumulate_tool_batch((), [partial], time.monotonic())
+    time.sleep(0.06)
+    with caplog.at_level(logging.DEBUG, logger="soothe_daemon.query.stream_delivery"):
+        coalescer.flush_due()
+    assert any("tool_call_updates_batch flush" in rec.message for rec in caplog.records)
+
+
 def test_custom_tool_update_not_suppressed_when_batch_has_placeholder() -> None:
     coalescer = StreamDeliveryCoalescer("adaptive", tool_batch_interval_ms=10_000)
     ns = ("execute:abc", "tools:sub")
@@ -631,3 +683,63 @@ def test_chunk_position_last_flushes_goal_completion_without_completed_event() -
     assert body["content"] == "ab"
     assert body.get("stream_terminal") is True
     assert body.get("chunk_position") == "last"
+
+
+def test_partial_stream_tool_update_upgrades_buffered_row() -> None:
+    """Partial frames merge into the buffered row instead of duplicating it."""
+    coalescer = StreamDeliveryCoalescer("adaptive", tool_batch_interval_ms=10_000)
+    ns = ()
+    placeholder = {
+        "type": "soothe.stream.tool_call.update",
+        "tool_call_id": "tc1",
+        "name": "write_file",
+        "args": {"_subgraph_tool": True},
+    }
+    assert coalescer._accumulate_tool_batch(ns, [placeholder], time.monotonic()) is True
+
+    partial = {
+        "type": "soothe.stream.tool_call.update",
+        "tool_call_id": "tc1",
+        "name": "write_file",
+        "args": {"file_path": "a.txt"},
+        "partial": True,
+    }
+    assert coalescer._merge_partial_stream_tool_update(ns, partial) is True
+    # Still suppressed — the merged batch carries the args, so no duplicate.
+    assert coalescer._should_suppress_stream_tool_update(ns, partial) is True
+
+    flushed = coalescer._flush_tool_batch(ns, force=True)
+    assert flushed[0][2]["updates"][0]["args"] == {"file_path": "a.txt"}
+
+
+def test_partial_merge_ignores_unbatched_ids() -> None:
+    """Nothing to merge when the call id is not in the batch buffer."""
+    coalescer = StreamDeliveryCoalescer("adaptive")
+    partial = {
+        "type": "soothe.stream.tool_call.update",
+        "tool_call_id": "tc-unknown",
+        "name": "write_file",
+        "args": {"file_path": "a.txt"},
+        "partial": True,
+    }
+    assert coalescer._merge_partial_stream_tool_update((), partial) is False
+
+
+def test_partial_merge_ignores_complete_updates() -> None:
+    """Only partial frames merge in place; complete ones follow the old path."""
+    coalescer = StreamDeliveryCoalescer("adaptive", tool_batch_interval_ms=10_000)
+    ns = ()
+    placeholder = {
+        "type": "soothe.stream.tool_call.update",
+        "tool_call_id": "tc1",
+        "name": "write_file",
+        "args": {"_subgraph_tool": True},
+    }
+    coalescer._accumulate_tool_batch(ns, [placeholder], time.monotonic())
+    complete = {
+        "type": "soothe.stream.tool_call.update",
+        "tool_call_id": "tc1",
+        "name": "write_file",
+        "args": {"file_path": "a.txt"},
+    }
+    assert coalescer._merge_partial_stream_tool_update(ns, complete) is False

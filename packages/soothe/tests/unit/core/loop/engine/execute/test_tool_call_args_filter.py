@@ -100,3 +100,48 @@ def test_wire_updates_emits_unified_main_tool_without_args() -> None:
     assert len(updates) == 1
     assert updates[0]["tool_call_id"] == "BCO_01:s:read_file:0"
     assert updates[0]["name"] == "read_file"
+
+
+def test_partial_stream_tool_updates_are_never_redundant() -> None:
+    """``partial=True`` frames are the live-streaming signal — keep them.
+
+    Recovered in-flight args look displayable, which would otherwise trip the
+    complete-args drop; the explicit partial marker must bypass it.
+    """
+    from soothe.sloop.engine.execute.tool_call_args import (
+        filter_redundant_stream_tool_updates,
+    )
+
+    updates = [
+        {
+            "type": "soothe.stream.tool_call.update",
+            "tool_call_id": "c1",
+            "name": "write_file",
+            "args": {"file_path": "a.txt"},
+            "partial": True,
+        }
+    ]
+    assert filter_redundant_stream_tool_updates(updates) == updates
+
+
+def test_mixed_partial_and_complete_updates_are_kept() -> None:
+    from soothe.sloop.engine.execute.tool_call_args import (
+        filter_redundant_stream_tool_updates,
+    )
+
+    updates = [
+        {
+            "type": "soothe.stream.tool_call.update",
+            "tool_call_id": "c1",
+            "name": "write_file",
+            "args": {"file_path": "a.txt"},
+            "partial": True,
+        },
+        {
+            "type": "soothe.stream.tool_call.update",
+            "tool_call_id": "c2",
+            "name": "grep",
+            "args": {"pattern": "x"},
+        },
+    ]
+    assert filter_redundant_stream_tool_updates(updates) == updates
