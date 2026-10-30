@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.2.6] - 2026-10-30
+
 ### Added
 
 - In-flight partial tool-arg wire updates: the Act-phase executor now emits `soothe.stream.tool_call.update` frames with `partial: true` while tool args are still streaming as JSON. Args are recovered from the open stream (closed pairs plus the still-growing value) by the new `ToolCallWireStreamTracker` — accumulated across chunks via `accumulate_tool_call_chunks`, rate-limited to one frame per `WIRE_TOOL_UPDATE_MIN_INTERVAL_S` (0.2s) per call so token-rate streams do not flood the wire. Clients can render the file path while a long `content` value is still generating; `filter_redundant_stream_tool_updates` never drops partial frames. Complete-arg events are unchanged. Flowjet consumes the frames through its throttled refresh path with no changes.
