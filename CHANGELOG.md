@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Clarification relay no longer re-issues the same question on resume. `AutoClarificationPolicy._answer_gate_deferred` now respects the `resume_turn` marker (mirroring `_answer_tool_approval`) so a gate-deferred `ask_user` is consumed without re-announcing when a human answer is already in flight — the operator saw the identical card twice on every resume turn (loop a47a).
+- `LoopRelay.hydrate_from_channels` is now idempotent: it skips the inbox rebuild when the in-memory inbox already matches the checkpoint's interrupt-id sequence, so repeated node entries during a resume turn don't re-enqueue the same parked interrupt three times (loop a47a).
+- `TypeSafeRiskClassifier` now circuit-breaks on permanent HTTP failures (401/403/404/410/451): after the first such error the backend is marked unavailable for the rest of the run and subsequent `classify` calls short-circuit to `unavailable` verdicts instead of retrying the endpoint on every tool call (loop a47a: 75 redundant 451 round-trips).
+
 ## [v1.2.3] - 2026-10-24
 
 ### Changed

@@ -592,3 +592,51 @@ async def test_tool_approval_resume_turn_skips_reannounce() -> None:
     ans = await policy.answer(request)
     assert ans is fallback._answer  # noqa: SLF001
     assert fallback.upgrade_announces == [False]
+
+
+# ---- gate_deferred resume replay (no duplicate announce, loop a47a) ----
+
+
+@pytest.mark.asyncio
+async def test_gate_deferred_resume_turn_skips_reannounce() -> None:
+    """A gate-deferred clarification on resume must consume the in-flight
+    human answer without re-announcing (loop a47a: the same ask_user
+    question was re-issued to the operator on every resume turn)."""
+    fallback = _AnnounceFallback()
+
+    async def _veritas(_req: ClarificationRequest) -> VeritasAnswerSchema:
+        raise AssertionError("veritas must not re-run for gate_deferred requests")
+
+    policy = AutoClarificationPolicy(_veritas, interactive_fallback=fallback)
+    base = _request()
+    request = replace(
+        base,
+        metadata={
+            **base.metadata,
+            "gate_deferred": True,
+            "gate_deferred_kind": "explicit",
+            "resume_turn": True,
+        },
+    )
+    ans = await policy.answer(request)
+    assert ans is fallback._answer  # noqa: SLF001
+    assert fallback.upgrade_announces == [False]
+
+
+@pytest.mark.asyncio
+async def test_gate_deferred_first_turn_announces() -> None:
+    """First-turn gate_deferred still announces (routes to human relay)."""
+    fallback = _AnnounceFallback()
+
+    async def _veritas(_req: ClarificationRequest) -> VeritasAnswerSchema:
+        raise AssertionError("veritas must not run for gate_deferred requests")
+
+    policy = AutoClarificationPolicy(_veritas, interactive_fallback=fallback)
+    base = _request()
+    request = replace(
+        base,
+        metadata={**base.metadata, "gate_deferred": True, "gate_deferred_kind": "explicit"},
+    )
+    ans = await policy.answer(request)
+    assert ans is fallback._answer  # noqa: SLF001
+    assert fallback.upgrade_announces == [True]

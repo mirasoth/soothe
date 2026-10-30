@@ -307,6 +307,48 @@ class TestProjectAndHydrate:
         assert fresh._parked_head_ticket_id == "loop-1__a3f7c"
 
     @pytest.mark.asyncio
+    async def test_hydrate_is_idempotent_on_repeated_calls(self, relay_and_events) -> None:
+        """Repeated hydrate calls with the same checkpoint must not rebuild
+        (and re-enqueue) the parked interrupt (loop a47a: the same
+        interrupt_id was re-enqueued 3× as multiple nodes re-entered)."""
+        relay, _ = relay_and_events
+        await _capture(relay, _ask_user_interrupt())
+        update = relay.project_to_channels(scratch=LoopPhaseScratch(), mark_parked_head=True)
+
+        fresh = LoopRelay(loop_id="loop-1", emit=relay._emit)
+        fresh.hydrate_from_channels(update["relay_state"])
+        assert len(fresh.inbox) == 1
+        head_iid = fresh.inbox.head.origin_interrupt_id
+        inbox_after_first = fresh.inbox
+
+        # Second hydrate with the same checkpoint: the inbox object is kept
+        # (not replaced), so the parked interrupt is not re-enqueued.
+        fresh.hydrate_from_channels(update["relay_state"])
+        assert fresh.inbox is inbox_after_first
+        assert len(fresh.inbox) == 1
+        assert fresh.inbox.head.origin_interrupt_id == head_iid
+
+    @pytest.mark.asyncio
+    async def test_hydrate_rebuilds_when_checkpoint_changes(self, relay_and_events) -> None:
+        """A changed checkpoint (consumed head + new interrupt) must rebuild."""
+        relay, _ = relay_and_events
+        await _capture(relay, _ask_user_interrupt("iAU1"))
+        update1 = relay.project_to_channels(scratch=LoopPhaseScratch(), mark_parked_head=True)
+
+        fresh = LoopRelay(loop_id="loop-1", emit=relay._emit)
+        fresh.hydrate_from_channels(update1["relay_state"])
+        assert fresh.inbox.head.origin_interrupt_id == "iAU1"
+
+        # Origin node consumed the head; a new interrupt was captured.
+        relay.inbox.dequeue()
+        await _capture(relay, _ask_user_interrupt("iAU2"))
+        update2 = relay.project_to_channels(scratch=LoopPhaseScratch(), mark_parked_head=True)
+
+        # Current inbox [iAU1] ≠ checkpoint [iAU2] → rebuild.
+        fresh.hydrate_from_channels(update2["relay_state"])
+        assert fresh.inbox.head.origin_interrupt_id == "iAU2"
+
+    @pytest.mark.asyncio
     async def test_snapshot_view(self, relay_and_events) -> None:
         relay, _ = relay_and_events
         await _capture(relay, _ask_user_interrupt())

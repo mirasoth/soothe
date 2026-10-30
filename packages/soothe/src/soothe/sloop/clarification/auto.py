@@ -119,9 +119,14 @@ class AutoClarificationPolicy:
         """
         if self._interactive_fallback is not None:
             announce = not request.metadata.get("resume_turn")
-            logger.info(
-                "[clarification] tool_approval interrupt from auto gate; routing to human relay"
-            )
+            if announce:
+                logger.info(
+                    "[clarification] tool_approval interrupt from auto gate; routing to human relay"
+                )
+            else:
+                logger.info(
+                    "[clarification] tool_approval resume replay; consuming human answer (no re-announce)"
+                )
             return await self._delegate_to_fallback(request, announce=announce)
         if self._autopilot_retry_on_fail:
             logger.info("[clarification] tool_approval without human; autopilot retry")
@@ -228,11 +233,23 @@ class AutoClarificationPolicy:
         gate defers only for genuine "I don't know" verdicts, so the station
         goes straight to the human relay when one is attached, the autopilot
         retry sentinel when enabled, or a hard defer (park) otherwise.
+
+        Resume replays pass ``announce=False`` so the already-mounted TUI
+        card is not re-announced (the human answer is consumed in flight).
         """
         kind = str(request.metadata.get("gate_deferred_kind") or "explicit")
         if self._interactive_fallback is not None:
-            logger.info("[clarification] ask_user gate deferred (kind=%s); routing to human", kind)
-            return await self._delegate_to_fallback(request)
+            announce = not request.metadata.get("resume_turn")
+            if announce:
+                logger.info(
+                    "[clarification] ask_user gate deferred (kind=%s); routing to human", kind
+                )
+            else:
+                logger.info(
+                    "[clarification] ask_user gate deferred (kind=%s); resume replay (no re-announce)",
+                    kind,
+                )
+            return await self._delegate_to_fallback(request, announce=announce)
         if self._autopilot_retry_on_fail:
             logger.info("[clarification] ask_user gate deferred (kind=%s); autopilot retry", kind)
             return self._build_retry_answer(request)

@@ -126,6 +126,58 @@ def _extract_interrupts_from_graph_interrupt(exc: GraphInterrupt) -> dict[str, A
     return result
 
 
+def _checkpoint_inbox_iids(
+    relay_state: Mapping[str, Any] | None,
+    current_goal_id: str | None,
+) -> list[str] | None:
+    """Interrupt-ids that ``hydrate_inbox`` would produce for the checkpoint.
+
+    Replicates the goal-filter applied by ``hydrate_inbox`` so the idempotency
+    guard compares against the post-filter sequence. Returns ``None`` when the
+    ``relay_state`` is absent or malformed (caller falls back to a rebuild).
+    """
+    if not isinstance(relay_state, Mapping):
+        return None
+    raw = relay_state.get("inbox")
+    if not isinstance(raw, list):
+        return None
+    iids: list[str] = []
+    for entry in raw:
+        if not isinstance(entry, Mapping):
+            continue
+        request = entry.get("request")
+        if not isinstance(request, Mapping):
+            continue
+        entry_goal_id = entry.get("goal_id")
+        if (
+            current_goal_id is not None
+            and entry_goal_id is not None
+            and entry_goal_id != current_goal_id
+        ):
+            continue
+        iids.append(str(request.get("origin_interrupt_id", "")))
+    return iids
+
+
+def _inbox_matches_checkpoint(
+    relay_state: Mapping[str, Any] | None,
+    inbox: RelayInbox,
+    current_goal_id: str | None,
+) -> bool:
+    """True when the in-memory inbox already reflects the checkpoint.
+
+    Compares the interrupt-id sequence (post goal-filter) so a resume turn's
+    repeated node entries don't rebuild — and re-enqueue — the same parked
+    interrupt. Returns ``False`` when a rebuild is needed (fresh worker,
+    stale-goal entries, or a changed checkpoint).
+    """
+    ckpt_iids = _checkpoint_inbox_iids(relay_state, current_goal_id)
+    if ckpt_iids is None:
+        return len(inbox) == 0
+    current_iids = [entry.request.origin_interrupt_id for entry in inbox]
+    return current_iids == ckpt_iids
+
+
 class LoopRelay:
     """Single typed bridge between the StrangeLoop and CoreAgent graphs.
 
@@ -579,14 +631,20 @@ class LoopRelay:
 
         Called at turn start (`node_execute` / `node_await_clarification`) so a
         fresh `ainvoke` reconstructs inbox and scratch from the checkpoint.
-        Idempotent — skips entries already present.
+        Idempotent — skips the inbox rebuild when the in-memory inbox already
+        matches the checkpoint (same interrupt-id sequence, post goal filter).
+
+        A resume turn re-enters several graph nodes, each calling hydrate;
+        without this guard the same parked interrupt is re-enqueued on every
+        entry, re-processing the request before the origin node dequeues it.
 
         When ``current_goal_id`` is provided, stale entries belonging to a
         *different* (cancelled) goal are filtered out during inbox hydration,
         preventing the cancelled goal's clarification interrupts from leaking
         into the new goal.
         """
-        self._inbox = hydrate_inbox(relay_state, current_goal_id=current_goal_id)
+        if not _inbox_matches_checkpoint(relay_state, self._inbox, current_goal_id):
+            self._inbox = hydrate_inbox(relay_state, current_goal_id=current_goal_id)
         if isinstance(relay_state, Mapping):
             parked = relay_state.get("parked_head_ticket_id")
             if parked:

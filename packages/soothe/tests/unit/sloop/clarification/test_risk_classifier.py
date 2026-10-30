@@ -57,7 +57,17 @@ def _classifier(answers=None, error=None, **cfg_over) -> TypeSafeRiskClassifier:
     clf._max_states = 32
     clf._questions = {}
     clf._classifier = _FakeClassifier(answers, error)
+    clf._circuit_tripped = False
+    clf._circuit_reason = None
     return clf
+
+
+class _FakeHTTPError(Exception):
+    """Stand-in for an HTTP status error with a structured status code."""
+
+    def __init__(self, status: int, message: str = "") -> None:
+        self.response = type("R", (), {"status_code": status})()
+        super().__init__(message or f"POST https://api.typesafe.ai/v1/systemone: {status}")
 
 
 # ---------------------------------------------------------------------------
@@ -107,6 +117,46 @@ class TestGates:
         clf = _classifier(error=RuntimeError("connection refused"))
         verdicts = await clf.classify([_query(), _query()])
         assert [v.band for v in verdicts] == ["unavailable", "unavailable"]
+
+    @pytest.mark.asyncio
+    async def test_transport_error_does_not_trip_circuit(self) -> None:
+        """Transient errors (no HTTP status) must not circuit-trip — the
+        backend may recover, so the next call still hits the endpoint."""
+        clf = _classifier(error=RuntimeError("connection refused"))
+        await clf.classify([_query()])
+        assert clf._circuit_tripped is False  # noqa: SLF001
+        first_states = len(clf._classifier.states)
+        await clf.classify([_query()])
+        assert clf._circuit_tripped is False  # noqa: SLF001
+        assert len(clf._classifier.states) == first_states + 1
+
+    @pytest.mark.asyncio
+    async def test_permanent_http_status_trips_circuit(self) -> None:
+        """A 451 (legal block) is permanent — the circuit trips and the
+        endpoint is not retried on subsequent calls (loop a47a: 75x)."""
+        clf = _classifier(error=_FakeHTTPError(451))
+        verdicts = await clf.classify([_query()])
+        assert [v.band for v in verdicts] == ["unavailable"]
+        assert clf._circuit_tripped is True  # noqa: SLF001
+        states_after_first = len(clf._classifier.states)
+        # Second call short-circuits — the backend is never hit.
+        verdicts2 = await clf.classify([_query(), _query()])
+        assert [v.band for v in verdicts2] == ["unavailable", "unavailable"]
+        assert len(clf._classifier.states) == states_after_first
+
+    @pytest.mark.asyncio
+    async def test_message_only_451_trips_circuit(self) -> None:
+        """A status code recoverable only from the message also trips."""
+        clf = _classifier(error=RuntimeError("451 Unavailable For Legal Reasons"))
+        await clf.classify([_query()])
+        assert clf._circuit_tripped is True  # noqa: SLF001
+
+    @pytest.mark.asyncio
+    async def test_500_does_not_trip_circuit(self) -> None:
+        """Server errors (5xx) are transient — no circuit trip."""
+        clf = _classifier(error=_FakeHTTPError(503))
+        await clf.classify([_query()])
+        assert clf._circuit_tripped is False  # noqa: SLF001
 
     @pytest.mark.asyncio
     async def test_missing_answer_is_unavailable(self) -> None:

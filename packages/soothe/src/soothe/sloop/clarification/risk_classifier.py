@@ -27,6 +27,7 @@ Two properties the gate depends on:
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -36,6 +37,16 @@ _QUESTION_ID = "risk_decision"
 _ALLOW = "allow"
 _ESCALATE = "escalate"
 _REJECT = "reject"
+
+# HTTP statuses that indicate a permanently unavailable backend (legal block,
+# auth failure, gone resource). On any of these the classifier circuit-trips
+# so subsequent calls short-circuit to `unavailable` instead of retrying the
+# endpoint on every tool call (loop a47a: 75 redundant 451 round-trips).
+_PERMANENT_HTTP_STATUSES = frozenset({401, 403, 404, 410, 451})
+
+# Matches a 3-digit HTTP status code in an exception message (fallback when
+# the exception lacks a structured status-code attribute).
+_STATUS_RE = re.compile(r"\b([1-5]\d{2})\b")
 
 _INSTRUCTIONS = (
     "Decide how this tool call should be handled for the stated goal: allow it, "
@@ -102,6 +113,27 @@ class NullRiskClassifier:
         return [RiskVerdict(band="unavailable", reason=self._reason) for _ in items]
 
 
+def _extract_http_status(exc: Exception) -> int | None:
+    """Best-effort HTTP status code from a transport/HTTP exception.
+
+    Checks structured attributes (``response.status_code``, ``status_code``)
+    before falling back to a regex on the message. Returns ``None`` when no
+    status can be determined.
+    """
+    response = getattr(exc, "response", None)
+    if response is not None:
+        status = getattr(response, "status_code", None)
+        if isinstance(status, int):
+            return status
+    status = getattr(exc, "status_code", None)
+    if isinstance(status, int):
+        return status
+    match = _STATUS_RE.search(str(exc))
+    if match is not None:
+        return int(match.group(1))
+    return None
+
+
 class TypeSafeRiskClassifier:
     """TypeSafe `/v1/systemone` backend via `langchain-typesafe`."""
 
@@ -135,6 +167,11 @@ class TypeSafeRiskClassifier:
         if api_key:
             client_kwargs["api_key"] = api_key
         self._classifier = TypeSafeClassifier(**client_kwargs)
+        # Circuit breaker: once a permanent HTTP failure (e.g. 451 legal
+        # block) is observed, short-circuit every subsequent call to an
+        # `unavailable` verdict so the endpoint is not retried per tool call.
+        self._circuit_tripped: bool = False
+        self._circuit_reason: str | None = None
 
     def _state(self, item: RiskQuery) -> dict[str, Any]:
         state: dict[str, Any] = {"tool": item.tool, "args": item.args_preview}
@@ -177,11 +214,25 @@ class TypeSafeRiskClassifier:
         )
 
     async def classify(self, items: list[RiskQuery]) -> list[RiskVerdict]:
-        """Classify subjects in bounded batches; failures degrade to fallback."""
+        """Classify subjects in bounded batches; failures degrade to fallback.
+
+        A permanent HTTP failure (e.g. 451 legal block) trips a circuit
+        breaker so subsequent calls return ``unavailable`` verdicts without
+        hitting the endpoint — the backend is unavailable for the rest of
+        the run, not retried per tool call.
+        """
         from langchain_typesafe.types import ClassifierRequest
 
         if not items:
             return []
+        if self._circuit_tripped:
+            return [
+                RiskVerdict(
+                    band="unavailable",
+                    reason=f"classifier circuit-open: {self._circuit_reason}",
+                )
+                for _ in items
+            ]
         verdicts: list[RiskVerdict] = []
         for start in range(0, len(items), self._max_states):
             batch = items[start : start + self._max_states]
@@ -193,10 +244,20 @@ class TypeSafeRiskClassifier:
                     ]
                 )
             except Exception as exc:  # noqa: BLE001 — never block on the classifier
-                logger.warning(
-                    "[risk_classifier] classification unavailable (%s); falling back",
-                    exc,
-                )
+                status = _extract_http_status(exc)
+                if status in _PERMANENT_HTTP_STATUSES:
+                    self._circuit_tripped = True
+                    self._circuit_reason = f"HTTP {status}"
+                    logger.warning(
+                        "[risk_classifier] backend permanently unavailable "
+                        "(HTTP %s); circuit tripped — subsequent calls short-circuit",
+                        status,
+                    )
+                else:
+                    logger.warning(
+                        "[risk_classifier] classification unavailable (%s); falling back",
+                        exc,
+                    )
                 verdicts.extend(
                     RiskVerdict(band="unavailable", reason=f"classifier error: {exc}")
                     for _ in batch
