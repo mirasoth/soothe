@@ -29,7 +29,7 @@ def test_no_blank_line_between_task_branch_and_main_step_tools() -> None:
         {"path": "~/Workspace/Longan"},
     )
     text = _plain(card._step_task_activity_content())
-    assert "Tool-use" in text
+    assert "──── tools" in text
     assert "Deep Research(scan both trees)" in text
     assert "ListFiles" in text
     assert "\n\n" not in text

@@ -108,8 +108,20 @@ def test_step_activity_tree_shows_collapsed_tool_overflow() -> None:
         error="✗",
         circle_empty="○",
         spinner_frames=["|"],
+        box_horizontal="-",
+        bullet="•",
+        expand="▶",
+        warning="!",
     )
-    colors = SimpleNamespace(cognition="c", error="e", muted="m", foreground="f")
+    colors = SimpleNamespace(
+        cognition="c",
+        error="e",
+        muted="m",
+        foreground="f",
+        accent="a",
+        warning="w",
+        card_border="b",
+    )
     content = StepActivityTree.render(
         step_id="ABC-01",
         step_status="running",

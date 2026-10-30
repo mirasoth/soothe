@@ -50,7 +50,11 @@ def run_impl(
             )
         log_level = resolve_cli_log_level(logging_level=cfg.logging_level)
         log_file = Path(SOOTHE_HOME) / "logs" / "cli.log"
-        setup_logging(log_level, log_file=log_file)
+        setup_logging(
+            log_level,
+            log_file=log_file,
+            tui_debug=bool(getattr(cfg, "tui_debug", False)),
+        )
 
         # PostgreSQL availability check (requires daemon-side config)
         if hasattr(cfg, "protocols") and hasattr(cfg.protocols, "durability"):

@@ -34,6 +34,15 @@ SHELL_ALLOW_LIST = "SOOTHE_CLI_SHELL_ALLOW_LIST"
 USER_ID = "SOOTHE_CLI_USER_ID"
 """Attach a user identifier to stream metadata (when set)."""
 
+TUI_DEBUG = "SOOTHE_TUI_DEBUG"
+"""Emit structured TUI trace logs on logger `soothe.ux.tui.trace`.
+
+Truthy values: '1', 'true', 'yes', 'on'. Mirrors `SootheConfig.tui_debug`
+(see `docs/wiki/configuration-guide/environment-variables.md`); the env var
+wins so tracing can be switched on for a single headless run without editing
+config.
+"""
+
 TUI_REFRESH_INTERVAL_MS = "SOOTHE_CLI_TUI_REFRESH_INTERVAL_MS"
 """Minimum interval between TUI widget refreshes in milliseconds (default: 800).
 
@@ -46,6 +55,13 @@ WORKSPACE = "SOOTHE_CLI_WORKSPACE"
 
 OMIT_WORKSPACE = "SOOTHE_CLI_OMIT_WORKSPACE"
 """Optional: when ``1``/``true``/``yes``, omit ``workspace`` on ``loop_new`` (default: send cwd)."""
+
+
+def env_flag_enabled(name: str) -> bool:
+    """Return True when `name` holds a truthy value ('1', 'true', 'yes', 'on')."""
+    import os
+
+    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
 
 
 def resolve_cli_loop_workspace() -> str | None:

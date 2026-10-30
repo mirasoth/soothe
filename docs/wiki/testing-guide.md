@@ -142,19 +142,13 @@ make test-integration
 
 **Purpose**: Test complete workflows from CLI to daemon to agent execution.
 
-**Location**: `scripts/` (benchmark and validation scripts)
-
-**Examples**:
-- `scripts/benchmark_e2e_concurrent_queries.py` - Concurrent query handling
-- `scripts/verify_daemon_events.py` - Daemon event streaming
-- `scripts/validate_streaming.py` - Output streaming validation
+**Location**: `packages/<name>/tests/integration/` (full CLI → daemon → agent workflows)
 
 **Run E2E tests**:
 ```bash
 # Requires running daemon
 soothed start
-python scripts/verify_daemon_events.py
-python scripts/benchmark_e2e_concurrent_queries.py
+make test-integration
 ```
 
 ---
@@ -655,11 +649,11 @@ pytest -x --pdb tests/unit/core/
 Run performance benchmarks:
 
 ```bash
-# Concurrent query benchmark
-python scripts/benchmark_e2e_concurrent_queries.py
+# Alert-pipeline SLO benchmark (also runs in CI)
+make bench-alert-slo
 
-# TUI performance check
-./scripts/tui_perf_check.sh
+# Full benchmark with custom iterations
+python scripts/benchmark_alert_pipeline.py --iterations 200
 ```
 
 ### Slow Test Management

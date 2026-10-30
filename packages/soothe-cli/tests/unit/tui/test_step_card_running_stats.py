@@ -533,7 +533,7 @@ def test_main_only_step_activity_has_tools_section_no_running_line() -> None:
     card._status = "running"
     card._start_time = 0.0
     content = str(card._step_task_activity_content())
-    assert "Tool-use" in content
+    assert "──── tools" in content
     assert "Glob" in content
     assert "Grep" in content
     assert "+1 more tool" not in content
@@ -579,7 +579,7 @@ def test_deferred_running_set_running_refreshes_task_activity_panel() -> None:
 
     assert mock_notes.update.called, "Task activity panel should refresh after deferred mount"
     notes_text = _extract_content_text(mock_notes.update.call_args[0][0])
-    assert "Tool-use" in notes_text
+    assert "──── tools" in notes_text
     assert "Grep" in notes_text or "grep" in notes_text.lower()
     assert "Running..." not in notes_text
     assert mock_status.display is False

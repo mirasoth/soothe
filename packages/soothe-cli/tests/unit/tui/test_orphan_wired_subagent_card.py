@@ -92,7 +92,7 @@ def test_orphan_subagent_card_header_includes_compact_title_meta() -> None:
     assert "↓340" in header
 
     activity = str(card._step_task_activity_content())
-    assert "Tool-use" in activity
+    assert "──── tools" in activity
     assert "Grep" in activity or "grep" in activity.lower()
 
 

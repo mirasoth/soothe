@@ -993,6 +993,66 @@ def _register_execute_namespace_binding(
             adapter._step_by_namespace[ns_key] = step_w
 
 
+_STEP_REASONING_EXCLUDED_PHASES: frozenset[str] = frozenset({"execute_step", "execute_wave"})
+"""Loop phases whose assistant text already has a dedicated display path."""
+
+
+def _is_step_reasoning_candidate(
+    *,
+    is_step_scope: bool,
+    text: str,
+    reasoning_text: str,
+    message: Any,
+    phase_loop: Any,
+) -> bool:
+    """True when assistant text belongs on the step card's Reasoning branch.
+
+    Covers the CoreAgent (deepagents) reply emitted after a tool call: it
+    arrives without a loop ``phase``, so it matches no user-visible output
+    phase and would otherwise be dropped. Excludes text already owned by
+    another path — loop-tagged user output (``goal_completion``, ``chitchat``,
+    intent hints, …) and captured thinking tokens (``reasoning_text``).
+    """
+    return (
+        is_step_scope
+        and bool(text.strip())
+        and not reasoning_text
+        and assistant_output_phase(message) is None
+        and phase_loop not in _STEP_REASONING_EXCLUDED_PHASES
+    )
+
+
+def _resolve_step_card_for_scoped_text(
+    adapter: TextualUIAdapter,
+    router: StepTaskRouter,
+    ns_key: tuple[str, ...],
+    message: Any = None,
+) -> Any | None:
+    """Resolve the step card that owns untagged assistant text (step reasoning).
+
+    Step-scoped assistant text — the CoreAgent (deepagents) reply emitted after
+    a tool call — arrives without a loop ``phase``, so it cannot be attributed
+    through the phase-based paths. Resolution mirrors token accounting: bound
+    namespace first, then step id inferred from ``tool_calls``, then the single
+    active step. When the fallback resolves a card the namespace is bound so
+    later chunks of the same message hit the direct lookup.
+
+    Returns ``None`` when no unambiguous step card exists (intake chatter,
+    parallel waves without a binding) so callers keep their current behavior.
+    """
+    if not is_step_card_tool_scope(ns_key=ns_key):
+        return None
+    step_w = adapter._step_by_namespace.get(ns_key)
+    if step_w is None:
+        step_w = _resolve_token_target_card(adapter, router, ns_key, message=message)
+    if step_w is None and len(router.active_step_ids) == 1:
+        only_sid = next(iter(router.active_step_ids))
+        step_w = adapter._current_step_messages.get(only_sid)
+    if step_w is not None and adapter._step_by_namespace.get(ns_key) is None:
+        adapter._step_by_namespace[ns_key] = step_w
+    return step_w
+
+
 def _apply_backend_loop_tokens_event(
     adapter: TextualUIAdapter,
     data: dict[str, Any],
@@ -3682,6 +3742,29 @@ async def execute_task_textual(
                                                     task_loop_assistant_by_tcid[tcid]
                                                 )
                                     continue
+                                # Step reasoning: the CoreAgent (deepagents) reply
+                                # emitted after a tool call arrives untagged (no
+                                # ``phase``), so it matches no user-visible loop
+                                # output phase and would be dropped by the gates
+                                # below. Surface it on the step card's Reasoning
+                                # branch instead of letting it vanish. Checked
+                                # before subgraph suppression because step-scope
+                                # execute namespaces are also step-owned text.
+                                if _is_step_reasoning_candidate(
+                                    is_step_scope=is_step_scope,
+                                    text=text,
+                                    reasoning_text=reasoning_text,
+                                    message=message,
+                                    phase_loop=phase_loop,
+                                ):
+                                    step_w_reasoning = _resolve_step_card_for_scoped_text(
+                                        adapter, router, ns_key, message
+                                    )
+                                    if step_w_reasoning is not None and hasattr(
+                                        step_w_reasoning, "append_reasoning_delta"
+                                    ):
+                                        step_w_reasoning.append_reasoning_delta(text)
+                                        continue
                                 if suppress_subgraph_assistant_text:
                                     continue
                                 if not text:

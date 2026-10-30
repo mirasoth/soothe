@@ -42,6 +42,10 @@ def _mock_theme_colors() -> MagicMock:
     colors.error = "#ff0000"
     colors.primary = "#0000ff"
     colors.success = "#00ff00"
+    # Pane headers need concrete color strings: they are baked into Textual
+    # style strings (`bold #rrggbb`), so a Mock would produce an invalid style.
+    colors.accent = "#00ff00"
+    colors.card_border = "#333333"
     return colors
 
 
@@ -170,6 +174,11 @@ def _render(index: StepRowIndex) -> str:
     g.spinner_frames = ["⠋", "⠙"]
     g.output_prefix = "⎿"
     g.tool_prefix = "●"
+    # Pane headers draw a rule with box_horizontal; it must be a real string.
+    g.box_horizontal = "─"
+    g.bullet = "•"
+    g.expand = "▶"
+    g.warning = "⚠"
     colors = _mock_theme_colors()
     with patch.object(theme, "get_theme_colors", return_value=colors):
         content = StepActivityTree.render(
@@ -197,14 +206,14 @@ def test_file_edit_always_shows_branch_with_action_path_deltas() -> None:
         ),
     ]
     text = _render(_make_index(rows))
-    assert "File-edit" in text
+    assert "──── files" in text
     assert "Created" in text
     assert "foo.md" in text
     assert "+2" in text
 
 
 def test_section_order_todo_tools_fileedit() -> None:
-    """Render order: To-do → Tool-use → File-edit."""
+    """Render order: tools → todo → files."""
     rows = [
         StepToolRow(
             tool_call_id="FE_01:s:grep:0",
@@ -227,6 +236,10 @@ def test_section_order_todo_tools_fileedit() -> None:
     g.spinner_frames = ["⠋"]
     g.output_prefix = "⎿"
     g.tool_prefix = "●"
+    g.box_horizontal = "─"
+    g.bullet = "•"
+    g.expand = "▶"
+    g.warning = "⚠"
     colors = _mock_theme_colors()
     todos = [{"content": "Do thing", "status": "pending"}]
     with patch.object(theme, "get_theme_colors", return_value=colors):
@@ -243,10 +256,10 @@ def test_section_order_todo_tools_fileedit() -> None:
                 todos=todos,
             )
         )
-    todo_idx = text.index("To-do")
-    tools_idx = text.index("Tool-use")
-    file_edit_idx = text.index("File-edit")
-    assert todo_idx < tools_idx < file_edit_idx
+    todo_idx = text.index("──── todo")
+    tools_idx = text.index("──── tools")
+    file_edit_idx = text.index("──── files")
+    assert tools_idx < todo_idx < file_edit_idx
 
 
 def test_file_edit_capped_to_latest_five() -> None:
@@ -268,7 +281,7 @@ def test_file_edit_capped_to_latest_five() -> None:
 
 
 def test_file_edit_excludes_file_write_from_tool_use() -> None:
-    """File-write rows should not also appear under Tool-use."""
+    """File-write rows should not also appear in the tools pane."""
     rows = [
         StepToolRow(
             tool_call_id="FE_01:s:grep:0",
@@ -284,8 +297,8 @@ def test_file_edit_excludes_file_write_from_tool_use() -> None:
         ),
     ]
     text = _render(_make_index(rows))
-    tools_idx = text.index("Tool-use")
-    file_edit_idx = text.index("File-edit")
+    tools_idx = text.index("──── tools")
+    file_edit_idx = text.index("──── files")
     tools_section = text[tools_idx:file_edit_idx]
     assert "Grep" in tools_section
     assert "WriteFile" not in tools_section
@@ -311,7 +324,7 @@ def test_file_edit_edit_file_shows_added_removed() -> None:
 
 
 def test_file_edit_branch_absent_without_file_write_rows() -> None:
-    """No File-edit header when there are no file-write tool rows."""
+    """No files pane when there are no file-write tool rows."""
     rows = [
         StepToolRow(
             tool_call_id="FE_01:s:grep:0",
@@ -321,5 +334,5 @@ def test_file_edit_branch_absent_without_file_write_rows() -> None:
         ),
     ]
     text = _render(_make_index(rows))
-    assert "File-edit" not in text
-    assert "Tool-use" in text
+    assert "──── files" not in text
+    assert "──── tools" in text
