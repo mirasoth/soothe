@@ -15,7 +15,7 @@ from soothe_client import (
 from soothe_client.appkit import DaemonSession
 from soothe_client.appkit.events import is_loop_scoped_event, unwrap_next
 
-from soothe_cli._env_vars import resolve_cli_loop_workspace
+from soothe_cli._env_vars import TUI_DEBUG, env_flag_enabled, resolve_cli_loop_workspace
 from soothe_cli.cli.execution.daemon_errors import (
     friendly_daemon_execution_error,
     is_daemon_worker_subprocess_lost,
@@ -220,9 +220,13 @@ async def _run_headless_session_once(
 
         presentation = PresentationEngine()
         renderer = HeadlessCliRenderer()
+        # `SOOTHE_TUI_DEBUG` wins so tracing can be enabled for one run without
+        # touching config; the CLI flag feeds `cfg.tui_debug` when set.
+        tui_debug = bool(getattr(cfg, "tui_debug", False)) or env_flag_enabled(TUI_DEBUG)
         processor = EventProcessor(
             renderer,
             presentation_engine=presentation,
+            tui_debug=tui_debug,
             headless_output=True,
             streaming_mode="batch" if stream_delivery == "batch" else "streaming",
         )

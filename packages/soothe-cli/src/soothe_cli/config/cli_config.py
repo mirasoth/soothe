@@ -32,6 +32,13 @@ class CLIConfig:
     markdown_theme: str = "match-app"
     """Markdown appearance preset (``match-app``, ``langchain``, ``standard``, …)."""
 
+    tui_debug: bool = False
+    """Emit structured TUI trace logs (logger `soothe.ux.tui.trace`).
+
+    `SOOTHE_TUI_DEBUG` env var overrides this (see
+    :func:`soothe_cli._env_vars.env_flag_enabled`).
+    """
+
     # Plan panel visibility preference
     plan_panel_default_visible: bool = False
     """When True, auto-show the in-flow plan panel while a goal is executing and

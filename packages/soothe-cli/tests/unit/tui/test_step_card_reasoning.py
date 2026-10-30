@@ -7,6 +7,8 @@ Reasoning section of the step card activity tree, with proper ordering
 
 from __future__ import annotations
 
+from typing import Any
+
 from soothe_cli.display.preview_limits import (
     STEP_CARD_REASONING_PREVIEW_LINES,
 )
@@ -260,6 +262,179 @@ def test_append_reasoning_delta_from_subgraph_namespace() -> None:
     assert hasattr(step_w, "append_reasoning_delta")
     step_w.append_reasoning_delta(reasoning_text)
     assert step_w._reasoning_buffer == "I should check the config."
+
+
+def test_step_reasoning_candidate_accepts_untagged_step_text() -> None:
+    """CoreAgent reply after a tool call: step scope, text, no phase."""
+    from langchain_core.messages import AIMessage
+
+    from soothe_cli.tui.textual_adapter import _is_step_reasoning_candidate
+
+    message = AIMessage(content="文件完整内容如下：…")
+    assert _is_step_reasoning_candidate(
+        is_step_scope=True,
+        text="文件完整内容如下：…",
+        reasoning_text="",
+        message=message,
+        phase_loop=getattr(message, "phase", None),
+    )
+
+
+def test_step_reasoning_candidate_rejects_user_visible_phase() -> None:
+    """goal_completion / chitchat text keeps its own user-visible path."""
+    from langchain_core.messages import AIMessageChunk
+
+    from soothe_cli.tui.textual_adapter import _is_step_reasoning_candidate
+
+    message = AIMessageChunk(content="final report", phase="goal_completion")
+    assert not _is_step_reasoning_candidate(
+        is_step_scope=True,
+        text="final report",
+        reasoning_text="",
+        message=message,
+        phase_loop="goal_completion",
+    )
+
+
+def test_step_reasoning_candidate_rejects_captured_thinking_tokens() -> None:
+    """Native `reasoning_content` already flows through its own channel."""
+    from langchain_core.messages import AIMessageChunk
+
+    from soothe_cli.tui.textual_adapter import _is_step_reasoning_candidate
+
+    message = AIMessageChunk(
+        content="",
+        additional_kwargs={"reasoning_content": "internal monologue"},
+    )
+    assert not _is_step_reasoning_candidate(
+        is_step_scope=True,
+        text="visible text",
+        reasoning_text="internal monologue",
+        message=message,
+        phase_loop=None,
+    )
+
+
+def test_step_reasoning_candidate_rejects_execute_phases_and_out_of_scope() -> None:
+    """execute_step/execute_wave prose and subagent namespaces are not step reasoning."""
+    from langchain_core.messages import AIMessage
+
+    from soothe_cli.tui.textual_adapter import _is_step_reasoning_candidate
+
+    message = AIMessage(content="step prose")
+    assert not _is_step_reasoning_candidate(
+        is_step_scope=True,
+        text="step prose",
+        reasoning_text="",
+        message=message,
+        phase_loop="execute_step",
+    )
+    assert not _is_step_reasoning_candidate(
+        is_step_scope=False,
+        text="subagent prose",
+        reasoning_text="",
+        message=message,
+        phase_loop=None,
+    )
+
+
+def _adapter_with_step(
+    step_card: Any,
+    *,
+    bindings: dict[tuple[str, ...], Any] | None = None,
+    active_step_ids: tuple[str, ...] = ("s1",),
+) -> tuple[Any, Any]:
+    """Minimal adapter + router pair holding one step card."""
+    from types import SimpleNamespace
+
+    from soothe_cli.runtime.state.step_router import StepTaskRouter
+
+    adapter = SimpleNamespace(
+        _step_by_namespace=dict(bindings or {}),
+        _current_step_messages={"s1": step_card},
+        _tool_to_step={},
+        _tool_display_by_call_id={},
+    )
+    router = StepTaskRouter()
+    router.active_step_ids.update(active_step_ids)
+    return adapter, router
+
+
+def test_resolve_step_card_for_main_namespace() -> None:
+    """Root-namespace step text resolves and binds (the live-run shape)."""
+    from soothe_cli.tui.textual_adapter import _resolve_step_card_for_scoped_text
+    from soothe_cli.tui.widgets.messages.cognition_step import CognitionStepMessage
+
+    step_card = CognitionStepMessage(step_id="s1", description="read the file")
+    step_card.set_running()
+    adapter, router = _adapter_with_step(step_card)
+
+    resolved = _resolve_step_card_for_scoped_text(adapter, router, ())
+    assert resolved is step_card
+    assert adapter._step_by_namespace[()] is step_card
+
+
+def test_resolve_step_card_for_execute_namespace() -> None:
+    """Execute subgraph namespaces resolve through the single-active-step fallback."""
+    from soothe_cli.tui.textual_adapter import _resolve_step_card_for_scoped_text
+    from soothe_cli.tui.widgets.messages.cognition_step import CognitionStepMessage
+
+    step_card = CognitionStepMessage(step_id="s1", description="read the file")
+    step_card.set_running()
+    adapter, router = _adapter_with_step(step_card)
+
+    ns_key = ("execute:thread-abc",)
+    resolved = _resolve_step_card_for_scoped_text(adapter, router, ns_key)
+    assert resolved is step_card
+    assert adapter._step_by_namespace[ns_key] is step_card
+
+
+def test_resolve_step_card_skips_subagent_namespace_and_idle_turn() -> None:
+    """Subagent namespaces and turns with no active step stay untouched."""
+    from soothe_cli.tui.textual_adapter import _resolve_step_card_for_scoped_text
+    from soothe_cli.tui.widgets.messages.cognition_step import CognitionStepMessage
+
+    step_card = CognitionStepMessage(step_id="s1", description="read the file")
+    step_card.set_running()
+
+    adapter, router = _adapter_with_step(step_card)
+    assert _resolve_step_card_for_scoped_text(adapter, router, ("tools:abc",)) is None
+    assert adapter._step_by_namespace == {}
+
+    adapter, router = _adapter_with_step(step_card, active_step_ids=())
+    assert _resolve_step_card_for_scoped_text(adapter, router, ()) is None
+    assert adapter._step_by_namespace == {}
+
+
+def test_untagged_step_text_reaches_step_card_reasoning() -> None:
+    """End-to-end: a real post-tool message lands in the step card buffer."""
+    from langchain_core.messages import AIMessage
+
+    from soothe_cli.tui.textual_adapter import (
+        _is_step_reasoning_candidate,
+        _resolve_step_card_for_scoped_text,
+    )
+    from soothe_cli.tui.widgets.messages.cognition_step import CognitionStepMessage
+
+    step_card = CognitionStepMessage(step_id="s1", description="read the file")
+    step_card.set_running()
+    adapter, router = _adapter_with_step(step_card)
+
+    message = AIMessage(content="文件完整内容如下：PROBE-MARKER-ALPHA")
+    text = str(message.content)
+    assert _is_step_reasoning_candidate(
+        is_step_scope=True,
+        text=text,
+        reasoning_text="",
+        message=message,
+        phase_loop=getattr(message, "phase", None),
+    )
+    resolved = _resolve_step_card_for_scoped_text(adapter, router, (), message)
+    assert resolved is step_card
+    resolved.append_reasoning_delta(text)
+
+    assert step_card._reasoning_buffer == text
+    assert step_card._has_task_activity_body()
 
 
 def test_append_reasoning_delta_from_dict_message() -> None:

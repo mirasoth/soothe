@@ -53,9 +53,9 @@ Defaults and validation bounds live in code; templates show the operator-facing 
    limits. Exceeding them requires a code change (raise `le`) plus a
    rationale record — not a config-only edit.
 
-4. **Measure before and after.** Use the benchmark scripts
-   (`scripts/benchmark_alert_pipeline.py`,
-   `scripts/benchmark_plan_generation.py`) and SLO docs under `benchmarks/`.
+4. **Measure before and after.** Use the benchmark script
+   (`scripts/benchmark_alert_pipeline.py`, via `make bench-alert-slo`) and SLO
+   docs under `benchmarks/`.
 
 5. **No keyword heuristics (RFC-630).** Content-judgment thresholds must use
    structured light-LLM fields or declarative config rules, not keyword/regex
