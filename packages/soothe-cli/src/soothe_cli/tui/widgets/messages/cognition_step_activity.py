@@ -33,6 +33,7 @@ from soothe_cli.display.tool_display import (
     format_step_tool_activity_command,
     format_step_tool_activity_line,
     truncate_to_width,
+    truncate_to_width_tail,
 )
 from soothe_cli.runtime.presentation.duration_format import (
     format_duration_ms,
@@ -1063,8 +1064,9 @@ class StepActivityTree:
         The thinking pane shows the *latest* ``reasoning_preview_lines`` lines
         of reasoning (captured thinking tokens from
         ``additional_kwargs["reasoning_content"]`` plus untagged CoreAgent step
-        text). Older lines scroll off: reasoning grows while the step runs, so
-        the tail is what the user wants to read.
+        text). Older lines scroll off and long lines are tail-truncated
+        (ellipsis prepended): reasoning grows while the step runs, so the tail
+        is what the user wants to read.
         """
         colors = _safe_colors(colors)
         todo_items = list(todos or [])
@@ -1296,18 +1298,21 @@ class StepActivityTree:
         # --- thinking pane -------------------------------------------------
         thinking_lines: list[PaneLine] = []
         if reasoning_text:
-            char_limit = reasoning_line_max_chars
+            # Thinking lines tail-truncate: when a line is too long, the
+            # *latest* content is kept (ellipsis prepended) because reasoning
+            # accumulates while the step runs and the user wants to see the
+            # most recent progress, not the stale head.
+            prefix_w = display_width("  ") + display_width(f"{g.bullet} ")
             if max_cols and max_cols > 0:
-                char_limit = min(char_limit, max_cols)
+                content_budget = max(1, min(reasoning_line_max_chars, max_cols - prefix_w))
+            else:
+                content_budget = reasoning_line_max_chars
             shown_lines: list[str] = []
             for ln in reasoning_text.splitlines():
                 stripped = ln.strip()
                 if not stripped:
                     continue
-                if len(stripped) > char_limit:
-                    shown_lines.append(stripped[: char_limit - 1] + "…")
-                else:
-                    shown_lines.append(stripped)
+                shown_lines.append(truncate_to_width_tail(stripped, content_budget))
             tail_lines = (
                 shown_lines[-reasoning_preview_lines:] if reasoning_preview_lines > 0 else []
             )

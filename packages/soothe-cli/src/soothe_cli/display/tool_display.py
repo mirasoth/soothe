@@ -75,6 +75,30 @@ def truncate_to_width(text: str, max_cols: int, *, ellipsis: str = "…") -> str
     return "".join(out) + ellipsis
 
 
+def truncate_to_width_tail(text: str, max_cols: int, *, ellipsis: str = "…") -> str:
+    """Truncate *text* to `max_cols` terminal columns, prepending an ellipsis.
+
+    Mirror of :func:`truncate_to_width` that keeps the *tail* of the string
+    (most recent content) instead of the head. Used for reasoning/thinking
+    lines where the latest progress is what the user wants to read.
+    """
+    if max_cols <= 0 or display_width(text) <= max_cols:
+        return text
+    ellipsis_width = display_width(ellipsis)
+    target = max_cols - ellipsis_width
+    if target <= 0:
+        return ellipsis[:max_cols] if ellipsis_width > max_cols else ellipsis
+    out: list[str] = []
+    width = 0
+    for ch in reversed(text):
+        w = _char_width(ch)
+        if width + w > target:
+            break
+        out.append(ch)
+        width += w
+    return ellipsis + "".join(reversed(out))
+
+
 def compact_arg_text(text: str) -> str:
     """Collapse whitespace/newlines so activity lines stay on one row."""
     return " ".join(text.split())

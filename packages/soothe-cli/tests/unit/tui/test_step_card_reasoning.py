@@ -88,8 +88,13 @@ def test_render_reasoning_section_content_shown() -> None:
 
 
 def test_render_reasoning_truncates_long_lines() -> None:
-    """Long reasoning lines are truncated with an ellipsis."""
-    long_line = "x" * 200
+    """Long reasoning lines are tail-truncated: the *latest* content is kept.
+
+    Reasoning accumulates while a step runs, so a truncated line shows the
+    tail (most recent progress) with an ellipsis prepended — not the stale
+    head with an ellipsis appended.
+    """
+    long_line = "HEAD" + "x" * 200 + "TAIL"
     content = StepActivityTree.render(
         step_id="s1",
         step_status="running",
@@ -104,8 +109,38 @@ def test_render_reasoning_truncates_long_lines() -> None:
     )
     text = str(content)
     assert "…" in text
-    # The full 200-char line should not appear
+    # The full line should not appear.
     assert long_line not in text
+    # Tail content is visible; head content is dropped.
+    assert "TAIL" in text
+    assert "HEAD" not in text
+
+
+def test_render_reasoning_tail_truncate_shows_latest_progress() -> None:
+    """A single growing reasoning line shows the latest progress as it grows.
+
+    Simulates the real streaming shape: one long line that keeps growing. The
+    displayed text always ends with the most recently appended content.
+    """
+    latest = "checking the other docs for references now"
+    growing = "Let me first find all the paper references. " * 10 + latest
+    content = StepActivityTree.render(
+        step_id="s1",
+        step_status="running",
+        index=_empty_index(),
+        subagent_notes=[],
+        subagent_notes_by_task={},
+        spinner_position=0,
+        colors=None,
+        g=get_glyphs(),
+        reasoning=growing,
+        reasoning_line_max_chars=60,
+    )
+    text = str(content)
+    # The latest progress is visible at the end of the truncated line.
+    assert latest in text
+    # The stale beginning is not shown.
+    assert "Let me first find all the paper references." not in text
 
 
 def test_render_reasoning_keeps_latest_lines() -> None:
