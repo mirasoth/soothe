@@ -8,8 +8,10 @@ import pytest
 
 from soothe.sloop.clarification.auto import AutoClarificationPolicy
 from soothe.sloop.clarification.origins import (
+    ORIGIN_COVERAGE_GATE,
     ORIGIN_EXECUTE,
     ORIGIN_PLAN_MODE_REVIEW,
+    ORIGIN_RAIL_PAUSE,
     ORIGIN_TOOL_APPROVAL,
 )
 from soothe.sloop.clarification.protocol import (
@@ -452,11 +454,13 @@ def test_autopilot_retry_on_fail_property() -> None:
     assert policy2.autopilot_retry_on_fail is False
 
 
-# ---- force_manual_origins (unchanged) ----
+# ---- human-gate origins (IG-LOOP-015: veritas routes plan_mode_review /
+# ---- rail_pause straight to the relay; force_manual_origins whitelist removed)
 
 
 @pytest.mark.asyncio
-async def test_force_manual_origin_uses_fallback_and_skips_veritas() -> None:
+async def test_plan_mode_review_uses_fallback_and_skips_veritas() -> None:
+    """plan_mode_review is a structural human gate — veritas never runs."""
     calls: list[ClarificationRequest] = []
 
     async def _veritas(_req: ClarificationRequest) -> VeritasAnswerSchema:
@@ -465,11 +469,7 @@ async def test_force_manual_origin_uses_fallback_and_skips_veritas() -> None:
 
     fallback_answer = ClarificationAnswer(answers=("Approve", ""), source="human")
     fallback = _RecordingFallback(fallback_answer)
-    policy = AutoClarificationPolicy(
-        _veritas,
-        interactive_fallback=fallback,
-        force_manual_origins=(ORIGIN_PLAN_MODE_REVIEW,),
-    )
+    policy = AutoClarificationPolicy(_veritas, interactive_fallback=fallback)
     request = _request(origin_node=ORIGIN_PLAN_MODE_REVIEW)
     ans = await policy.answer(request)
     assert ans is fallback_answer
@@ -478,16 +478,49 @@ async def test_force_manual_origin_uses_fallback_and_skips_veritas() -> None:
 
 
 @pytest.mark.asyncio
-async def test_force_manual_origin_defers_without_fallback() -> None:
-    """Force-manual origin without fallback now retries (autopilot default).
+async def test_rail_pause_uses_fallback_and_skips_veritas() -> None:
+    """rail_pause is a structural human gate — veritas never runs."""
+    calls: list[ClarificationRequest] = []
+
+    async def _veritas(_req: ClarificationRequest) -> VeritasAnswerSchema:
+        calls.append(_req)
+        return VeritasAnswerSchema(answers=["ok"], confidence=0.99, defer=False)
+
+    fallback_answer = ClarificationAnswer(answers=("Continue",), source="human")
+    fallback = _RecordingFallback(fallback_answer)
+    policy = AutoClarificationPolicy(_veritas, interactive_fallback=fallback)
+    request = _request(origin_node=ORIGIN_RAIL_PAUSE)
+    ans = await policy.answer(request)
+    assert ans is fallback_answer
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_coverage_gate_routes_to_veritas() -> None:
+    """coverage_gate is NOT a human gate — veritas determines (IG-LOOP-015)."""
+    calls: list[ClarificationRequest] = []
+
+    async def _veritas(req: ClarificationRequest) -> VeritasAnswerSchema:
+        calls.append(req)
+        return VeritasAnswerSchema(answers=["go"], confidence=0.9, defer=False)
+
+    policy = AutoClarificationPolicy(_veritas)
+    request = _request(origin_node=ORIGIN_COVERAGE_GATE)
+    ans = await policy.answer(request)
+    assert ans.source == "veritas"
+    assert calls == [request]
+
+
+@pytest.mark.asyncio
+async def test_human_gate_defers_without_fallback() -> None:
+    """Human-gate origin without fallback now retries (autopilot default).
     Use autopilot_retry_on_fail=False to get the legacy hard defer."""
 
     async def _veritas(_req: ClarificationRequest) -> VeritasAnswerSchema:
-        raise AssertionError("veritas must not run for force-manual origins")
+        raise AssertionError("veritas must not run for human-gate origins")
 
     policy = AutoClarificationPolicy(
         _veritas,
-        force_manual_origins=(ORIGIN_PLAN_MODE_REVIEW,),
         autopilot_retry_on_fail=False,
     )
     request = _request(origin_node=ORIGIN_PLAN_MODE_REVIEW)
@@ -498,15 +531,14 @@ async def test_force_manual_origin_defers_without_fallback() -> None:
 
 
 @pytest.mark.asyncio
-async def test_force_manual_origin_autopilot_retry_without_fallback() -> None:
-    """Force-manual origin in autopilot returns retry instead of hard defer."""
+async def test_human_gate_autopilot_retry_without_fallback() -> None:
+    """Human-gate origin in autopilot returns retry instead of hard defer."""
 
     async def _veritas(_req: ClarificationRequest) -> VeritasAnswerSchema:
-        raise AssertionError("veritas must not run for force-manual origins")
+        raise AssertionError("veritas must not run for human-gate origins")
 
     policy = AutoClarificationPolicy(
         _veritas,
-        force_manual_origins=(ORIGIN_PLAN_MODE_REVIEW,),
         autopilot_retry_on_fail=True,
     )
     request = _request(origin_node=ORIGIN_PLAN_MODE_REVIEW)
@@ -516,12 +548,12 @@ async def test_force_manual_origin_autopilot_retry_without_fallback() -> None:
 
 
 @pytest.mark.asyncio
-async def test_force_manual_does_not_affect_other_origins() -> None:
+async def test_human_gate_does_not_affect_veritas_origins() -> None:
+    """execute and coverage_gate still go through veritas."""
     policy = AutoClarificationPolicy(
         _veritas_returning(
             VeritasAnswerSchema(answers=["auth"], confidence=0.9, defer=False, rationale="ok")
         ),
-        force_manual_origins=(ORIGIN_PLAN_MODE_REVIEW,),
     )
     ans = await policy.answer(_request(origin_node=ORIGIN_EXECUTE))
     assert ans.source == "veritas"

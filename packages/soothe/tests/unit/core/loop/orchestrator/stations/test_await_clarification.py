@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from soothe.sloop.clarification.auto import AutoClarificationPolicy
 from soothe.sloop.clarification.protocol import (
     ClarificationAnswer,
     ClarificationDeferredError,
@@ -19,6 +20,7 @@ from soothe.sloop.relay.ticket import ResumeTicket, ticket_to_state
 from soothe.sloop.stations.sidecars.await_user import (
     node_await_clarification,
 )
+from soothe.subagents.veritas.schemas import VeritasAnswerSchema
 
 
 @dataclass
@@ -125,12 +127,18 @@ class _InteractivePolicyStub:
         return self._answer
 
 
-class _AutoPolicyStub:
-    def __init__(self, *, raises: ClarificationDeferredError | None = None) -> None:
-        self._raises = raises
+class _AutoPolicyStub(AutoClarificationPolicy):
+    """Auto-policy stub overriding `answer` so no real veritas call runs.
 
-    def requires_manual(self, _origin_node: str) -> bool:
-        return False
+    Subclasses `AutoClarificationPolicy` so `_mode_for_policy`'s isinstance
+    check recognizes it as auto (IG-LOOP-015)."""
+
+    def __init__(self, *, raises: ClarificationDeferredError | None = None) -> None:
+        async def _stub_veritas(_req: ClarificationRequest) -> VeritasAnswerSchema:
+            return VeritasAnswerSchema(answers=["x"], confidence=0.9, defer=False)
+
+        super().__init__(_stub_veritas)
+        self._raises = raises
 
     async def answer(self, request: ClarificationRequest) -> ClarificationAnswer:
         if self._raises is not None:

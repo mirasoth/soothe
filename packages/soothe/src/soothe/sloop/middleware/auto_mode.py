@@ -79,7 +79,6 @@ class AutoModeMiddleware(AgentMiddleware):
         active_in_bypass: bool = False,
         default_clarification_mode: str = "auto",
         manual_scope: str = "all",
-        force_manual_tool_approval: bool = False,
         veritas_answer: Any | None = None,
         dynamic_rules_enabled: bool = True,
         grant_cap: int = DEFAULT_GRANT_CAP,
@@ -96,8 +95,6 @@ class AutoModeMiddleware(AgentMiddleware):
             manual_scope: `manual_scope` from `ToolApprovalConfig` —
                 `all` routes every unresolved gated call to the human,
                 `ambiguous_only` auto-approves rule-unresolved calls.
-            force_manual_tool_approval: `tool_approval` listed in
-                `force_manual_origins` — every gated call goes to the human.
             veritas_answer: Optional shared veritas answerer (decision-model
                 fast path + LLM) consulted for L1-unresolved calls carrying
                 risk hints. `None` keeps the deterministic behaviour.
@@ -111,7 +108,6 @@ class AutoModeMiddleware(AgentMiddleware):
         self._active_in_bypass = active_in_bypass
         self._default_mode = default_clarification_mode
         self._manual_scope = manual_scope
-        self._force_manual_tool_approval = force_manual_tool_approval
         self._veritas_answer = veritas_answer
         self._dynamic_rules = dynamic_rules_enabled
         self._grants = LoopGrantStore(cap=grant_cap)
@@ -329,8 +325,6 @@ class AutoModeMiddleware(AgentMiddleware):
 
     def _needs_human_for_ambiguous(self, ctx: AutoModeContext) -> bool:
         """Whether a rule-unresolved gated call still needs a human decision."""
-        if self._force_manual_tool_approval:
-            return ctx.human_attached
         if ctx.bypass:
             return False
         if ctx.clarification_mode == "manual":

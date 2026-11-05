@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field, field_validator
 from soothe_nano.protocols.routing import TaskComplexity
 
 from soothe.context.models import ExecutionHint
+from soothe.sloop.clarification.question_schema import QuestionSpec
 
 StepOutcome = Literal["complete", "decompose", "blocked"]
 
@@ -74,14 +75,34 @@ class DecompositionProposal(BaseModel):
         return subtasks
 
 
+class CoverageClarification(BaseModel):
+    """A user-decision gate surfaced by an Eval step via `coverage_verdict`.
+
+    Carries structured `QuestionSpec` questions so the relay and TUI render
+    coverage gates identically to live `ask_user` gates. Routed straight to
+    `await_clarification`; never materialized as an execution step.
+    """
+
+    questions: list[QuestionSpec] = Field(min_length=1)
+    reason: str = Field(default="", description="Why the goal is blocked on the user.")
+
+
 class CoverageVerdict(BaseModel):
     """Structured verdict emitted by an Eval step via the coverage_verdict tool.
 
     `complete` is the only sanctioned signal that a goal is fully covered.
     When false, `remaining_subtasks` are queued as a `DecompositionProposal`
     so reconcile materializes continuation steps for the next plan-execute wave.
+
+    `pending_clarification` (IG-LOOP-015) reports a user-decision gate that
+    blocks the goal: the verdict routes it straight to `await_clarification`
+    via the relay instead of materializing an execution step whose brief is
+    "ask the user" (closes the search_tools spiral observed in loop b047).
+    At most one of `remaining_subtasks` (continuation work) and
+    `pending_clarification` (blocked on user) is meaningful per verdict.
     """
 
     complete: bool
     reasoning: str = ""
     remaining_subtasks: list[ProposedSubtask] = Field(default_factory=list)
+    pending_clarification: CoverageClarification | None = None

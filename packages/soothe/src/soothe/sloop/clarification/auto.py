@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable, Collection
+from collections.abc import Awaitable, Callable
 
+from soothe.sloop.clarification.origins import (
+    ORIGIN_PLAN_MODE_REVIEW,
+    ORIGIN_RAIL_PAUSE,
+    ORIGIN_TOOL_APPROVAL,
+)
 from soothe.sloop.clarification.protocol import (
     ClarificationAnswer,
     ClarificationDeferredError,
-    ClarificationOrigin,
     ClarificationPolicy,
     ClarificationRequest,
     DeferKind,
@@ -33,6 +37,12 @@ _REASON_TEMPLATES: dict[DeferKind, str] = {
 # Sentinel answer for autopilot retry — tells the LLM to try a different action.
 _RETRY_SENTINEL = "(retry)"
 
+# Structural human-gate origins: veritas routes these straight to the relay
+# without an LLM determination. They are review/pause semantics that require a
+# human by definition (IG-LOOP-015 replaced the configurable force_manual_origins
+# whitelist with this closed set — veritas is the arbiter for everything else).
+_HUMAN_GATE_ORIGINS: frozenset[str] = frozenset({ORIGIN_PLAN_MODE_REVIEW, ORIGIN_RAIL_PAUSE})
+
 
 class AutoClarificationPolicy:
     """Delegate clarifications to veritas; fall back on any failure.
@@ -41,10 +51,10 @@ class AutoClarificationPolicy:
     Autopilot fallback: returns a synthetic retry answer prompting the LLM
     to try a different action.
 
-    RFC-634: `tool_approval` requests skip veritas — `AutoModeMiddleware`
-    resolves deterministic verdicts inline and only escalates to an
-    interrupt when a human is attached, so these route straight to the
-    interactive relay.
+    Routing (IG-LOOP-015): `tool_approval` and the structural human gates
+    (`plan_mode_review`, `rail_pause`) skip veritas and go straight to the
+    human relay. Every other origin (`execute`, `coverage_gate`, …) is
+    determined by veritas — confident → auto-answer, defer → human relay.
     """
 
     def __init__(
@@ -53,7 +63,6 @@ class AutoClarificationPolicy:
         *,
         min_confidence: float = 0.4,
         interactive_fallback: ClarificationPolicy | None = None,
-        force_manual_origins: Collection[ClarificationOrigin] | None = None,
         degrade_to_manual_on_failure: bool = True,
         autopilot_retry_on_fail: bool = True,
     ) -> None:
@@ -61,7 +70,6 @@ class AutoClarificationPolicy:
         self._veritas_answer = veritas_answer
         self._min_confidence = min_confidence
         self._interactive_fallback = interactive_fallback
-        self._force_manual_origins: frozenset[str] = frozenset(force_manual_origins or ())
         self._degrade_to_manual_on_failure = degrade_to_manual_on_failure
         self._autopilot_retry_on_fail = autopilot_retry_on_fail
 
@@ -81,30 +89,21 @@ class AutoClarificationPolicy:
         return self._autopilot_retry_on_fail
 
     @property
-    def force_manual_origins(self) -> frozenset[str]:
-        """Origins that must skip veritas and go straight to the human."""
-        return self._force_manual_origins
-
-    @property
     def interactive_fallback(self) -> ClarificationPolicy | None:
         """Interactive policy used when auto-answering is unavailable."""
         return self._interactive_fallback
 
-    def requires_manual(self, origin_node: str) -> bool:
-        """True when this origin must not be auto-answered by veritas."""
-        return origin_node in self._force_manual_origins
-
     async def answer(self, request: ClarificationRequest) -> ClarificationAnswer:
         """Resolve a clarification request via relay, veritas, or fallback."""
         # --- tool-approval: middleware-originated, human-only (RFC-634) ---
-        if request.origin_node == "tool_approval":
+        if request.origin_node == ORIGIN_TOOL_APPROVAL:
             return await self._answer_tool_approval(request)
 
-        # --- force-manual origins: skip veritas, go straight to human ---
-        if self.requires_manual(request.origin_node):
-            return await self._answer_force_manual(request)
+        # --- structural human gates: veritas routes straight to the relay ---
+        if request.origin_node in _HUMAN_GATE_ORIGINS:
+            return await self._answer_human_relay(request)
 
-        # --- veritas LLM auto-answer ---
+        # --- veritas LLM auto-answer (execute, coverage_gate, …) ---
         return await self._answer_veritas(request)
 
     async def _answer_tool_approval(self, request: ClarificationRequest) -> ClarificationAnswer:
@@ -137,15 +136,17 @@ class AutoClarificationPolicy:
             kind="explicit",
         )
 
-    async def _answer_force_manual(self, request: ClarificationRequest) -> ClarificationAnswer:
-        """Force-manual origins skip veritas entirely.
+    async def _answer_human_relay(self, request: ClarificationRequest) -> ClarificationAnswer:
+        """Structural human-gate origins skip veritas entirely.
 
-        `await_clarification` already emitted with `mode=manual`, so we
-        call `answer()` directly (no re-announce).
+        `plan_mode_review` and `rail_pause` are review/pause semantics that
+        require a human by definition; veritas routes them straight to the
+        interactive relay. `await_clarification` already emitted with
+        `mode=manual`, so we call `answer()` directly (no re-announce).
         """
         if self._interactive_fallback is not None:
             logger.info(
-                "[clarification] origin=%s requires manual confirmation; skipping veritas",
+                "[clarification] origin=%s is a human gate; routing to relay (skipping veritas)",
                 request.origin_node,
             )
             return await self._interactive_fallback.answer(request)

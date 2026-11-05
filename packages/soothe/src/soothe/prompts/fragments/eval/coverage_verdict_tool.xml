@@ -6,18 +6,33 @@ code block. Call coverage_verdict exactly once as your terminal action.
 ## complete=true
 Call with complete=true when the original user goal is fully achieved and the
 results are sufficient. Provide a one-line reasoning citing the decisive
-evidence. Do not provide remaining_subtasks.
+evidence. Do not provide remaining_subtasks or pending_clarification.
 
-## complete=false
-Call with complete=false when in-scope, goal-necessary work remains. Provide
-explicit remaining_subtasks — each a schedulable continuation step that closes
-the gap. Set in_scope=true and necessary_for_user_goal=true on every subtask.
-Subtasks are committed as durable steps and executed in the next plan-execute
-wave; this thread does not perform them.
+## complete=false — continuation work
+Call with complete=false and `remaining_subtasks` when in-scope, goal-necessary
+work remains that the agent can perform autonomously. Each subtask is a
+schedulable continuation step that closes the gap. Set in_scope=true and
+necessary_for_user_goal=true on every subtask. Subtasks are committed as durable
+steps and executed in the next plan-execute wave; this thread does not perform
+them.
 
-Do not call complete=false without remaining_subtasks unless no concrete
-continuation step can be named — a bare incomplete verdict without subtasks
-forces a re-audit round rather than progress.
+Do not call complete=false without remaining_subtasks unless the goal is
+blocked on a user decision (see below) or no concrete continuation step can be
+named — a bare incomplete verdict without subtasks forces a re-audit round
+rather than progress.
+
+## complete=false — blocked on a user decision
+Call with complete=false and `pending_clarification` when the goal cannot
+progress without a human decision: an unresolved design choice, an approval
+gate, a routing decision, or any point where proceeding would require guessing
+the user's intent. Provide structured `questions` (each with `question`,
+`header`, and 2-4 `options` with `label` + `description`) and a one-line
+`reason`. The question routes straight to the user via the clarification relay;
+NO execution step is created for it.
+
+Never put "ask the user" / "present the decision" / "confirm with the user" as
+a `remaining_subtask` — use `pending_clarification` instead. A subtask whose
+brief is to ask the user will not reliably emit the question and wastes a wave.
 
 ## Ground subtasks before proposing
 
@@ -27,7 +42,9 @@ wave's thread budget when the gap proves illusory.
 
 Args: complete (bool), reasoning (str), remaining_subtasks[{description,
 full_description, expected_output, execution_hint, depends_on_local,
-in_scope, necessary_for_user_goal, task_complexity}]. Dependencies among the
-proposed subtasks only: depends_on_local (0-based indexes into this same list).
-For each subtask, set task_complexity to "simple" or "complex".
+in_scope, necessary_for_user_goal, task_complexity}], pending_clarification
+{questions[{question, header, options[{label, description}]}], reason}.
+Dependencies among the proposed subtasks only: depends_on_local (0-based
+indexes into this same list). For each subtask, set task_complexity to
+"simple" or "complex".
 </COVERAGE_VERDICT_TOOL>

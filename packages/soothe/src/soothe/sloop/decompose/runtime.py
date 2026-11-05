@@ -19,6 +19,12 @@ _proposal_sink: ContextVar[list[DecompositionProposal] | None] = ContextVar(
 _verdict_sink: ContextVar[list[dict[str, Any]] | None] = ContextVar(
     "coverage_verdict_sink", default=None
 )
+# IG-LOOP-015: Eval-step user-decision gates (CoverageClarification) queued by
+# `coverage_verdict` for reconcile to route straight to `await_clarification`
+# instead of materializing an "ask the user" execution step.
+_clarification_sink: ContextVar[list[dict[str, Any]] | None] = ContextVar(
+    "coverage_clarification_sink", default=None
+)
 
 
 @dataclass
@@ -29,6 +35,7 @@ class DecomposeRuntimeTokens:
     wave: Token[int]
     sink: Token[list[DecompositionProposal] | None]
     verdict: Token[list[dict[str, Any]] | None] | None = None
+    clarification: Token[list[dict[str, Any]] | None] | None = None
 
 
 def bind_decompose_runtime(
@@ -37,24 +44,30 @@ def bind_decompose_runtime(
     sink: list[DecompositionProposal],
     wave_seq: int = 0,
     verdict_sink: list[dict[str, Any]] | None = None,
+    clarification_sink: list[dict[str, Any]] | None = None,
 ) -> DecomposeRuntimeTokens:
-    """Bind step id, proposal sink, and optional verdict sink for a CoreAgent turn."""
+    """Bind step id, proposal sink, and optional verdict/clarification sinks for a CoreAgent turn."""
     logger.debug(
-        "[decompose] bind runtime step=%s wave=%d sink_id=%d sink_bound=%s verdict_bound=%s",
+        "[decompose] bind runtime step=%s wave=%d sink_id=%d sink_bound=%s verdict_bound=%s clar_bound=%s",
         step_id,
         wave_seq,
         id(sink),
         sink is not None,
         verdict_sink is not None,
+        clarification_sink is not None,
     )
     verdict_token: Token[list[dict[str, Any]] | None] | None = None
     if verdict_sink is not None:
         verdict_token = _verdict_sink.set(verdict_sink)
+    clarification_token: Token[list[dict[str, Any]] | None] | None = None
+    if clarification_sink is not None:
+        clarification_token = _clarification_sink.set(clarification_sink)
     return DecomposeRuntimeTokens(
         step=_current_step_id.set(step_id),
         wave=_wave_seq.set(wave_seq),
         sink=_proposal_sink.set(sink),
         verdict=verdict_token,
+        clarification=clarification_token,
     )
 
 
@@ -63,19 +76,24 @@ def reset_decompose_runtime(tokens: DecomposeRuntimeTokens) -> None:
     step_id = _current_step_id.get()
     sink = _proposal_sink.get()
     verdict = _verdict_sink.get()
+    clarification = _clarification_sink.get()
     queued = len(sink) if sink else 0
     verdict_count = len(verdict) if verdict else 0
+    clar_count = len(clarification) if clarification else 0
     logger.debug(
-        "[decompose] reset runtime step=%s proposals_queued=%d verdicts_queued=%d",
+        "[decompose] reset runtime step=%s proposals_queued=%d verdicts_queued=%d clarifications_queued=%d",
         step_id,
         queued,
         verdict_count,
+        clar_count,
     )
     _current_step_id.reset(tokens.step)
     _wave_seq.reset(tokens.wave)
     _proposal_sink.reset(tokens.sink)
     if tokens.verdict is not None:
         _verdict_sink.reset(tokens.verdict)
+    if tokens.clarification is not None:
+        _clarification_sink.reset(tokens.clarification)
 
 
 def current_step_id() -> str | None:
@@ -96,6 +114,16 @@ def current_proposal_sink() -> list[DecompositionProposal] | None:
 def current_verdict_sink() -> list[dict[str, Any]] | None:
     """Return the coverage-verdict sink list bound for the current eval step, if any."""
     return _verdict_sink.get()
+
+
+def current_clarification_sink() -> list[dict[str, Any]] | None:
+    """Return the coverage-clarification sink list bound for the current eval step, if any.
+
+    Populated by `coverage_verdict` when an Eval step reports a user-decision
+    gate (`CoverageClarification`); drained by reconcile to route straight to
+    `await_clarification` (IG-LOOP-015).
+    """
+    return _clarification_sink.get()
 
 
 def langgraph_configurable() -> dict[str, Any]:

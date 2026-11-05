@@ -1366,10 +1366,6 @@ class ToolApprovalConfig(BaseModel):
     dynamic_rules: DynamicRulesConfig = Field(default_factory=DynamicRulesConfig)
 
 
-DEFAULT_FORCE_MANUAL_ORIGINS: tuple[str, ...] = ("plan_mode_review",)
-"""Origins that never use veritas auto-answer, even in auto mode."""
-
-
 class ClarificationConfig(BaseModel):
     """Configuration for the clarification relay.
 
@@ -1393,8 +1389,8 @@ class ClarificationConfig(BaseModel):
     autopilot_retry_on_fail: bool = True
     """When True and no human is attached (autopilot), veritas failures return a
     synthetic retry answer instead of parking the goal. The sentinel
-    `"(retry)"` is fed back to the CoreAgent as the tool result, prompting
-    the LLM to try a different action. When False, veritas failures hard-defer
+    `"(retry)"` is fed back to the CoreAgent as the tool result, prompting the
+    LLM to try a different action. When False, veritas failures hard-defer
     (the goal parks in `awaiting_clarification` status)."""
 
     default_mode: Literal["auto", "manual"] = "auto"
@@ -1406,27 +1402,6 @@ class ClarificationConfig(BaseModel):
     through the TUI relay (interactive policy). Autopilot always forces
     `auto` regardless of this setting.
     """
-
-    force_manual_origins: list[
-        Literal[
-            "execute",
-            "plan_mode_review",
-            "rail_pause",
-            "tool_approval",
-        ]
-    ] = Field(
-        default_factory=lambda: list(DEFAULT_FORCE_MANUAL_ORIGINS),
-        description=(
-            "Clarification origins that never use veritas auto-answer, even when "
-            "`default_mode` / wire `clarification_mode` is `auto`. "
-            "With a human attached, the interactive TUI relay is used; otherwise "
-            "the loop defers. Default is `plan_mode_review` only — `tool_approval` "
-            "is evaluated by the multi-stage pipeline in auto mode so safe "
-            "tool calls auto-approve without an LLM. Re-add `tool_approval` to "
-            "route every non-rejected tool action through a human — deny/safety "
-            "stages still auto-reject dangerous actions."
-        ),
-    )
 
     tool_approval: ToolApprovalConfig = Field(default_factory=ToolApprovalConfig)
     """multi-stage tool-approval pipeline. When enabled,

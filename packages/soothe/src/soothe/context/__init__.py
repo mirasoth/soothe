@@ -1,6 +1,8 @@
 """Context Engine — unified context management for goals, steps, and projection."""
 
 from soothe.context.decomposition import (
+    CoverageClarification,
+    CoverageVerdict,
     DecompositionProposal,
     ProposedSubtask,
     StepOutcome,
@@ -27,6 +29,8 @@ from soothe.context.planning_step_planner import StepPlanManagerAdapter, StepPla
 
 __all__ = [
     "ContextEngine",
+    "CoverageClarification",
+    "CoverageVerdict",
     "DecompositionProposal",
     "ProposedSubtask",
     "StepOutcome",

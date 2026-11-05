@@ -8,7 +8,11 @@ from typing import Any
 
 from soothe.events import STRANGE_LOOP_CONTEXT_COMPACTED
 from soothe.sloop.clarification.detector import ClarificationDetector
-from soothe.sloop.clarification.origins import ORIGIN_EXECUTE, ORIGIN_TOOL_APPROVAL
+from soothe.sloop.clarification.origins import (
+    ORIGIN_COVERAGE_GATE,
+    ORIGIN_EXECUTE,
+    ORIGIN_TOOL_APPROVAL,
+)
 from soothe.sloop.clarification.protocol import (
     ClarificationRequest,
     LoopStateView,
@@ -1106,6 +1110,49 @@ async def node_execute(ctx: LoopRuntimeContext, state_dict: dict[str, Any]) -> d
                 state.thread_id,
                 exc_info=True,
             )
+
+    # IG-LOOP-015: drain coverage-emitted user-decision gates (Eval steps that
+    # reported the goal blocked on a user decision via `coverage_verdict`).
+    # Enqueue each as a ClarificationRequest into the relay so the captured-
+    # clarification block below routes to `await_clarification`. No execution
+    # step is materialized — closes the b047 search_tools spiral where the
+    # agent was handed a "present via ask_user" step brief.
+    coverage_gates = getattr(run_executor, "coverage_clarifications", None)
+    if coverage_gates and relay is not None and clarification_view is not None:
+        from soothe.sloop.clarification.question_schema import QuestionSpec
+
+        for gate in coverage_gates:
+            raw_questions = gate.get("questions") or []
+            questions = []
+            for rq in raw_questions:
+                try:
+                    qs = rq if isinstance(rq, QuestionSpec) else QuestionSpec.model_validate(rq)
+                except Exception:
+                    logger.warning(
+                        "[execute] skipping malformed coverage-gate question: %s",
+                        rq,
+                    )
+                    continue
+                questions.append(qs.model_dump())
+            if not questions:
+                continue
+            gate_request = ClarificationRequest(
+                questions=tuple(questions),
+                origin_node=ORIGIN_COVERAGE_GATE,
+                origin_interrupt_id=f"coverage-gate:{gate.get('reason', '')[:40]}",
+                loop_state=clarification_view,
+            )
+            relay.inbox.enqueue(
+                gate_request,
+                resume_ticket=ResumeTicket(),
+                step_id=getattr(getattr(ctx, "goal_record", None), "goal_id", None),
+                goal_id=getattr(goal_record, "goal_id", None),
+            )
+            logger.info(
+                "[execute] coverage-gate queued → await_clarification (questions=%d)",
+                len(questions),
+            )
+        coverage_gates.clear()
 
     # Surface captured clarifications so the graph routes to
     # ``await_clarification`` instead of ``record_iteration``. The queue may

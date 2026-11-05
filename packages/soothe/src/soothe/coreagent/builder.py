@@ -115,7 +115,6 @@ class AgentBuilder(nano_builder.AgentBuilder):
             active_in_bypass=ta_cfg.inline_gate.active_in_bypass,
             default_clarification_mode=clar_cfg.default_mode,
             manual_scope=ta_cfg.manual_scope,
-            force_manual_tool_approval="tool_approval" in (clar_cfg.force_manual_origins or ()),
             veritas_answer=veritas_answer,
             dynamic_rules_enabled=bool(
                 dynamic_cfg is None or getattr(dynamic_cfg, "enabled", True)

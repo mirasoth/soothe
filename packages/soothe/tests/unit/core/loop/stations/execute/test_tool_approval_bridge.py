@@ -1,15 +1,15 @@
 """Tests for the tool-approval ↔ clarification bridge.
 
-Covers: force_manual_origins includes tool_approval, answer_to_decision
-mapping, and the resume-payload translator in node_execute that converts a
-relay answer into the HITL decisions shape.
+Covers: AutoClarificationPolicy routing for tool_approval (hardcoded human
+gate, IG-LOOP-015), answer_to_decision mapping, and the resume-payload
+translator in node_execute that converts a relay answer into the HITL
+decisions shape.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from soothe.config.models import DEFAULT_FORCE_MANUAL_ORIGINS
 from soothe.sloop.clarification.origins import (
     ORIGIN_EXECUTE,
     ORIGIN_TOOL_APPROVAL,
@@ -21,20 +21,8 @@ from soothe.sloop.relay.outbox import (
 )
 
 # ---------------------------------------------------------------------------
-# force_manual_origins bridge
+# tool_approval routing is hardcoded (IG-LOOP-015: force_manual_origins removed)
 # ---------------------------------------------------------------------------
-
-
-def test_tool_approval_not_in_default_force_manual_origins() -> None:
-    """tool_approval is auto-evaluated by the inline gate in auto mode by default.
-
-    Removing it from the default ``force_manual_origins`` lets
-    ``AutoModeMiddleware`` resolve deterministic verdicts inline (and route
-    safety escalations to the human relay) instead of forcing every gated
-    call to the human. ``plan_mode_review`` stays a human call.
-    """
-    assert ORIGIN_TOOL_APPROVAL not in DEFAULT_FORCE_MANUAL_ORIGINS
-    assert "plan_mode_review" in DEFAULT_FORCE_MANUAL_ORIGINS
 
 
 # ---------------------------------------------------------------------------
@@ -231,23 +219,18 @@ def test_build_clarification_resume_payload_non_instructive_reject_no_message() 
 
 
 # ---------------------------------------------------------------------------
-# AutoClarificationPolicy routing: tool_approval is veritas-evaluated by default
+# AutoClarificationPolicy routing: tool_approval is a hardcoded human gate
 # ---------------------------------------------------------------------------
 
 
-def test_auto_policy_evaluates_tool_approval_via_veritas_by_default() -> None:
-    """By default tool_approval is NOT force-manual, so veritas evaluates it."""
-    from soothe.sloop.clarification.auto import AutoClarificationPolicy
+def test_auto_policy_routes_tool_approval_to_human() -> None:
+    """tool_approval is hardcoded to route to the human relay (IG-LOOP-015);
+    the force_manual_origins whitelist no longer exists."""
+    from soothe.sloop.clarification.auto import _HUMAN_GATE_ORIGINS
 
-    sentinel = object()
-
-    def _veritas(req: object) -> object:
-        return sentinel
-
-    policy = AutoClarificationPolicy(
-        veritas_answer=_veritas,
-        force_manual_origins=DEFAULT_FORCE_MANUAL_ORIGINS,
-    )
-    assert not policy.requires_manual(ORIGIN_TOOL_APPROVAL)
-    assert policy.requires_manual("plan_mode_review")
-    assert not policy.requires_manual("execute")
+    # tool_approval is NOT in _HUMAN_GATE_ORIGINS (it has its own branch), but
+    # it routes to the human relay via the dedicated _answer_tool_approval path.
+    assert ORIGIN_TOOL_APPROVAL not in _HUMAN_GATE_ORIGINS
+    assert "plan_mode_review" in _HUMAN_GATE_ORIGINS
+    assert "rail_pause" in _HUMAN_GATE_ORIGINS
+    assert "execute" not in _HUMAN_GATE_ORIGINS

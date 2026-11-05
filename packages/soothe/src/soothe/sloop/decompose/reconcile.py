@@ -293,3 +293,18 @@ def drain_executor_proposals(executor: Any) -> list[DecompositionProposal]:
     out = list(raw)
     raw.clear()
     return out
+
+
+def drain_executor_clarifications(executor: Any) -> list[dict[str, Any]]:
+    """Drain coverage-emitted user-decision gates queued on an Executor (IG-LOOP-015).
+
+    Each entry is a `CoverageClarification.model_dump()` (with ``reason`` and
+    ``questions`` as QuestionSpec dicts). Reconcile routes these straight to
+    `await_clarification` instead of materializing execution steps.
+    """
+    raw = getattr(executor, "coverage_clarifications", None)
+    if not isinstance(raw, list) or not raw:
+        return []
+    out = list(raw)
+    raw.clear()
+    return out

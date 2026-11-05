@@ -8,9 +8,15 @@ from typing import Any
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
-from soothe.context.decomposition import CoverageVerdict, DecompositionProposal, ProposedSubtask
+from soothe.context.decomposition import (
+    CoverageClarification,
+    CoverageVerdict,
+    DecompositionProposal,
+    ProposedSubtask,
+)
 from soothe.prompts import COVERAGE_VERDICT_TOOL_DESCRIPTION
 from soothe.sloop.decompose.runtime import (
+    current_clarification_sink,
     current_proposal_sink,
     current_step_id,
     current_verdict_sink,
@@ -27,7 +33,17 @@ class _CoverageVerdictArgs(BaseModel):
         default_factory=list,
         description=(
             "Continuation steps for the next plan-execute wave when complete is false. "
-            "Each must be independently executable and grounded in evidence already gathered."
+            "Each must be independently executable and grounded in evidence already gathered. "
+            "Do NOT put user-decision gates here — use `pending_clarification` for those."
+        ),
+    )
+    pending_clarification: CoverageClarification | None = Field(
+        default=None,
+        description=(
+            "A user-decision gate blocking the goal (e.g. an unresolved design choice, "
+            "approval, or routing decision). Set this instead of a `remaining_subtask` "
+            "whose brief would be 'ask the user'. Routed straight to the relay; no "
+            "execution step is created."
         ),
     )
 
@@ -46,6 +62,29 @@ def _record_verdict(verdict: CoverageVerdict, *, step_id: str) -> str:
             "thread with a verdict sink bound."
         )
     sink.append(verdict.model_dump(mode="python"))
+
+    # IG-LOOP-015: a user-decision gate routes straight to the clarification
+    # relay — never materialized as an execution step (closes the b047
+    # search_tools spiral where the agent was handed "present via ask_user").
+    if verdict.pending_clarification is not None:
+        clar_sink = current_clarification_sink()
+        if clar_sink is None:
+            return (
+                "Error: no clarification sink bound; pending user-decision gate "
+                "could not be queued."
+            )
+        clar_sink.append(verdict.pending_clarification.model_dump(mode="python"))
+        logger.info(
+            "[coverage_verdict] queued user-decision gate step=%s questions=%d reason=%s",
+            step_id,
+            len(verdict.pending_clarification.questions),
+            verdict.pending_clarification.reason[:120],
+        )
+        return (
+            "Coverage verdict recorded (blocked on user decision): clarification "
+            "queued to the relay. This thread should end; do not continue working."
+        )
+
     if not verdict.complete and verdict.remaining_subtasks:
         proposal_sink = current_proposal_sink()
         if proposal_sink is None:
@@ -77,6 +116,7 @@ async def _arun_coverage_verdict(
     complete: bool,
     reasoning: str = "",
     remaining_subtasks: list[Any] | None = None,
+    pending_clarification: CoverageClarification | None = None,
 ) -> str:
     step_id = current_step_id()
     if not step_id:
@@ -89,6 +129,7 @@ async def _arun_coverage_verdict(
         complete=complete,
         reasoning=reasoning,
         remaining_subtasks=parsed,
+        pending_clarification=pending_clarification,
     )
     return _record_verdict(verdict, step_id=step_id)
 
@@ -97,6 +138,7 @@ def _run_coverage_verdict(
     complete: bool,
     reasoning: str = "",
     remaining_subtasks: list[Any] | None = None,
+    pending_clarification: CoverageClarification | None = None,
 ) -> str:
     step_id = current_step_id()
     if not step_id:
@@ -109,6 +151,7 @@ def _run_coverage_verdict(
         complete=complete,
         reasoning=reasoning,
         remaining_subtasks=parsed,
+        pending_clarification=pending_clarification,
     )
     return _record_verdict(verdict, step_id=step_id)
 

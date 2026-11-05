@@ -337,14 +337,15 @@ def _question_text(question: Any) -> str:
 
 
 def _mode_for_policy(policy: Any, *, origin_node: str | None = None) -> str:
-    from soothe.sloop.clarification.auto import AutoClarificationPolicy
+    from soothe.sloop.clarification.auto import _HUMAN_GATE_ORIGINS, AutoClarificationPolicy
     from soothe.sloop.clarification.interactive import InteractiveClarificationPolicy
 
     if isinstance(policy, InteractiveClarificationPolicy):
         return "manual"
-    requires_manual = getattr(policy, "requires_manual", None)
-    if isinstance(policy, AutoClarificationPolicy) or callable(requires_manual):
-        if callable(requires_manual) and origin_node and requires_manual(origin_node):
+    if isinstance(policy, AutoClarificationPolicy):
+        # Structural human gates and tool_approval route straight to the relay
+        # (veritas skips them); everything else is veritas-arbitrated (auto).
+        if origin_node and (origin_node in _HUMAN_GATE_ORIGINS or origin_node == "tool_approval"):
             return "manual"
         return "auto"
     return "manual"

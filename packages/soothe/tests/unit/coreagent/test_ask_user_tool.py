@@ -9,12 +9,11 @@ from unittest.mock import patch
 import pytest
 
 from soothe.coreagent.tools.ask_user import (
-    OptionSpec,
-    QuestionSpec,
     _AskUserArgs,
     _format_answers,
     build_ask_user_tool,
 )
+from soothe.sloop.clarification.question_schema import OptionSpec, QuestionSpec
 
 # ---------------------------------------------------------------------------
 # Fixtures

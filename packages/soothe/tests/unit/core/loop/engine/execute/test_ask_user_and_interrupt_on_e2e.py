@@ -507,7 +507,8 @@ class TestAskUserToolHandlerCase:
 
     def test_tool_emits_ask_user_interrupt(self) -> None:
         """When the LLM calls ask_user, the handler emits interrupt({"type":"ask_user",...})."""
-        from soothe.coreagent.tools.ask_user import OptionSpec, QuestionSpec, _run_ask_user
+        from soothe.coreagent.tools.ask_user import _run_ask_user
+        from soothe.sloop.clarification.question_schema import OptionSpec, QuestionSpec
 
         q = QuestionSpec(
             question="Which option: A or B?",
@@ -534,7 +535,8 @@ class TestAskUserToolHandlerCase:
         assert "Option B" in result
 
     def test_tool_returns_dismissed_message_on_empty_answer(self) -> None:
-        from soothe.coreagent.tools.ask_user import OptionSpec, QuestionSpec, _run_ask_user
+        from soothe.coreagent.tools.ask_user import _run_ask_user
+        from soothe.sloop.clarification.question_schema import OptionSpec, QuestionSpec
 
         q = QuestionSpec(
             question="Approve the plan?",
@@ -552,7 +554,8 @@ class TestAskUserToolHandlerCase:
 
     @pytest.mark.asyncio
     async def test_tool_async_path(self) -> None:
-        from soothe.coreagent.tools.ask_user import OptionSpec, QuestionSpec, build_ask_user_tool
+        from soothe.coreagent.tools.ask_user import build_ask_user_tool
+        from soothe.sloop.clarification.question_schema import OptionSpec, QuestionSpec
 
         q = QuestionSpec(
             question="Approve the plan?",
@@ -887,8 +890,8 @@ class TestStructuredAskUserWireRoundTrip:
     async def test_structured_interrupt_detected(self) -> None:
         """A structured ask_user interrupt (QuestionSpec dicts) is detected
         by the detector and questions survive as structured dicts."""
-        from soothe.coreagent.tools.ask_user import OptionSpec, QuestionSpec
         from soothe.sloop.clarification.detector import ClarificationDetector
+        from soothe.sloop.clarification.question_schema import OptionSpec, QuestionSpec
 
         q = QuestionSpec(
             question="How should the API authenticate requests?",

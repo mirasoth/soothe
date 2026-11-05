@@ -21,7 +21,6 @@ def build_default_clarification_policy(
     emit: EmitFn | None = None,
     min_confidence: float = 0.4,
     interactive_fallback: ClarificationPolicy | None = None,
-    force_manual_origins: tuple[str, ...] | list[str] | None = None,
     degrade_to_manual_on_failure: bool = True,
     autopilot_retry_on_fail: bool = True,
 ) -> ClarificationPolicy:
@@ -34,7 +33,6 @@ def build_default_clarification_policy(
         emit: Emit function for `InteractiveClarificationPolicy`.
         min_confidence: Confidence threshold for the auto policy.
         interactive_fallback: Policy injected into `AutoClarificationPolicy`.
-        force_manual_origins: Origins that skip veritas and use the relay.
         degrade_to_manual_on_failure: Route veritas failures to the
             interactive fallback (TUI only).
         autopilot_retry_on_fail: Return a synthetic retry answer when no
@@ -53,7 +51,6 @@ def build_default_clarification_policy(
             veritas_answer,
             min_confidence=min_confidence,
             interactive_fallback=interactive_fallback,
-            force_manual_origins=force_manual_origins,
             degrade_to_manual_on_failure=degrade_to_manual_on_failure,
             autopilot_retry_on_fail=autopilot_retry_on_fail,
         )

@@ -361,6 +361,9 @@ class Executor:
         self.decompose_proposals: list[Any] = []
         # IG-780: structured verdicts queued by coverage_verdict on Eval THREADS.
         self.coverage_verdicts: list[dict[str, Any]] = []
+        # IG-LOOP-015: user-decision gates queued by coverage_verdict on Eval
+        # THREADS, drained by reconcile to route straight to await_clarification.
+        self.coverage_clarifications: list[dict[str, Any]] = []
 
     def _execute_min_answer_chars(self) -> int:
         if self._config is None:
@@ -2509,6 +2512,7 @@ class Executor:
                 step_id=step.id,
                 sink=self.decompose_proposals,
                 verdict_sink=self.coverage_verdicts if step.kind == "eval" else None,
+                clarification_sink=self.coverage_clarifications if step.kind == "eval" else None,
             )
             # Pass current_decision for middleware to inject agent loop output contract
             # when available on `loop_state`; parallel branches

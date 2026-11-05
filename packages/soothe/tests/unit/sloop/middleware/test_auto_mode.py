@@ -242,15 +242,6 @@ class TestAmbiguousActions:
         runtime = _Runtime({"soothe_clarification_mode": "manual"})
         assert _gate(manual_scope="all").after_model(state, runtime) is None
 
-    def test_force_manual_tool_approval_interrupts_every_call(self, monkeypatch) -> None:
-        """force_manual_origins includes tool_approval: every gated call
-        goes to the human when one is attached."""
-        captured = _stub_interrupt(monkeypatch, {"decisions": [{"type": "approve"}]})
-        state = _state([_tc("run_command", {"command": "pytest -xvs"})])
-        runtime = _Runtime({"soothe_clarification_mode": "auto", "soothe_human_attached": True})
-        _gate(force_manual_tool_approval=True).after_model(state, runtime)
-        assert len(captured) == 1
-
     def test_missing_mode_falls_back_to_default(self) -> None:
         """No clarification mode in configurable → build-time default."""
         state = _state([_tc("run_command", {"command": "pytest -xvs"})])
@@ -653,7 +644,6 @@ class TestBuilderWiring:
                 clarification=SimpleNamespace(
                     tool_approval=ta_cfg,
                     default_mode="auto",
-                    force_manual_origins=("plan_mode_review",),
                 )
             ),
             security=None,
@@ -671,7 +661,8 @@ class TestBuilderWiring:
         builder._config = SimpleNamespace(
             agent=SimpleNamespace(
                 clarification=SimpleNamespace(
-                    tool_approval=ta_cfg, default_mode="auto", force_manual_origins=()
+                    tool_approval=ta_cfg,
+                    default_mode="auto",
                 )
             ),
             security=None,

@@ -18,14 +18,11 @@ from soothe.sloop.clarification.runtime_factory import (
 
 def _make_config(default_mode: str = "auto") -> Any:
     """Construct a minimal config stub with the fields the factory reads."""
-    from soothe.config.models import DEFAULT_FORCE_MANUAL_ORIGINS
-
     cfg = MagicMock()
     cfg.agent.clarification.default_mode = default_mode
     cfg.agent.clarification.auto_min_confidence = 0.4
     cfg.agent.clarification.degrade_to_manual_on_failure = True
     cfg.agent.clarification.autopilot_retry_on_fail = True
-    cfg.agent.clarification.force_manual_origins = list(DEFAULT_FORCE_MANUAL_ORIGINS)
     cfg.agent.veritas.model_role = "think"
     cfg.agent.veritas.max_context_steps = 8
     cfg.create_chat_model = MagicMock(return_value=MagicMock())
@@ -95,25 +92,6 @@ class TestBuildClarificationPolicyForRunner:
         config = _make_config()
         build_clarification_policy_for_runner(config, mode="manual")
         config.create_chat_model.assert_not_called()
-
-    def test_auto_policy_receives_force_manual_origins(self) -> None:
-        from soothe.sloop.clarification.origins import (
-            ORIGIN_EXECUTE,
-            ORIGIN_PLAN_MODE_REVIEW,
-            ORIGIN_TOOL_APPROVAL,
-        )
-
-        config = _make_config()
-        config.agent.clarification.force_manual_origins = [
-            ORIGIN_PLAN_MODE_REVIEW,
-            ORIGIN_EXECUTE,
-        ]
-        policy = build_clarification_policy_for_runner(config, mode="auto")
-        assert isinstance(policy, AutoClarificationPolicy)
-        assert policy.force_manual_origins == frozenset({ORIGIN_PLAN_MODE_REVIEW, ORIGIN_EXECUTE})
-        assert policy.requires_manual(ORIGIN_PLAN_MODE_REVIEW)
-        assert policy.requires_manual(ORIGIN_EXECUTE)
-        assert not policy.requires_manual(ORIGIN_TOOL_APPROVAL)
 
     def test_auto_without_human_attached_has_no_fallback(self) -> None:
         """RFC-623: autopilot path keeps the hard-defer behavior."""
