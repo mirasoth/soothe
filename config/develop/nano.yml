@@ -7,8 +7,6 @@ providers:
       - glm-5.2
       - qwen3.7-plus
       - qwen3.6-flash
-      - kimi-k2.5
-      - MiniMax-M3
       - text-embedding-v4
 
   # Multi-instance DashScope providers for random selection + failover.
@@ -108,12 +106,6 @@ router_profiles:
       fast: "ds2:qwen3.6-flash;ds4:qwen3.6-flash;ds5:qwen3.6-flash;ds6:qwen3.6-flash;ds7:qwen3.6-flash;ds9:qwen3.6-flash;ds10:qwen3.6-flash"
       think: "ds2:glm-5.2;ds4:glm-5.2;ds5:glm-5.2;ds6:glm-5.2;ds7:glm-5.2;ds9:glm-5.2;ds10:glm-5.2"
       image: "ds2:qwen3.7-plus;ds4:qwen3.7-plus;ds5:qwen3.7-plus;ds6:qwen3.7-plus;ds7:qwen3.7-plus;ds9:qwen3.7-plus;ds10:qwen3.7-plus"
-      ocr: "omlx:DeepSeek-OCR-4bit"
-
-  - name: qwen
-    router:
-      default: "omlx:Qwen3.8-27B-4bit"
-      image: "omlx:GLM-4.6V-Flash-4bit"
       ocr: "omlx:DeepSeek-OCR-4bit"
 
 active_router_profile: glm-mm
