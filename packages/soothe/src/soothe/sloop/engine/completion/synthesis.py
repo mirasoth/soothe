@@ -19,11 +19,17 @@ from soothe.sloop.engine.completion.synthesis_projection import (
     build_synthesis_messages,
     render_synthesis_system_prompt,
 )
+from soothe.sloop.engine.execute.graph_interrupt import (
+    _STREAM_HEARTBEAT_SENTINEL,
+    DispatchTimeoutError,
+    GraphStreamChunkReader,
+)
 from soothe.sloop.orchestrator.checkpoint import synthesis_thread_id
 from soothe.sloop.state.schemas import LoopState
 from soothe.sloop.utils.config_keys import SOOTHE_GOAL_SYNTHESIS_CONFIG_KEY
 from soothe.sloop.utils.messages import tag_messages_stream_chunk_for_goal_completion
 from soothe.sloop.utils.plan_action_text import resolve_plan_action_text
+from soothe.sloop.utils.token_usage import direct_llm_token_call_scope
 from soothe.utils.messages import extract_text_from_message_content
 
 if TYPE_CHECKING:
@@ -38,6 +44,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _DEFAULT_SYNTHESIS_EVIDENCE_MAX = GOAL_COMPLETION_REPORT_MAX_CHARS
+
+# Fresh-stream re-dispatches for a stalled synthesis stream before fallback.
+_SYNTHESIS_STALL_RETRY_MAX = 1
 
 
 class SynthesisGenerator:
@@ -82,8 +91,9 @@ class SynthesisGenerator:
         former two-phase classify→generate into a single LLM call.
 
         The scratchpad stream is wrapped in `asyncio.timeout` bounded by
-        `dispatch_idle_seconds`. On timeout, falls back to
-        `generate_user_fallback_summary`.
+        `dispatch_idle_seconds`; the standard stream is guarded by an idle
+        watchdog with one fresh-stream re-dispatch. Both fall back to
+        `generate_user_fallback_summary` on persistent stalls.
 
         Uses isolated checkpoint thread to prevent replay of parent StrangeLoop
         history.
@@ -141,8 +151,6 @@ class SynthesisGenerator:
 
         graph_config = self._build_graph_config(state)
 
-        from soothe.sloop.utils.token_usage import direct_llm_token_call_scope
-
         synthesis_start = time.perf_counter()
         logger.info(
             "Synthesis (generate): starting stream scenario=%s scratchpad=%s approx_chars=%d",
@@ -184,13 +192,23 @@ class SynthesisGenerator:
                 )
                 return
         else:
-            with direct_llm_token_call_scope():
-                async for chunk in self.llm.astream(messages, config=graph_config):
-                    yield tag_messages_stream_chunk_for_goal_completion(
-                        ((), "messages", (chunk, {})),
-                        thread_id=state.thread_id,
-                        iteration=state.iteration,
-                    )
+            idle_seconds = self._dispatch_idle_seconds()
+            if idle_seconds <= 0:
+                with direct_llm_token_call_scope():
+                    async for chunk in self.llm.astream(messages, config=graph_config):
+                        yield tag_messages_stream_chunk_for_goal_completion(
+                            ((), "messages", (chunk, {})),
+                            thread_id=state.thread_id,
+                            iteration=state.iteration,
+                        )
+            else:
+                async for chunk in self._astream_with_stall_retry(
+                    messages,
+                    graph_config,
+                    state,
+                    idle_seconds,
+                ):
+                    yield chunk
 
         synthesis_elapsed_ms = int((time.perf_counter() - synthesis_start) * 1000)
         logger.info(
@@ -367,13 +385,83 @@ class SynthesisGenerator:
             )
         return graph_config
 
+    async def _astream_with_stall_retry(
+        self,
+        messages: list,
+        graph_config: dict[str, Any],
+        state: LoopState,
+        idle_seconds: float,
+    ) -> AsyncGenerator:
+        """Yield tagged synthesis chunks guarded by the idle watchdog.
+
+        A stall before any text re-dispatches a fresh stream up to
+        _SYNTHESIS_STALL_RETRY_MAX times, then yields the fallback summary;
+        a stall after partial text keeps the partial report.
+        """
+        for attempt in range(_SYNTHESIS_STALL_RETRY_MAX + 1):
+            reader = GraphStreamChunkReader(
+                # aiter() normalizes mock and generator streams alike; calling
+                # __anext__() on a raw MagicMock would loop forever.
+                aiter(self.llm.astream(messages, config=graph_config)),
+                idle_timeout=idle_seconds,
+            )
+            emitted_chars = 0
+            stalled = False
+            with direct_llm_token_call_scope():
+                try:
+                    while True:
+                        try:
+                            chunk = await reader.read_next()
+                        except StopAsyncIteration:
+                            break
+                        if chunk is _STREAM_HEARTBEAT_SENTINEL:
+                            continue
+                        emitted_chars += len(
+                            extract_text_from_message_content(getattr(chunk, "content", ""))
+                        )
+                        yield tag_messages_stream_chunk_for_goal_completion(
+                            ((), "messages", (chunk, {})),
+                            thread_id=state.thread_id,
+                            iteration=state.iteration,
+                        )
+                except DispatchTimeoutError:
+                    stalled = True
+                finally:
+                    await reader.cancel()
+            if not stalled:
+                return
+            if emitted_chars > 0:
+                logger.warning(
+                    "Synthesis stream stalled after %d chars; keeping partial report",
+                    emitted_chars,
+                )
+                return
+            if attempt < _SYNTHESIS_STALL_RETRY_MAX:
+                backoff_seconds = min(5.0, idle_seconds * 0.1)
+                logger.warning(
+                    "Synthesis stream stalled (attempt %d/%d, idle=%.0fs); retrying in %.1fs",
+                    attempt + 1,
+                    _SYNTHESIS_STALL_RETRY_MAX + 1,
+                    idle_seconds,
+                    backoff_seconds,
+                )
+                await asyncio.sleep(backoff_seconds)
+                continue
+            logger.warning(
+                "Synthesis stream stalled on all %d attempts; using fallback summary",
+                _SYNTHESIS_STALL_RETRY_MAX + 1,
+            )
+            async for chunk in self._yield_fallback_chunk(state):
+                yield chunk
+            return
+
     def _dispatch_idle_seconds(self) -> float:
-        """Return the dispatch idle timeout for scratchpad-mode synthesis streaming."""
+        """Return the dispatch idle timeout used by synthesis stream guards."""
         if self._soothe_config is None:
             return 0.0
         return max(0.0, float(self._soothe_config.agent.loop.dispatch_idle_seconds))
 
-    def _yield_fallback_chunk(self, state: LoopState) -> AsyncGenerator:
+    async def _yield_fallback_chunk(self, state: LoopState) -> AsyncGenerator:
         """Yield a fallback summary as a tagged goal-completion message chunk."""
         from langchain_core.messages import AIMessage
 
@@ -398,7 +486,7 @@ class SynthesisGenerator:
 
 def generate_user_fallback_summary(
     state: LoopState,
-    plan_result: PlanResult,
+    plan_result: PlanResult | None,
 ) -> str:
     """Generate user-friendly fallback summary.
 
@@ -413,7 +501,7 @@ def generate_user_fallback_summary(
         User-friendly summary text.
     """
     # Use planner's full_output if available
-    if plan_result.full_output:
+    if plan_result is not None and plan_result.full_output:
         final_output = plan_result.full_output
         logger.info("Fallback summary: use full_output chars=%d", len(final_output))
         return final_output

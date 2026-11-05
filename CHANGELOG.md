@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Guard goal-completion synthesis streams with the dispatch idle watchdog: a stalled provider stream now re-dispatches once and then falls back to the step summary, so the final report always arrives instead of hanging (and the synthesis fallback no longer crashes on a missing plan result).
 - Show TUI token usage live while streaming, with correct cumulative totals and a full input/output/cache-token breakdown (plus an authoritative turn-end total).
 
 ## [v1.2.7] - 2026-11-05
