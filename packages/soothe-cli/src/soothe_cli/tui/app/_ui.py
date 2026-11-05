@@ -59,24 +59,24 @@ class _UIMixin:
             self._status_bar.set_tokens(count, approximate=approximate)
 
     def _loop_token_total(self) -> int:
-        """Return persisted loop usage plus the active goal/turn portion."""
-        return self._loop_baseline_tokens + self._loop_input_tokens + self._loop_output_tokens
+        """Return the current cumulative loop usage (display total)."""
+        return self._display_token_total()
 
     def _current_turn_token_total(self) -> int:
-        """Best-effort tokens for the in-flight goal/turn (stream + backend)."""
-        goal_total = self._loop_input_tokens + self._loop_output_tokens
+        """Best-effort tokens for the in-flight goal (backend vs stream)."""
+        goal_total = self._loop_goal_run_tokens
         inflight = getattr(self, "_inflight_turn_stats", None)
-        if inflight is None:
-            return goal_total
-        stream_total = inflight.input_tokens + inflight.output_tokens
+        stream_total = inflight.input_tokens + inflight.output_tokens if inflight is not None else 0
         return max(goal_total, stream_total)
 
     def _display_token_total(self) -> int:
-        """Return loop usage including the in-flight turn when a worker is active."""
+        """Return completed-goal baseline plus the active goal's usage."""
+        if self._loop_turn_committed:
+            return self._loop_baseline_tokens
         return self._loop_baseline_tokens + self._current_turn_token_total()
 
     def _refresh_token_displays(self, *, approximate: bool | None = None) -> None:
-        """Push the current token total to the thinking row or status bar."""
+        """Push the live token total to the thinking row and status bar."""
         if approximate is not None:
             self._tokens_approximate = self._tokens_approximate or approximate
         total = self._display_token_total()
@@ -85,14 +85,11 @@ class _UIMixin:
         status_bar = getattr(self, "_status_bar", None)
         if loading_widget is not None:
             loading_widget.set_token_usage(total, approximate=approximate_flag)
-            if status_bar:
-                status_bar.hide_tokens()
             target = "thinking_row"
-        elif status_bar:
-            self._update_tokens(total, approximate=approximate_flag)
-            target = "status_bar"
         else:
-            target = "none"
+            target = "status_bar"
+        if status_bar:
+            self._update_tokens(total, approximate=approximate_flag)
         trace = self._token_event_trace()
         if trace is not None:
             trace.note_display_refresh(display_total=total, target=target)
@@ -100,7 +97,7 @@ class _UIMixin:
     def _loop_token_breakdown(self) -> tuple[int, int, int]:
         """Return `(baseline, goal_run, display_total)` for debug tracing."""
         baseline = self._loop_baseline_tokens
-        goal_run = self._loop_input_tokens + self._loop_output_tokens
+        goal_run = self._loop_goal_run_tokens
         return baseline, goal_run, self._display_token_total()
 
     def _reset_loop_token_usage(
@@ -113,8 +110,8 @@ class _UIMixin:
         """Clear per-loop token counters (loop switch, /clear, or scope change)."""
         self._loop_token_scope_id = str(loop_id or "").strip() or None
         self._loop_baseline_tokens = max(0, baseline)
-        self._loop_input_tokens = 0
-        self._loop_output_tokens = 0
+        self._loop_goal_run_tokens = 0
+        self._loop_turn_committed = False
         self._refresh_token_displays(approximate=approximate)
 
     def _ensure_loop_token_scope(self, loop_id: str | None) -> None:
@@ -134,10 +131,10 @@ class _UIMixin:
         self._reset_loop_token_usage(loop_id, baseline=baseline, approximate=approximate)
 
     def _begin_loop_turn_tokens(self) -> None:
-        """Reset per-turn goal counters; baseline from prior turns is retained."""
+        """Reset per-goal counters; baseline from prior goals is retained."""
         self._ensure_loop_token_scope(self._lc_loop_id)
-        self._loop_input_tokens = 0
-        self._loop_output_tokens = 0
+        self._loop_goal_run_tokens = 0
+        self._loop_turn_committed = False
 
     def _record_loop_turn_tokens(
         self,
@@ -146,16 +143,15 @@ class _UIMixin:
         *,
         approximate: bool = False,
     ) -> None:
-        """Fold one turn's usage into the loop baseline and refresh the bar."""
+        """Fold one goal's usage into the loop baseline and refresh the bar."""
         self._ensure_loop_token_scope(self._lc_loop_id)
         stream_total = max(0, input_tokens) + max(0, output_tokens)
-        goal_total = self._loop_input_tokens + self._loop_output_tokens
-        turn_total = max(stream_total, goal_total)
+        turn_total = max(stream_total, self._loop_goal_run_tokens)
         if turn_total <= 0:
             return
         self._loop_baseline_tokens += turn_total
-        self._loop_input_tokens = 0
-        self._loop_output_tokens = 0
+        self._loop_goal_run_tokens = 0
+        self._loop_turn_committed = True
         if approximate:
             self._tokens_approximate = True
         self._refresh_token_displays()
@@ -170,33 +166,25 @@ class _UIMixin:
         *,
         source: str = "backend",
     ) -> None:
-        """Merge backend goal-run token totals into the visible loop counter."""
+        """Merge a backend per-goal cumulative total into the live counter."""
         from soothe_cli.runtime.token_usage import coerce_total_tokens_used
 
         goal_total = coerce_total_tokens_used(goal_run_tokens)
         self._ensure_loop_token_scope(self._lc_loop_id)
-        previous_goal = self._loop_input_tokens + self._loop_output_tokens
-        applied = goal_total >= previous_goal
-        if applied and goal_total > 0:
-            self._loop_input_tokens = 0
-            self._loop_output_tokens = goal_total
-            self._refresh_token_displays()
-        else:
-            self._refresh_token_displays()
+        previous_goal = self._loop_goal_run_tokens
+        applied = goal_total > previous_goal
+        if applied:
+            self._loop_goal_run_tokens = goal_total
+        self._refresh_token_displays()
         trace = self._token_event_trace()
         if trace is not None:
             trace.note_authoritative_merge(
                 source=source,
                 goal_run_total=goal_total,
                 previous_goal_run=previous_goal,
-                applied=applied and goal_total > 0,
+                applied=applied,
                 display_total=self._display_token_total(),
             )
-
-    def _hide_tokens(self) -> None:
-        """Hide the status-bar token display while the thinking row is active."""
-        if self._status_bar:
-            self._status_bar.hide_tokens()
 
     def _check_hydration_needed(self) -> None:
         """Check if we need to hydrate messages from the store.

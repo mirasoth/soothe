@@ -18,6 +18,8 @@ class TokenEventTrace:
     plan_phase_missing_total_field: int = 0
     step_completed_events: int = 0
     step_completed_with_total_field: int = 0
+    completed_events: int = 0
+    completed_with_total_field: int = 0
     authoritative_applied: int = 0
     display_refreshes: int = 0
     anomalies: list[str] = field(default_factory=list)
@@ -30,6 +32,8 @@ class TokenEventTrace:
         self.plan_phase_missing_total_field = 0
         self.step_completed_events = 0
         self.step_completed_with_total_field = 0
+        self.completed_events = 0
+        self.completed_with_total_field = 0
         self.authoritative_applied = 0
         self.display_refreshes = 0
         self.anomalies.clear()
@@ -74,6 +78,17 @@ class TokenEventTrace:
         logger.debug(
             "[token-events] step_completed step_id=%s total=%s has_total_field=%s",
             step_id or "—",
+            total_tokens_used if has_total_field else "—",
+            has_total_field,
+        )
+
+    def note_completed(self, *, total_tokens_used: int | None, has_total_field: bool) -> None:
+        """Record the turn-end authoritative total from `strange_loop.completed`."""
+        self.completed_events += 1
+        if has_total_field:
+            self.completed_with_total_field += 1
+        logger.debug(
+            "[token-events] completed total=%s has_total_field=%s",
             total_tokens_used if has_total_field else "—",
             has_total_field,
         )
@@ -123,7 +138,9 @@ class TokenEventTrace:
         """Emit one summary line per turn; flags missing events."""
         has_stream = self.stream_chunks > 0
         has_backend_total = (
-            self.plan_phase_with_total_field > 0 or self.step_completed_with_total_field > 0
+            self.plan_phase_with_total_field > 0
+            or self.step_completed_with_total_field > 0
+            or self.completed_with_total_field > 0
         )
         has_any_usage = display_total > 0 or turn_input > 0 or turn_output > 0
 
@@ -163,4 +180,4 @@ class TokenEventTrace:
         )
 
 
-__all__ = ["TokenEventTrace", "logger"]
+__all__ = ["TokenEventTrace"]

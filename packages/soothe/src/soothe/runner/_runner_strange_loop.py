@@ -46,6 +46,7 @@ from soothe.sloop.utils.messages import (
     loop_message_assistant_output_phase,
 )
 from soothe.sloop.utils.plan_action_text import resolve_plan_action_text
+from soothe.sloop.utils.token_usage_breakdown import TokenUsageAccumulator
 from soothe.utils.messages import extract_text_from_message_content
 
 if TYPE_CHECKING:
@@ -686,6 +687,7 @@ class StrangeLoopMixin:
         increment_ai_message_count = False
         pending_chitchat_persist: dict[str, object] | None = None
         interrupted = False
+        token_usage_accumulator = TokenUsageAccumulator()
 
         try:
             async for event_type, event_data in loop_agent.run_with_progress(
@@ -855,6 +857,7 @@ class StrangeLoopMixin:
                             if isinstance(clarification, dict)
                             else None,
                             total_tokens_used=total_tokens_used,
+                            token_usage=token_usage_accumulator.snapshot(),
                         ).to_dict()
                     )
 
@@ -911,6 +914,7 @@ class StrangeLoopMixin:
                     # Forward full `messages` stream for AI + tool payloads (no strip).
                     # Forward custom tool_call_update (main + subgraph).
                     if _forward_messages_chunk(event_data):
+                        token_usage_accumulator.observe(event_data)
                         yield event_data
 
                 elif event_type == "plan_phase_status":
@@ -927,6 +931,7 @@ class StrangeLoopMixin:
                             StrangeLoopPlanPhaseStatusEvent(
                                 label=label,
                                 total_tokens_used=total_tokens_used,
+                                token_usage=token_usage_accumulator.snapshot(),
                             ).to_dict()
                         )
 
@@ -1049,6 +1054,11 @@ class StrangeLoopMixin:
                             iteration=None,
                         )
 
+                    completed_total = (
+                        int(event_data.get("total_tokens_used") or 0)
+                        if isinstance(event_data, dict)
+                        else 0
+                    )
                     yield custom_event(
                         StrangeLoopCompletedEvent(
                             thread_id=tid,
@@ -1061,6 +1071,8 @@ class StrangeLoopMixin:
                             # Bug #3: forward plan-mode approve follow-on exec
                             # signal so the daemon auto-enqueues the exec goal.
                             follow_on_exec=getattr(final_result, "follow_on_exec", None),
+                            total_tokens_used=completed_total,
+                            token_usage=token_usage_accumulator.snapshot(),
                         ).to_dict()
                     )
 

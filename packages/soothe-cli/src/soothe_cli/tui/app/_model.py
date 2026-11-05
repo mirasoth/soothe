@@ -263,6 +263,7 @@ class _ModelMixin:
         from soothe_cli.settings import settings
         from soothe_cli.tui.widgets.context_data import load_token_usage_snapshot
 
+        inflight = self._inflight_turn_stats
         return await load_token_usage_snapshot(
             context_tokens=self._loop_token_total(),
             approximate=self._tokens_approximate,
@@ -270,8 +271,10 @@ class _ModelMixin:
             daemon_session=self._daemon_session,
             model_name=settings.model_name,
             context_limit=settings.model_context_limit,
-            input_tokens=self._loop_baseline_tokens + self._loop_input_tokens,
-            output_tokens=self._loop_output_tokens,
+            input_tokens=inflight.input_tokens if inflight else 0,
+            output_tokens=inflight.output_tokens if inflight else 0,
+            cache_read_tokens=inflight.cache_read_tokens if inflight else 0,
+            cache_creation_tokens=inflight.cache_creation_tokens if inflight else 0,
         )
 
     async def _show_context_viewer(self) -> None:

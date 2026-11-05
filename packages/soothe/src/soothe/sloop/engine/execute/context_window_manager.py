@@ -324,8 +324,8 @@ class ContextWindowManager:
             # Estimate new token count
             new_tokens = await self.estimate_checkpoint_tokens(thread_id)
 
-            # Update LoopState metrics
-            state.total_tokens_used = new_tokens
+            # Context-window percentage uses post-compaction size; cumulative
+            # total_tokens_used is monotonic and must not be overwritten here.
             state.context_percentage_consumed = min(
                 1.0,
                 new_tokens / self._context_limit(),

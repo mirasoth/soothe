@@ -400,16 +400,7 @@ class StatusBar(Horizontal):
             display.update("")
 
     def set_tokens(self, count: int, *, approximate: bool = False) -> None:
-        """Set the token count.
-
-        Forces a display refresh even when the value is unchanged, because
-        `hide_tokens` clears the widget text without updating the reactive
-        attribute.
-
-        Args:
-        count: Accumulated loop token usage total.
-        approximate: Append "+" to indicate the count is stale.
-        """
+        """Set the token count, refreshing even when the value is unchanged."""
         self._approximate = approximate
         if self.tokens == count:
             # Reactive dedup would skip the watcher — call render directly.
@@ -418,13 +409,6 @@ class StatusBar(Horizontal):
             # Reactive assignment triggers watch_tokens, which reads
             # self._approximate for the suffix.
             self.tokens = count
-
-    def hide_tokens(self) -> None:
-        """Hide the token display (e.g., during streaming)."""
-        try:
-            self.query_one("#tokens-display", Static).update("")
-        except NoMatches:
-            return
 
     def set_model(self, *, provider: str, model: str) -> None:
         """Update the model display text.

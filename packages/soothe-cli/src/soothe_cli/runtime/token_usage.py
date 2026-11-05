@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "TokenUsage",
     "coerce_total_tokens_used",
     "extract_stream_message_token_usage",
     "fetch_conversation_token_count",
@@ -23,41 +25,75 @@ def coerce_total_tokens_used(value: Any) -> int:
         return 0
 
 
-def _coerce_int(value: Any) -> int:
-    return coerce_total_tokens_used(value)
+@dataclass(frozen=True, slots=True)
+class TokenUsage:
+    """Full per-call token breakdown (cache stays a subset of input)."""
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_creation_tokens: int = 0
+    total_tokens: int = 0
+
+    @classmethod
+    def from_mapping(cls, usage: dict[str, Any]) -> TokenUsage:
+        """Build a breakdown from a LangChain/OpenAI usage mapping."""
+        input_toks = coerce_total_tokens_used(
+            usage.get("input_tokens") or usage.get("prompt_tokens")
+        )
+        output_toks = coerce_total_tokens_used(
+            usage.get("output_tokens") or usage.get("completion_tokens")
+        )
+        total_toks = coerce_total_tokens_used(usage.get("total_tokens")) or input_toks + output_toks
+
+        cache_read = 0
+        cache_creation = 0
+        details = usage.get("input_token_details")
+        if isinstance(details, dict):
+            cache_read = coerce_total_tokens_used(details.get("cache_read"))
+            cache_creation = coerce_total_tokens_used(details.get("cache_creation"))
+        prompt_details = usage.get("prompt_tokens_details")
+        if isinstance(prompt_details, dict):
+            cache_read = cache_read or coerce_total_tokens_used(prompt_details.get("cached_tokens"))
+        cache_read = cache_read or coerce_total_tokens_used(usage.get("cache_read_input_tokens"))
+        cache_creation = cache_creation or coerce_total_tokens_used(
+            usage.get("cache_creation_input_tokens")
+        )
+
+        return cls(input_toks, output_toks, cache_read, cache_creation, total_toks)
+
+    def has_any(self) -> bool:
+        """True when any token count is present."""
+        return bool(
+            self.input_tokens
+            or self.output_tokens
+            or self.total_tokens
+            or self.cache_read_tokens
+            or self.cache_creation_tokens
+        )
 
 
-def _usage_from_mapping(usage: dict[str, Any]) -> tuple[int, int, int]:
-    """Return `(input_tokens, output_tokens, total_tokens)` from a usage dict."""
-    input_toks = _coerce_int(usage.get("input_tokens") or usage.get("prompt_tokens"))
-    output_toks = _coerce_int(usage.get("output_tokens") or usage.get("completion_tokens"))
-    total_toks = _coerce_int(usage.get("total_tokens"))
-    if not total_toks and (input_toks or output_toks):
-        total_toks = input_toks + output_toks
-    return input_toks, output_toks, total_toks
-
-
-def extract_stream_message_token_usage(message: Any) -> tuple[int, int, int]:
-    """Extract token usage from a streamed LangChain or wire-format message.
+def extract_stream_message_token_usage(message: Any) -> TokenUsage:
+    """Extract a full token breakdown from a streamed LangChain or wire message.
 
     Providers vary:
-    - LangChain `usage_metadata` (`input_tokens` / `output_tokens`)
+    - LangChain `usage_metadata` (`input_tokens` / `output_tokens` + cache details)
     - OpenAI-style `response_metadata.token_usage` (`prompt_tokens` / `completion_tokens`)
     - Flat wire dicts with either shape
     """
     if message is None:
-        return 0, 0, 0
+        return TokenUsage()
 
     usage = getattr(message, "usage_metadata", None)
     if isinstance(usage, dict) and usage:
-        return _usage_from_mapping(usage)
+        return TokenUsage.from_mapping(usage)
 
     response_metadata = getattr(message, "response_metadata", None)
     if isinstance(response_metadata, dict):
         for key in ("token_usage", "usage"):
             nested = response_metadata.get(key)
             if isinstance(nested, dict) and nested:
-                return _usage_from_mapping(nested)
+                return TokenUsage.from_mapping(nested)
 
     if isinstance(message, dict):
         from soothe_cli.runtime.wire.message_text import wire_message_body
@@ -71,21 +107,20 @@ def extract_stream_message_token_usage(message: Any) -> tuple[int, int, int]:
                 continue
             direct_usage = body.get("usage_metadata")
             if isinstance(direct_usage, dict) and direct_usage:
-                return _usage_from_mapping(direct_usage)
+                return TokenUsage.from_mapping(direct_usage)
             response = body.get("response_metadata")
             if isinstance(response, dict):
                 for key in ("token_usage", "usage"):
                     nested_usage = response.get(key)
                     if isinstance(nested_usage, dict) and nested_usage:
-                        return _usage_from_mapping(nested_usage)
+                        return TokenUsage.from_mapping(nested_usage)
 
-    return 0, 0, 0
+    return TokenUsage()
 
 
 def message_has_token_usage_metadata(message: Any) -> bool:
     """Return True when a stream message carries provider token usage."""
-    input_toks, output_toks, total_toks = extract_stream_message_token_usage(message)
-    return bool(input_toks or output_toks or total_toks)
+    return extract_stream_message_token_usage(message).has_any()
 
 
 async def fetch_conversation_token_count(daemon_session: Any, loop_id: str | None) -> int | None:

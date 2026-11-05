@@ -5,9 +5,9 @@ from unittest.mock import create_autospec
 from langchain_core.messages import AIMessage, AIMessageChunk
 
 from soothe_cli.runtime.parse.tool_call_resolution import materialize_ai_blocks_with_resolved_tools
+from soothe_cli.runtime.presentation.renderer_base import RendererBase
 from soothe_cli.tui.textual_adapter import (
     _expand_nonstandard_tool_blocks,
-    _repair_concatenated_output_text,
     _tui_effective_ai_blocks,
 )
 
@@ -195,7 +195,7 @@ def test_repair_concatenated_output_text_common_artifacts() -> None:
         "# Report##1. Objective and Methodology first10 lines."
         " Read file- **Content Type**\n```1# Soothe\n23<div>```"
     )
-    fixed = _repair_concatenated_output_text(raw)
+    fixed = RendererBase.repair_concatenated_output(raw)
     assert "## 1. Objective" in fixed or "##1. Objective" in fixed
     assert "first 10 lines" in fixed
     assert "Read file\n- **Content Type**" in fixed

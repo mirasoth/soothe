@@ -216,6 +216,58 @@ def _chunk_position_last(msg: Any) -> bool:
     return body.get("chunk_position") == "last"
 
 
+_USAGE_SUM_KEYS = (
+    "input_tokens",
+    "output_tokens",
+    "total_tokens",
+    "prompt_tokens",
+    "completion_tokens",
+    "cache_read_input_tokens",
+    "cache_creation_input_tokens",
+)
+
+
+def _merge_usage_metadata(
+    existing: dict[str, Any] | None, incoming: dict[str, Any]
+) -> dict[str, Any]:
+    """Sum streaming-chunk usage deltas so no generation's tokens are lost."""
+    out = dict(existing) if isinstance(existing, dict) else {}
+    for key in _USAGE_SUM_KEYS:
+        if key in incoming:
+            try:
+                out[key] = int(out.get(key) or 0) + int(incoming.get(key) or 0)
+            except (TypeError, ValueError):
+                pass
+    for detail_key in ("input_token_details", "output_token_details"):
+        detail = incoming.get(detail_key)
+        if not isinstance(detail, dict):
+            continue
+        merged = dict(out.get(detail_key)) if isinstance(out.get(detail_key), dict) else {}
+        for key, value in detail.items():
+            try:
+                merged[key] = int(merged.get(key) or 0) + int(value or 0)
+            except (TypeError, ValueError):
+                pass
+        out[detail_key] = merged
+    for key, value in incoming.items():
+        if key not in out:
+            out[key] = value
+    return out
+
+
+def _wire_body_has_usage(body: dict[str, Any]) -> bool:
+    """True when a wire message body carries provider token usage."""
+    usage = body.get("usage_metadata")
+    if isinstance(usage, dict) and usage:
+        return True
+    response = body.get("response_metadata")
+    if isinstance(response, dict):
+        for key in ("token_usage", "usage"):
+            if isinstance(response.get(key), dict) and response[key]:
+                return True
+    return False
+
+
 def _stamp_stream_terminal_wire_data(wire_data: Any) -> Any:
     """Attach `stream_terminal=true` to a passthrough messages wire pair."""
     if not isinstance(wire_data, (tuple, list)) or not wire_data:
@@ -466,7 +518,7 @@ class StreamDeliveryCoalescer:
                         flat = flatten_enveloped_message_dict(body)
                         text = "".join(extract_text_from_ai_message(flat)).strip()
                         has_phase = bool(flat.get("phase"))
-                        if text or has_phase:
+                        if text or has_phase or _wire_body_has_usage(flat):
                             out.append((ns, mode, wire_data))
                     return out_prefix + self._finish_messages_ingest(ns, msg, out)
             out.append((ns, mode, data))
@@ -487,15 +539,19 @@ class StreamDeliveryCoalescer:
                         buf.template_meta = dict(metadata)
                 usage = body.get("usage_metadata")
                 if isinstance(usage, dict) and usage:
-                    buf.usage_metadata = dict(usage)
+                    buf.usage_metadata = _merge_usage_metadata(buf.usage_metadata, usage)
                 response = body.get("response_metadata")
                 if isinstance(response, dict):
-                    nested = response.get("token_usage")
+                    nested = response.get("token_usage") or response.get("usage")
                     if isinstance(nested, dict) and nested:
-                        buf.template_msg = dict(buf.template_msg or body)
-                        existing = buf.template_msg.setdefault("response_metadata", {})
-                        if isinstance(existing, dict):
-                            existing["token_usage"] = dict(nested)
+                        template = dict(buf.template_msg or body)
+                        response_meta = dict(template.get("response_metadata") or {})
+                        prior = response_meta.get("token_usage")
+                        response_meta["token_usage"] = _merge_usage_metadata(
+                            prior if isinstance(prior, dict) else None, nested
+                        )
+                        template["response_metadata"] = response_meta
+                        buf.template_msg = template
                 interval_due = (
                     bool(buf.parts)
                     and buf.last_activity_monotonic > 0
@@ -929,14 +985,17 @@ class StreamDeliveryCoalescer:
         final: bool,
     ) -> list[tuple[tuple[str, ...], str, Any]]:
         buf = self._text_buffers.pop(namespace, None)
-        if buf is None or not buf.parts:
+        if buf is None:
+            return []
+        usage = buf.usage_metadata if isinstance(buf.usage_metadata, dict) else None
+        if not buf.parts and not usage:
             return []
         text = "".join(buf.parts)
         msg = dict(buf.template_msg or {"type": "AIMessageChunk"})
         msg.setdefault("type", "AIMessageChunk")
         msg["content"] = text
-        if buf.usage_metadata:
-            msg["usage_metadata"] = dict(buf.usage_metadata)
+        if usage:
+            msg["usage_metadata"] = dict(usage)
         if final:
             msg["chunk_position"] = "last"
             msg[GOAL_COMPLETION_STREAM_TERMINAL_FIELD] = True

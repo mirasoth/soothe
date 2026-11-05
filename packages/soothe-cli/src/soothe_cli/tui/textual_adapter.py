@@ -321,9 +321,6 @@ class TextualUIAdapter:
         self._token_event_trace = TokenEventTrace()
         """Per-turn debug counters for token lifecycle events (DEBUG log)."""
 
-        self._on_tokens_hide: Callable[[], None] | None = None
-        """Called to hide the token display during streaming."""
-
         self._clarification_pending: bool = False
         """RFC-622: True while the loop graph is paused on ``await_clarification``.
 
@@ -653,14 +650,13 @@ def print_usage_table(
     """Print a model-usage stats table to a Rich console."""
     from rich.table import Table
 
-    from soothe_cli.runtime.state.session_stats import format_token_count
-
     has_time = wall_time >= 0.1  # noqa: PLR2004
     if not (stats.request_count or stats.input_tokens or has_time):
         return
 
     if stats.per_model:
         multi_model = len(stats.per_model) > 1
+        show_cache = bool(stats.cache_read_tokens or stats.cache_creation_tokens)
         table = Table(
             show_header=True,
             header_style="bold",
@@ -672,28 +668,55 @@ def print_usage_table(
         table.add_column("Reqs", justify="right", style="dim")
         table.add_column("InputTok", justify="right", style="dim")
         table.add_column("OutputTok", justify="right", style="dim")
+        table.add_column("TotalTok", justify="right", style="dim")
+        if show_cache:
+            table.add_column("Cache(rd/wr)", justify="right", style="dim")
+
+        def _row(label: str, ms: ModelStats) -> list[str]:
+            cells = [
+                label,
+                str(ms.request_count),
+                format_token_count(ms.input_tokens),
+                format_token_count(ms.output_tokens),
+                format_token_count(ms.total_tokens),
+            ]
+            if show_cache:
+                cells.append(
+                    f"{format_token_count(ms.cache_read_tokens)}/"
+                    f"{format_token_count(ms.cache_creation_tokens)}"
+                )
+            return cells
 
         if multi_model:
             for model_name, ms in stats.per_model.items():
-                table.add_row(
-                    model_name,
-                    str(ms.request_count),
-                    format_token_count(ms.input_tokens),
-                    format_token_count(ms.output_tokens),
-                )
+                table.add_row(*_row(model_name, ms))
             table.add_row(
-                "Total",
-                str(stats.request_count),
-                format_token_count(stats.input_tokens),
-                format_token_count(stats.output_tokens),
+                *_row(
+                    "Total",
+                    ModelStats(
+                        request_count=stats.request_count,
+                        input_tokens=stats.input_tokens,
+                        output_tokens=stats.output_tokens,
+                        total_tokens=stats.total_tokens,
+                        cache_read_tokens=stats.cache_read_tokens,
+                        cache_creation_tokens=stats.cache_creation_tokens,
+                    ),
+                )
             )
         else:
             model_label = next(iter(stats.per_model))
             table.add_row(
-                model_label,
-                str(stats.request_count),
-                format_token_count(stats.input_tokens),
-                format_token_count(stats.output_tokens),
+                *_row(
+                    model_label,
+                    ModelStats(
+                        request_count=stats.request_count,
+                        input_tokens=stats.input_tokens,
+                        output_tokens=stats.output_tokens,
+                        total_tokens=stats.total_tokens,
+                        cache_read_tokens=stats.cache_read_tokens,
+                        cache_creation_tokens=stats.cache_creation_tokens,
+                    ),
+                )
             )
 
         console.print()
@@ -1067,6 +1090,11 @@ def _apply_backend_loop_tokens_event(
         label = str(data.get("label", "")).strip()
         adapter._token_event_trace.note_plan_phase(
             label=label,
+            total_tokens_used=total_used,
+            has_total_field=has_total_field,
+        )
+    elif source == "completed":
+        adapter._token_event_trace.note_completed(
             total_tokens_used=total_used,
             has_total_field=has_total_field,
         )
@@ -3148,17 +3176,15 @@ async def execute_task_textual(
         adapter._get_loop_token_total,
         adapter._on_refresh_token_displays,
         adapter._apply_authoritative_loop_tokens,
-        adapter._on_tokens_hide,
     )
     if any(token_cbs) and not all(token_cbs):
         logger.warning(
             "Token callbacks partially wired (turn=%s, total=%s, refresh=%s, "
-            "authoritative=%s, hide=%s); token display may behave inconsistently",
+            "authoritative=%s); token display may behave inconsistently",
             adapter._on_turn_tokens is not None,
             adapter._get_loop_token_total is not None,
             adapter._on_refresh_token_displays is not None,
             adapter._apply_authoritative_loop_tokens is not None,
-            adapter._on_tokens_hide is not None,
         )
 
     # Snapshot the clarification-answer flag *before* showing the spinner so
@@ -3179,10 +3205,6 @@ async def execute_task_textual(
     # when this turn is a clarification answer (plan-review resume).
     if adapter._set_spinner and not sending_clarification_answer:
         await adapter._set_spinner(SPINNER_LABEL_THINKING)
-
-    # Hide token display during streaming (will be shown with accurate count at end)
-    if adapter._on_tokens_hide:
-        adapter._on_tokens_hide()
 
     file_op_tracker = FileOpTracker(assistant_id=assistant_id)
     adapter._file_preview_assistant_id = assistant_id
@@ -3440,44 +3462,34 @@ async def execute_task_textual(
 
                         # Extract token usage (before content_blocks check — usage may
                         # be on any chunk; providers use usage_metadata or response_metadata).
-                        input_toks, output_toks, total_toks = extract_stream_message_token_usage(
-                            message
-                        )
-                        if input_toks or output_toks or total_toks:
+                        usage = extract_stream_message_token_usage(message)
+                        if usage.has_any():
                             adapter._token_event_trace.note_stream_usage(
-                                input_tokens=input_toks,
-                                output_tokens=output_toks,
-                                total_tokens=total_toks,
+                                input_tokens=usage.input_tokens,
+                                output_tokens=usage.output_tokens,
+                                total_tokens=usage.total_tokens,
                             )
                             from soothe_cli.settings import settings
 
                             active_model = settings.model_name or ""
-                            if input_toks or output_toks:
-                                turn_stats.record_request(active_model, input_toks, output_toks)
-                            elif total_toks:
-                                turn_stats.record_request(active_model, total_toks, 0)
+                            # Always fold into turn stats first: even an orphan chunk
+                            # with no step card / goal tree still updates the total.
+                            turn_stats.record_request(active_model, usage)
                             if adapter._on_refresh_token_displays:
                                 adapter._on_refresh_token_displays()
                             token_card = _resolve_token_target_card(
                                 adapter, router, ns_key, message=message
                             )
                             if token_card is not None:
-                                if input_toks or output_toks:
-                                    token_card.record_token_usage(input_toks, output_toks)
-                                elif total_toks:
-                                    token_card.record_token_usage(total_toks, 0)
+                                token_card.record_token_usage(
+                                    usage.input_tokens, usage.output_tokens
+                                )
                             else:
-                                # Orphan usage chunk (parallel wave: usage_metadata
-                                # arrives before any tool call binds a namespace to a
-                                # step card). Route to the goal-level accumulator so no
-                                # usage chunk is silently dropped; it surfaces in the
-                                # done footer and ``goal_token_totals``.
                                 goal_tree = adapter._goal_tree_message
                                 if goal_tree is not None:
-                                    if input_toks or output_toks:
-                                        goal_tree.record_goal_token_usage(input_toks, output_toks)
-                                    elif total_toks:
-                                        goal_tree.record_goal_token_usage(total_toks, 0)
+                                    goal_tree.record_goal_token_usage(
+                                        usage.input_tokens, usage.output_tokens
+                                    )
 
                         touched_tool_ids = tool_ids_touched_by_stream_message(message)
                         if touched_tool_ids:
@@ -4230,6 +4242,13 @@ async def execute_task_textual(
                                 continue
 
                             if event_type == STRANGE_LOOP_COMPLETED:
+                                # Turn-end authoritative total reconciles the live
+                                # counter before the turn baseline is committed.
+                                _apply_backend_loop_tokens_event(
+                                    adapter,
+                                    data,
+                                    source="completed",
+                                )
                                 if not ns_key:
                                     # Loop completion is the last frame most clients
                                     # observe: the turn ends here and the drain window
@@ -4989,26 +5008,3 @@ __all__ = [
     "STRANGE_LOOP_STEP_STARTED",
     "TurnToolUiCoalescer",
 ]
-
-_LAZY_EXPORTS: dict[str, str] = {
-    "_expand_nonstandard_tool_blocks": "_expand_nonstandard_tool_blocks",
-    "_handle_interrupt_cleanup": "_handle_interrupt_cleanup",
-    "_tui_effective_ai_blocks": "_tui_effective_ai_blocks",
-    "_tui_goal_completion_matches_prior_main_visible_answer": (
-        "_tui_goal_completion_matches_prior_main_visible_answer"
-    ),
-}
-
-
-def __getattr__(name: str) -> Any:
-    if name == "_repair_concatenated_output_text":
-        fn = RendererBase.repair_concatenated_output
-        globals()[name] = fn
-        return fn
-    if name in _LAZY_EXPORTS:
-        attr = _LAZY_EXPORTS[name]
-        value = globals()[attr]
-        globals()[name] = value
-        return value
-    msg = f"module {__name__!r} has no attribute {name!r}"
-    raise AttributeError(msg)

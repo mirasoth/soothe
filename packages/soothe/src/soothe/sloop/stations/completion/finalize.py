@@ -442,6 +442,7 @@ async def _finalize_plan_mode_approve(
             "result": updated_result,
             "step_results_count": 0,
             "skip_goal_completion_wire_duplicate": True,
+            "total_tokens_used": state.total_tokens_used,
         },
     )
 
@@ -502,6 +503,7 @@ async def _finalize_plan_mode_reject(
             ),
             "step_results_count": 0,
             "skip_goal_completion_wire_duplicate": True,
+            "total_tokens_used": state.total_tokens_used,
         },
     )
 
@@ -734,6 +736,7 @@ async def node_goal_completion(
             "result": updated_result,
             "step_results_count": len(pre_clear_step_results),
             "skip_goal_completion_wire_duplicate": skip_goal_completion_wire_duplicate,
+            "total_tokens_used": state.total_tokens_used,
         },
     )
 

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Show TUI token usage live while streaming, with correct cumulative totals and a full input/output/cache-token breakdown (plus an authoritative turn-end total).
+
 ## [v1.2.7] - 2026-11-05
 
 ### Changed

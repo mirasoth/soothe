@@ -15,6 +15,7 @@ from soothe_client.appkit.turn import (
 from soothe_client.core.events import (
     STRANGE_LOOP_COMPLETED,
     STRANGE_LOOP_PLAN_DECISION,
+    STRANGE_LOOP_PLAN_PHASE,
     STRANGE_LOOP_STARTED,
     STRANGE_LOOP_STEP_COMPLETED,
     STRANGE_LOOP_STEP_QUEUED,
@@ -27,6 +28,7 @@ from soothe_client.ux.stream_tool_wire import STREAM_TOOL_CALL_UPDATE, TOOL_CALL
 
 from soothe_cli.runtime.presentation.engine import PresentationEngine
 from soothe_cli.runtime.state.session_stats import TurnEventStats
+from soothe_cli.runtime.token_usage import message_has_token_usage_metadata
 from soothe_cli.runtime.wire.chunk_filter import (
     message_has_tool_invocation_metadata,
     updates_chunk_is_noop,
@@ -43,6 +45,7 @@ _MAIN_LOOP_CUSTOM_TYPES = frozenset(
         STRANGE_LOOP_STARTED,
         STRANGE_LOOP_COMPLETED,
         STRANGE_LOOP_PLAN_DECISION,
+        STRANGE_LOOP_PLAN_PHASE,
         STRANGE_LOOP_STEP_STARTED,
         STRANGE_LOOP_STEP_QUEUED,
         STRANGE_LOOP_STEP_COMPLETED,
@@ -83,6 +86,8 @@ class TurnPrepareState:
 def _message_priority(message: Any, *, is_summarization: bool) -> int:
     if isinstance(message, ToolMessage):
         return PRIORITY_NORMAL
+    if message_has_token_usage_metadata(message):
+        return PRIORITY_HIGH
     if message_has_tool_invocation_metadata(message):
         return PRIORITY_NORMAL
     if is_summarization:

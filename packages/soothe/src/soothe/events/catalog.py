@@ -297,6 +297,10 @@ class StrangeLoopCompletedEvent(LifecycleEvent):
     # auto-enqueues a fresh exec goal carrying the approved plan (goal_prompt +
     # plan_path) after this goal's stream ends. None for non-plan-mode goals.
     follow_on_exec: dict[str, str | None] | None = None
+    # Authoritative cumulative loop consumption at turn end (TUI reconciliation).
+    total_tokens_used: int = 0
+    # Optional per-turn breakdown (input/output/cache/total) for live UIs.
+    token_usage: dict[str, Any] | None = None
 
 
 class StrangeLoopPlanDecisionEvent(LifecycleEvent):
@@ -325,6 +329,7 @@ class StrangeLoopPlanPhaseStatusEvent(LifecycleEvent):
     )
     label: str
     total_tokens_used: int = 0
+    token_usage: dict[str, Any] | None = None
 
 
 class WiredSubagentStartedEvent(LifecycleEvent):
@@ -418,6 +423,7 @@ class StrangeLoopStepCompletedEvent(LifecycleEvent):
     tool_call_count: int = 0
     clarification: dict[str, Any] | None = None
     total_tokens_used: int = 0
+    token_usage: dict[str, Any] | None = None
 
 
 class StrangeLoopContextCompactionEvent(LifecycleEvent):

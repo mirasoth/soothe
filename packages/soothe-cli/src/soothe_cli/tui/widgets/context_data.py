@@ -57,6 +57,8 @@ class TokenUsageSnapshot:
     context_limit: int | None = None
     input_tokens: int = 0
     output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_creation_tokens: int = 0
 
 
 async def load_token_usage_snapshot(
@@ -69,6 +71,8 @@ async def load_token_usage_snapshot(
     context_limit: int | None = None,
     input_tokens: int = 0,
     output_tokens: int = 0,
+    cache_read_tokens: int = 0,
+    cache_creation_tokens: int = 0,
 ) -> TokenUsageSnapshot:
     """Build the token snapshot shown in the context modal."""
     conv_tokens: int | None = None
@@ -89,6 +93,8 @@ async def load_token_usage_snapshot(
         context_limit=context_limit,
         input_tokens=input_tokens,
         output_tokens=output_tokens,
+        cache_read_tokens=cache_read_tokens,
+        cache_creation_tokens=cache_creation_tokens,
     )
 
 
@@ -174,6 +180,13 @@ def format_token_usage(snapshot: TokenUsageSnapshot) -> str:
     usage = f"{formatted}{suffix} tokens used this loop"
     if in_count > 0 or out_count > 0:
         usage += f" (↑{format_token_count(in_count)} · ↓{format_token_count(out_count)})"
+    cache_parts: list[str] = []
+    if snapshot.cache_read_tokens > 0:
+        cache_parts.append(f"cache read {format_token_count(snapshot.cache_read_tokens)}")
+    if snapshot.cache_creation_tokens > 0:
+        cache_parts.append(f"cache write {format_token_count(snapshot.cache_creation_tokens)}")
+    if cache_parts:
+        usage += f" · {' · '.join(cache_parts)}"
 
     msg = f"{usage} · {model_name}" if model_name else usage
 

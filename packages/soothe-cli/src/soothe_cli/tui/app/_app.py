@@ -281,13 +281,13 @@ class SootheApp(
         """Loop id that ``_loop_*_tokens`` counters belong to."""
 
         self._loop_baseline_tokens: int = 0
-        """Persisted loop usage total loaded from checkpoint (resume baseline)."""
+        """Cumulative usage from completed goals (resume baseline)."""
 
-        self._loop_input_tokens: int = 0
-        """Input tokens for the in-flight goal/turn (stream or backend)."""
+        self._loop_goal_run_tokens: int = 0
+        """Authoritative per-goal cumulative total from backend lifecycle events."""
 
-        self._loop_output_tokens: int = 0
-        """Output tokens for the in-flight goal/turn (stream or backend)."""
+        self._loop_turn_committed: bool = False
+        """True once the active goal's usage has been folded into the baseline."""
 
         self._tokens_approximate: bool = False
         """Whether the cached token count is stale (interrupted generation)."""

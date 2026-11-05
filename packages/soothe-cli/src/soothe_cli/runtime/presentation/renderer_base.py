@@ -20,10 +20,6 @@ class RendererBase:
     def repair_concatenated_output(text: str) -> str:
         """Repair common markdown/text concatenation artifacts.
 
-        Consolidates the repair logic previously duplicated in:
-        - CLI: _repair_concatenated_final_output()
-        - TUI: _repair_concatenated_output_text()
-
         Fixes issues that arise when streaming text chunks are concatenated:
         - Missing newlines before headings
         - Missing spaces after heading markers
