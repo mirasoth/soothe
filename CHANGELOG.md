@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.2.7] - 2026-11-05
+
+### Changed
+
+- Route every `ask_user` — skill-, tool-approval-, CoreAgent-, or coverage-triggered — through one veritas-arbitrated path, closing the coverage→`search_tools` spiral where the loop repeatedly asked for tools instead of the user. Coverage verdicts now emit a clarification directly into `pending_clarification` instead of queuing a remaining subtask, and the `force_manual_origins` whitelist is removed in favor of a single veritas routing rule (tool-approval and plan-mode gates stay human-relayed).
+- Tail-truncate reasoning lines in step cards so the latest progress stays visible: the thinking pane now keeps the tail of an over-long line (most recent text) with an ellipsis prepended, instead of the stale head with an ellipsis appended.
+
+[Compare with previous version]: https://github.com/mirasoth/soothe/compare/v1.2.6...v1.2.7
+
 ## [v1.2.6] - 2026-10-30
 
 ### Added
