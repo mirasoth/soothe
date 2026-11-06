@@ -1,3 +1,7 @@
+# Soothe development agent config (nano-owned). Composed with soothe.yml at load;
+# host-owned keys (cron, agent.loop, ...) belong in soothe.yml, not here.
+# ${VAR} placeholders are expanded from the environment before validation.
+
 providers:
   - name: dashscope
     provider_type: openai
@@ -9,7 +13,44 @@ providers:
       - qwen3.6-flash
       - text-embedding-v4
 
-  # Multi-instance DashScope providers for random selection + failover.
+  # Classifier backend, not a chat LLM: provider_type 'typesafe' speaks the
+  # TypeSafe /v1/systemone protocol. model/timeout_seconds are classifier-only
+  # fields; classifier.provider below binds to this entry by name.
+  - name: typesafe-official
+    provider_type: typesafe
+    api_base_url: "https://api.typesafe.ai"
+    api_key: "${TYPESAFE_API_KEY}"
+    model: jev-latest
+    timeout_seconds: 5
+
+  # Local oMLX server (OpenAI-compatible). api_key is a dummy value: the
+  # endpoint needs no auth. An 'openai' provider with a custom api_base_url is
+  # the supported way to reach local servers. Supplies DeepSeek-OCR-4bit for
+  # the ocr role, plus vision/embedding variants available to other profiles.
+  - name: omlx
+    provider_type: openai
+    api_base_url: "http://localhost:9642/v1"
+    api_key: "mirasoth"
+    models:
+      - Qwen3.6-27B-OptiQ-4bit
+      - GLM-4.6V-Flash-4bit
+      - PaddleOCR-VL-1.5-4bit
+      - DeepSeek-OCR-4bit
+      - nomicai-modernbert-embed-base-bf16
+
+  # Alternative OpenAI-compatible cloud endpoint; only referenced by the
+  # dormant 'hunyuan' router profile below, not the active one.
+  - name: hunyuan
+    provider_type: openai
+    api_base_url: "${HY_BASE_URL}"
+    api_key: "${HY_API_KEY}"
+    models:
+      - hy4
+      - hy3
+
+  # Separate DashScope accounts/endpoints pooled by the 'glm-mm' router profile
+  # (see the semicolon-joined specs below). The pool spreads load across
+  # accounts via random per-call selection with failover and a circuit breaker.
   - name: ds2
     provider_type: openai
     api_base_url: "${DS2_BASE_URL}"
@@ -73,25 +114,11 @@ providers:
       - qwen3.7-plus
       - qwen3.6-flash
 
-  - name: omlx
-    provider_type: openai
-    api_base_url: "http://localhost:9642/v1"
-    api_key: "mirasoth"
-    models:
-      - Qwen3.6-27B-OptiQ-4bit
-      - GLM-4.6V-Flash-4bit
-      - PaddleOCR-VL-1.5-4bit
-      - DeepSeek-OCR-4bit
-      - nomicai-modernbert-embed-base-bf16
-
-  - name: typesafe-official
-    provider_type: typesafe
-    api_base_url: "https://api.typesafe.ai"
-    api_key: "${TYPESAFE_API_KEY}"
-    model: jev-latest
-    timeout_seconds: 5
-
+# Named role presets; active_router_profile selects one. Roles are default,
+# fast, think, image, ocr; any unset role inherits 'default'. A role value is
+# a 'provider:model' spec, or several joined by ';' to form a failover pool.
 router_profiles:
+  # Single-instance baseline: every role resolves to one dashscope endpoint.
   - name: glm
     router:
       default: "dashscope:glm-5.2"
@@ -100,6 +127,8 @@ router_profiles:
       image: "dashscope:qwen3.7-plus"
       ocr: "omlx:DeepSeek-OCR-4bit"
 
+  # Active pooled profile: spreads load and fails over across the ds* accounts.
+  # ocr stays on the local omlx model instead of the cloud pool.
   - name: glm-mm
     router:
       default: "ds2:glm-5.2;ds4:glm-5.2;ds5:glm-5.2;ds6:glm-5.2;ds7:glm-5.2;ds9:glm-5.2;ds10:glm-5.2"
@@ -108,19 +137,32 @@ router_profiles:
       image: "ds2:qwen3.7-plus;ds4:qwen3.7-plus;ds5:qwen3.7-plus;ds6:qwen3.7-plus;ds7:qwen3.7-plus;ds9:qwen3.7-plus;ds10:qwen3.7-plus"
       ocr: "omlx:DeepSeek-OCR-4bit"
 
-active_router_profile: glm-mm
+  # Alternative cloud profile; selectable via active_router_profile but inactive.
+  - name: hunyuan
+    router:
+      default: "hunyuan:hy4"
+      fast: "hunyuan:hy3"
 
+# Switch profiles here to change the backend without touching agent code
+# (routing is by role, never by model name).
+active_router_profile: glm-mm
+# embedding_dims must equal the model's output vector size; changing the model
+# without updating dims and re-indexing corrupts existing vectors.
 embedding_profile:
   model_role: dashscope:text-embedding-v4
   embedding_dims: 1536
-
+# Shared by the host tool-approval gate and intent classification; 'provider'
+# must name a provider_type 'typesafe' entry above.
 classifier:
   enabled: true
   provider: typesafe-official
 
+# Dev uses single-process SQLite; production switches to postgresql for
+# concurrent writers.
 persistence:
   default_backend: sqlite
-
+# File-based sqlite_vec dev store (hnsw index). vector_store_router below maps
+# the default role to a 'provider:collection' pair.
 vector_stores:
   - name: sqlite_vec_dev
     provider_type: sqlite_vec
@@ -129,7 +171,6 @@ vector_stores:
     url: null
     api_key: null
     grpc_port: 50051
-
 vector_store_router:
   default: sqlite_vec_dev:soothe_default
 
@@ -139,6 +180,10 @@ tools:
       - duckduckgo
       - bing
 
+# Sync is off by default (enabled is false); this only supplies a default
+# source_uri and fsspec options for client-initiated s3 workspaces. ${VAR}
+# expansion matches bare names only, so the ':-default' forms below are not
+# expanded: set the env vars or the literal placeholder reaches s3fs.
 workspace_sync:
   source_uri: "s3://soothe/"
   storage_options:
@@ -147,6 +192,13 @@ workspace_sync:
     secret: "${SOOTHE_MINIO_ROOT_PASSWORD:-soothe@minio}"
     anon: false
 
+# Dev-only relaxation: allow file access outside the workspace. Production
+# keeps this restricted.
+security:
+  allow_paths_outside_workspace: true
+
+# Local dev observability: DEBUG file logging and the dev Langfuse container;
+# the pk-/sk- values are local placeholders, not real credentials.
 observability:
   log_file_level: DEBUG
   langfuse:
@@ -156,7 +208,4 @@ observability:
     trace_name: soothe-dev
     tags:
       - soothe
-
-security:
-  allow_paths_outside_workspace: true
 
