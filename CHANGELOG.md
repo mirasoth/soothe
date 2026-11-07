@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.2.9] - 2026-11-07
+
+### Changed
+
+- Bump the `soothe-nano` floor to `>=2.0.8`, pulling in workspace-scoped `rm` relaxation (in-workspace targets downgrade to an audited risk hint instead of hard-deny) and the `sudo_rm_rf` pattern-ordering fix.
+
+[Compare with previous version]: https://github.com/mirasoth/soothe/compare/v1.2.8...v1.2.9
+
 ## [v1.2.8] - 2026-11-06
 
 ### Changed

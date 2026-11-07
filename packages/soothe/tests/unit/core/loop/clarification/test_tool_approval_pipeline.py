@@ -415,10 +415,10 @@ class TestAllowlistMatching:
 
     def test_allowlist_no_match_still_escalates(self) -> None:
         """A different rm command (not the approved one) still escalates."""
-        rec = approval_record("run_command", {"command": "rm -rf /tmp/test_folder"})
+        rec = approval_record("run_command", {"command": "rm -rf /etc/test"})
         result = _pipeline().evaluate_action(
             "run_command",
-            {"command": "rm -rf /tmp/other_folder"},
+            {"command": "rm -rf /etc/other"},
             allowlist=[rec],
         )
         assert result.decision == "escalate"
@@ -475,14 +475,14 @@ class TestRuleLevelOverride:
 
     def test_approved_rule_overrides_safety_escalation(self) -> None:
         """A ``{"rule": ...}`` allowlist record suppresses re-escalation for the same family."""
-        result_first = _pipeline().evaluate_action("run_command", {"command": "rm -rf /tmp/a"})
+        result_first = _pipeline().evaluate_action("run_command", {"command": "rm -rf /etc/a"})
         assert result_first.decision == "escalate"
         rule_id = result_first.rule_id
 
         # Human approved → node_execute records {"rule": rule_id}.
         result_second = _pipeline().evaluate_action(
             "run_command",
-            {"command": "rm -rf /tmp/different_path"},
+            {"command": "rm -rf /etc/different_path"},
             allowlist=[{"rule": rule_id}],
         )
         # Same rule, different command → no re-escalation (human already decided).
@@ -502,7 +502,7 @@ class TestRuleLevelOverride:
         """A rule override for one rule does not suppress a different rule."""
         result = _pipeline().evaluate_action(
             "run_command",
-            {"command": "rm -rf /tmp/x"},
+            {"command": "rm -rf /etc/x"},
             allowlist=[{"rule": "command.dangerous.some_other_rule"}],
         )
         assert result.decision == "escalate"
