@@ -50,6 +50,11 @@ class TestStepAction:
 
         assert step.dependencies == ["step_1"]
 
+    def test_steps_without_a_deliverable_have_no_expected_output(self):
+        """Unspecified expected outputs stay absent instead of becoming status prose."""
+        assert StepAction(description="Greet the user").expected_output is None
+        assert PlanGenerateStep(description="Greet the user").expected_output is None
+
 
 class TestAgentDecision:
     """Tests for AgentDecision schema."""

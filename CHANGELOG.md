@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Drop the `Step completed successfully` placeholder expected output so step-completion reports and final answers show real results instead of a status line; step summaries now describe the concrete outcome.
 - Verify every running step against the daemon's step DAG and runner state on loop resume, so stale steps show their real outcome instead of ticking forever.
 
 ## [v1.2.10] - 2026-11-09

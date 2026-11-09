@@ -67,6 +67,7 @@ async def test_dispatch_creates_root_and_claims() -> None:
     assert result["dispatch_route"] == "execute"
     assert ctx.scratch.decision is not None
     assert len(ctx.scratch.decision.steps) == 1
+    assert ctx.scratch.decision.steps[0].expected_output is None
     refreshed = await ce.get_goal(goal.id)
     assert refreshed is not None
     root_id = ctx.scratch.decision.steps[0].id

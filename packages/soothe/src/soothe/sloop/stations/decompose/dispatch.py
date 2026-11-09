@@ -46,7 +46,7 @@ def _step_action_from_node(node: StepNode) -> StepAction:
         id=node.id,
         description=title,
         full_description=full,
-        expected_output=node.expected_output or "Step completed successfully",
+        expected_output=node.expected_output,
         dependencies=list(node.dependencies) or None,
         execution_hint=hint,
         kind=kind,  # type: ignore[arg-type]

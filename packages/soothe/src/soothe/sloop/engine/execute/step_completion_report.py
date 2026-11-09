@@ -14,13 +14,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_STEP_COMPLETION_REPORT_SYSTEM = (
-    "You write brief step-completion status lines for the user watching progress.\n"
-    "Given the execute-step input and assistant output, respond with exactly one "
-    "first-person sentence (I/we) of at most {max_words} words.\n"
-    "No preamble, quotes, or bullet points."
-)
-
 _CONTENT_CAP = 8000
 
 

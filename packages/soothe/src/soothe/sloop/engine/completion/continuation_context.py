@@ -161,10 +161,7 @@ def build_continuation_execution_hints(
     *, has_prior_goal_completion: bool
 ) -> ExecuteStepEnvelopeBody:
     """Build INSTRUCTIONS body for a loop-continuation bootstrap step."""
-    instruction_lines = [
-        "- Execute the step described in EXECUTION TASK above",
-        "- Produce output matching the expected output specification",
-    ]
+    instruction_lines = ["- Execute the step described in EXECUTION TASK above"]
     if has_prior_goal_completion:
         instruction_lines.insert(
             0,

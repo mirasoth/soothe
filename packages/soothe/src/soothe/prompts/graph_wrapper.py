@@ -184,17 +184,14 @@ class GraphPromptWrapper:
             AIMessage(content=ai or "(no step output)"),
         ]
 
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
     def _build_step_completion_system_fragment(self, state: LoopState | None) -> str:
         """Return the step-completion system-prompt template (with {max_words} placeholder)."""
         _ = state
         return (
-            "You write brief step-completion status lines for the user watching progress.\n"
+            "You write brief step-completion updates for the user watching progress.\n"
             "Given the execute-step input and assistant output, respond with exactly one "
             "first-person sentence (I/we) of at most {max_words} words.\n"
+            "Describe what was produced or answered; never restate completion status.\n"
             "No preamble, quotes, or bullet points."
         )
 

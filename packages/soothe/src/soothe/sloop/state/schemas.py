@@ -77,7 +77,10 @@ class PlanGenerateStep(BaseModel):
         default=None,
         description="Detailed execution prompt with key inputs (50-150 words).",
     )
-    expected_output: str = "Step completed successfully"
+    expected_output: str | None = Field(
+        default=None,
+        description="Concrete deliverable this step produces; omit when none exists.",
+    )
     dependencies: list[str] | None = None
     continues_from: list[str] | None = Field(
         default=None,
@@ -113,7 +116,10 @@ class StepAction(BaseModel):
         default=None,
         description="Detailed execution prompt with key inputs (50-150 words).",
     )
-    expected_output: str = "Step completed successfully"
+    expected_output: str | None = Field(
+        default=None,
+        description="Concrete deliverable this step produces; None when unspecified.",
+    )
     dependencies: list[str] | None = None
     kind: StepKind = "action"
     questions: list[str] | None = None
