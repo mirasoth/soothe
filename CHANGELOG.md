@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Verify every running step against the daemon's step DAG and runner state on loop resume, so stale steps show their real outcome instead of ticking forever.
+
 ## [v1.2.10] - 2026-11-09
 
 ### Added

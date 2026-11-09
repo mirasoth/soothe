@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+from soothe_client.display.transcript_types import MessageData, MessageType
+
 from soothe_cli.commands.binding import message_from_widget, message_to_widget
-from soothe_cli.tui.widgets.message_store import MessageType
 from soothe_cli.tui.widgets.messages import CognitionStepMessage
 
 
@@ -58,3 +59,22 @@ def test_step_progress_round_trip_interrupted() -> None:
     assert md.type == MessageType.STEP_PROGRESS
     assert md.step_progress_phase == "interrupted"
     assert md.step_summary == "Cancelled"
+
+
+def test_resumed_interrupted_step_does_not_start_the_running_spinner() -> None:
+    """A daemon-verified stale step must render terminal, not tick again."""
+    md = MessageData(
+        type=MessageType.STEP_PROGRESS,
+        content="",
+        id="stp-resumed",
+        step_progress_id="sid-resumed",
+        step_progress_description="Run skill",
+        step_progress_phase="interrupted",
+        step_summary="Interrupted - the daemon is no longer running this step",
+    )
+
+    widget = message_to_widget(md)
+
+    assert isinstance(widget, CognitionStepMessage)
+    assert widget._deferred_running is False
+    assert widget._deferred_interrupted == md.step_summary
