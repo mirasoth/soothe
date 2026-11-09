@@ -1847,6 +1847,16 @@ class Executor:
         """Generate a first-person TUI cognition summary from the step human/ai pair."""
         if self._fast_model is None or self._config is None:
             return None
+        # A toolless direct reply needs no card line: the streamed answer is
+        # already user-visible and there is no work to summarize.
+        rec = result.step_result
+        if (
+            rec is not None
+            and rec.success
+            and not rec.tool_call_count
+            and not rec.subgraph_tool_call_count
+        ):
+            return None
         # Skip the success-flavored summary when the step actually failed.
         # The LLM otherwise sees partial output from a resumed checkpoint and
         # produces a false "I have successfully ..." line before the failure
@@ -2969,19 +2979,6 @@ class Executor:
                 self._clarification_capture is not None
                 and self._clarification_capture.head is not None
             )
-            if step.kind == "action" and not captured_clarification:
-                from soothe.sloop.eval.step_close_report import assess_step_close
-
-                close_report = await assess_step_close(
-                    fast_model=self._fast_model,
-                    user_goal=resolve_user_request(loop_state) if loop_state is not None else "",
-                    step_description=step.full_description or step.description,
-                    final_output=output,
-                    outcome_summary=primary_outcome,
-                    soothe_config=self._config,
-                    goal_trace=self._goal_trace,
-                )
-                primary_outcome["step_close_report"] = close_report.model_dump()
 
             # Step success: fail when every tool call errored OR the step produced
             # no meaningful output (model failure / blocked API key → empty stream).
@@ -3009,6 +3006,26 @@ class Executor:
             step_success = (not all_tools_failed or captured_clarification) and (
                 captured_clarification or has_meaningful_output
             )
+
+            # A successful toolless reply has no tool outcomes or deferred work
+            # to assess, and ROOT_EVAL skips Eval for this shape — the close
+            # assessment would only add an LLM round trip on conversational turns.
+            toolless_success = (
+                step_success and main_tool_call_count == 0 and subgraph_tool_call_count == 0
+            )
+            if step.kind == "action" and not captured_clarification and not toolless_success:
+                from soothe.sloop.eval.step_close_report import assess_step_close
+
+                close_report = await assess_step_close(
+                    fast_model=self._fast_model,
+                    user_goal=resolve_user_request(loop_state) if loop_state is not None else "",
+                    step_description=step.full_description or step.description,
+                    final_output=output,
+                    outcome_summary=primary_outcome,
+                    soothe_config=self._config,
+                    goal_trace=self._goal_trace,
+                )
+                primary_outcome["step_close_report"] = close_report.model_dump()
             step_error: str | None = None
             step_error_type: (
                 Literal["execution", "tool", "timeout", "policy", "unknown", "fatal"] | None
