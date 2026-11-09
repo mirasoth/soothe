@@ -783,8 +783,7 @@ class SootheRunner(
             thread_id: Persistence thread ID; generated when omitted.
             workspace: Thread workspace path; resolved when omitted.
             preferred_subagent: Optional subagent hint for StrangeLoop.
-            intake_scope: Forced intake scope (`minimal`/`simple`/`complex`);
-                skips the intake LLM when set.
+            intake_scope: Forced task complexity (`minimal`/`simple`/`complex`).
             client_loop_id: Daemon loop scope for logging and correlation.
             autopilot_job: Autopilot-dispatched goal bundle; emits a single
                 `GoalCompletionChunk`.

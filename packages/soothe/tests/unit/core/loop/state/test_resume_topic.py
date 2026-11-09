@@ -15,29 +15,16 @@ from soothe.sloop.state.resume_topic import (
 )
 
 
-def test_derive_resume_topic_prefers_intake_reasoning() -> None:
+def test_derive_resume_topic_uses_goal_text() -> None:
     assert (
-        derive_resume_topic(
-            intake_reasoning="User wants to refactor the authentication module",
-            goal_text="refactor auth please",
-        )
-        == "User wants to refactor the authentication module"
-    )
-
-
-def test_derive_resume_topic_falls_back_to_goal_text() -> None:
-    assert (
-        derive_resume_topic(
-            intake_reasoning="",
-            goal_text="Build the auth module from scratch with tests",
-        )
+        derive_resume_topic(goal_text="Build the auth module from scratch with tests")
         == "Build the auth module from scratch with tests"
     )
 
 
 def test_derive_resume_topic_limits_to_ten_words() -> None:
-    long_reasoning = " ".join(f"word{i}" for i in range(1, 16))
-    topic = derive_resume_topic(intake_reasoning=long_reasoning, goal_text="fallback goal")
+    long_text = " ".join(f"word{i}" for i in range(1, 16))
+    topic = derive_resume_topic(goal_text=long_text)
     assert topic is not None
     assert len(topic.split()) == 10
     assert topic == " ".join(f"word{i}" for i in range(1, 11))
@@ -50,10 +37,12 @@ def test_enforce_topic_word_limit() -> None:
 
 
 def test_derive_resume_topic_strips_quotes() -> None:
-    assert (
-        derive_resume_topic(intake_reasoning='  "Fix auth bug in API"  ', goal_text="")
-        == "Fix auth bug in API"
-    )
+    assert derive_resume_topic(goal_text='  "Fix auth bug in API"  ') == "Fix auth bug in API"
+
+
+def test_derive_resume_topic_empty_returns_none() -> None:
+    assert derive_resume_topic(goal_text="") is None
+    assert derive_resume_topic(goal_text=None) is None
 
 
 @pytest.mark.asyncio
@@ -69,7 +58,6 @@ async def test_persist_resume_topic_if_needed_skips_empty_topic(
     await persist_resume_topic_if_needed(
         config=SimpleNamespace(),
         loop_id="loop-empty",
-        intake_reasoning="",
         goal_text="",
     )
 
@@ -92,11 +80,10 @@ async def test_persist_resume_topic_if_needed_stores_derived_topic(
     await persist_resume_topic_if_needed(
         config=SimpleNamespace(),
         loop_id="loop-new",
-        intake_reasoning="Work request to fix failing tests",
-        goal_text="fix tests",
+        goal_text="fix failing tests",
     )
 
-    set_once_mock.assert_awaited_once_with("loop-new", "Work request to fix failing tests")
+    set_once_mock.assert_awaited_once_with("loop-new", "fix failing tests")
     close_mock.assert_awaited_once()
 
 
@@ -104,17 +91,15 @@ def test_schedule_skips_when_not_first_loop_goal() -> None:
     schedule_resume_topic_persistence(
         config=SimpleNamespace(),
         loop_id="loop-a",
-        intake_reasoning="Reasoning text",
         goal_text="goal text",
         is_first_loop_goal=False,
     )
 
 
-def test_schedule_skips_when_sources_empty() -> None:
+def test_schedule_skips_when_goal_text_empty() -> None:
     schedule_resume_topic_persistence(
         config=SimpleNamespace(),
         loop_id="loop-b",
-        intake_reasoning="",
         goal_text="",
         is_first_loop_goal=True,
     )

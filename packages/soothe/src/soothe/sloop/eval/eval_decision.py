@@ -146,22 +146,9 @@ async def decide_eval_required(
     soothe_config: SootheConfig | None = None,
     goal_trace: GoalLoopTrace | None = None,
 ) -> EvalDecision:
-    """Return an LLM decision on whether a coverage Eval step should run.
+    """Decide whether a coverage Eval step should run.
 
-    MINIMAL tasks short-circuit to `should_run_eval=False` without calling
-    the LLM. When `fast_model` is None or the call fails, fail-safe to
-    `should_run_eval=True` (run Eval rather than silently skip).
-
-    Args:
-        fast_model: Resolved fast chat model (or None → fail-safe).
-        user_goal: Original user goal text.
-        step_history: All StepNodes in the goal DAG (for the prompt envelope).
-        task_complexity: Client-forced task complexity, when set.
-        soothe_config: Optional config for tracing.
-        goal_trace: Optional Langfuse goal trace.
-
-    Returns:
-        EvalDecision with `should_run_eval` and `reasoning`.
+    MINIMAL short-circuits to skip; any failure fails safe to run Eval.
     """
     complexity_value = (
         getattr(task_complexity, "value", task_complexity)

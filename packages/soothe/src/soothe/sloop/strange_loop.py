@@ -659,12 +659,9 @@ class StrangeLoop:
             from soothe.sloop.utils.goal_text import resolve_user_request
 
             if not clarification_answer:
-                # Intake reasoning lives in the graph node now; the resume topic
-                # falls back to the user's own words for all task results.
                 schedule_resume_topic_persistence(
                     config=self.config,
                     loop_id=state_manager.loop_id,
-                    intake_reasoning=None,
                     goal_text=resolve_user_request(state),
                     is_first_loop_goal=checkpoint.total_goals_completed == 0,
                 )

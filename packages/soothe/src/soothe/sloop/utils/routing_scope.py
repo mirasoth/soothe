@@ -8,15 +8,7 @@ from soothe_nano.protocols.routing import RoutingClassification, TaskComplexity
 def parse_intake_scope(raw: object | None) -> TaskComplexity | None:
     """Parse a wire `intake_scope` value into a forced `TaskComplexity`.
 
-    Args:
-        raw: Client value (string or `None`). Empty / whitespace returns `None`.
-
-    Returns:
-        Normalized `TaskComplexity`, or `None` when unset.
-
-    Raises:
-        ValueError: When `raw` is a non-empty string outside minimal|simple|complex,
-            or a non-string non-None value.
+    Raises ValueError on a non-empty value outside minimal|simple|complex.
     """
     if raw is None:
         return None
@@ -35,11 +27,11 @@ def build_routing_classification(
     task_complexity: TaskComplexity | None,
     preferred_subagent: str | None,
 ) -> RoutingClassification | None:
-    """Build routing classification consumed by StrangeLoop Plan/Execute.
+    """Build routing classification for StrangeLoop Plan/Execute.
 
-    Wired specialists are requested explicitly via slash/daemon `preferred_subagent`;
-    routing never infers one. `task_complexity` comes only from a client-forced
-    `intake_scope`; unforced turns stay `None` so the decompose gate decides.
+    `task_complexity` comes only from a client-forced `intake_scope`; unforced
+    turns stay `None` so the decompose gate decides. Wired specialists are
+    explicit via `preferred_subagent`; routing never infers one.
     """
     from soothe.sloop.state.schemas import resolve_wire_subagent
 

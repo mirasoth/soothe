@@ -7,7 +7,6 @@ from datetime import UTC, datetime
 from soothe.sloop.state.execution_checkpoint import GoalIndexEntry
 from soothe.sloop.utils.structural_continuation import (
     has_active_running_goal,
-    has_intra_loop_checkpoint_to_continue,
     has_resumable_interrupted_goal,
     is_loop_continuation_phrase,
     is_loop_control_signal,
@@ -67,18 +66,6 @@ def test_is_loop_control_signal_includes_keyword_and_phrase() -> None:
     assert is_loop_control_signal("continue this loop")
     assert is_loop_control_signal("retry this goal")
     assert not is_loop_control_signal("hello")
-
-
-def test_has_intra_loop_checkpoint_to_continue() -> None:
-    assert has_intra_loop_checkpoint_to_continue(
-        _checkpoint(status="running", goal_status="running")
-    )
-    assert has_intra_loop_checkpoint_to_continue(
-        _checkpoint(status="idle", goal_status="completed", current_goal_index=-1)
-    )
-    assert has_intra_loop_checkpoint_to_continue(
-        _checkpoint(status="idle", goal_status="interrupted")
-    )
 
 
 def test_has_active_running_goal() -> None:

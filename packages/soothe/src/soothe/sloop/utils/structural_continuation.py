@@ -10,7 +10,7 @@ from soothe.sloop.utils.continue_keyword import is_interrupt_resume_keyword
 if TYPE_CHECKING:
     from soothe.sloop.state.execution_checkpoint import GoalIndexEntry
 
-# Phrases that request loop resume rather than social chitchat (match anywhere in text).
+# Explicit multi-word loop-resume phrases (single-word keywords live in continue_keyword).
 _LOOP_CONTINUATION_PHRASE_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bcontinue\s+(?:this|the|current)\s+loop\b", re.IGNORECASE),
     re.compile(r"\bresume\s+(?:this|the|current)\s+loop\b", re.IGNORECASE),
@@ -21,10 +21,7 @@ _LOOP_CONTINUATION_PHRASE_PATTERNS: tuple[re.Pattern[str], ...] = (
 
 
 def is_loop_continuation_phrase(text: str | None) -> bool:
-    """Return True when *text* is an explicit loop-resume phrase.
-
-    Single-word keywords are handled by :func:`is_interrupt_resume_keyword`.
-    """
+    """True when *text* is an explicit multi-word loop-resume phrase."""
     normalized = (text or "").strip()
     if not normalized:
         return False
@@ -45,7 +42,7 @@ def _active_goal_record(checkpoint: Any) -> GoalIndexEntry | None:
 
 
 def has_active_running_goal(checkpoint: Any | None) -> bool:
-    """Return True when the checkpoint has a goal still marked running."""
+    """True when the checkpoint's active goal is still running."""
     if checkpoint is None:
         return False
     goal = _active_goal_record(checkpoint)
@@ -53,15 +50,8 @@ def has_active_running_goal(checkpoint: Any | None) -> bool:
 
 
 def has_resumable_interrupted_goal(checkpoint: Any | None) -> bool:
-    """Return True when the checkpoint holds an incomplete goal worth resuming.
-
-    Covers `status=running` mid-flight recovery and the post-cancel case where
-    loop metadata was marked `idle` while the StrangeLoop goal index entry is
-    still `running` (interrupt touch). Also covers the `interrupted` goal
-    index status written by `mark_goal_interrupted` on a user cancel, so that
-    a retry/continue/resume re-activates that goal in place rather than
-    starting a fresh goal.
-    """
+    """True when the checkpoint holds a running/cancelled/interrupted goal that
+    a retry/continue/resume can reactivate in place."""
     if checkpoint is None:
         return False
     goal = _active_goal_record(checkpoint)
@@ -71,22 +61,8 @@ def has_resumable_interrupted_goal(checkpoint: Any | None) -> bool:
     return status in ("running", "cancelled", "interrupted")
 
 
-def has_intra_loop_checkpoint_to_continue(checkpoint: Any | None) -> bool:
-    """Return True when *this* loop's checkpoint holds work to resume or continue.
-
-    Resume recovery is loop-scoped: an empty or missing `goal_history` (for
-    example after a social-only first turn) is not a continuation target.
-    Any prior goal record on this loop — incomplete or completed — is.
-    """
-    if checkpoint is None:
-        return False
-    history = getattr(checkpoint, "goal_history", None) or []
-    return len(history) > 0
-
-
 __all__ = [
     "has_active_running_goal",
-    "has_intra_loop_checkpoint_to_continue",
     "has_resumable_interrupted_goal",
     "is_loop_continuation_phrase",
     "is_loop_control_signal",

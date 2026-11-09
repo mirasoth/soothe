@@ -28,20 +28,7 @@ async def summarize_step_completion_report(
 ) -> str | None:
     """Summarize a completed execute step for TUI cognition display.
 
-    Uses only the single-step human/ai pair (no prior steps or goal messages).
-    Delegates message assembly to :class:`GraphPromptWrapper` so the system
-    prompt lives in one place alongside all other LLM-invoking nodes.
-
-    Args:
-        human_content: Compact execute-step human input (ledger-style).
-        ai_content: Final assistant output for the step.
-        fast_model: Fast router model for the summary call.
-        soothe_config: Optional config for rate limits and tracing.
-        goal_trace: Optional trace context for observability.
-        max_words: Optional prompt word target; defaults to config or 50 when omitted.
-
-    Returns:
-        First-person summary text, or None when input is empty or the call fails.
+    Returns the summary text, or None when the input is empty or the call fails.
     """
     from soothe_nano.llm import ainvoke_traced
 

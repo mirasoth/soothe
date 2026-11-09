@@ -45,9 +45,8 @@ _GOAL_COMPLETION_LEDGER_HUMAN_BASE = (
 )
 
 
-def _goal_completion_ledger_human_content(state: LoopState) -> str:
+def _goal_completion_ledger_human_content() -> str:
     """Human ledger line for goal completion (synthesis prompt; all complexities)."""
-    _ = state
     return (
         _GOAL_COMPLETION_LEDGER_HUMAN_BASE
         + " Use the same primary natural language as the user's request."
@@ -82,7 +81,7 @@ def _append_goal_completion_ledger_pair(
     if not text:
         return
     human_msg = LoopHumanMessage(
-        content=_goal_completion_ledger_human_content(state),
+        content=_goal_completion_ledger_human_content(),
         thread_id=state.thread_id,
         iteration=iteration_completed,
         goal_summary=(state.goal[:200] if state.goal else None),

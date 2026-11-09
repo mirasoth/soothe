@@ -2369,21 +2369,8 @@ class Executor:
     ) -> _ExecuteStepResult:
         """Execute single step, collecting events for the parallel merge queue.
 
-        When `live_event_queue` is set (parallel execute), each stream chunk is
-        pushed immediately for upstream display and is not duplicated on the
-        returned `_ExecuteStepResult.events` list.
-
-        Args:
-            step: StepAction with description and optional hints.
-            thread_id: Logical thread ID for records, logs, and durability lookups.
-            workspace: Thread-specific workspace path.
-            routing_classification: Loop routing payload for middleware.
-            continue_loop_mode: True when this loop has prior goals.
-            loop_state: When set, generates isolated thread ID; multi-dep steps
-                inject predecessor ledger messages.
-
-        Returns:
-            Collected execute-step stream result.
+        With `live_event_queue` (parallel execute), stream chunks are pushed
+        upstream immediately and not duplicated on `result.events`.
         """
         start = time.perf_counter()
         # Accumulate pre-interrupt elapsed time (carried on resume_ticket)

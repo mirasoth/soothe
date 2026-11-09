@@ -71,19 +71,8 @@ async def decide_finish_vs_split_typesafe(
 ) -> str | None:
     """Decide whether to strip decompose_task via TypeSafe.
 
-    Args:
-        step_description: The step's full description text.
-        user_goal: Original user goal text.
-        task_complexity: Client-forced task complexity, when known.
-        soothe_config: ``SootheConfig`` providing the classifier provider and
-            decision parameters (nano ``classifier`` block).
-
-    Returns:
-        ``"finish"`` when JEV says finish-in-thread with trusted confidence
-        and suppression bar met; ``"split"`` when JEV says split with trusted
-        confidence; ``None`` when the classifier is disabled/unavailable, the
-        verdict is untrusted, or the suppression bar is not met — callers
-        keep the decompose tool unchanged on ``None``.
+    Returns "finish" / "split" on trusted verdicts, else None — callers keep
+    the decompose tool unchanged on None.
     """
     cfg = classifier_config(soothe_config)
     if cfg is None or not cfg.enabled:
