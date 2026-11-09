@@ -70,7 +70,6 @@ async def test_synthesize_appends_goal_completion_ledger_pair() -> None:
     strange_loop.loop_planner = Mock()
     strange_loop.loop_planner._model = Mock()
     strange_loop.core_agent = Mock()
-    strange_loop.config.agent.loop.final_response = "auto"
 
     sm = Mock()
     sm.record_iteration = AsyncMock()
@@ -157,7 +156,6 @@ async def test_goal_completion_logs_planning_dag_at_info(
     strange_loop.loop_planner = Mock()
     strange_loop.loop_planner._model = Mock()
     strange_loop.core_agent = Mock()
-    strange_loop.config.agent.loop.final_response = "auto"
 
     sm = Mock()
     sm.record_iteration = AsyncMock()
@@ -216,7 +214,6 @@ async def test_goal_completion_dag_reflects_finalized_goal_status(
     strange_loop.loop_planner = Mock()
     strange_loop.loop_planner._model = Mock()
     strange_loop.core_agent = Mock()
-    strange_loop.config.agent.loop.final_response = "auto"
 
     sm = Mock()
     sm.record_iteration = AsyncMock()
@@ -280,7 +277,6 @@ async def test_ledger_direct_appends_goal_completion_ledger_pair() -> None:
     strange_loop.loop_planner = Mock()
     strange_loop.loop_planner._model = Mock()
     strange_loop.core_agent = Mock()
-    strange_loop.config.agent.loop.final_response = "auto"
 
     sm = Mock()
     sm.record_iteration = AsyncMock()
@@ -336,7 +332,6 @@ async def test_empty_ledger_direct_falls_back_to_synthesis() -> None:
     strange_loop.loop_planner = Mock()
     strange_loop.loop_planner._model = Mock()
     strange_loop.core_agent = Mock()
-    strange_loop.config.agent.loop.final_response = "auto"
 
     sm = Mock()
     sm.record_iteration = AsyncMock()
@@ -408,7 +403,6 @@ async def test_minimal_intake_ledger_direct_uses_synthesis_prompt_as_human() -> 
     strange_loop.loop_planner = Mock()
     strange_loop.loop_planner._model = Mock()
     strange_loop.core_agent = Mock()
-    strange_loop.config.agent.loop.final_response = "auto"
 
     sm = Mock()
     sm.record_iteration = AsyncMock()
@@ -464,7 +458,6 @@ async def test_synthesis_fallback_sets_skip_replay_false() -> None:
     strange_loop.loop_planner = Mock()
     strange_loop.loop_planner._model = Mock()
     strange_loop.core_agent = Mock()
-    strange_loop.config.agent.loop.final_response = "auto"
 
     sm = Mock()
     sm.record_iteration = AsyncMock()
@@ -574,7 +567,6 @@ async def test_ledger_direct_filters_out_planning_messages_for_final_output() ->
     strange_loop.loop_planner = Mock()
     strange_loop.loop_planner._model = Mock()
     strange_loop.core_agent = Mock()
-    strange_loop.config.agent.loop.final_response = "auto"
 
     sm = Mock()
     sm.record_iteration = AsyncMock()
@@ -624,7 +616,7 @@ async def test_goal_completion_emits_finalize_phase_status() -> None:
     strange_loop.loop_planner = Mock()
     strange_loop.loop_planner._model = Mock()
     strange_loop.core_agent = Mock()
-    strange_loop.config.agent.loop.final_response = "auto"
+
     strange_loop._fast_llm = None  # Prevent synthesis LLM calls
 
     sm = Mock()
@@ -703,9 +695,6 @@ async def test_plan_mode_approve_skips_summary() -> None:
     strange_loop.loop_planner = Mock()
     strange_loop.loop_planner._model = Mock()
     strange_loop.core_agent = Mock()
-    # Default mode is always_synthesize — the bug forces synthesis even though
-    # require_goal_completion=False. The fix must short-circuit regardless.
-    strange_loop.config.agent.loop.final_response = "always_synthesize"
     strange_loop._fast_llm = Mock()  # would be invoked if synthesis ran
 
     sm = Mock()

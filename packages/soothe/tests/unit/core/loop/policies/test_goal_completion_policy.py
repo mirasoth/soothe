@@ -163,16 +163,6 @@ def test_step_dag_multiple_plans() -> None:
 # --- determine_completion_strategy tests ---
 
 
-def test_strategy_always_synthesize() -> None:
-    adapter = _make_adapter()
-    pr = PlanResult(status="done", goal_progress="complete", require_goal_completion=False)
-    state = mock_loop_state()
-    assert (
-        adapter.determine_completion_strategy(state, pr, "always_synthesize")
-        == CompletionStrategy.SYNTHESIZE
-    )
-
-
 def test_strategy_ledger_direct_simple() -> None:
     adapter = _make_adapter()
     d = AgentDecision(
@@ -201,9 +191,7 @@ def test_strategy_ledger_direct_simple() -> None:
             )
         ]
     )
-    assert (
-        adapter.determine_completion_strategy(state, pr, "auto") == CompletionStrategy.LEDGER_DIRECT
-    )
+    assert adapter.determine_completion_strategy(state, pr) == CompletionStrategy.LEDGER_DIRECT
 
 
 def test_strategy_simple_empty_ledger_synthesizes() -> None:
@@ -226,7 +214,7 @@ def test_strategy_simple_empty_ledger_synthesizes() -> None:
         [StepExecutionRecord(step_id="01", success=True, outcome={}, duration_ms=10, thread_id="t")]
     )
     state = mock_loop_state(loop_messages=[])
-    assert adapter.determine_completion_strategy(state, pr, "auto") == CompletionStrategy.SYNTHESIZE
+    assert adapter.determine_completion_strategy(state, pr) == CompletionStrategy.SYNTHESIZE
 
 
 def test_strategy_synthesize_multiple_plans() -> None:
@@ -257,9 +245,7 @@ def test_strategy_synthesize_multiple_plans() -> None:
     adapter.ingest_plan(pr2, "XYZ", 1)
 
     state = mock_loop_state()
-    assert (
-        adapter.determine_completion_strategy(state, pr2, "auto") == CompletionStrategy.SYNTHESIZE
-    )
+    assert adapter.determine_completion_strategy(state, pr2) == CompletionStrategy.SYNTHESIZE
 
 
 def test_strategy_synthesize_failed_steps() -> None:
@@ -292,7 +278,7 @@ def test_strategy_synthesize_failed_steps() -> None:
         ]
     )
     state = mock_loop_state()
-    assert adapter.determine_completion_strategy(state, pr, "auto") == CompletionStrategy.SYNTHESIZE
+    assert adapter.determine_completion_strategy(state, pr) == CompletionStrategy.SYNTHESIZE
 
 
 if __name__ == "__main__":

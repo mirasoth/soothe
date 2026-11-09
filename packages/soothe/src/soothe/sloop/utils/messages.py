@@ -117,6 +117,70 @@ def last_ledger_ai_content(state: LoopState) -> str:
     return ""
 
 
+def last_step_output_content(
+    state: LoopState,
+    goal_steps: dict[str, Any] | Any | None = None,
+) -> str:
+    """Return AI text from the last completed step's execution output.
+
+    Used by goal completion ``LEDGER_DIRECT`` passthrough to surface the
+    actual step deliverable (e.g. a design draft) rather than just the last
+    ledger message. Falls back to ``last_ledger_ai_content`` when the step
+    execution output is empty.
+
+    Args:
+        state: LoopState with populated ``loop_messages`` (for fallback).
+        goal_steps: ``StepDAG.nodes`` dict (or a ``StepDAG`` with a ``nodes``
+            attribute). When None, returns empty string (caller falls back).
+
+    Returns:
+        Concatenated AI message text from the last completed step's
+        ``execution.output_messages``, or ``last_ledger_ai_content`` if empty.
+    """
+    if goal_steps is not None and hasattr(goal_steps, "nodes"):
+        goal_steps = goal_steps.nodes
+    if not goal_steps:
+        return last_ledger_ai_content(state)
+
+    completed = [
+        n
+        for n in goal_steps.values()
+        if getattr(n, "status", None) == "completed" and getattr(n, "execution", None) is not None
+    ]
+    if not completed:
+        return last_ledger_ai_content(state)
+
+    completed.sort(
+        key=lambda n: (getattr(n, "plan_iteration", 0), getattr(n, "id", "")),
+        reverse=True,
+    )
+    last = completed[0]
+
+    output_msgs = getattr(last.execution, "output_messages", None) or []
+    parts: list[str] = []
+    for msg in output_msgs:
+        if not isinstance(msg, dict):
+            msg_str = str(msg)
+            if msg_str.strip():
+                parts.append(msg_str)
+            continue
+        role = msg.get("role") or msg.get("type", "")
+        if role in ("assistant", "ai"):
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                content = " ".join(
+                    str(block.get("text", "")) if isinstance(block, dict) else str(block)
+                    for block in content
+                )
+            if content and str(content).strip():
+                parts.append(str(content))
+
+    text = "\n".join(parts).strip()
+    if text:
+        return text
+    return last_ledger_ai_content(state)
+
+
 def loop_message_assistant_output_phase(msg: Any) -> str | None:
     """Return `phase` when `msg` is a loop-tagged assistant-output message."""
     if msg is None:

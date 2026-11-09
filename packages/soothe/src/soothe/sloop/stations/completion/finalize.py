@@ -26,7 +26,7 @@ from soothe.sloop.state.schemas import LoopState
 from soothe.sloop.utils.messages import (
     LoopAIMessage,
     LoopHumanMessage,
-    last_ledger_ai_content,
+    last_step_output_content,
 )
 from soothe.sloop.utils.stream_normalize import iter_messages_for_act_aggregation
 from soothe.utils.goal_completion_stream import (
@@ -557,9 +557,7 @@ async def node_goal_completion(
     # user-facing summary. ``follow_on_exec`` is set only by
     # ``handle_plan_mode_review_answer`` on approve; None for every other
     # completion path (including the exec goal itself, whose scratch starts
-    # fresh). Under the default ``final_response=always_synthesize`` mode the
-    # strategy logic below would force synthesis anyway, so short-circuit here
-    # before constructing the SynthesisGenerator.
+    # fresh). Short-circuit here before constructing the SynthesisGenerator.
     follow_on_exec = getattr(ctx.scratch, "follow_on_exec", None)
     if follow_on_exec is not None:
         return await _finalize_plan_mode_approve(
@@ -624,7 +622,6 @@ async def node_goal_completion(
     action = plan_manager.determine_completion_strategy(
         state,
         plan_result,
-        strange_loop.config.agent.loop.final_response,
     )
 
     # RFC-624 Phase 4: in-memory goal finalization only; disk persist runs after ``completed``.
@@ -655,7 +652,16 @@ async def node_goal_completion(
     used_synthesis_fallback = False
 
     if action == CompletionStrategy.LEDGER_DIRECT:
-        final_output = last_ledger_ai_content(state)
+        goal_steps = None
+        if ctx.ce is not None and ctx.ce_goal_id:
+            try:
+                _goal = await ctx.ce.get_goal(ctx.ce_goal_id)
+                if _goal is not None:
+                    goal_steps = _goal.steps.nodes
+            except Exception:
+                logger.warning("[goal_completion] CE goal steps read failed", exc_info=True)
+
+        final_output = last_step_output_content(state, goal_steps)
         if not (final_output or "").strip():
             logger.info(
                 "Goal completion: ledger_direct empty; falling back to synthesis",
@@ -663,10 +669,45 @@ async def node_goal_completion(
             action = CompletionStrategy.SYNTHESIZE
             final_output = None
         else:
-            logger.info(
-                "Goal completion: action=ledger_direct chars=%d",
-                len(final_output),
+            from soothe.sloop.engine.completion.report_validation_typesafe import (
+                validate_report_typesafe,
             )
+
+            step_kind = None
+            if goal_steps:
+                _completed = [
+                    n for n in goal_steps.values() if getattr(n, "status", None) == "completed"
+                ]
+                if _completed:
+                    _completed.sort(
+                        key=lambda n: (getattr(n, "plan_iteration", 0), getattr(n, "id", "")),
+                        reverse=True,
+                    )
+                    step_kind = str(getattr(_completed[0], "kind", "") or "") or None
+
+            report_valid = await validate_report_typesafe(
+                user_goal=state.goal or "",
+                step_output=final_output,
+                step_kind=step_kind,
+                soothe_config=strange_loop.config,
+            )
+            if report_valid is False:
+                logger.info(
+                    "Goal completion: report validation=invalid; falling back to synthesis",
+                )
+                action = CompletionStrategy.SYNTHESIZE
+                final_output = None
+            else:
+                if report_valid is True:
+                    logger.info(
+                        "Goal completion: action=ledger_direct passthrough (validated) chars=%d",
+                        len(final_output),
+                    )
+                else:
+                    logger.info(
+                        "Goal completion: action=ledger_direct passthrough (validation unavailable) chars=%d",
+                        len(final_output),
+                    )
 
     if action == CompletionStrategy.SYNTHESIZE:
         # RFC-624 Phase 4 Stage 2: No restore needed.

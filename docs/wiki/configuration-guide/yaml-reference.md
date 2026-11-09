@@ -83,7 +83,7 @@ Define chat/image routing in **`router_profiles`** and select with **`active_rou
 
 ## Agent
 
-The largest section. `AgentConfig` consolidates identity (`name`, `system_prompt`), `autopilot`, `loop`, and `protocols`. Goal-completion behavior (`goal_completion_mode`: llm_only/heuristic_only/hybrid; `final_response`: auto/always_synthesize) lives under `agent.loop`.
+The largest section. `AgentConfig` consolidates identity (`name`, `system_prompt`), `autopilot`, `loop`, and `protocols`. Goal-completion behavior (`goal_completion_mode`: llm_only/heuristic_only/hybrid) lives under `agent.loop`. Completion strategy (`LEDGER_DIRECT` vs `SYNTHESIZE`) is determined automatically from DAG topology and typesafe report validation — no manual mode toggle.
 
 ### Autopilot (`agent.autopilot`)
 

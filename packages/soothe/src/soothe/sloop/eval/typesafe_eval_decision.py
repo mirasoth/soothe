@@ -41,18 +41,24 @@ _HISTORY_MAX_CHARS = 4000
 
 _INSTRUCTIONS = (
     "Decide whether a coverage audit of the goal is warranted, given the "
-    "steps already executed and their reported outcomes."
+    "steps already executed, their reported outcomes, and the structured "
+    "completion signals (close_report_requires_eval, step_kind, "
+    "ask_user_interrupt, artifact_produced)."
 )
 
 _CRITERIA: dict[str, str] = {
     _NO_EVAL: (
-        "The executed steps fully cover the goal: the close reports and "
-        "outcomes show the deliverable is produced and nothing material is "
-        "left unaddressed."
+        "The executed steps fully cover the goal: the close reports show "
+        "requires_eval=False, the step produced an artifact (artifact_produced=True), "
+        "and (for brainstorm/discuss steps) the step ended with an ask_user gate "
+        "(ask_user_interrupt=True) — all indicating the goal is fully achieved. "
+        "Nothing material is left unaddressed."
     ),
     _EVAL: (
-        "Coverage is uncertain or incomplete: something in the goal is "
-        "unverified, partially done, failed, or the evidence is missing."
+        "Coverage is uncertain or incomplete: close_report_requires_eval=True, "
+        "no artifact produced, or the step ended without a completion signal. "
+        "Something in the goal is unverified, partially done, failed, or the "
+        "evidence is missing."
     ),
 }
 
@@ -62,6 +68,7 @@ async def decide_eval_coverage_typesafe(
     user_goal: str,
     step_history_table: str,
     task_complexity: str | None = None,
+    structured_signals: dict[str, Any] | None = None,
     soothe_config: Any | None = None,
 ) -> bool | None:
     """Decide whether a coverage Eval is required via TypeSafe.
@@ -71,6 +78,11 @@ async def decide_eval_coverage_typesafe(
         step_history_table: Rendered step history (descriptions, expected
             outputs, close reports, outcomes).
         task_complexity: Intake label value, when known.
+        structured_signals: Dict with keys ``close_report_requires_eval``,
+            ``step_kind``, ``ask_user_interrupt``, ``artifact_produced``
+            extracted from the step history. Passed to the classifier state
+            so it can make a fast categorical decision without an LLM round
+            trip.
         soothe_config: `SootheConfig` providing the classifier provider and
             decision parameters (nano `classifier` block).
 
@@ -97,6 +109,8 @@ async def decide_eval_coverage_typesafe(
     }
     if task_complexity:
         state["task_complexity"] = task_complexity
+    if structured_signals:
+        state.update(structured_signals)
 
     try:
         response = await classifier.ainvoke(ClassifierRequest(state=state, questions=questions))

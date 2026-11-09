@@ -202,4 +202,5 @@ class TestNamedConstantsEquivalence:
 
         assert rules.low_success_rate_threshold == 0.6
         assert rules.dag_dependency_threshold == 3
-        assert rules.simple_ledger_direct_max_steps == 1
+        assert rules.simple_ledger_direct_max_steps == 3
+        assert rules.linear_chain_max_depth == 3

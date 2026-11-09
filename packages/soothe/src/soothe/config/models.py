@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 # Re-export facade — canonical source: soothe_nano.config.models
 from soothe_nano.config.models import (  # noqa: F401
@@ -80,17 +80,7 @@ from soothe.config.constants import (
     GOAL_COMPLETION_REPORT_MAX_PER_MESSAGE_CHARS,
 )
 
-AgenticFinalResponseMode = Literal["auto", "always_synthesize"]
-
-
 ExecuteDeliverableAssessMode = Literal["auto", "always", "never"]
-
-
-def normalize_agentic_final_response_mode(value: Any) -> Any:
-    """Normalize `final_response`; `adaptive` is a deprecated alias for `auto`."""
-    if value == "adaptive":
-        return "auto"
-    return value
 
 
 class AssistantIdentity(BaseModel):
@@ -837,7 +827,16 @@ class CompletionRulesConfig(BaseModel):
 
     dag_dependency_threshold: int = Field(default=3, ge=1)
     low_success_rate_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
-    simple_ledger_direct_max_steps: int = Field(default=1, ge=1)
+    simple_ledger_direct_max_steps: int = Field(default=3, ge=1)
+    linear_chain_max_depth: int = Field(
+        default=3,
+        ge=1,
+        le=10,
+        description=(
+            "Max dependency chain depth for ledger_direct eligibility when the "
+            "DAG is a linear chain (no parallel branches, no decomposition children)."
+        ),
+    )
     ledger_direct_max_tool_calls: int = Field(
         default=50,
         ge=0,
@@ -1103,20 +1102,6 @@ class StrangeLoopConfig(BaseModel):
         ge=5,
         le=100,
     )
-
-    final_response: AgenticFinalResponseMode = Field(
-        default="always_synthesize",
-        description=(
-            "On goal completion: always_synthesize always runs a final CoreAgent report; "
-            "auto uses structural heuristics to choose ledger direct vs a final CoreAgent "
-            "report. Legacy alias: adaptive → auto."
-        ),
-    )
-
-    @field_validator("final_response", mode="before")
-    @classmethod
-    def _normalize_final_response(cls, value: Any) -> Any:
-        return normalize_agentic_final_response_mode(value)
 
     step_brief_hydration_enabled: bool = Field(
         default=True,

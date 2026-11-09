@@ -86,7 +86,7 @@ async def test_parallel_execution(test_config: SootheConfig, requires_llm_api):
 
 @pytest.mark.asyncio
 async def test_feature_flags(requires_llm_api):
-    """Agentic final-response mode remains a supported toggle."""
+    """Completion rules remain configurable."""
     # Configure router based on available credentials
     if os.getenv("ANTHROPIC_API_KEY"):
         router_config = {
@@ -99,23 +99,23 @@ async def test_feature_flags(requires_llm_api):
         router_config = {}
 
     config1 = config_with_router_profile(router_config)
-    config1.agent.loop.final_response = "always_synthesize"
+    config1.agent.loop.rules.completion.linear_chain_max_depth = 5
     config1.agent.protocols.memory.enabled = False  # Anthropic doesn't support embeddings
     runner1 = SootheRunner(config1)
 
     try:
-        assert config1.agent.loop.final_response == "always_synthesize"
+        assert config1.agent.loop.rules.completion.linear_chain_max_depth == 5
 
     finally:
         await runner1.cleanup()
 
     config2 = config_with_router_profile(router_config)
-    config2.agent.loop.final_response = "auto"
+    config2.agent.loop.rules.completion.simple_ledger_direct_max_steps = 2
     config2.agent.protocols.memory.enabled = False  # Anthropic doesn't support embeddings
     runner2 = SootheRunner(config2)
 
     try:
-        assert config2.agent.loop.final_response == "auto"
+        assert config2.agent.loop.rules.completion.simple_ledger_direct_max_steps == 2
 
     finally:
         await runner2.cleanup()

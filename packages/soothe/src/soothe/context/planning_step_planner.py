@@ -31,7 +31,6 @@ class _DagStats:
     failed_steps: int
     completed_steps: int
     total_steps: int
-    has_dag_dependencies: bool
     chain_depth: int
     success_rate: float
     pending_step_ids: set[str]
@@ -42,13 +41,11 @@ class _DagStats:
 def _extract_dag_stats(goal: GoalNode, plan_wave_count: int) -> _DagStats:
     """Extract primitive stats from a goal's StepDAG for heuristic functions."""
     step_dag = goal.steps
-    has_deps = any(n.dependencies for n in step_dag.nodes.values())
     return _DagStats(
         plan_wave_count=plan_wave_count,
         failed_steps=step_dag.failed_steps,
         completed_steps=step_dag.completed_steps,
         total_steps=step_dag.total_steps,
-        has_dag_dependencies=has_deps,
         chain_depth=step_dag.chain_depth,
         success_rate=step_dag.success_rate,
         pending_step_ids=step_dag.pending_step_ids(),
@@ -189,7 +186,6 @@ class StepPlanningSubengine:
         goal_id: str,
         state: Any,
         plan_result: Any,
-        mode: str = "auto",
     ) -> CompletionStrategy:
         """Delegate to completion.determine_completion_strategy."""
         goal = self._dag.get_goal(goal_id)
@@ -214,7 +210,6 @@ class StepPlanningSubengine:
                 plan_result.require_goal_completion if plan_result else True
             ),
             plan_wave_count=stats.plan_wave_count,
-            has_dag_dependencies=stats.has_dag_dependencies,
             failed_steps=stats.failed_steps,
             total_steps=stats.total_steps,
             completed_steps=stats.completed_steps,
@@ -227,7 +222,7 @@ class StepPlanningSubengine:
                 state.current_decision.steps if getattr(state, "current_decision", None) else None
             ),
             ledger_text=ledger_text,
-            final_response_mode=mode,
+            dag_nodes=goal.steps.nodes,
             last_wave_tool_call_count=int(getattr(state, "last_wave_tool_call_count", 0) or 0),
             assessment_terminal=assessment_terminal,
         )
@@ -451,12 +446,9 @@ class StepPlanManagerAdapter:
         self,
         state: Any,
         plan_result: Any,
-        mode: str = "auto",
     ) -> CompletionStrategy:
         """Determine the completion strategy for the bound goal."""
-        return self._subengine.determine_completion_strategy(
-            self._goal_id, state, plan_result, mode
-        )
+        return self._subengine.determine_completion_strategy(self._goal_id, state, plan_result)
 
     def format_completion_dag_report(self) -> str:
         """Return a formatted DAG completion report."""
