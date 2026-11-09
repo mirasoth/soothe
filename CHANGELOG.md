@@ -7,7 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [v1.2.9] - 2026-11-07
+## [v1.2.10] - 2026-11-09
+
+### Added
+
+- TypeSafe report validation gate that checks whether the final step output is a valid goal report before `LEDGER_DIRECT` passthrough, with synthesis as the fail-safe fallback when the classifier is unavailable or the output is invalid.
+- Structured completion signals (`close_report.requires_eval`, `step_kind`, `ask_user_interrupt`, `artifact_produced`) for the TypeSafe eval decision, so BRAINSTORM-mode steps that end with an `ask_user` gate and produce an artifact are correctly recognized as complete without an LLM round trip.
+
+### Changed
+
+- `LEDGER_DIRECT` is now always the first candidate on goal completion; `determine_completion_strategy` tries it before falling back to synthesis instead of respecting a manual mode toggle.
+- `LEDGER_DIRECT` eligibility gate uses DAG topology (`_is_linear_chain`: single root, no parallel branches, chain depth ≤ 3) instead of `plan_wave_count ≤ 1`, allowing short linear chains across multiple plan waves to qualify for direct passthrough.
+- `LEDGER_DIRECT` content source uses the final completed step's execution output instead of the last ledger AI message, surfacing the actual deliverable (e.g. a design draft) as the goal report.
+- `simple_ledger_direct_max_steps` default raised from 1 to 3 to match the new linear-chain gate.
+
+### Removed
+
+- `agent.loop.final_response` config field and `AgenticFinalResponseMode` type — the `always_synthesize`/`auto` toggle is gone; completion strategy is determined automatically from DAG topology and TypeSafe report validation.
+
+[Compare with previous version]: https://github.com/mirasoth/soothe/compare/v1.2.9...v1.2.10
 
 ### Changed
 
