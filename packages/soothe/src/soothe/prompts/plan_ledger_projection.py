@@ -418,52 +418,6 @@ def _compact_terminal_unit_for_projection(
     return _compact_goal_completion_unit_for_projection(unit, include_boundary=include_boundary)
 
 
-def project_last_goal_completion_for_intake(
-    loop_messages: list[BaseMessage],
-    ledger_cfg: PlanPromptLedgerConfig | None,
-    *,
-    include_boundary: bool = True,
-    k: int = 3,
-) -> list[BaseMessage]:
-    """Project up to `k` prior `goal_completion` ledger units into intake classify input.
-
-    Uses the same `goal_completion` resolution as execute Slice A. The synthesis
-    human envelope is rewritten to a short label so the classifier focuses on the
-    terminal AI report.
-
-    Args:
-        loop_messages: Full ledger loaded from CE persistence.
-        ledger_cfg: Optional caps (same knobs as plan prompts).
-        include_boundary: When True (default), prepend boundary marker.
-            Set False where the classifier needs the prior scope signal.
-        k: Maximum number of prior completion units to project.
-
-    Returns:
-        Bounded ledger slice injected before the classify human message.
-    """
-    if not loop_messages:
-        return []
-
-    units = collect_goal_completion_units(loop_messages, k=k)
-    if not units:
-        return []
-
-    flat: list[BaseMessage] = []
-    for unit in units:
-        flat.extend(
-            _compact_goal_completion_unit_for_projection(unit, include_boundary=include_boundary)
-        )
-    projected = project_loop_messages_for_plan(flat, ledger_cfg)
-    logger.debug(
-        "Intake goal-completion projection: k=%d units=%d out=%d boundary=%s",
-        k,
-        len(units),
-        len(projected),
-        include_boundary,
-    )
-    return projected
-
-
 def current_goal_has_execute_ledger(state: LoopState) -> bool:
     """True when the active plan already has execute_step rows in the orchestration ledger."""
     decision = state.current_decision

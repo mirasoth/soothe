@@ -56,15 +56,15 @@ def test_plan_quick_view_header_includes_loop_id_when_available() -> None:
     )
 
 
-def test_plan_quick_view_header_carries_glyph_and_intake() -> None:
-    """Title row is one line: glyph, short loop id, intake, elapsed, hint."""
+def test_plan_quick_view_header_carries_glyph_and_complexity() -> None:
+    """Title row is one line: glyph, short loop id, complexity, elapsed, hint."""
     tree = CognitionGoalTreeMessage(goal="Ship feature", id="gt-glyph")
-    tree.set_intake_label("complex")
+    tree.set_task_complexity("complex")
 
     header = _plan_quick_view_header(
         "019ff5a0-1234-5678-9abc-def012348d26",
         prefix=tree.plan_panel_prefix_content(),
-        intake=tree.intake_label(),
+        task_complexity=tree.task_complexity(),
         elapsed="37s",
     )
 
@@ -74,7 +74,7 @@ def test_plan_quick_view_header_carries_glyph_and_intake() -> None:
 def test_plan_quick_view_body_omits_goal_text() -> None:
     """Panel body holds step rows only; the goal lives in the title row above."""
     tree = CognitionGoalTreeMessage(goal="Ship feature", id="gt-body")
-    tree.set_intake_label("complex")
+    tree.set_task_complexity("complex")
     tree.sync_plan_steps([{"id": "STEP-1", "description": "Read files"}])
 
     plain = tree.plan_quick_view_content().plain
@@ -94,7 +94,7 @@ def test_plan_quick_view_content_shows_pending_and_running() -> None:
             {"id": "STEP-2", "description": "Apply edits"},
         ]
     )
-    tree.set_intake_label("complex")
+    tree.set_task_complexity("complex")
     tree.set_step_phase("STEP-1", "running", description="Read files")
 
     content = tree.plan_quick_view_content()
@@ -105,16 +105,16 @@ def test_plan_quick_view_content_shows_pending_and_running() -> None:
     assert "2:" in content.plain
 
 
-def test_plan_quick_view_ignores_invalid_intake_label() -> None:
+def test_plan_quick_view_ignores_invalid_complexity() -> None:
     """Only minimal/simple/complex reach the panel title."""
-    tree = CognitionGoalTreeMessage(goal="Ship feature", id="gt-intake")
-    tree.set_intake_label("chitchat")
-    tree.set_intake_label("dependency")
-    assert tree.intake_label() == ""
+    tree = CognitionGoalTreeMessage(goal="Ship feature", id="gt-complexity")
+    tree.set_task_complexity("chitchat")
+    tree.set_task_complexity("dependency")
+    assert tree.task_complexity() == ""
 
-    tree.set_intake_label("simple")
-    assert tree.intake_label() == "simple"
-    assert "simple" in _plan_quick_view_header(None, intake=tree.intake_label()).plain
+    tree.set_task_complexity("simple")
+    assert tree.task_complexity() == "simple"
+    assert "simple" in _plan_quick_view_header(None, task_complexity=tree.task_complexity()).plain
 
 
 def test_plan_quick_view_hides_tool_error_summary_on_successful_step() -> None:

@@ -319,7 +319,6 @@ class SynthesisGenerator:
             user_goal=normalize_user_query(goal),
             workspace=state.workspace,
             agent_instructions_max_chars=agent_instructions_max_chars,
-            response_language=getattr(state, "response_language", None),
             scratchpad_mode=True,
         )
 

@@ -53,7 +53,7 @@ INTAKE_LEDGER_PHASES: frozenset[str] = frozenset({INTAKE, "intent_classify"})
 # --- Graph channel schema / route literals ---
 
 _IterationOutcome = Literal["continue", "completed", "fatal", "max_iterations", "deferred"]
-_IntentRoute = Literal["continue_loop", "fast_path", "wired_subagent"]
+_IntentRoute = Literal["continue_loop", "wired_subagent"]
 _DispatchRoute = Literal["execute", "root_eval", "fatal"]
 _ReconcileRoute = Literal["dispatch", "root_eval"]
 _RootEvalRoute = Literal["finalize", "dispatch"]
@@ -67,7 +67,6 @@ class LoopGraphState(TypedDict, total=False):
     dispatch_route: _DispatchRoute | None
     reconcile_route: _ReconcileRoute | None
     root_eval_route: _RootEvalRoute | None
-    intake_label: str | None  # IntakeLabel at runtime
     # IG-775: single typed projection target for the LoopRelay bridge.
     # Holds the serialized inbox (FIFO of captured clarifications + resume
     # tickets), the active origin, the pending answer slot, the serializable

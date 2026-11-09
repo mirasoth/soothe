@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 def _plan_quick_view_title(
     loop_id: str | None,
     *,
-    intake: str | None = None,
+    task_complexity: str | None = None,
     elapsed: str | None = None,
     tokens: str | None = None,
 ) -> str:
@@ -42,7 +42,7 @@ def _plan_quick_view_title(
     short_id = compact_id_suffix(loop_id or "")
     if short_id:
         title = f"{title} [{short_id}]"
-    label = (intake or "").strip().lower()
+    label = (task_complexity or "").strip().lower()
     if label:
         title = f"{title} · {label}"
     if elapsed:
@@ -56,7 +56,7 @@ def _plan_quick_view_header(
     loop_id: str | None,
     *,
     prefix: Content | None = None,
-    intake: str | None = None,
+    task_complexity: str | None = None,
     show_enter_hint: bool = False,
     elapsed: str | None = None,
     tokens: str | None = None,
@@ -65,7 +65,7 @@ def _plan_quick_view_header(
     """Build the quick-view title row: status glyph, bold title, dim hints.
 
     The title carries everything that identifies the running goal — short loop
-    id, intake complexity, and live elapsed — so the panel needs no separate
+    id, task complexity, and live elapsed — so the panel needs no separate
     goal line. It is rendered with the same `SECONDARY_TEXT_STYLE` dim style
     used by the welcome-area Loop ID, then bolded via `bold dim` so the title
     stands out while staying de-emphasized. `prefix` is the goal lifecycle
@@ -76,7 +76,9 @@ def _plan_quick_view_header(
     title exceeds the budget it is ellipsized.
     """
     dim_style = theme.SECONDARY_TEXT_STYLE
-    title = _plan_quick_view_title(loop_id, intake=intake, elapsed=elapsed, tokens=tokens)
+    title = _plan_quick_view_title(
+        loop_id, task_complexity=task_complexity, elapsed=elapsed, tokens=tokens
+    )
     hints: list[str] = []
     if show_enter_hint:
         hints.append("Enter runs queued goal")
@@ -315,20 +317,20 @@ class PlanQuickViewOverlay(Vertical):
                     show_enter_hint = bool(can_run_queued())
             elapsed: str | None = None
             prefix: Content | None = None
-            intake: str | None = None
+            task_complexity: str | None = None
             tokens: str | None = None
             with suppress(Exception):
                 elapsed = tree.loop_elapsed_label()
             with suppress(Exception):
                 prefix = tree.plan_panel_prefix_content()
-                intake = tree.intake_label()
+                task_complexity = tree.task_complexity()
             with suppress(Exception):
                 tokens = tree.goal_token_suffix()
             self._header.update(
                 _plan_quick_view_header(
                     getattr(self.app, "_lc_loop_id", None),
                     prefix=prefix,
-                    intake=intake,
+                    task_complexity=task_complexity,
                     show_enter_hint=show_enter_hint,
                     elapsed=elapsed,
                     tokens=tokens,

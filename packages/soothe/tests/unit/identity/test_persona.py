@@ -22,11 +22,6 @@ from soothe.identity.persona import (
     build_assistant_identity_block,
     build_intake_identity_line,
 )
-from soothe.sloop.intention.prompts import (
-    INTAKE_CLASSIFY_SYSTEM_PROMPT,
-    INTAKE_SOCIAL_REPLY_PROMPT,
-    build_intake_system_prompt,
-)
 
 _NANO_FRAGMENTS_DIR = Path(nano_fragments.__file__).parent
 _NANO_IDENTITY_XML = (
@@ -168,58 +163,3 @@ def test_apply_override_patches_nano_builder_hot_path():
         assert "Acme" in PromptIdentity.identity_block("Soothe")
     finally:
         _restore_nano_fragment()
-
-
-def test_intake_prompt_default_unresolved_placeholders():
-    """Default intake prompt (no identity) resolves all identity placeholders."""
-    prompt = build_intake_system_prompt(INTAKE_CLASSIFY_SYSTEM_PROMPT, "Soothe")
-    assert "{assistant_creator}" not in prompt
-    assert "{assistant_byline}" not in prompt
-    assert "{assistant_role}" not in prompt
-    assert "{assistant_vendor_denylist}" not in prompt
-    assert "{assistant_name}" not in prompt
-    assert "Dr. Xiaming Chen" not in prompt
-    assert "invented by" not in prompt
-    assert "say you are Soothe, a helpful AI assistant — never" in prompt
-
-
-def test_intake_prompt_custom_identity():
-    """Custom identity resolves placeholders to configured values."""
-    custom = AssistantIdentity(
-        creator="Acme",
-        role_description="a coding agent",
-        vendor_denylist=["GPT-4", "Llama"],
-    )
-    prompt = build_intake_system_prompt(INTAKE_CLASSIFY_SYSTEM_PROMPT, "Soothe", identity=custom)
-    assert "invented by Acme" in prompt
-    assert "a coding agent invented by Acme" in prompt
-    assert "GPT-4 or Llama" in prompt
-    assert "Dr. Xiaming Chen" not in prompt
-    # Identity block at the top
-    assert prompt.startswith("<ASSISTANT_IDENTITY>")
-    # Unresolved placeholders must not leak
-    assert "{assistant_creator}" not in prompt
-    assert "{assistant_byline}" not in prompt
-    assert "{assistant_role}" not in prompt
-
-
-def test_social_reply_prompt_custom_identity():
-    """Social reply fragment resolves placeholders with custom identity."""
-    custom = AssistantIdentity(creator="Acme")
-    prompt = build_intake_system_prompt(INTAKE_SOCIAL_REPLY_PROMPT, "Soothe", identity=custom)
-    assert "invented by Acme" in prompt
-    assert "Dr. Xiaming Chen" not in prompt
-    assert "{assistant_creator}" not in prompt
-    assert "{assistant_byline}" not in prompt
-
-
-def test_intake_prompt_structure_preserved():
-    """Identity block precedes intake body precedes timestamp."""
-    from soothe.utils.prompt_clock import prompt_datetime_context
-
-    ctx = prompt_datetime_context()
-    prompt = build_intake_system_prompt(INTAKE_CLASSIFY_SYSTEM_PROMPT, "Soothe", ctx=ctx)
-    assert prompt.startswith("<ASSISTANT_IDENTITY>")
-    assert prompt.index("<ASSISTANT_IDENTITY>") < prompt.index("<INTAKE_CLASSIFY>")
-    assert prompt.index("<INTAKE_CLASSIFY>") < prompt.index("<PROMPT_TIMESTAMP>")
-    assert prompt.endswith("</PROMPT_TIMESTAMP>")

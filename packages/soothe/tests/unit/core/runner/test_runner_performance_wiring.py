@@ -15,22 +15,6 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.mark.asyncio
-async def test_query_complexity_classification(test_config: SootheConfig, requires_llm_api):
-    """Intent classifier is wired when a fast chat model can be created."""
-    runner = SootheRunner(test_config)
-
-    try:
-        assert hasattr(runner, "_intent_classifier")
-        if runner._intent_classifier is not None:
-            from soothe.sloop.intention.classifier import IntentClassifier
-
-            assert isinstance(runner._intent_classifier, IntentClassifier)
-
-    finally:
-        await runner.cleanup()
-
-
-@pytest.mark.asyncio
 async def test_template_planning(test_config: SootheConfig, requires_llm_api):
     """Runner exposes a planner when the agent stack configured one."""
     runner = SootheRunner(test_config)

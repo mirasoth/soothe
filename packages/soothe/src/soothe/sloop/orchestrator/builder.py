@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
 
 from soothe.sloop.stations.completion.finalize import node_goal_completion
@@ -15,7 +14,6 @@ from soothe.sloop.stations.decompose.root_eval import node as root_eval_node
 from soothe.sloop.stations.execute.execute import node_execute
 from soothe.sloop.stations.execute.record_progress import node_record_iteration
 from soothe.sloop.stations.preprocess.enter_loop import node_init_or_resume
-from soothe.sloop.stations.preprocess.intake import node_intent_classify
 from soothe.sloop.stations.sidecars.await_user import node_await_clarification
 from soothe.sloop.stations.sidecars.delegate import node_invoke_wired_subagent
 
@@ -24,9 +22,9 @@ from .node_base import wrap_node
 from .routing import (
     route_after_clarification,
     route_after_dispatch,
+    route_after_enter,
     route_after_execute,
     route_after_plan_review,
-    route_after_preprocess,
     route_after_reconcile,
     route_after_record_iteration,
     route_after_root_eval,
@@ -40,7 +38,6 @@ from .stations import (
     ENTER_LOOP,
     EXECUTE,
     FINALIZE,
-    INTAKE,
     PLAN_REVIEW,
     RECONCILE,
     RECORD_PROGRESS,
@@ -100,10 +97,6 @@ def build_strange_loop_graph(ctx: LoopRuntimeContext):
     goal and the prior interrupt would dangle.
     """
 
-    async def intake(state: dict[str, Any], config: RunnableConfig) -> dict[str, Any]:
-        """Classify user input as task vs. social and route accordingly."""
-        return await node_intent_classify(ctx, state, config)
-
     async def enter_loop(state: dict[str, Any]) -> dict[str, Any]:
         """Initialize or resume the loop from persisted checkpoint state."""
         return await node_init_or_resume(ctx, state)
@@ -135,7 +128,6 @@ def build_strange_loop_graph(ctx: LoopRuntimeContext):
         return await node_plan_review(ctx, state)
 
     graph = StateGraph(LoopGraphState)
-    graph.add_node(INTAKE, intake)
     graph.add_node(ENTER_LOOP, enter_loop)
     graph.add_node(DELEGATE, delegate)
     graph.add_node(DISPATCH, wrap_node(DISPATCH, dispatch_node, ctx))
@@ -147,15 +139,13 @@ def build_strange_loop_graph(ctx: LoopRuntimeContext):
     graph.add_node(AWAIT_USER, await_user)
     graph.add_node(PLAN_REVIEW, plan_review)
 
-    graph.add_edge(START, INTAKE)
-    graph.add_edge(INTAKE, ENTER_LOOP)
+    graph.add_edge(START, ENTER_LOOP)
     graph.add_conditional_edges(
         ENTER_LOOP,
-        route_after_preprocess,
+        route_after_enter,
         {
             DISPATCH: DISPATCH,
             DELEGATE: DELEGATE,
-            END: END,
         },
     )
     graph.add_conditional_edges(

@@ -47,26 +47,10 @@ _GOAL_COMPLETION_LEDGER_HUMAN_BASE = (
 
 def _goal_completion_ledger_human_content(state: LoopState) -> str:
     """Human ledger line for goal completion (synthesis prompt; all complexities)."""
-    from soothe.sloop.intention.models import (
-        ResponseLanguage,
-        normalize_response_language,
-    )
-
-    language = normalize_response_language(getattr(state, "response_language", None))
-    if language is None or language == ResponseLanguage.OTHER:
-        return (
-            _GOAL_COMPLETION_LEDGER_HUMAN_BASE
-            + " Use the same primary natural language as the user's request."
-        )
-    display = {
-        ResponseLanguage.EN: "English",
-        ResponseLanguage.ZH: "Chinese",
-        ResponseLanguage.JA: "Japanese",
-        ResponseLanguage.KO: "Korean",
-    }.get(language, language.value)
+    _ = state
     return (
         _GOAL_COMPLETION_LEDGER_HUMAN_BASE
-        + f" Write user-facing prose in {display} ({language.value})."
+        + " Use the same primary natural language as the user's request."
     )
 
 

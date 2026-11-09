@@ -1170,7 +1170,6 @@ class Executor:
         messages: list[Any],
         *,
         routing_classification: Any | None = None,
-        response_language: Any | None = None,
         workspace: str | None = None,
         continue_loop_mode: bool = False,
         synthesis_scenario: str | None = None,
@@ -1182,8 +1181,6 @@ class Executor:
         out: dict[str, Any] = {"messages": messages}
         if routing_classification is not None:
             out["routing_classification"] = routing_classification
-        if response_language is not None:
-            out["response_language"] = response_language
         if workspace:
             out["workspace"] = workspace
         if continue_loop_mode:
@@ -2445,11 +2442,11 @@ class Executor:
             from soothe.sloop.utils.config_keys import (
                 SOOTHE_DECOMPOSE_STEP_ID_KEY,
                 SOOTHE_EVAL_STEP_ID_KEY,
-                SOOTHE_INTAKE_LABEL_KEY,
                 SOOTHE_INTERACTION_MODE_KEY,
                 SOOTHE_IS_DAG_ROOT_KEY,
                 SOOTHE_MAX_BRANCH_ROOT_KEY,
                 SOOTHE_STEP_DESCRIPTION_KEY,
+                SOOTHE_TASK_COMPLEXITY_KEY,
                 SOOTHE_USER_GOAL_KEY,
             )
 
@@ -2496,16 +2493,18 @@ class Executor:
                 configurable["soothe_loop_id"] = self._loop_id
             if step.kind == "eval":
                 configurable[SOOTHE_EVAL_STEP_ID_KEY] = step.id
-            # Propagate intake label + root flag so DecomposeTaskMiddleware can
-            # apply a soft parallelization nudge on complex root steps
+            # Propagate forced complexity + root flag so DecomposeTaskMiddleware
+            # can apply a soft parallelization nudge on complex root steps
             # (language-independent semantic signal — no keyword matching).
             if step.is_dag_root:
                 configurable[SOOTHE_IS_DAG_ROOT_KEY] = True
             if loop_state is not None:
-                intent = getattr(loop_state, "intent", None)
-                intake_label = getattr(intent, "intake_label", None) if intent else None
-                if intake_label:
-                    configurable[SOOTHE_INTAKE_LABEL_KEY] = str(intake_label)
+                routing = getattr(loop_state, "routing_classification", None)
+                forced_complexity = getattr(routing, "task_complexity", None)
+                if forced_complexity is not None:
+                    configurable[SOOTHE_TASK_COMPLEXITY_KEY] = str(
+                        getattr(forced_complexity, "value", forced_complexity)
+                    )
             from soothe.sloop.decompose.runtime import bind_decompose_runtime
 
             decompose_tokens = bind_decompose_runtime(
@@ -2574,9 +2573,6 @@ class Executor:
             skill_activation = self._seed_skill_activation(loop_state) if loop_state else None
             mcp_state = self._seed_mcp_state(loop_state) if loop_state else None
             tool_activation = self._seed_tool_activation(loop_state) if loop_state else None
-            response_language = (
-                getattr(loop_state, "response_language", None) if loop_state else None
-            )
 
             max_action_retries = self._execute_action_retry_max()
             action_retries_done = 0
@@ -2625,7 +2621,6 @@ class Executor:
                         self._execute_graph_input(
                             stream_input_messages,
                             routing_classification=routing_classification,
-                            response_language=response_language,
                             workspace=workspace,
                             continue_loop_mode=continue_loop_mode,
                             skill_activation=skill_activation,
@@ -2765,7 +2760,6 @@ class Executor:
                             self._execute_graph_input(
                                 current_stream_input,
                                 routing_classification=routing_classification,
-                                response_language=response_language,
                                 workspace=workspace,
                                 continue_loop_mode=continue_loop_mode,
                                 skill_activation=skill_activation,

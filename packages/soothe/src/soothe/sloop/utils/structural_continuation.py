@@ -84,57 +84,10 @@ def has_intra_loop_checkpoint_to_continue(checkpoint: Any | None) -> bool:
     return len(history) > 0
 
 
-def should_bypass_chitchat_fast_path(
-    checkpoint: Any | None,
-    user_text: str | None,
-) -> bool:
-    """Return True when the chitchat fast-path must not short-circuit intake.
-
-    Loop-control phrases bypass chitchat routing only when this loop's checkpoint
-    has intra-loop work to continue. Otherwise keep the intake classify result
-    (typically social). Other social messages on a running loop still use the
-    chitchat path; the chitchat goal is finalized afterward via
-    :func:`chitchat_may_finalize_checkpoint`.
-    """
-    return is_loop_control_signal(user_text) and has_intra_loop_checkpoint_to_continue(checkpoint)
-
-
-def chitchat_may_finalize_checkpoint(checkpoint: Any | None) -> bool:
-    """Return True when chitchat is allowed to finalize the active goal.
-
-    Chitchat on a running loop must not mark goals completed — *except* when the
-    active goal is the chitchat goal itself. The chitchat fast-path skips the
-    FINALIZE station, so a fresh chitchat goal is left `running` on the
-    checkpoint with `duration_ms == 0` (no EXECUTE/RECORD_PROGRESS ran). Such
-    a goal is safe to finalize here.
-
-    An in-flight *task* goal — one that already executed at least one wave — has
-    `duration_ms > 0` (incremented only by `record_iteration`, post-EXECUTE,
-    a station the chitchat fast-path never reaches) and must NOT be finalized by
-    chitchat; the normal graph FINALIZE owns its completion.
-    """
-    if checkpoint is None:
-        return False
-    status = getattr(checkpoint, "status", None)
-    if status == "idle":
-        # Goal already completed through the normal graph, or no goal to mutate.
-        return not has_active_running_goal(checkpoint)
-    if status == "running":
-        goal = _active_goal_record(checkpoint)
-        if goal is None:
-            return False
-        # Fresh chitchat goal (duration_ms == 0): safe to finalize. In-flight
-        # task goal (duration_ms > 0): leave for the normal graph FINALIZE.
-        return getattr(goal, "duration_ms", 0) == 0
-    return False
-
-
 __all__ = [
-    "chitchat_may_finalize_checkpoint",
     "has_active_running_goal",
     "has_intra_loop_checkpoint_to_continue",
     "has_resumable_interrupted_goal",
     "is_loop_continuation_phrase",
     "is_loop_control_signal",
-    "should_bypass_chitchat_fast_path",
 ]

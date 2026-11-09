@@ -12,7 +12,7 @@ from soothe.sloop.orchestrator.stations import PHASE_PREAMBLE
 if TYPE_CHECKING:
     from soothe.sloop.state.schemas import AgentDecision, LoopState, StepAction
 
-ProjectionPhase = Literal["intake", "execute", "synthesis"]
+ProjectionPhase = Literal["execute", "synthesis"]
 
 
 @dataclass
@@ -86,7 +86,6 @@ class LoopContextProjector:
         """
         from soothe.prompts.plan_ledger_projection import (
             project_execute_step_graph_input,
-            project_last_goal_completion_for_intake,
             project_loop_messages_for_synthesis,
             projected_ledger_has_goal_completion,
         )
@@ -97,10 +96,6 @@ class LoopContextProjector:
             loop_messages,
             max_turns=self._preamble_max_turns(cfg),
         )
-
-        if spec.phase == "intake":
-            tail = project_last_goal_completion_for_intake(loop_messages, cfg, k=prior_goal_tail)
-            return ProjectedContext(messages=[*preamble, *tail])
 
         if spec.phase == "execute":
             projected = project_execute_step_graph_input(

@@ -89,9 +89,6 @@ GOAL_REPORT = "soothe.cognition.goal.reported"
 GOAL_DIRECTIVES_APPLIED = "soothe.cognition.goal.directives.applied"
 GOAL_DEFERRED = "soothe.cognition.goal.deferred"
 
-# Intent classification
-INTENT_CLASSIFIED = "soothe.cognition.intent.classified"
-
 # Plan cognition (client UX)
 PLAN_CREATED = "soothe.cognition.plan.created"
 PLAN_REFLECTED = "soothe.cognition.plan.reflected"
@@ -315,7 +312,6 @@ class StrangeLoopPlanDecisionEvent(LifecycleEvent):
     iteration: int = 0
     steps: list[dict[str, Any]] = []  # noqa: RUF012
     execution_mode: str = ""
-    intake_label: str = ""
     task_complexity: str = ""
     total_steps: int = 0  # Cumulative total steps across all iterations
     done_steps: int = 0  # Cumulative completed steps across all iterations
@@ -551,21 +547,6 @@ class PlanDagSnapshotEvent(ProtocolEvent):
 
     type: Literal["soothe.internal.plan.dag_snapshot"] = "soothe.internal.plan.dag_snapshot"
     steps: list[dict[str, Any]] = []  # noqa: RUF012
-
-
-class IntentClassifiedEvent(ProtocolEvent):
-    """Intent classification result for client visibility.
-
-    Emitted after intent-classify determines an agentic intent,
-    providing reasoning for why the query requires tool execution
-    rather than a direct chitchat-style response.
-    """
-
-    type: Literal["soothe.cognition.intent.classified"] = "soothe.cognition.intent.classified"
-    intent_type: str = "agentic"
-    reasoning: str | None = None
-    intake_label: str = ""
-    task_complexity: str = ""
 
 
 class GoalCreatedEvent(ProtocolEvent):
@@ -848,15 +829,6 @@ _reg(
 )
 _reg(PLAN_REFLECTED, PlanReflectedEvent, summary_template="Reflected: {assessment}")
 _reg(PLAN_DAG_SNAPSHOT, PlanDagSnapshotEvent, verbosity=VerbosityTier.INTERNAL)
-
-# -- Protocol: intent --------------------------------------------------------
-_reg(
-    INTENT_CLASSIFIED,
-    IntentClassifiedEvent,
-    verbosity=VerbosityTier.NORMAL,
-    summary_template="{reasoning}",
-    priority=EventPriority.HIGH,
-)
 
 # -- Protocol: goal ----------------------------------------------------------
 _reg(GOAL_CREATED, GoalCreatedEvent, summary_template="Goal: {description} (priority={priority})")

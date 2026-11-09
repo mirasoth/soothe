@@ -1,21 +1,13 @@
-"""Phase orchestration mixin for SootheRunner (chitchat and checkpointer helpers)."""
+"""Phase orchestration mixin for SootheRunner (LangGraph checkpointer helpers)."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from soothe_nano.core.exceptions import ConfigurationError
-
-from soothe.sloop.utils.messages import loop_assistant_messages_chunk
-
-from ._runner_shared import StreamChunk
-
-if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator
-
 
 logger = logging.getLogger(__name__)
 
@@ -31,19 +23,8 @@ def _create_host_serde() -> Any:
     from soothe_nano.protocols.routing import RoutingClassification, TaskComplexity
     from soothe_nano.utils.serde import create_soothe_serde
 
-    from soothe.sloop.intention.models import (
-        IntakeConfidence,
-        IntakeLabel,
-        IntakeScope,
-        ResponseLanguage,
-    )
-
     serde: JsonPlusSerializer = create_soothe_serde().with_msgpack_allowlist(
         [
-            ResponseLanguage,
-            IntakeLabel,
-            IntakeConfidence,
-            IntakeScope,
             RoutingClassification,
             TaskComplexity,
         ]
@@ -52,213 +33,11 @@ def _create_host_serde() -> Any:
 
 
 class PhasesMixin:
-    """Chitchat fast path and LangGraph checkpointer initialization.
+    """LangGraph checkpointer initialization.
 
     Mixed into `SootheRunner` -- all `self.*` attributes are defined
     on the concrete class.
     """
-
-    # -- chitchat fast path (piggybacked intake response) ------------------
-
-    async def _run_chitchat(
-        self,
-        user_input: str,
-        thread_id: str,
-        *,
-        chitchat_response: str,
-        context_engine: Any | None = None,
-        ce_goal_id: str | None = None,
-        loop_id: str | None = None,
-        defer_persistence: bool = False,
-    ) -> AsyncGenerator[StreamChunk]:
-        """Fast path for chitchat intake: emit piggybacked response directly.
-
-        When `defer_persistence` is true, only the wire response is emitted; the
-        caller must invoke `_save_chitchat_to_state` after the StrangeLoop graph
-        finishes so checkpoint finalize does not race `run_with_progress` teardown.
-        """
-        main_thread_id = (loop_id or self._client_loop_id_for_stream or thread_id or "").strip()
-        if not main_thread_id:
-            main_thread_id = thread_id
-
-        response = (chitchat_response or "").strip()
-
-        logger.info("Chitchat: %s (main_thread=%s)", user_input[:50], main_thread_id)
-
-        yield loop_assistant_messages_chunk(
-            content=response,
-            phase="chitchat",
-            thread_id=main_thread_id,
-        )
-
-        if defer_persistence:
-            return
-
-        try:
-            await self._save_chitchat_to_state(
-                user_input,
-                response,
-                main_thread_id,
-                context_engine=context_engine,
-                ce_goal_id=ce_goal_id,
-                loop_id=main_thread_id,
-            )
-        except Exception:
-            logger.warning(
-                "Chitchat persistence/finalize failed (loop=%s)",
-                main_thread_id,
-                exc_info=True,
-            )
-
-    async def _save_chitchat_to_state(
-        self,
-        query: str,
-        response: str,
-        main_thread_id: str,
-        *,
-        context_engine: Any | None = None,
-        ce_goal_id: str | None = None,
-        loop_id: str | None = None,
-    ) -> None:
-        """Persist chitchat Human+AI pair to ledger and finalize loop checkpoint."""
-        await self._save_chitchat_to_ledger(
-            query,
-            response,
-            main_thread_id,
-            context_engine=context_engine,
-        )
-        await self._finalize_chitchat_loop(
-            loop_id or main_thread_id,
-            context_engine=context_engine,
-            ce_goal_id=ce_goal_id,
-        )
-
-    async def _save_chitchat_to_ledger(
-        self,
-        query: str,
-        response: str,
-        main_thread_id: str,
-        *,
-        context_engine: Any | None = None,
-    ) -> None:
-        """Persist chitchat Human+AI pair to the loop ContextEngine ledger."""
-        from soothe.context.engine import ContextEngine
-        from soothe.context.store_factory import (
-            resolve_context_engine_persistence,
-        )
-        from soothe.sloop.utils.messages import (
-            LoopAIMessage,
-            LoopHumanMessage,
-            _record_ledger_message,
-        )
-
-        answer = (response or "").strip()
-        if not answer:
-            return
-
-        if context_engine is not None:
-            try:
-                human = LoopHumanMessage(
-                    content=query,
-                    thread_id=main_thread_id,
-                    phase="chitchat",
-                )
-                ai = LoopAIMessage(
-                    content=answer,
-                    thread_id=main_thread_id,
-                    phase="chitchat",
-                )
-                _record_ledger_message(context_engine, human, "chitchat")
-                _record_ledger_message(context_engine, ai, "chitchat")
-                await context_engine.save()
-                logger.debug(
-                    "Chitchat exchange saved to active loop ledger (loop=%s)",
-                    main_thread_id,
-                )
-                return
-            except Exception:
-                logger.debug("Failed to save chitchat to active loop ledger", exc_info=True)
-
-        loop_id = (main_thread_id or "").strip()
-        if not loop_id:
-            return
-
-        try:
-            persistence = resolve_context_engine_persistence(self._config, loop_id)
-            ce = ContextEngine(persistence=persistence)
-            await ce.load()
-            human = LoopHumanMessage(content=query, thread_id=main_thread_id, phase="chitchat")
-            ai = LoopAIMessage(content=answer, thread_id=main_thread_id, phase="chitchat")
-            _record_ledger_message(ce, human, "chitchat")
-            _record_ledger_message(ce, ai, "chitchat")
-            await ce.save()
-            logger.debug("Chitchat exchange saved to loop ledger for loop %s", loop_id)
-        except Exception:
-            logger.debug("Failed to save chitchat to loop ledger", exc_info=True)
-
-    async def _finalize_chitchat_loop(
-        self,
-        loop_id: str,
-        *,
-        context_engine: Any | None = None,
-        ce_goal_id: str | None = None,
-    ) -> None:
-        """Mark the active StrangeLoop goal complete and return checkpoint to idle."""
-        loop_id = (loop_id or "").strip()
-        if not loop_id:
-            return
-
-        try:
-            from soothe.sloop.state.sloop_manager import StrangeLoopStateManager
-            from soothe.sloop.utils.structural_continuation import (
-                chitchat_may_finalize_checkpoint,
-            )
-
-            shared_pool = await self.get_sloop_shared_pool()
-            sm = StrangeLoopStateManager(
-                config=self._config,
-                loop_id=loop_id,
-                shared_pool=shared_pool,
-            )
-            try:
-                checkpoint = await sm.load()
-                if checkpoint is None:
-                    return
-                if not chitchat_may_finalize_checkpoint(checkpoint):
-                    logger.info(
-                        "Chitchat finalize skipped for loop %s (status=%s)",
-                        loop_id,
-                        checkpoint.status,
-                    )
-                    return
-                idx = checkpoint.current_goal_index
-                if idx < 0 or idx >= len(checkpoint.goal_history):
-                    return
-                goal_record = checkpoint.goal_history[idx]
-                if context_engine is not None and ce_goal_id:
-                    try:
-                        await context_engine.finalize_goal(ce_goal_id, status="completed")
-                    except Exception:
-                        logger.debug(
-                            "CE finalize_goal failed for chitchat fast path",
-                            exc_info=True,
-                        )
-                    try:
-                        await context_engine.save()
-                    except Exception:
-                        logger.debug(
-                            "CE save failed for chitchat fast path",
-                            exc_info=True,
-                        )
-                await sm.finalize_goal(goal_record)
-            finally:
-                await sm.close()
-        except Exception:
-            logger.warning(
-                "StrangeLoop finalize failed for chitchat (loop=%s)",
-                loop_id,
-                exc_info=True,
-            )
 
     # -- LangGraph stream with interrupt auto-resume -------------------------
 

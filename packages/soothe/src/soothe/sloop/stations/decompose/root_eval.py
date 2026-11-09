@@ -5,7 +5,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from soothe.sloop.intention.models import IntakeLabel
+from soothe_nano.protocols.routing import TaskComplexity
+
 from soothe.sloop.orchestrator.node_base import (
     LoopNode,
     NodeResult,
@@ -22,6 +23,19 @@ logger = logging.getLogger(__name__)
 
 # Read-only interaction modes skip the coverage Eval.
 _READONLY_MODES = frozenset({"plan", "ask"})
+
+
+def _is_toolless_single_leaf(goal: Any) -> bool:
+    """True when the goal ran as one root leaf with zero tool calls.
+
+    Conversational turns (greetings, identity/meta questions) finish this way;
+    there is nothing for a coverage audit to check.
+    """
+    nodes = list(goal.steps.nodes.values())
+    if len(nodes) != 1 or nodes[0].parent_step_id is not None:
+        return False
+    execution = nodes[0].execution
+    return execution is not None and not execution.tool_call_count
 
 
 def _try_auto_to_manual_fallback(
@@ -305,22 +319,20 @@ class RootEvalNode(LoopNode):
                 # a missing complete verdict or a decomposed latest routes
                 # straight to the bounded re-audit below.
                 if latest is None:
-                    intent = getattr(ctx.loop_state, "intent", None)
-                    intake_label = (
-                        getattr(intent, "intake_label", None) if intent is not None else None
-                    )
-                    if intake_label == IntakeLabel.MINIMAL:
+                    routing = getattr(ctx.loop_state, "routing_classification", None)
+                    forced_complexity = getattr(routing, "task_complexity", None)
+                    if forced_complexity == TaskComplexity.MINIMAL:
                         logger.info("[root_eval] minimal task; skip Eval; finalize")
                         return NodeResult(payload={"root_eval_route": "finalize"})
 
-                    if intake_label == IntakeLabel.SIMPLE:
+                    if forced_complexity == TaskComplexity.SIMPLE:
                         from soothe.sloop.eval.eval_decision import decide_eval_required
 
                         decision = await decide_eval_required(
                             fast_model=ctx.strange_loop._fast_llm,
                             user_goal=(resolve_user_request(ctx.loop_state) or goal.description),
                             step_history=list(goal.steps.nodes.values()),
-                            intake_label=intake_label,
+                            task_complexity=forced_complexity,
                             soothe_config=ctx.strange_loop.config,
                             goal_trace=ctx.goal_trace,
                         )
@@ -334,13 +346,17 @@ class RootEvalNode(LoopNode):
                         # should_run_eval=True → fall through to Eval insertion.
 
                     elif not goal.steps.eval_required():
-                        if intake_label != IntakeLabel.COMPLEX:
+                        if forced_complexity != TaskComplexity.COMPLEX:
                             logger.info("[root_eval] eval skip predicate matched; finalize")
                             return NodeResult(payload={"root_eval_route": "finalize"})
                         logger.info(
                             "[root_eval] complex goal ran as single leaf; force Eval (no decomposition)"
                         )
                         # Fall through to Eval insertion below.
+
+                    elif _is_toolless_single_leaf(goal):
+                        logger.info("[root_eval] toolless single leaf; skip Eval; finalize")
+                        return NodeResult(payload={"root_eval_route": "finalize"})
 
                 eval_cfg = getattr(ctx.strange_loop.config.agent.loop, "eval", None)
                 max_rounds = positive_config_int(

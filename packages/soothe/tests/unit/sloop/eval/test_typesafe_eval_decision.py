@@ -192,36 +192,39 @@ class TestFacade:
 
     @pytest.mark.asyncio
     async def test_classifier_no_eval_skips_llm(self, monkeypatch) -> None:
+        from soothe_nano.protocols.routing import TaskComplexity
+
         from soothe.sloop.eval.eval_decision import decide_eval_required
-        from soothe.sloop.intention.models import IntakeLabel
 
         self._patch_facade(monkeypatch, False)
         decision = await decide_eval_required(
             fast_model=object(),
             user_goal="g",
             step_history=[],
-            intake_label=IntakeLabel.SIMPLE,
+            task_complexity=TaskComplexity.SIMPLE,
         )
         assert decision.should_run_eval is False
 
     @pytest.mark.asyncio
     async def test_classifier_eval_runs(self, monkeypatch) -> None:
+        from soothe_nano.protocols.routing import TaskComplexity
+
         from soothe.sloop.eval.eval_decision import decide_eval_required
-        from soothe.sloop.intention.models import IntakeLabel
 
         self._patch_facade(monkeypatch, True)
         decision = await decide_eval_required(
             fast_model=object(),
             user_goal="g",
             step_history=[],
-            intake_label=IntakeLabel.SIMPLE,
+            task_complexity=TaskComplexity.SIMPLE,
         )
         assert decision.should_run_eval is True
 
     @pytest.mark.asyncio
     async def test_minimal_short_circuits_without_any_call(self, monkeypatch) -> None:
+        from soothe_nano.protocols.routing import TaskComplexity
+
         from soothe.sloop.eval.eval_decision import decide_eval_required
-        from soothe.sloop.intention.models import IntakeLabel
 
         async def _boom(*_a: Any, **_k: Any) -> Any:
             raise AssertionError("classifier must not run for MINIMAL tasks")
@@ -231,21 +234,22 @@ class TestFacade:
             fast_model=object(),
             user_goal="g",
             step_history=[],
-            intake_label=IntakeLabel.MINIMAL,
+            task_complexity=TaskComplexity.MINIMAL,
         )
         assert decision.should_run_eval is False
 
     @pytest.mark.asyncio
     async def test_no_fast_model_fails_safe(self, monkeypatch) -> None:
         """No model → require Eval, regardless of the classifier."""
+        from soothe_nano.protocols.routing import TaskComplexity
+
         from soothe.sloop.eval.eval_decision import decide_eval_required
-        from soothe.sloop.intention.models import IntakeLabel
 
         self._patch_facade(monkeypatch, False)
         decision = await decide_eval_required(
             fast_model=None,
             user_goal="g",
             step_history=[],
-            intake_label=IntakeLabel.SIMPLE,
+            task_complexity=TaskComplexity.SIMPLE,
         )
         assert decision.should_run_eval is True

@@ -9,9 +9,9 @@ from typing import TYPE_CHECKING, Any
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 from soothe_nano.llm import ainvoke_structured_traced
+from soothe_nano.protocols.routing import TaskComplexity
 
 from soothe.context.models import StepNode
-from soothe.sloop.intention.models import IntakeLabel
 
 if TYPE_CHECKING:
     from soothe.config import SootheConfig
@@ -142,7 +142,7 @@ async def decide_eval_required(
     fast_model: Any,
     user_goal: str,
     step_history: list[StepNode],
-    intake_label: IntakeLabel,
+    task_complexity: TaskComplexity | None,
     soothe_config: SootheConfig | None = None,
     goal_trace: GoalLoopTrace | None = None,
 ) -> EvalDecision:
@@ -156,15 +156,21 @@ async def decide_eval_required(
         fast_model: Resolved fast chat model (or None → fail-safe).
         user_goal: Original user goal text.
         step_history: All StepNodes in the goal DAG (for the prompt envelope).
-        intake_label: 4-class intake label from intent classification.
+        task_complexity: Client-forced task complexity, when set.
         soothe_config: Optional config for tracing.
         goal_trace: Optional Langfuse goal trace.
 
     Returns:
         EvalDecision with `should_run_eval` and `reasoning`.
     """
+    complexity_value = (
+        getattr(task_complexity, "value", task_complexity)
+        if task_complexity is not None
+        else "unknown"
+    )
+
     # MINIMAL never needs Eval — skip the LLM call entirely.
-    if intake_label == IntakeLabel.MINIMAL:
+    if task_complexity == TaskComplexity.MINIMAL:
         return EvalDecision(
             should_run_eval=False,
             reasoning="Minimal task; no coverage audit needed.",
@@ -181,7 +187,7 @@ async def decide_eval_required(
     classified = await _classify_eval_coverage(
         user_goal=user_goal,
         step_history_table=_step_history_table(step_history),
-        task_complexity=intake_label.value,
+        task_complexity=complexity_value,
         structured_signals=structured_signals,
         soothe_config=soothe_config,
     )
@@ -198,7 +204,7 @@ async def decide_eval_required(
     system = EVAL_DECISION_SYSTEM
     human = (
         f"ORIGINAL USER GOAL:\n{user_goal or '(unspecified)'}\n\n"
-        f"TASK COMPLEXITY: {intake_label.value}\n\n"
+        f"TASK COMPLEXITY: {complexity_value}\n\n"
         f"INTRA-GOAL STEP HISTORY:\n{_step_history_table(step_history)}"
     )
     try:

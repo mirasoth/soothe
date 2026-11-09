@@ -21,7 +21,6 @@ import pytest
 from soothe.config.models import DecomposeLoopConfig, EvalLoopConfig
 from soothe.context.engine import ContextEngine
 from soothe.context.models import StepNode
-from soothe.sloop.intention.models import IntakeLabel
 from soothe.sloop.orchestrator.runtime_context import (
     LoopPhaseScratch,
     LoopRuntimeContext,
@@ -46,10 +45,12 @@ def _ctx_with_ce(
     *,
     iteration: int = 0,
     max_waves: int = 10,
-    intake_label: IntakeLabel | None = IntakeLabel.COMPLEX,
+    task_complexity: str | None = "complex",
     rail_interpreter: object | None = None,
 ) -> LoopRuntimeContext:
-    intent = SimpleNamespace(intake_label=intake_label) if intake_label is not None else None
+    routing = (
+        SimpleNamespace(task_complexity=task_complexity) if task_complexity is not None else None
+    )
     loop_state = SimpleNamespace(
         goal="deploy agentspace stack",
         goal_user_submission="deploy agentspace stack",
@@ -58,7 +59,7 @@ def _ctx_with_ce(
         current_decision=None,
         plan_id=None,
         step_results=[],
-        intent=intent,
+        routing_classification=routing,
     )
     strange_loop = SimpleNamespace(
         config=SimpleNamespace(
@@ -237,7 +238,7 @@ async def test_waves_exhausted_max_eval_rounds_fatal() -> None:
         max_waves=10,
         # Use an unlabeled intent so the structural skip path is taken and the
         # max-rounds guard fires before any intake-gated eval decision.
-        intake_label=None,
+        task_complexity=None,
     )
 
     result = await RootEvalNode()(ctx, {})

@@ -29,7 +29,6 @@ from .catalog import (
     GOAL_FAILED,
     GOAL_REMOVED,
     GOAL_REPORT,
-    INTENT_CLASSIFIED,  #
     ITERATION_COMPLETED,
     ITERATION_STARTED,
     LOOP_COMPLETED,
@@ -75,7 +74,6 @@ from .catalog import (
     GoalFailedEvent,
     GoalRemovedEvent,
     GoalReportEvent,
-    IntentClassifiedEvent,  #
     IterationCompletedEvent,
     IterationStartedEvent,
     LoopCompletedEvent,
@@ -135,7 +133,6 @@ __all__ = [
     "GOAL_REPORT",
     "GOAL_DIRECTIVES_APPLIED",
     "GOAL_DEFERRED",
-    "INTENT_CLASSIFIED",  #
     "PLAN_CREATED",
     "PLAN_BATCH_STARTED",
     "PLAN_REFLECTED",
@@ -210,7 +207,6 @@ __all__ = [
     "WiredSubagentFailedEvent",
     "WiredSubagentCancelledEvent",
     # Intent events
-    "IntentClassifiedEvent",
     # Other events
     "MemoryRecalledEvent",
     "MemoryStoredEvent",

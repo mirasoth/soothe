@@ -40,21 +40,3 @@ def test_langfuse_goal_output_text_ignores_execute_ledger_without_goal_completio
         LoopAIMessage(content="wave text", phase="execute_step", thread_id="t"),
     ]
     assert _langfuse_goal_output_text(ctx) == ""
-
-
-def test_langfuse_goal_output_text_uses_chitchat_intent_response() -> None:
-    from soothe.sloop.intention.models import (
-        IntakeLabel,
-        IntentClassification,
-        TaskComplexity,
-    )
-
-    ctx = MagicMock()
-    ctx.loop_state.loop_messages = []
-    ctx.loop_state.previous_plan = None
-    ctx.loop_state.intent = IntentClassification(
-        intake_label=IntakeLabel.CHITCHAT,
-        chitchat_response="Hi! I'm Soothe.",
-        task_complexity=TaskComplexity.MINIMAL,
-    )
-    assert _langfuse_goal_output_text(ctx) == "Hi! I'm Soothe."

@@ -122,7 +122,6 @@ class GraphPromptWrapper:
             user_goal=user_goal,
             workspace=state.workspace,
             agent_instructions_max_chars=agent_instructions_max_chars,
-            response_language=getattr(state, "response_language", None),
         )
 
         projection = self.project_ledger(kind="synthesis", state=state, ledger_cfg=ledger_cfg)
@@ -206,7 +205,6 @@ class GraphPromptWrapper:
         user_goal: str,
         workspace: str | None = None,
         agent_instructions_max_chars: int = 8000,
-        response_language: object | None = None,
         scratchpad_mode: bool = False,
     ) -> str:
         """Delegate to synthesis_projection.render_synthesis_system_prompt."""
@@ -219,7 +217,6 @@ class GraphPromptWrapper:
             user_goal=user_goal,
             workspace=workspace,
             agent_instructions_max_chars=agent_instructions_max_chars,
-            response_language=response_language,
             scratchpad_mode=scratchpad_mode,
         )
 

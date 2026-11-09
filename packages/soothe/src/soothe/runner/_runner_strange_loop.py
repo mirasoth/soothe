@@ -14,7 +14,6 @@ from soothe_nano.wire.stream_tool_wire import STREAM_TOOL_CALL_UPDATE
 from soothe.config.constants import DEFAULT_MAX_ITERATIONS
 from soothe.events import (
     ERROR,
-    IntentClassifiedEvent,  #
     StrangeLoopCompletedEvent,
     StrangeLoopPlanDecisionEvent,
     StrangeLoopPlanPhaseStatusEvent,
@@ -35,17 +34,13 @@ from soothe.sloop.clarification.events import (
     ClarificationDeferredEvent,
     ClarificationRequestedEvent,
 )
-from soothe.sloop.intention.models import (
-    build_loop_routing_classification,
-    intent_classification_from_intake_scope,
-    parse_intake_scope,
-)
 from soothe.sloop.utils.events import LoopAgentReasonEvent
 from soothe.sloop.utils.messages import (
     loop_assistant_messages_chunk,
     loop_message_assistant_output_phase,
 )
 from soothe.sloop.utils.plan_action_text import resolve_plan_action_text
+from soothe.sloop.utils.routing_scope import build_routing_classification, parse_intake_scope
 from soothe.sloop.utils.token_usage_breakdown import TokenUsageAccumulator
 from soothe.utils.messages import extract_text_from_message_content
 
@@ -568,8 +563,8 @@ class StrangeLoopMixin:
             workspace: Thread-specific workspace path.
             max_iterations: Maximum loop iterations.
             preferred_subagent: Optional subagent hint for routing.
-            intake_scope: Optional client-forced scope (`minimal`|`simple`|
-                `complex`). Skips intake classification when set.
+            intake_scope: Optional client-forced task complexity
+                (`minimal`|`simple`|`complex`).
             clarification_mode: Mode for this goal (`"auto"` / `"manual"`).
                 Falls back to `config.agent.clarification.default_mode` when `None`.
             interaction_mode: Per-request CoreAgent interaction mode
@@ -592,16 +587,10 @@ class StrangeLoopMixin:
         # ask_user) uses `interrupt()`; without a checkpointer that pause is
         # not resumable and Approve / `Command(resume=...)` is a no-op.
 
-        # Intake classification runs in the graph INTAKE node (after CE load);
-        # social queries END before the rest of the graph.
-        #
-        # When the caller flags this turn as a clarification answer (RFC-622), the graph
-        # skips classification so a bare word like "soothe" does not short-circuit resume.
+        # When the caller flags this turn as a clarification answer (RFC-622),
+        # the forced-scope hint is ignored so a bare word like "soothe" cannot
+        # re-route the resumed goal.
         strange_loop_id = (self._client_loop_id_for_stream or tid).strip() or tid
-        if clarification_answer:
-            logger.info(
-                "[StrangeLoop] clarification_answer=True - graph will skip intent classification"
-            )
         if resume_interrupted:
             logger.info("[StrangeLoop] resume_interrupted=True - recovering running checkpoint")
 
@@ -658,26 +647,22 @@ class StrangeLoopMixin:
             )
             clarification_policy = None
 
-        preclassified_intent = None
+        forced_complexity = None
         if intake_scope and not clarification_answer:
             try:
-                scope = parse_intake_scope(intake_scope)
+                forced_complexity = parse_intake_scope(intake_scope)
             except ValueError:
                 logger.warning(
                     "[StrangeLoop] Ignoring invalid intake_scope=%r",
                     intake_scope,
                 )
-                scope = None
-            if scope is not None:
-                preclassified_intent = intent_classification_from_intake_scope(scope)
+            if forced_complexity is not None:
                 logger.info(
-                    "[StrangeLoop] Client intake_scope=%s — skipping intake classification",
-                    scope.value,
+                    "[StrangeLoop] Client intake_scope=%s — forcing task complexity",
+                    forced_complexity.value,
                 )
 
-        routing_classification = build_loop_routing_classification(
-            preclassified_intent, preferred_subagent
-        )
+        routing_classification = build_routing_classification(forced_complexity, preferred_subagent)
 
         # Loop status liveness heartbeat (follow-up):
         # While the loop runs, tick `updated_at` so periodic reconciliation can
@@ -685,7 +670,6 @@ class StrangeLoopMixin:
         # `status="running"` row to `idle`.
         heartbeat_handle = _start_loop_heartbeat(self._config, strange_loop_id)
         increment_ai_message_count = False
-        pending_chitchat_persist: dict[str, object] | None = None
         interrupted = False
         token_usage_accumulator = TokenUsageAccumulator()
 
@@ -696,9 +680,7 @@ class StrangeLoopMixin:
                 loop_id=strange_loop_id,
                 workspace=workspace,
                 max_iterations=max_iterations,
-                intent=preclassified_intent,
                 routing_classification=routing_classification,
-                intent_classifier=self._intent_classifier,
                 preferred_subagent=preferred_subagent,
                 shared_pool=shared_pool,  # Shared pool for high-concurrency
                 clarification_policy=clarification_policy,
@@ -709,78 +691,6 @@ class StrangeLoopMixin:
                 approved_plan_path=approved_plan_path,
                 autopilot_rail_id=autopilot_rail_id,
             ):
-                if event_type == "intent_classified_reasoning":
-                    payload = event_data if isinstance(event_data, dict) else {}
-                    reasoning = str(payload.get("reasoning", "")).strip()
-                    if reasoning:
-                        yield custom_event(
-                            IntentClassifiedEvent(
-                                reasoning=reasoning,
-                            ).to_dict()
-                        )
-
-                elif event_type == "intent_classified":
-                    payload = event_data if isinstance(event_data, dict) else {}
-                    intake_raw = payload.get("intake_label", "")
-                    intake_label = str(getattr(intake_raw, "value", intake_raw) or "").strip()
-                    complexity_raw = payload.get("task_complexity", "")
-                    task_complexity = str(
-                        getattr(complexity_raw, "value", complexity_raw) or ""
-                    ).strip()
-                    logger.info(
-                        "[Intent] Classified in graph as %s (intake=%s complexity=%s)",
-                        payload.get("intent_type") or "unknown",
-                        intake_label or "unknown",
-                        task_complexity or "unknown",
-                    )
-                    if intake_label:
-                        yield custom_event(
-                            IntentClassifiedEvent(
-                                intent_type=str(payload.get("intent_type") or "agentic"),
-                                intake_label=intake_label,
-                                task_complexity=task_complexity,
-                            ).to_dict()
-                        )
-
-                elif event_type == "intent_fast_path":
-                    classification = (
-                        event_data.get("classification") if isinstance(event_data, dict) else None
-                    )
-                    fast_ce = (
-                        event_data.get("context_engine") if isinstance(event_data, dict) else None
-                    )
-                    ce_goal_id = (
-                        event_data.get("ce_goal_id") if isinstance(event_data, dict) else None
-                    )
-                    chitchat_response = ""
-                    if isinstance(event_data, dict):
-                        chitchat_response = str(
-                            event_data.get("chitchat_response")
-                            or getattr(classification, "chitchat_response", "")
-                            or ""
-                        ).strip()
-                    main_thread_id = (strange_loop_id or tid or "").strip() or tid
-                    async for chunk in self._run_chitchat(
-                        user_input,
-                        tid,
-                        chitchat_response=chitchat_response,
-                        context_engine=fast_ce,
-                        ce_goal_id=ce_goal_id,
-                        loop_id=strange_loop_id,
-                        defer_persistence=True,
-                    ):
-                        yield chunk
-                    pending_chitchat_persist = {
-                        "query": user_input,
-                        "response": chitchat_response,
-                        "main_thread_id": main_thread_id,
-                        "context_engine": fast_ce,
-                        "ce_goal_id": ce_goal_id,
-                        "loop_id": strange_loop_id,
-                    }
-                    increment_ai_message_count = True
-                    continue
-
                 if event_type == "iteration_started":
                     # Internal event - not shown to user
                     logger.info("[Loop] Iteration %d started", event_data["iteration"])
@@ -798,7 +708,6 @@ class StrangeLoopMixin:
                             iteration=int(event_data.get("iteration", 0)),
                             steps=list(event_data.get("steps") or []),
                             execution_mode=str(event_data.get("execution_mode", "")),
-                            intake_label=str(event_data.get("intake_label", "") or ""),
                             task_complexity=str(event_data.get("task_complexity", "") or ""),
                             total_steps=int(event_data.get("total_steps", 0)),
                             done_steps=int(event_data.get("done_steps", 0)),
@@ -1099,26 +1008,6 @@ class StrangeLoopMixin:
                         strange_loop_id,
                     )
 
-            if pending_chitchat_persist is not None:
-                try:
-                    await self._save_chitchat_to_state(
-                        str(pending_chitchat_persist["query"]),
-                        str(pending_chitchat_persist["response"]),
-                        str(pending_chitchat_persist["main_thread_id"]),
-                        context_engine=pending_chitchat_persist.get("context_engine"),
-                        ce_goal_id=(
-                            str(pending_chitchat_persist["ce_goal_id"])
-                            if pending_chitchat_persist.get("ce_goal_id")
-                            else None
-                        ),
-                        loop_id=str(pending_chitchat_persist.get("loop_id") or strange_loop_id),
-                    )
-                except Exception:
-                    logger.warning(
-                        "Chitchat persistence/finalize failed after graph (loop=%s)",
-                        strange_loop_id,
-                        exc_info=True,
-                    )
         except asyncio.CancelledError:
             # Only cooperative Task.cancel() (daemon cancel_event / disconnect) should
             # mark the goal interrupted. Libraries may raise CancelledError without

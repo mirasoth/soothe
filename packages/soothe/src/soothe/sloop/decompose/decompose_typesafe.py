@@ -66,7 +66,7 @@ async def decide_finish_vs_split_typesafe(
     *,
     step_description: str,
     user_goal: str,
-    intake_label: str | None = None,
+    task_complexity: str | None = None,
     soothe_config: SootheConfig | None = None,
 ) -> str | None:
     """Decide whether to strip decompose_task via TypeSafe.
@@ -74,7 +74,7 @@ async def decide_finish_vs_split_typesafe(
     Args:
         step_description: The step's full description text.
         user_goal: Original user goal text.
-        intake_label: Intake complexity label, when known.
+        task_complexity: Client-forced task complexity, when known.
         soothe_config: ``SootheConfig`` providing the classifier provider and
             decision parameters (nano ``classifier`` block).
 
@@ -106,8 +106,8 @@ async def decide_finish_vs_split_typesafe(
         "step_description": truncate_text(step_description.strip(), limit=_STEP_DESC_MAX_CHARS),
         "goal": truncate_text(user_goal.strip(), limit=_GOAL_MAX_CHARS),
     }
-    if intake_label:
-        state["intake_label"] = str(intake_label)
+    if task_complexity:
+        state["task_complexity"] = str(task_complexity)
 
     try:
         response = await classifier.ainvoke(ClassifierRequest(state=state, questions=questions))
