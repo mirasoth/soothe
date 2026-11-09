@@ -8,7 +8,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from langchain_core.messages import AIMessage, AIMessageChunk
+from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 
 from soothe.context.engine import ContextEngine
 from soothe.context.store_sqlite import SqliteContextPersistence
@@ -141,6 +141,111 @@ def test_ledger_execute_ai_content_single_step_fills_from_chunks_ig373() -> None
     body = executor._extract_final_assistant_text_from_step_messages(messages)
     assert "Here are the first lines" in body
     assert "A\nB" in body
+
+
+def test_ledger_ai_content_last_hop_with_chunk_only_hops() -> None:
+    """Chunked narration from earlier hops must not leak into the ledger body.
+
+    When per-hop text streams as AIMessageChunks and only the final hop
+    materializes a non-chunk AIMessage, the ToolMessage boundary delimits
+    the last hop (loop f326 regression)."""
+    mock_agent = _make_mock_agent()
+    executor = Executor(mock_agent, max_parallel_steps=4, context_engine=_make_ce())
+    narration = "I'll analyze veritas arch — let me first explore the workspace."
+    report = "# Veritas Architecture Analysis\n\nFull report body."
+    messages: list = [
+        AIMessageChunk(content=narration),
+        ToolMessage(content="files", tool_call_id="t1"),
+        AIMessageChunk(content="I found the subagent. Let me read files."),
+        ToolMessage(content="contents", tool_call_id="t2"),
+        AIMessageChunk(content=report),
+        AIMessage(content=report),
+    ]
+    body = executor._extract_final_assistant_text_from_step_messages(messages)
+    assert body == report
+
+
+def test_last_hop_text_empty_when_step_capped_after_tools() -> None:
+    """No AI text after the last ToolMessage -> empty extraction (no final turn)."""
+    mock_agent = _make_mock_agent()
+    executor = Executor(mock_agent, max_parallel_steps=4, context_engine=_make_ce())
+    first = "First turn text."
+    messages: list = [
+        AIMessageChunk(content=first),
+        AIMessage(content=first),
+        AIMessage(
+            content="second turn wants tools", tool_calls=[{"name": "grep", "args": {}, "id": "c1"}]
+        ),
+        ToolMessage(content="results", tool_call_id="c1"),
+    ]
+    turn = executor._messages_for_last_assistant_turn(messages)
+    assert turn == []
+    body = executor._extract_final_assistant_text_from_step_messages(messages)
+    assert body == ""
+
+
+def test_prior_assistant_text_excludes_final_hop() -> None:
+    """Prior-hop text carries every hop before the last ToolMessage boundary."""
+    mock_agent = _make_mock_agent()
+    executor = Executor(mock_agent, max_parallel_steps=4, context_engine=_make_ce())
+    narration = "I'll analyze veritas arch — let me first explore the workspace."
+    report = "# Veritas Architecture Analysis\n\nFull report body."
+    recap = "Analysis delivered above. In short: done."
+    messages: list = [
+        AIMessageChunk(content=narration),
+        ToolMessage(content="files", tool_call_id="t1"),
+        AIMessageChunk(content=report),
+        AIMessage(content=report),
+        ToolMessage(content="todo results", tool_call_id="t2"),
+        AIMessageChunk(content=recap),
+        AIMessage(content=recap),
+    ]
+    prior = executor._prior_assistant_text_from_step_messages(messages)
+    assert narration in prior
+    assert report in prior
+    assert recap not in prior
+
+
+def test_prior_assistant_text_empty_for_single_hop() -> None:
+    """No ToolMessage boundaries -> single-hop step has no prior text."""
+    mock_agent = _make_mock_agent()
+    executor = Executor(mock_agent, max_parallel_steps=4, context_engine=_make_ce())
+    prior = executor._prior_assistant_text_from_step_messages(
+        [AIMessageChunk(content="direct answer"), AIMessage(content="direct answer")]
+    )
+    assert prior == ""
+
+
+def test_resolve_ledger_ai_content_empty_last_hop_uses_accumulated_output() -> None:
+    """Empty last hop -> ledger AI content falls back to accumulated output.
+
+    Pins the executor half of the empty last-hop finalize path: the ledger
+    message carries the accumulated stream text, which finalize must gate
+    through report validation before passthrough."""
+    mock_agent = _make_mock_agent()
+    executor = Executor(mock_agent, max_parallel_steps=4, context_engine=_make_ce())
+    messages: list = [
+        AIMessageChunk(content="I'll analyze the goal — let me look around."),
+        ToolMessage(content="results", tool_call_id="c1"),
+    ]
+    content = executor._resolve_execute_step_ledger_ai_content(
+        step_messages=messages,
+        delegate_final=None,
+        output="# Report\n\nAccumulated stream body.",
+    )
+    assert content == "# Report\n\nAccumulated stream body."
+
+
+def test_resolve_ledger_ai_content_empty_messages_and_output_is_empty() -> None:
+    """No AI text and no accumulated output -> empty ledger AI content."""
+    mock_agent = _make_mock_agent()
+    executor = Executor(mock_agent, max_parallel_steps=4, context_engine=_make_ce())
+    content = executor._resolve_execute_step_ledger_ai_content(
+        step_messages=[ToolMessage(content="results", tool_call_id="c1")],
+        delegate_final=None,
+        output="   ",
+    )
+    assert content == ""
 
 
 @pytest.mark.asyncio

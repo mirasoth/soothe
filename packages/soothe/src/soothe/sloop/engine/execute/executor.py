@@ -155,6 +155,10 @@ logger = logging.getLogger(__name__)
 # re-plans its todo list mid-step.
 _IDENTICAL_REPEAT_EXEMPT: frozenset[str] = frozenset({"write_todos"})
 
+# Tail cap for the prior-hop AI text stashed in the step outcome; the report
+# validator consumes it as self-containedness context.
+_PRIOR_AI_OUTPUT_CAP = 4000
+
 
 # --- Helper functions ---
 
@@ -1399,24 +1403,35 @@ class Executor:
     def _messages_for_last_assistant_turn(messages: list[BaseMessage]) -> list[BaseMessage]:
         """Return AI messages/chunks belonging to the final CoreAgent hop only.
 
-        Multi-hop tool loops append one assistant turn per hop. Ledger and
+        Tool results only exist between hops, so the last ToolMessage delimits
+        the final hop even when per-hop text streams as chunks only. Ledger and
         `ledger_direct` goal completion must surface the last turn, not a
         concatenation of every hop's narration.
         """
-        ai_message_indices = [
-            i
-            for i, msg in enumerate(messages)
-            if isinstance(msg, AIMessage) and not isinstance(msg, AIMessageChunk)
-        ]
-        if not ai_message_indices:
-            return [m for m in messages if isinstance(m, (AIMessage, AIMessageChunk))]
+        last_tool_idx = -1
+        for i, msg in enumerate(messages):
+            if isinstance(msg, ToolMessage):
+                last_tool_idx = i
 
-        start = ai_message_indices[-2] + 1 if len(ai_message_indices) >= 2 else 0
+        start = last_tool_idx + 1
         return [
             msg
             for i, msg in enumerate(messages)
             if i >= start and isinstance(msg, (AIMessage, AIMessageChunk))
         ]
+
+    def _prior_assistant_text_from_step_messages(self, messages: list[BaseMessage]) -> str:
+        """Return assembled AI text from every hop before the final one.
+
+        Empty when the step is single-hop (no tool results delimit prior turns).
+        """
+        last_tool_idx = -1
+        for i, msg in enumerate(messages):
+            if isinstance(msg, ToolMessage):
+                last_tool_idx = i
+        return self._assemble_assistant_text_from_stream_messages(
+            messages[: last_tool_idx + 1]
+        ).strip()
 
     def _aggregate_wave_metrics(
         self,
@@ -2958,6 +2973,11 @@ class Executor:
             # Add CoreAgent input/output evidence
             primary_outcome["step_input"] = envelope  # HumanMessage content sent to CoreAgent
             primary_outcome["output_summary"] = create_output_summary(output)  # Truncated findings
+            # Tail of the pre-final-hop AI text: report-validation context for
+            # the goal-completion self-containedness check (loop ad0a).
+            prior_ai = self._prior_assistant_text_from_step_messages(messages)
+            if prior_ai:
+                primary_outcome["prior_ai_output"] = prior_ai[-_PRIOR_AI_OUTPUT_CAP:]
             # Compute captured_clarification early — it gates both the close-report
             # LLM call below and the step-success logic. A captured clarification
             # (tool_approval / ask_user) pauses the step; completion-assessment LLM

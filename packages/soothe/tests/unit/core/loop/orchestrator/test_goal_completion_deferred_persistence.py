@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -94,7 +94,11 @@ async def test_completed_emits_before_finalize_goal_persistence() -> None:
         goal=goal,
     )
 
-    await node_goal_completion(ctx, {})
+    with patch(
+        "soothe.sloop.engine.completion.report_validation_typesafe.validate_report_typesafe",
+        AsyncMock(return_value=True),
+    ):
+        await node_goal_completion(ctx, {})
 
     completed_idx = next(
         i for i, c in enumerate(ctx.emit.await_args_list) if c.args and c.args[0] == "completed"
@@ -157,7 +161,11 @@ async def test_terminal_bootstrap_skips_duplicate_record_iteration() -> None:
         goal=goal,
     )
 
-    await node_goal_completion(ctx, {"after_record_route": "goal_completion"})
+    with patch(
+        "soothe.sloop.engine.completion.report_validation_typesafe.validate_report_typesafe",
+        AsyncMock(return_value=True),
+    ):
+        await node_goal_completion(ctx, {"after_record_route": "goal_completion"})
 
     sm.record_iteration.assert_not_called()
     assert loop_state.iteration == 1

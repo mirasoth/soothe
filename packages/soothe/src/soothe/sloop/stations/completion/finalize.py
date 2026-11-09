@@ -676,6 +676,7 @@ async def node_goal_completion(
             )
 
             step_kind = None
+            prior_output = None
             if goal_steps:
                 _completed = [
                     n for n in goal_steps.values() if getattr(n, "status", None) == "completed"
@@ -686,6 +687,9 @@ async def node_goal_completion(
                         reverse=True,
                     )
                     step_kind = str(getattr(_completed[0], "kind", "") or "") or None
+                    _outcome = getattr(getattr(_completed[0], "execution", None), "outcome", None)
+                    if isinstance(_outcome, dict):
+                        prior_output = str(_outcome.get("prior_ai_output") or "") or None
 
             bypass_validation = _toolless_single_leaf(goal_steps)
             if bypass_validation:
@@ -698,6 +702,7 @@ async def node_goal_completion(
                     user_goal=state.goal or "",
                     step_output=final_output,
                     step_kind=step_kind,
+                    prior_output=prior_output,
                     soothe_config=strange_loop.config,
                 )
             if not bypass_validation:
@@ -713,10 +718,12 @@ async def node_goal_completion(
                         len(final_output),
                     )
                 else:
+                    # RFC-SLP-004 fail-safe: unavailable/untrusted verdict -> synthesize.
                     logger.info(
-                        "Goal completion: action=ledger_direct passthrough (validation unavailable) chars=%d",
-                        len(final_output),
+                        "Goal completion: report validation unavailable; falling back to synthesis",
                     )
+                    action = CompletionStrategy.SYNTHESIZE
+                    final_output = None
 
     if action == CompletionStrategy.SYNTHESIZE:
         # RFC-624 Phase 4 Stage 2: No restore needed.

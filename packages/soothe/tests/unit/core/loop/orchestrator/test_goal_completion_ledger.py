@@ -292,7 +292,11 @@ async def test_ledger_direct_appends_goal_completion_ledger_pair() -> None:
         goal=goal,
     )
 
-    await node_goal_completion(ctx, {})
+    with patch(
+        "soothe.sloop.engine.completion.report_validation_typesafe.validate_report_typesafe",
+        AsyncMock(return_value=True),
+    ):
+        await node_goal_completion(ctx, {})
 
     # JIU-02: drain ledger reconciliation background task.
     if ctx.ledger_reconciliation_task is not None:
@@ -314,6 +318,238 @@ async def test_ledger_direct_appends_goal_completion_ledger_pair() -> None:
     assert isinstance(lm[3], LoopAIMessage)
     assert lm[3].phase == "goal_completion"
     assert lm[3].content == "already the answer"
+
+
+@pytest.mark.asyncio
+async def test_ledger_direct_untrusted_validation_falls_back_to_synthesis() -> None:
+    """RFC-SLP-004: unavailable/untrusted report verdict -> synthesize, not passthrough."""
+    ce = _make_ce()
+    loop_state = LoopState(goal="g", thread_id="thr-1")
+    goal = GoalNode(description="g")
+    ce._dag.add_goal(goal)
+    loop_state.bind_ce(ce, goal.id)
+    ce.ledger.record_message(
+        LoopHumanMessage(
+            content="Execute: x",
+            thread_id="thr-1",
+            iteration=0,
+            phase="execute_step",
+        ),
+        phase="execute_step",
+    )
+    ce.ledger.record_message(
+        LoopAIMessage(
+            content="raw step output",
+            thread_id="thr-1",
+            iteration=0,
+            phase="execute_step",
+        ),
+        phase="execute_step",
+    )
+    plan_result = PlanResult(status="done", goal_progress="complete", require_goal_completion=False)
+    pm = StepPlanManagerAdapter(subengine=ce.planning.step, goal_id=goal.id)
+    pm.determine_completion_strategy = Mock(return_value=CompletionStrategy.LEDGER_DIRECT)
+
+    strange_loop = Mock()
+    strange_loop.loop_planner = Mock()
+    strange_loop.loop_planner._model = Mock()
+    strange_loop.core_agent = Mock()
+
+    sm = Mock()
+    sm.record_iteration = AsyncMock()
+    sm.finalize_goal = AsyncMock()
+
+    ctx = _ctx(
+        loop_state=loop_state,
+        plan_manager=pm,
+        strange_loop=strange_loop,
+        state_manager=sm,
+        plan_result=plan_result,
+        ce=ce,
+        goal=goal,
+    )
+
+    async def fake_gen(self, _goal: str, _state: LoopState):  # noqa: ARG002
+        yield ((), "messages", (AIMessage(content="clean synthesis"), {}))
+
+    with (
+        patch(
+            "soothe.sloop.engine.completion.report_validation_typesafe.validate_report_typesafe",
+            AsyncMock(return_value=None),
+        ),
+        patch.object(SynthesisGenerator, "generate_synthesis", fake_gen),
+    ):
+        await node_goal_completion(ctx, {})
+
+    # JIU-02: drain ledger reconciliation background task.
+    if ctx.ledger_reconciliation_task is not None:
+        await ctx.ledger_reconciliation_task
+
+    completed_payload = next(
+        (c.args[1] for c in ctx.emit.await_args_list if c.args and c.args[0] == "completed"),
+        None,
+    )
+    assert completed_payload is not None
+    # Synthesis streamed the goal_completion phase, so the runner replay is skipped.
+    assert completed_payload.get("skip_goal_completion_wire_duplicate") is True
+    gc_ai = next(
+        m
+        for m in loop_state.loop_messages
+        if getattr(m, "phase", None) == "goal_completion" and isinstance(m, LoopAIMessage)
+    )
+    assert gc_ai.content == "clean synthesis"
+
+
+@pytest.mark.asyncio
+async def test_ledger_direct_empty_last_hop_blob_never_reaches_wire() -> None:
+    """Empty last-hop finalize path (loop f326 regression).
+
+    When the executor resolves ledger AI content from accumulated output
+    (empty last hop after tool results), the narration+report blob seeded
+    into the ledger must not be replayed as the goal report: an untrusted
+    validation verdict routes it to synthesis."""
+    ce = _make_ce()
+    loop_state = LoopState(goal="analyze veritas arch", thread_id="thr-1")
+    goal = GoalNode(description="analyze veritas arch")
+    ce._dag.add_goal(goal)
+    loop_state.bind_ce(ce, goal.id)
+    blob = (
+        'I\'ll analyze "veritas arch" — let me first explore the workspace.'
+        "I found the veritas subagent. Let me read all its files."
+        "# Veritas Architecture Analysis\n\nFull report body."
+    )
+    ce.ledger.record_message(
+        LoopHumanMessage(
+            content="Execute: analyze veritas arch",
+            thread_id="thr-1",
+            iteration=0,
+            phase="execute_step",
+        ),
+        phase="execute_step",
+    )
+    ce.ledger.record_message(
+        LoopAIMessage(
+            content=blob,
+            thread_id="thr-1",
+            iteration=0,
+            phase="execute_step",
+        ),
+        phase="execute_step",
+    )
+    plan_result = PlanResult(status="done", goal_progress="complete", require_goal_completion=False)
+    pm = StepPlanManagerAdapter(subengine=ce.planning.step, goal_id=goal.id)
+    pm.determine_completion_strategy = Mock(return_value=CompletionStrategy.LEDGER_DIRECT)
+
+    strange_loop = Mock()
+    strange_loop.loop_planner = Mock()
+    strange_loop.loop_planner._model = Mock()
+    strange_loop.core_agent = Mock()
+
+    sm = Mock()
+    sm.record_iteration = AsyncMock()
+    sm.finalize_goal = AsyncMock()
+
+    ctx = _ctx(
+        loop_state=loop_state,
+        plan_manager=pm,
+        strange_loop=strange_loop,
+        state_manager=sm,
+        plan_result=plan_result,
+        ce=ce,
+        goal=goal,
+    )
+
+    async def fake_gen(self, _goal: str, _state: LoopState):  # noqa: ARG002
+        yield ((), "messages", (AIMessage(content="clean synthesis"), {}))
+
+    with (
+        patch(
+            "soothe.sloop.engine.completion.report_validation_typesafe.validate_report_typesafe",
+            AsyncMock(return_value=None),
+        ),
+        patch.object(SynthesisGenerator, "generate_synthesis", fake_gen),
+    ):
+        await node_goal_completion(ctx, {})
+
+    # JIU-02: drain ledger reconciliation background task.
+    if ctx.ledger_reconciliation_task is not None:
+        await ctx.ledger_reconciliation_task
+
+    completed_payload = next(
+        (c.args[1] for c in ctx.emit.await_args_list if c.args and c.args[0] == "completed"),
+        None,
+    )
+    assert completed_payload is not None
+    assert completed_payload.get("skip_goal_completion_wire_duplicate") is True
+    assert completed_payload["result"].full_output == "clean synthesis"
+    assert "I'll analyze" not in completed_payload["result"].full_output
+    gc_ai = next(
+        m
+        for m in loop_state.loop_messages
+        if getattr(m, "phase", None) == "goal_completion" and isinstance(m, LoopAIMessage)
+    )
+    assert gc_ai.content == "clean synthesis"
+
+
+@pytest.mark.asyncio
+async def test_ledger_direct_passes_prior_output_from_step_outcome() -> None:
+    """The validator receives the step's prior-hop text from CE execution.outcome."""
+    from soothe.context.models import StepExecution, StepNode
+
+    ce = _make_ce()
+    loop_state = LoopState(goal="g", thread_id="thr-1")
+    goal = GoalNode(description="g")
+    ce._dag.add_goal(goal)
+    loop_state.bind_ce(ce, goal.id)
+    await ce.add_step(goal.id, StepNode(id="S1", description="g"))
+    await ce.complete_step(
+        goal.id,
+        "S1",
+        StepExecution(
+            tool_call_count=43, outcome={"prior_ai_output": "Full report delivered earlier."}
+        ),
+    )
+    ce.ledger.record_message(
+        LoopAIMessage(
+            content="Analysis delivered above. In short: done.",
+            thread_id="thr-1",
+            iteration=0,
+            phase="execute_step",
+        ),
+        phase="execute_step",
+    )
+    plan_result = PlanResult(status="done", goal_progress="complete", require_goal_completion=False)
+    pm = StepPlanManagerAdapter(subengine=ce.planning.step, goal_id=goal.id)
+    pm.determine_completion_strategy = Mock(return_value=CompletionStrategy.LEDGER_DIRECT)
+
+    strange_loop = Mock()
+    strange_loop.loop_planner = Mock()
+    strange_loop.loop_planner._model = Mock()
+    strange_loop.core_agent = Mock()
+
+    sm = Mock()
+    sm.record_iteration = AsyncMock()
+    sm.finalize_goal = AsyncMock()
+
+    ctx = _ctx(
+        loop_state=loop_state,
+        plan_manager=pm,
+        strange_loop=strange_loop,
+        state_manager=sm,
+        plan_result=plan_result,
+        ce=ce,
+        goal=goal,
+    )
+
+    validator = AsyncMock(return_value=True)
+    with patch(
+        "soothe.sloop.engine.completion.report_validation_typesafe.validate_report_typesafe",
+        validator,
+    ):
+        await node_goal_completion(ctx, {})
+
+    assert validator.await_count == 1
+    assert validator.await_args.kwargs["prior_output"] == "Full report delivered earlier."
 
 
 @pytest.mark.asyncio
@@ -414,7 +650,11 @@ async def test_minimal_intake_ledger_direct_uses_synthesis_prompt_as_human() -> 
         goal=goal,
     )
 
-    await node_goal_completion(ctx, {})
+    with patch(
+        "soothe.sloop.engine.completion.report_validation_typesafe.validate_report_typesafe",
+        AsyncMock(return_value=True),
+    ):
+        await node_goal_completion(ctx, {})
 
     # JIU-02: drain ledger reconciliation background task.
     if ctx.ledger_reconciliation_task is not None:
@@ -578,7 +818,11 @@ async def test_ledger_direct_filters_out_planning_messages_for_final_output() ->
         goal=goal,
     )
 
-    await node_goal_completion(ctx, {})
+    with patch(
+        "soothe.sloop.engine.completion.report_validation_typesafe.validate_report_typesafe",
+        AsyncMock(return_value=True),
+    ):
+        await node_goal_completion(ctx, {})
 
     # JIU-02: drain ledger reconciliation background task.
     if ctx.ledger_reconciliation_task is not None:
@@ -629,7 +873,11 @@ async def test_goal_completion_emits_finalize_phase_status() -> None:
         goal=goal,
     )
 
-    await node_goal_completion(ctx, {})
+    with patch(
+        "soothe.sloop.engine.completion.report_validation_typesafe.validate_report_typesafe",
+        AsyncMock(return_value=True),
+    ):
+        await node_goal_completion(ctx, {})
 
     # JIU-02: drain ledger reconciliation background task.
     if ctx.ledger_reconciliation_task is not None:
