@@ -79,7 +79,7 @@ class _CfgStub:
 def _patch_client(monkeypatch: pytest.MonkeyPatch, fake: _FakeClassifier) -> None:
     monkeypatch.setattr(
         ti_mod,
-        "build_typesafe_classifier",
+        "build_classifier",
         lambda _cfg: fake,
     )
 

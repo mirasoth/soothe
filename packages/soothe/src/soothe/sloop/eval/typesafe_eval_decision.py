@@ -23,7 +23,7 @@ import logging
 from typing import Any
 
 from soothe.sloop.clarification.typesafe_client import (
-    build_typesafe_classifier,
+    build_classifier,
     classifier_config,
     verdict_trusted,
 )
@@ -87,7 +87,7 @@ async def decide_eval_coverage_typesafe(
     from langchain_typesafe.types import ClassifierRequest
 
     questions = {_QUESTION_ID: Choice(instructions=_INSTRUCTIONS, criteria=_CRITERIA)}
-    classifier = build_typesafe_classifier(soothe_config)
+    classifier = build_classifier(soothe_config)
     if classifier is None:
         return None
 
@@ -101,13 +101,13 @@ async def decide_eval_coverage_typesafe(
     try:
         response = await classifier.ainvoke(ClassifierRequest(state=state, questions=questions))
     except Exception as exc:  # noqa: BLE001 — never block on the classifier
-        logger.warning("[eval_decision] typesafe unavailable (%s); using LLM", exc)
+        logger.warning("[eval_decision] classifier unavailable (%s); using LLM", exc)
         return None
 
     answers = getattr(response, "answers", {}) or {}
     answer = answers.get(_QUESTION_ID)
     if answer is None:
-        logger.warning("[eval_decision] typesafe returned no answer; using LLM")
+        logger.warning("[eval_decision] classifier returned no answer; using LLM")
         return None
 
     trusted, reason = verdict_trusted(cfg, answer)
@@ -119,7 +119,7 @@ async def decide_eval_coverage_typesafe(
     confidence = getattr(answer, "confidence", None)
     if choice == _EVAL:
         # Same direction as the fail-safe — no extra bar needed.
-        logger.debug("[eval_decision] typesafe: run audit (conf=%s)", confidence)
+        logger.debug("[eval_decision] classifier: run audit (conf=%s)", confidence)
         return True
     if choice == _NO_EVAL:
         suppress_bar = float(cfg.suppress_min_confidence)
@@ -130,10 +130,10 @@ async def decide_eval_coverage_typesafe(
                 suppress_bar,
             )
             return None
-        logger.debug("[eval_decision] typesafe: skip audit (conf=%s)", confidence)
+        logger.debug("[eval_decision] classifier: skip audit (conf=%s)", confidence)
         return False
 
-    logger.info("[eval_decision] typesafe returned unknown choice %r; using LLM", choice)
+    logger.info("[eval_decision] classifier returned unknown choice %r; using LLM", choice)
     return None
 
 

@@ -24,7 +24,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from soothe.sloop.clarification.typesafe_client import (
-    build_typesafe_classifier,
+    build_classifier,
     classifier_config,
     verdict_trusted,
 )
@@ -94,12 +94,12 @@ async def decide_finish_vs_split_typesafe(
 
     questions = {_QUESTION_ID: Choice(instructions=_INSTRUCTIONS, criteria=_CRITERIA)}
     try:
-        classifier = build_typesafe_classifier(soothe_config)
+        classifier = build_classifier(soothe_config)
     except Exception as exc:  # noqa: BLE001 — never block on the classifier
-        logger.info("[decompose] typesafe backend unavailable (%s); keeping tool", exc)
+        logger.info("[decompose] classifier unavailable (%s); keeping tool", exc)
         return None
     if classifier is None:
-        logger.info("[decompose] typesafe backend unavailable; keeping tool")
+        logger.info("[decompose] classifier unavailable; keeping tool")
         return None
 
     state: dict[str, Any] = {
@@ -112,13 +112,13 @@ async def decide_finish_vs_split_typesafe(
     try:
         response = await classifier.ainvoke(ClassifierRequest(state=state, questions=questions))
     except Exception as exc:  # noqa: BLE001 — never block on the classifier
-        logger.warning("[decompose] typesafe unavailable (%s); keeping tool", exc)
+        logger.warning("[decompose] classifier unavailable (%s); keeping tool", exc)
         return None
 
     answers = getattr(response, "answers", {}) or {}
     answer = answers.get(_QUESTION_ID)
     if answer is None:
-        logger.info("[decompose] typesafe returned no answer; keeping tool")
+        logger.info("[decompose] classifier returned no answer; keeping tool")
         return None
 
     trusted, reason = verdict_trusted(cfg, answer)
@@ -131,7 +131,7 @@ async def decide_finish_vs_split_typesafe(
 
     if choice == _SPLIT:
         # Same direction as the fail-safe — no extra bar needed.
-        logger.debug("[decompose] typesafe: split (conf=%s)", confidence)
+        logger.debug("[decompose] classifier: split (conf=%s)", confidence)
         return "split"
 
     if choice == _FINISH:
@@ -146,10 +146,10 @@ async def decide_finish_vs_split_typesafe(
                 suppress_bar,
             )
             return None
-        logger.debug("[decompose] typesafe: finish (conf=%s)", confidence)
+        logger.debug("[decompose] classifier: finish (conf=%s)", confidence)
         return "finish"
 
-    logger.info("[decompose] typesafe returned unknown choice %r; keeping tool", choice)
+    logger.info("[decompose] classifier returned unknown choice %r; keeping tool", choice)
     return None
 
 

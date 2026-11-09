@@ -62,7 +62,7 @@ class _CfgStub:
 
 
 def _patch(monkeypatch: pytest.MonkeyPatch, fake: _FakeClassifier) -> None:
-    monkeypatch.setattr(ts_mod, "build_typesafe_classifier", lambda _cfg: fake)
+    monkeypatch.setattr(ts_mod, "build_classifier", lambda _cfg: fake)
 
 
 def _rail(rail_id: str, summary: str = "", applies_when: str = "") -> Any:
@@ -229,10 +229,10 @@ class TestFallback:
 
     @pytest.mark.asyncio
     async def test_build_error_falls_back(self, monkeypatch) -> None:
-        """build_typesafe_classifier raising should not block."""
+        """build_classifier raising should not block."""
         monkeypatch.setattr(
             ts_mod,
-            "build_typesafe_classifier",
+            "build_classifier",
             lambda _cfg: (_ for _ in ()).throw(RuntimeError("bad endpoint")),
         )
         assert await _pick() is None

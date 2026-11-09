@@ -63,7 +63,7 @@ class _CfgStub:
 
 
 def _patch(monkeypatch: pytest.MonkeyPatch, fake: _FakeClassifier) -> None:
-    monkeypatch.setattr(ts_mod, "build_typesafe_classifier", lambda _cfg: fake)
+    monkeypatch.setattr(ts_mod, "build_classifier", lambda _cfg: fake)
 
 
 def _decide(**over: Any) -> Any:
@@ -173,7 +173,7 @@ class TestFallback:
     async def test_build_classifier_exception_returns_none(self, monkeypatch) -> None:
         monkeypatch.setattr(
             ts_mod,
-            "build_typesafe_classifier",
+            "build_classifier",
             lambda _cfg: (_ for _ in ()).throw(ValueError("boom")),
         )
         assert await _decide() is None

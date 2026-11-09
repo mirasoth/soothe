@@ -18,7 +18,7 @@ import logging
 from typing import Any
 
 from soothe.sloop.clarification.typesafe_client import (
-    build_typesafe_classifier,
+    build_classifier,
     classifier_config,
     verdict_trusted,
 )
@@ -87,7 +87,7 @@ async def classify_intent_typesafe(
     """
     cfg = classifier_config(soothe_config)
     if cfg is None or not cfg.enabled:
-        logger.info("[intent] typesafe disabled; using LLM path")
+        logger.info("[intent] classifier disabled; using LLM path")
         return None
 
     from langchain_typesafe import Choice
@@ -99,9 +99,9 @@ async def classify_intent_typesafe(
             instructions=_LANGUAGE_INSTRUCTIONS, criteria=_LANGUAGE_CRITERIA
         ),
     }
-    classifier = build_typesafe_classifier(soothe_config)
+    classifier = build_classifier(soothe_config)
     if classifier is None:
-        logger.info("[intent] typesafe backend unavailable; using LLM path")
+        logger.info("[intent] classifier unavailable; using LLM path")
         return None
 
     state = {"query": truncate_text(query.strip(), limit=_QUERY_MAX_CHARS)}
@@ -109,26 +109,26 @@ async def classify_intent_typesafe(
         response = await classifier.ainvoke(ClassifierRequest(state=state, questions=questions))
     except Exception as exc:  # noqa: BLE001 — never block on the classifier
         logger.warning(
-            "[intent] typesafe classification unavailable (%s); falling back to LLM", exc
+            "[intent] classifier classification unavailable (%s); falling back to LLM", exc
         )
         return None
 
     answers = getattr(response, "answers", {}) or {}
     label_answer = answers.get(_LABEL_QUESTION_ID)
     if label_answer is None:
-        logger.info("[intent] typesafe returned no label answer; falling back to LLM")
+        logger.info("[intent] classifier returned no label answer; falling back to LLM")
         return None
 
     trusted, reason = verdict_trusted(cfg, label_answer)
     if not trusted:
-        logger.info("[intent] typesafe verdict untrusted (%s); falling back to LLM", reason)
+        logger.info("[intent] classifier verdict untrusted (%s); falling back to LLM", reason)
         return None
 
     raw_label = str(getattr(label_answer, "choice", "") or "")
     try:
         label = IntakeLabel(raw_label)
     except ValueError:
-        logger.info("[intent] typesafe returned unknown label %r; falling back to LLM", raw_label)
+        logger.info("[intent] classifier returned unknown label %r; falling back to LLM", raw_label)
         return None
 
     # Language rides along in the same request but is gated independently:
@@ -148,7 +148,7 @@ async def classify_intent_typesafe(
         return None
 
     logger.info(
-        "[intent] typesafe label=%s conf=%s",
+        "[intent] classifier label=%s conf=%s",
         label.value,
         getattr(label_answer, "confidence", None),
     )

@@ -1,15 +1,13 @@
-"""Shared TypeSafe client construction (nano-configured, swappable backend).
+"""Shared classifier construction (nano-configured, swappable backend).
 
-Every TypeSafe-backed decision in Soothe resolves its endpoint the same way:
-nano's `providers` (a `provider_type: typesafe` entry) / `classifier` config.
-Questions are bound per-request via `ClassifierRequest`, so each decision
-owns its own question set — this module owns the shared resolution and gating.
+Every calibrated classifier decision in Soothe resolves its endpoint the same
+way: nano's `providers` (a `provider_type: typesafe` entry) / `classifier`
+config. Questions are bound per-request via `ClassifierRequest`, so each
+decision owns its own question set — this module owns the shared resolution
+and gating.
 
-Current consumers (all use `Choice` for OOD detection, all fall back to LLM
-on any failure or unconfiguration):
+Current consumers of `build_classifier` (all use `Choice` for OOD detection):
 
-- Risk classification (`subagents/veritas/decision_model.py`) — the veritas
-  decision fast path
 - Intent classification (`typesafe_intent.py`) — intake routing
 - Eval coverage decision (`typesafe_eval_decision.py`) — coverage audit gate
 - Scenario classification (`scenario_typesafe.py`) — synthesis style selection
@@ -17,15 +15,21 @@ on any failure or unconfiguration):
 - Rail auto-pick (`rail_typesafe.py`) — LoopRail selection
 - Root eval re-audit (`root_eval_typesafe.py`) — re-audit vs finalize
 
+The veritas decision fast path (`subagents/veritas/decision_model.py`) builds
+its own `TypeSafeClassifier` directly with a Jev-first-then-LLM circuit
+breaker; it is not routed through `build_classifier`.
+
 Two invariants hold for every consumer:
 
 - **Distribution-shift gate.** `Noul` answers expose only a probability (no
   confidence), so decisions that must survive out-of-distribution input use
   `Choice`, which returns a label, a distribution, and a confidence score.
   `verdict_trusted` rejects low-confidence and near-tie verdicts.
-- **Unavailable is normal.** Local servers are foreground processes with no
-  autostart; every failure path returns `None` so the caller degrades to its
-  existing LLM-based behaviour instead of blocking.
+- **Unavailable degrades, never blocks.** When the TypeSafe backend cannot be
+  built, `build_classifier` falls back to an `LLMChoiceClassifier` backed by
+  the `fast` model role (see IG-LOOP-017). If the fallback is disabled or the
+  fast model cannot be resolved, it returns `None` so the caller degrades to
+  its fail-safe default instead of blocking.
 """
 
 from __future__ import annotations
@@ -34,6 +38,10 @@ import logging
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# One-shot WARNING when the LLM fast-model fallback engages, so a TypeSafe
+# outage is discoverable rather than silently degrading every decision.
+_llm_fallback_warned: bool = False
 
 
 def resolve_classifier_provider(soothe_config: Any) -> tuple[str, dict[str, Any]] | None:
@@ -72,17 +80,30 @@ def resolve_classifier_provider(soothe_config: Any) -> tuple[str, dict[str, Any]
     return provider_type, kwargs
 
 
-def build_typesafe_classifier(
+def build_classifier(
     soothe_config: Any,
 ) -> Any | None:
-    """Build a `langchain-typesafe` classifier for the resolved provider.
+    """Build a `Choice` classifier for the resolved provider.
+
+    Resolution order:
+
+    1. If the classifier is disabled or the provider unresolvable, return
+       ``None`` — the caller degrades to its fail-safe default.
+    2. Try a `TypeSafeClassifier`. On success, return it.
+    3. On any construction failure (missing `TYPESAFE_API_KEY`, bad endpoint,
+       missing dependency), build an `LLMChoiceClassifier` from the ``fast``
+       model role and return it. A single WARNING is logged per process so
+       the degradation is discoverable.
+    4. If the fast model cannot be resolved, return ``None`` — no fallback
+       is ever worse than the fail-safe default.
 
     Args:
-        soothe_config: `SootheConfig` providing the classifier provider.
+        soothe_config: `SootheConfig` providing the classifier provider and
+            the ``fast`` model role via ``create_chat_model``.
 
     Returns:
-        A `TypeSafeClassifier`, or `None` when the classifier is disabled,
-        the provider is missing, or the optional dependency is absent.
+        A `TypeSafeClassifier` or an `LLMChoiceClassifier`, or `None` when
+        the classifier is disabled or both backends are unavailable.
     """
     if resolve_classifier_provider(soothe_config) is None:
         return None
@@ -103,9 +124,45 @@ def build_typesafe_classifier(
         client_kwargs["api_key"] = kwargs["api_key"]
     try:
         return TypeSafeClassifier(**client_kwargs)
-    except Exception as exc:  # noqa: BLE001 — missing dep / bad endpoint
-        logger.warning("[classifier] backend unavailable: %s", exc)
+    except Exception as exc:  # noqa: BLE001 — missing dep / bad endpoint / missing key
+        logger.warning("[classifier] typesafe backend unavailable: %s", exc)
+        return _build_llm_fallback(soothe_config, reason=str(exc))
+
+
+def _build_llm_fallback(soothe_config: Any, *, reason: str) -> Any | None:
+    """Build an `LLMChoiceClassifier` stand-in, or `None` if unresolvable.
+
+    Args:
+        soothe_config: `SootheConfig` providing the ``fast`` model role via
+            ``create_chat_model``.
+        reason: The TypeSafe failure reason, included in the log line.
+
+    Returns:
+        An `LLMChoiceClassifier`, or `None` when the fast model cannot be
+        resolved (no fallback is ever worse than the fail-safe default).
+    """
+    try:
+        model = soothe_config.create_chat_model("fast")
+    except Exception as exc:  # noqa: BLE001 — never block on fallback construction
+        logger.warning(
+            "[classifier] LLM fallback unavailable (fast model failed: %s); "
+            "returning None — decisions will degrade to fail-safe defaults",
+            exc,
+        )
         return None
+    if model is None:
+        return None
+    global _llm_fallback_warned
+    if not _llm_fallback_warned:
+        _llm_fallback_warned = True
+        logger.warning(
+            "[classifier] typesafe unavailable (%s); using LLM fast-model "
+            "fallback for Choice decisions",
+            reason,
+        )
+    from soothe.sloop.clarification.llm_classifier import LLMChoiceClassifier
+
+    return LLMChoiceClassifier(model, soothe_config=soothe_config)
 
 
 def classifier_config(soothe_config: Any) -> Any | None:
@@ -137,7 +194,7 @@ def verdict_trusted(cfg: Any, answer: Any) -> tuple[bool, str]:
 
 
 __all__ = [
-    "build_typesafe_classifier",
+    "build_classifier",
     "classifier_config",
     "resolve_classifier_provider",
     "verdict_trusted",

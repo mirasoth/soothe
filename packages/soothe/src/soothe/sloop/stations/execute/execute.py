@@ -921,8 +921,6 @@ async def node_execute(ctx: LoopRuntimeContext, state_dict: dict[str, Any]) -> d
                 },
             )
             if relay is not None:
-                from soothe.sloop.relay.ticket import ResumeTicket
-
                 relay.inbox.enqueue(
                     ask_request,
                     resume_ticket=ResumeTicket(),

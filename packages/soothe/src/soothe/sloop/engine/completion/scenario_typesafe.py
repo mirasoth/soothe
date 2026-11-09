@@ -22,7 +22,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from soothe.sloop.clarification.typesafe_client import (
-    build_typesafe_classifier,
+    build_classifier,
     classifier_config,
     verdict_trusted,
 )
@@ -82,12 +82,12 @@ async def classify_scenario_typesafe(
 
     questions = {_QUESTION_ID: Choice(instructions=_INSTRUCTIONS, criteria=_SCENARIO_DESCRIPTIONS)}
     try:
-        classifier = build_typesafe_classifier(soothe_config)
+        classifier = build_classifier(soothe_config)
     except Exception as exc:  # noqa: BLE001 — never block on the classifier
-        logger.info("[scenario] typesafe backend unavailable (%s); using scratchpad", exc)
+        logger.info("[scenario] classifier unavailable (%s); using scratchpad", exc)
         return None
     if classifier is None:
-        logger.info("[scenario] typesafe backend unavailable; using scratchpad")
+        logger.info("[scenario] classifier unavailable; using scratchpad")
         return None
 
     state: dict[str, Any] = {
@@ -103,13 +103,13 @@ async def classify_scenario_typesafe(
     try:
         response = await classifier.ainvoke(ClassifierRequest(state=state, questions=questions))
     except Exception as exc:  # noqa: BLE001 — never block on the classifier
-        logger.warning("[scenario] typesafe unavailable (%s); using scratchpad", exc)
+        logger.warning("[scenario] classifier unavailable (%s); using scratchpad", exc)
         return None
 
     answers = getattr(response, "answers", {}) or {}
     answer = answers.get(_QUESTION_ID)
     if answer is None:
-        logger.info("[scenario] typesafe returned no answer; using scratchpad")
+        logger.info("[scenario] classifier returned no answer; using scratchpad")
         return None
 
     trusted, reason = verdict_trusted(cfg, answer)
@@ -120,7 +120,7 @@ async def classify_scenario_typesafe(
     choice = str(getattr(answer, "choice", "") or "")
     confidence = getattr(answer, "confidence", None)
     if choice not in _SCENARIO_DESCRIPTIONS:
-        logger.info("[scenario] typesafe returned unknown scenario %r; using scratchpad", choice)
+        logger.info("[scenario] classifier returned unknown scenario %r; using scratchpad", choice)
         return None
 
     # Suppressing the scratchpad self-classification is a work-suppression
@@ -136,7 +136,7 @@ async def classify_scenario_typesafe(
         return None
 
     logger.info(
-        "[scenario] typesafe: scenario=%s conf=%s",
+        "[scenario] classifier: scenario=%s conf=%s",
         choice,
         confidence,
     )

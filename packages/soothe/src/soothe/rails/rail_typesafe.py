@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, Any
 
 from soothe.rails.catalog import RailDefinition
 from soothe.sloop.clarification.typesafe_client import (
-    build_typesafe_classifier,
+    build_classifier,
     classifier_config,
     verdict_trusted,
 )
@@ -98,12 +98,12 @@ async def pick_rail_typesafe(
     criteria = _build_criteria(candidates)
     questions = {_QUESTION_ID: Choice(instructions=_INSTRUCTIONS, criteria=criteria)}
     try:
-        classifier = build_typesafe_classifier(soothe_config)
+        classifier = build_classifier(soothe_config)
     except Exception as exc:  # noqa: BLE001 — never block on the classifier
-        logger.info("[rail_pick] typesafe backend unavailable (%s); using LLM", exc)
+        logger.info("[rail_pick] classifier unavailable (%s); using LLM", exc)
         return None
     if classifier is None:
-        logger.info("[rail_pick] typesafe backend unavailable; using LLM")
+        logger.info("[rail_pick] classifier unavailable; using LLM")
         return None
 
     state: dict[str, Any] = {
@@ -113,13 +113,13 @@ async def pick_rail_typesafe(
     try:
         response = await classifier.ainvoke(ClassifierRequest(state=state, questions=questions))
     except Exception as exc:  # noqa: BLE001 — never block on the classifier
-        logger.warning("[rail_pick] typesafe unavailable (%s); using LLM", exc)
+        logger.warning("[rail_pick] classifier unavailable (%s); using LLM", exc)
         return None
 
     answers = getattr(response, "answers", {}) or {}
     answer = answers.get(_QUESTION_ID)
     if answer is None:
-        logger.info("[rail_pick] typesafe returned no answer; using LLM")
+        logger.info("[rail_pick] classifier returned no answer; using LLM")
         return None
 
     trusted, reason = verdict_trusted(cfg, answer)
@@ -141,14 +141,14 @@ async def pick_rail_typesafe(
                 suppress_bar,
             )
             return None
-        logger.debug("[rail_pick] typesafe: abstain (conf=%s)", confidence)
+        logger.debug("[rail_pick] classifier: abstain (conf=%s)", confidence)
         return _ABSTAIN
 
     if choice in allowed:
-        logger.debug("[rail_pick] typesafe: rail=%s (conf=%s)", choice, confidence)
+        logger.debug("[rail_pick] classifier: rail=%s (conf=%s)", choice, confidence)
         return choice
 
-    logger.info("[rail_pick] typesafe returned unknown rail %r; using LLM", choice)
+    logger.info("[rail_pick] classifier returned unknown rail %r; using LLM", choice)
     return None
 
 

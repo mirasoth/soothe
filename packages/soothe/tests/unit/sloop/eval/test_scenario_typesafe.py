@@ -65,7 +65,7 @@ class _CfgStub:
 
 
 def _patch(monkeypatch: pytest.MonkeyPatch, fake: _FakeClassifier) -> None:
-    monkeypatch.setattr(ts_mod, "build_typesafe_classifier", lambda _cfg: fake)
+    monkeypatch.setattr(ts_mod, "build_classifier", lambda _cfg: fake)
 
 
 _EXEC_SUMMARY = {

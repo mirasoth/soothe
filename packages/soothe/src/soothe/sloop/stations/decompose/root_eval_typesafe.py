@@ -20,7 +20,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from soothe.sloop.clarification.typesafe_client import (
-    build_typesafe_classifier,
+    build_classifier,
     classifier_config,
     verdict_trusted,
 )
@@ -89,12 +89,12 @@ async def decide_reaudit_vs_finalize_typesafe(
 
     questions = {_QUESTION_ID: Choice(instructions=_INSTRUCTIONS, criteria=_CRITERIA)}
     try:
-        classifier = build_typesafe_classifier(soothe_config)
+        classifier = build_classifier(soothe_config)
     except Exception as exc:  # noqa: BLE001 — never block on the classifier
-        logger.info("[root_eval] typesafe backend unavailable (%s); re-auditing", exc)
+        logger.info("[root_eval] classifier unavailable (%s); re-auditing", exc)
         return None
     if classifier is None:
-        logger.info("[root_eval] typesafe backend unavailable; re-auditing")
+        logger.info("[root_eval] classifier unavailable; re-auditing")
         return None
 
     state: dict[str, Any] = {
@@ -105,13 +105,13 @@ async def decide_reaudit_vs_finalize_typesafe(
     try:
         response = await classifier.ainvoke(ClassifierRequest(state=state, questions=questions))
     except Exception as exc:  # noqa: BLE001 — never block on the classifier
-        logger.warning("[root_eval] typesafe unavailable (%s); re-auditing", exc)
+        logger.warning("[root_eval] classifier unavailable (%s); re-auditing", exc)
         return None
 
     answers = getattr(response, "answers", {}) or {}
     answer = answers.get(_QUESTION_ID)
     if answer is None:
-        logger.info("[root_eval] typesafe returned no answer; re-auditing")
+        logger.info("[root_eval] classifier returned no answer; re-auditing")
         return None
 
     trusted, reason = verdict_trusted(cfg, answer)
@@ -122,7 +122,7 @@ async def decide_reaudit_vs_finalize_typesafe(
     choice = str(getattr(answer, "choice", "") or "")
     confidence = getattr(answer, "confidence", None)
     if choice == _REAUDIT:
-        logger.debug("[root_eval] typesafe: re-audit (conf=%s)", confidence)
+        logger.debug("[root_eval] classifier: re-audit (conf=%s)", confidence)
         return True
     if choice == _FINALIZE:
         suppress_bar = float(cfg.suppress_min_confidence)
@@ -133,10 +133,10 @@ async def decide_reaudit_vs_finalize_typesafe(
                 suppress_bar,
             )
             return None
-        logger.debug("[root_eval] typesafe: finalize (conf=%s)", confidence)
+        logger.debug("[root_eval] classifier: finalize (conf=%s)", confidence)
         return False
 
-    logger.info("[root_eval] typesafe returned unknown choice %r; re-auditing", choice)
+    logger.info("[root_eval] classifier returned unknown choice %r; re-auditing", choice)
     return None
 
 
