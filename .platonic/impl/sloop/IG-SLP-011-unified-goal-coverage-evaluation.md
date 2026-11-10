@@ -50,7 +50,11 @@ validation consume signals as evidence.
   labels, compact prompt.
 - `monitor.py`: `PceMonitor` — owns the event queue, spawns as
   `loop-pce:{loop_id}` at graph invoke (alongside `pump_task`,
-  strange_loop.py:1034), cancelled in the `finally` block. Pass loop:
+  strange_loop.py:1034), cancelled in the `finally` block. The
+  fingerprint cache is keyed per goal (`_last_fingerprints[goal_id]`)
+  and the milestone counters folded into a goal's fingerprint are scoped
+  to that goal's step ids (`_goal_milestone_state`), so switching goals
+  neither suppresses nor invalidates another goal's passes. Pass loop:
   drain events → debounce (`min_pass_interval_s`, coalesce) →
   snapshot → fingerprint check (skip if unchanged since last verdict) →
   typesafe verdict → escalate if untrusted / conflicting consecutive
@@ -133,7 +137,9 @@ validation consume signals as evidence.
 New unit tests in `packages/soothe/tests/unit/`:
 
 - `sloop/pce/test_pce_monitor.py`: fingerprint skip (identical
-  snapshot → single classifier call), debounce coalescing, per-goal
+  snapshot → single classifier call), per-goal cache keying (goal switch
+  does not invalidate another goal's entry; other-goal milestones do not
+  leak into the fingerprint), debounce coalescing, per-goal
   pass/escalation caps, error injection (classifier unavailable, LLM
   failure, crash) leaves the loop unaffected, ring bound.
 - `sloop/pce/test_pce_events.py`: queue drop-oldest under overflow, registry

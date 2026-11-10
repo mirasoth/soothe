@@ -49,6 +49,32 @@ class _VerdictStub:
         return self.verdict
 
 
+class _TwoGoalCE:
+    """CE double with two goals; the active goal is switchable."""
+
+    def __init__(self) -> None:
+        self.goal_a = GoalNode(description="goal a", status="active")
+        step_a = StepNode(id="SA", description="a work", status="active")
+        self.goal_a.steps.nodes[step_a.id] = step_a
+        self.goal_b = GoalNode(description="goal b", status="pending")
+        step_b = StepNode(id="SB", description="b work", status="pending")
+        self.goal_b.steps.nodes[step_b.id] = step_b
+        self.goals = [self.goal_a, self.goal_b]
+
+    def set_active(self, goal: GoalNode) -> None:
+        for g in self.goals:
+            g.status = "active" if g is goal else "pending"
+
+    def get_all_goals(self) -> list[GoalNode]:
+        return list(self.goals)
+
+    def get_goal_sync(self, goal_id: str) -> GoalNode | None:
+        return next((g for g in self.goals if g.id == goal_id), None)
+
+    def get_ledger_entries(self) -> list[tuple[Any, str | None]]:
+        return []
+
+
 def _monitor(ce: _FakeCE, **cfg_over: Any) -> PceMonitor:
     cfg = PceLoopConfig(**cfg_over)
     monitor = PceMonitor(loop_id="loop-1", context_engine=ce, pce_config=cfg)
@@ -146,6 +172,48 @@ async def test_fingerprint_skip_does_not_advance_debounce(monkeypatch):
     await monitor._maybe_pass([PceEvent(kind="step_completed", step_id="S1")])
     assert stub.calls == 2
     assert ce.goal.coverage_signals[-1].evidence.get("events") == ["step_completed"]
+
+
+async def test_fingerprint_cache_is_per_goal(monkeypatch):
+    """Switching goals must not invalidate another goal's cache entry.
+
+    Goal A runs a pass, goal B runs a pass, then A resumes with an
+    unchanged DAG — A's pass must hit A's cache entry and skip. A global
+    cache would hold B's fingerprint and force a redundant re-evaluation.
+    """
+    ce = _TwoGoalCE()
+    stub = _VerdictStub(PceVerdict(kind="on_track", confidence=0.9, source="typesafe"))
+    monkeypatch.setattr(monitor_mod, "decide_pce_verdict_typesafe", stub)
+    monitor = _monitor(ce)
+
+    # Pass 1: goal A active with a milestone on its step.
+    await monitor._maybe_pass(
+        [PceEvent(kind="tool_milestone", step_id="SA", payload={"tool_count": 25})]
+    )
+    assert stub.calls == 1
+    assert ce.goal_a.coverage_signals, "signal written to goal A"
+
+    # Pass 2: goal B active — its step milestone is scoped to B only.
+    _arm(monitor)
+    ce.set_active(ce.goal_b)
+    ce.goal_b.steps.nodes["SB"].status = "active"
+    await monitor._maybe_pass(
+        [PceEvent(kind="tool_milestone", step_id="SB", payload={"tool_count": 10})]
+    )
+    assert stub.calls == 2
+    assert ce.goal_b.coverage_signals, "signal written to goal B"
+    assert set(monitor._last_fingerprints) == {ce.goal_a.id, ce.goal_b.id}
+
+    # Pass 3: A resumes with its original state (B back to pending).
+    # B's milestone counter must not leak into A's fingerprint.
+    _arm(monitor)
+    ce.set_active(ce.goal_a)
+    ce.goal_b.steps.nodes["SB"].status = "pending"
+    await monitor._maybe_pass(
+        [PceEvent(kind="tool_milestone", step_id="SA", payload={"tool_count": 25})]
+    )
+    assert stub.calls == 2, "unchanged goal A state must hit A's cache entry"
+    assert len(ce.goal_a.coverage_signals) == 1
 
 
 async def test_max_passes_per_goal_cap(monkeypatch):

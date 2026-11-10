@@ -54,7 +54,9 @@ class PceMonitor:
         self._fast_model = fast_model
         self.queue = PceEventQueue()
 
-        self._last_fingerprint: str | None = None
+        # RFC-SLP-005: fingerprint cache is per-goal so switching between
+        # goals neither suppresses nor invalidates another goal's passes.
+        self._last_fingerprints: dict[str, str] = {}
         self._last_pass_monotonic: float = 0.0
         self._passes_per_goal: dict[str, int] = {}
         self._escalations_per_goal: dict[str, int] = {}
@@ -112,8 +114,8 @@ class PceMonitor:
         if self._passes_per_goal.get(goal.id, 0) >= int(self._cfg.max_passes_per_goal):
             return
 
-        state_fp = fingerprint(snapshot, self._milestone_state)
-        if state_fp == self._last_fingerprint:
+        state_fp = fingerprint(snapshot, self._goal_milestone_state(goal))
+        if state_fp == self._last_fingerprints.get(goal.id):
             # A skipped pass costs no verdict call, so it must not advance
             # the debounce window — otherwise a follow-up event carrying the
             # real state change (e.g. the post-commit step_completed) would
@@ -127,7 +129,7 @@ class PceMonitor:
             )
         except Exception:  # noqa: BLE001 — classifier failure skips the pass
             logger.warning("[pce] typesafe verdict failed", exc_info=True)
-            self._last_fingerprint = state_fp
+            self._last_fingerprints[goal.id] = state_fp
             self._last_pass_monotonic = now
             return
         escalate = verdict is None or any(e.kind in BOUNDARY_EVENT_KINDS for e in events)
@@ -157,7 +159,7 @@ class PceMonitor:
                 )
         if verdict is None:
             # No usable verdict — record nothing, do not block.
-            self._last_fingerprint = state_fp
+            self._last_fingerprints[goal.id] = state_fp
             self._last_pass_monotonic = now
             return
 
@@ -174,7 +176,7 @@ class PceMonitor:
             },
         )
         self._append_signal(goal.id, signal)
-        self._last_fingerprint = state_fp
+        self._last_fingerprints[goal.id] = state_fp
         self._last_pass_monotonic = now
         self._last_kinds_per_goal[goal.id] = verdict.kind
         self._passes_per_goal[goal.id] = self._passes_per_goal.get(goal.id, 0) + 1
@@ -187,6 +189,14 @@ class PceMonitor:
         )
 
     # ── helpers ─────────────────────────────────────────────────────
+
+    # Milestone counters scoped to this goal's steps.
+    def _goal_milestone_state(self, goal: Any) -> dict[str, Any]:
+        try:
+            step_ids = set(goal.steps.nodes.keys())
+        except AttributeError:
+            return dict(self._milestone_state)
+        return {sid: counters for sid, counters in self._milestone_state.items() if sid in step_ids}
 
     def _absorb_milestones(self, events: list[PceEvent]) -> None:
         for event in events:
