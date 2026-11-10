@@ -73,6 +73,7 @@ async def validate_report_typesafe(
     step_output: str,
     step_kind: str | None = None,
     prior_output: str | None = None,
+    pce_signal: str | None = None,
     soothe_config: SootheConfig | None = None,
 ) -> bool | None:
     """Decide whether the final step output is a valid goal report.
@@ -89,6 +90,8 @@ async def validate_report_typesafe(
             content delivered in earlier hops is not a valid report.
         soothe_config: ``SootheConfig`` providing the classifier provider and
             decision parameters (nano ``classifier`` block).
+        pce_signal: Latest unconsumed PCE coverage signal summary
+            (kind + confidence), when one exists (RFC-SLP-005).
 
     Returns:
         `True` when the output is a valid goal report (passthrough),
@@ -120,6 +123,8 @@ async def validate_report_typesafe(
     }
     if step_kind:
         state["step_kind"] = step_kind
+    if pce_signal:
+        state["pce_signal"] = pce_signal
     prior = (prior_output or "").strip()
     if prior:
         # Tail: the hops closest to the final one carry what a recap would point at.

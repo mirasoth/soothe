@@ -12,6 +12,18 @@ from soothe.sloop.utils.plan_action_text import resolve_plan_action_text
 logger = logging.getLogger(__name__)
 
 
+def _emit_pce(ctx: Any, kind: str, **payload: Any) -> None:
+    """Fire-and-forget PCE event; emit_pce_event never raises."""
+    from soothe.sloop.pce.events import emit_pce_event
+
+    emit_pce_event(
+        getattr(ctx.state_manager, "loop_id", None),
+        kind,
+        goal_id=getattr(ctx, "ce_goal_id", None),
+        **payload,
+    )
+
+
 async def _emit_step_rail_events(
     ctx: LoopRuntimeContext,
     step_results: list[Any],
@@ -124,13 +136,27 @@ async def node_record_iteration(ctx: LoopRuntimeContext, _state: dict[str, Any])
                     if close_data is not None:
                         goal = await ctx.ce.get_goal(ctx.ce_goal_id)
                         if goal is not None and r.step_id in goal.steps.nodes:
-                            goal.steps.nodes[
-                                r.step_id
-                            ].close_report = StepCloseReport.model_validate(close_data)
+                            close_report = StepCloseReport.model_validate(close_data)
+                            goal.steps.nodes[r.step_id].close_report = close_report
+                            _emit_pce(
+                                ctx,
+                                "close_report_filed",
+                                step_id=r.step_id,
+                                requires_eval=bool(close_report.requires_eval),
+                            )
                 if r.success:
                     await ctx.ce.complete_step(ctx.ce_goal_id, r.step_id, execution)
                 else:
                     await ctx.ce.fail_step(ctx.ce_goal_id, r.step_id, execution)
+                # RFC-SLP-005: terminal events fire after the CE status
+                # flip so the PCE snapshot sees committed state.
+                _emit_pce(
+                    ctx,
+                    "step_completed" if r.success else "step_failed",
+                    step_id=r.step_id,
+                    tool_count=getattr(r, "tool_call_count", None),
+                    duration_ms=getattr(r, "duration_ms", None),
+                )
             await ctx.ce.save()
             if ctx.ce_goal_id:
                 ctx.ce.increment_iteration(ctx.ce_goal_id)

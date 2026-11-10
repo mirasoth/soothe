@@ -423,6 +423,7 @@ class StrangeLoop:
         # handled by the manager/backends (goal_records + agentloop_loops only).
 
         runtime_ctx: LoopRuntimeContext | None = None
+        pce_monitor = None  # RFC-SLP-005 PCE monitor handle
         try:
             checkpoint: Any = None
 
@@ -1033,6 +1034,23 @@ class StrangeLoop:
 
             pump_task = asyncio.create_task(pump_graph())
             try:
+                # RFC-SLP-005: signal-only goal-DAG coverage monitor.
+                from soothe.sloop.pce.monitor import start_pce_monitor
+
+                pce_monitor = start_pce_monitor(
+                    loop_id=ctx.state_manager.loop_id,
+                    context_engine=getattr(ctx, "ce", None),
+                    strange_loop=self,
+                    interaction_mode=interaction_mode,
+                )
+            except Exception:
+                logger.warning(
+                    "[run_with_progress] PCE monitor spawn failed (loop=%s)",
+                    ctx.state_manager.loop_id,
+                    exc_info=True,
+                )
+                pce_monitor = None
+            try:
                 while True:
                     item = await queue.get()
                     if item is _graph_sentinel:
@@ -1071,6 +1089,10 @@ class StrangeLoop:
                         await pump_task
                 else:
                     await pump_task
+                if pce_monitor is not None:
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await pce_monitor.stop()
+                    pce_monitor = None
 
         finally:
             from soothe.sloop.stations.completion.finalize import (
@@ -1080,6 +1102,10 @@ class StrangeLoop:
             # Drain checkpoint finalize before closing pools so a background save cannot
             # restart the async flush worker and block the thread-pool worker cleanup.
             await await_goal_completion_tail_persistence(runtime_ctx)
+            if pce_monitor is not None:
+                with contextlib.suppress(asyncio.CancelledError):
+                    await pce_monitor.stop()
+                pce_monitor = None
             # Always stop async checkpoint worker even when setup fails before graph start.
             await state_manager.close()
             # Clear the hot-swap target so a stale RPC cannot reach a finished context.

@@ -1,6 +1,6 @@
 # sloop RFC Index (SLP)
 
-**Last Updated**: 2026-11-09  |  **RFCs**: 4
+**Last Updated**: 2026-11-10  |  **RFCs**: 5
 
 | ID | Title | Kind | Status |
 |----|-------|------|--------|
@@ -8,3 +8,4 @@
 | [RFC-SLP-002](RFC-SLP-002-sloop-recursive-decomposition.md) | Sloop Recursive Step Decomposition | Architecture Design | Implemented (partial) |
 | [RFC-SLP-003](RFC-SLP-003-sloop-eval-thread.md) | StrangeLoop Eval Thread | Architecture Design | Implemented (partial) |
 | [RFC-SLP-004](RFC-SLP-004-short-chain-fast-finalize.md) | Short-Chain Fast Finalize | Architecture Design | Draft |
+| [RFC-SLP-005](RFC-SLP-005-unified-goal-coverage-evaluation.md) | Unified Goal Coverage Evaluation — PCE and Reactive Eval | Architecture Design | Draft |

@@ -909,6 +909,57 @@ class EvalLoopConfig(BaseModel):
     )
 
 
+class PceLoopConfig(BaseModel):
+    """Proactive Coverage Evaluation monitor limits (RFC-SLP-005)."""
+
+    enabled: bool = Field(
+        default=True,
+        description="Enable the PCE monitor (signal-only goal DAG observer).",
+    )
+    tool_call_interval: int = Field(
+        default=25,
+        ge=1,
+        le=500,
+        description="Tool calls per active step between PCE milestone passes.",
+    )
+    token_milestone: int = Field(
+        default=50000,
+        ge=1000,
+        le=10_000_000,
+        description="Input tokens per step between PCE milestone passes.",
+    )
+    elapsed_milestone_s: int = Field(
+        default=600,
+        ge=30,
+        le=86400,
+        description="Elapsed seconds per step between PCE milestone passes.",
+    )
+    min_pass_interval_s: int = Field(
+        default=30,
+        ge=1,
+        le=3600,
+        description="Minimum interval between PCE evaluation passes (debounce).",
+    )
+    max_passes_per_goal: int = Field(
+        default=20,
+        ge=1,
+        le=200,
+        description="Maximum PCE evaluation passes per goal.",
+    )
+    max_llm_escalations_per_goal: int = Field(
+        default=5,
+        ge=0,
+        le=50,
+        description="Maximum PCE LLM escalation passes per goal.",
+    )
+    signal_ring_size: int = Field(
+        default=20,
+        ge=1,
+        le=100,
+        description="CoverageSignal ring bound per goal.",
+    )
+
+
 class LoopDebugConfig(BaseModel):
     """Static LangGraph breakpoints on the StrangeLoop graph (ops/debug).
 
@@ -1238,6 +1289,10 @@ class StrangeLoopConfig(BaseModel):
     eval: EvalLoopConfig = Field(
         default_factory=EvalLoopConfig,
         description="Coverage Eval thread limits.",
+    )
+    pce: PceLoopConfig = Field(
+        default_factory=PceLoopConfig,
+        description="Proactive Coverage Evaluation monitor limits.",
     )
 
 

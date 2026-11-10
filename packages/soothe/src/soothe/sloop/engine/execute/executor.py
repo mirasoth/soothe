@@ -407,6 +407,32 @@ class Executor:
             return 500
         return max(1, int(self._config.agent.loop.token_continuation_min_delta))
 
+    # Fire-and-forget PCE event (RFC-SLP-005); emit_pce_event never raises.
+    def _emit_pce(
+        self,
+        kind: str,
+        *,
+        step: Any | None = None,
+        step_id: str | None = None,
+        **payload: Any,
+    ) -> None:
+        from soothe.sloop.pce.events import emit_pce_event
+
+        emit_pce_event(
+            self._loop_id,
+            kind,
+            step_id=step_id or getattr(step, "id", None),
+            **payload,
+        )
+
+    # PCE tool milestone interval; 0 disables the milestone.
+    def _pce_tool_interval(self) -> int:
+        try:
+            cfg = self._config.agent.loop.pce if self._config else None
+            return int(getattr(cfg, "tool_call_interval", 0) or 0)
+        except AttributeError:
+            return 0
+
     @staticmethod
     def _detect_max_tokens_truncation(
         messages: list[BaseMessage],
@@ -2415,6 +2441,7 @@ class Executor:
                 preview_first(step.description, 100),
                 budget.max_tool_calls_per_step,
             )
+            self._emit_pce("step_started", step=step)
 
             # Thread isolation for parallel safety; predecessor context via injection.
             fork_thread_id = thread_id  # Default to main thread
@@ -3495,6 +3522,13 @@ class Executor:
 
             messages.append(msg)
             tool_call_count += 1
+            interval = self._pce_tool_interval()
+            if interval and tool_call_count % interval == 0:
+                self._emit_pce(
+                    "tool_milestone",
+                    step_id=step_id,
+                    tool_count=tool_call_count,
+                )
             tool_call_id = msg.tool_call_id
             tool_name = msg.name or "unknown"
 

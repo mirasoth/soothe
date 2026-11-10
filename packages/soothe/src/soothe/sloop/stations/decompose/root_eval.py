@@ -127,6 +127,31 @@ def _dispatch_waves_exhausted(ctx: LoopRuntimeContext) -> tuple[bool, int, int]:
     return wave >= max_waves, wave, max_waves
 
 
+def _pce_audit_signals(goal: Any) -> list[Any]:
+    """Unconsumed PCE signals that force a coverage Eval (RFC-SLP-005)."""
+    signals = getattr(goal, "coverage_signals", None)
+    if not isinstance(signals, list):
+        return []
+    return [s for s in signals if getattr(s, "consumed_by", None) is None and s.requires_audit()]
+
+
+def _consume_pce_signals(goal: Any, consumer: str, signals: list[Any]) -> None:
+    for signal in signals:
+        signal.consumed_by = consumer
+
+
+def _pce_signal_lines(goal: Any, limit: int = 5) -> list[str]:
+    """Latest unconsumed signals rendered as untrusted evidence lines."""
+    raw = getattr(goal, "coverage_signals", None)
+    signals = (
+        [s for s in raw if getattr(s, "consumed_by", None) is None] if isinstance(raw, list) else []
+    )
+    return [
+        f"- kind={s.kind} conf={s.confidence:.2f} source={s.source} (untrusted monitor signal)"
+        for s in signals[-limit:]
+    ]
+
+
 def _eval_envelope(goal_text: str, nodes: list[Any]) -> str:
     rows: list[str] = []
     for node in nodes:
@@ -158,6 +183,19 @@ def _eval_envelope(goal_text: str, nodes: list[Any]) -> str:
         "verdict is treated as unconfirmed and forces a re-audit.\n\n"
         f"ORIGINAL USER GOAL:\n{goal_text}\n\n"
         f"INTRA-GOAL STEP HISTORY:\n{history}"
+    )
+
+
+def _eval_envelope_with_signals(goal_text: str, nodes: list[Any], goal: Any) -> str:
+    """Eval envelope plus unconsumed PCE signals as untrusted evidence."""
+    envelope = _eval_envelope(goal_text, nodes)
+    lines = _pce_signal_lines(goal)
+    if not lines:
+        return envelope
+    return (
+        envelope
+        + "\n\nPCE COVERAGE SIGNALS (untrusted, from the loop monitor):\n"
+        + "\n".join(lines)
     )
 
 
@@ -301,9 +339,10 @@ class RootEvalNode(LoopNode):
 
                         reaudit_decision = await decide_reaudit_vs_finalize_typesafe(
                             user_goal=(resolve_user_request(ctx.loop_state) or goal.description),
-                            step_history_table=_eval_envelope(
+                            step_history_table=_eval_envelope_with_signals(
                                 resolve_user_request(ctx.loop_state) or goal.description,
                                 list(goal.steps.nodes.values()),
+                                goal,
                             ),
                             soothe_config=ctx.strange_loop.config,
                         )
@@ -347,8 +386,18 @@ class RootEvalNode(LoopNode):
 
                     elif not goal.steps.eval_required():
                         if forced_complexity != TaskComplexity.COMPLEX:
-                            logger.info("[root_eval] eval skip predicate matched; finalize")
-                            return NodeResult(payload={"root_eval_route": "finalize"})
+                            pending_signals = _pce_audit_signals(goal)
+                            if pending_signals:
+                                # RFC-SLP-005: PCE signals force an audit even
+                                # for single-leaf goals; consume on decision.
+                                _consume_pce_signals(goal, "root_eval", pending_signals)
+                                logger.info(
+                                    "[root_eval] %d PCE signal(s) require audit; force Eval",
+                                    len(pending_signals),
+                                )
+                            else:
+                                logger.info("[root_eval] eval skip predicate matched; finalize")
+                                return NodeResult(payload={"root_eval_route": "finalize"})
                         logger.info(
                             "[root_eval] complex goal ran as single leaf; force Eval (no decomposition)"
                         )
@@ -377,9 +426,10 @@ class RootEvalNode(LoopNode):
                 eval_node = StepNode(
                     id=f"{allocate_plan_id()}-EVAL",
                     description="Evaluate user-goal coverage",
-                    full_description=_eval_envelope(
+                    full_description=_eval_envelope_with_signals(
                         resolve_user_request(ctx.loop_state) or goal.description,
                         list(goal.steps.nodes.values()),
+                        goal,
                     ),
                     expected_output="Structured coverage_verdict (complete or continuation subtasks)",
                     status="pending",
