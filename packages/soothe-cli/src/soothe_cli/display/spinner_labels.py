@@ -56,13 +56,6 @@ def map_plan_phase_spinner_label(label: str) -> str:
     return SPINNER_LABEL_THINKING
 
 
-def retry_spinner_hint(*, attempt: int, max_attempts: int) -> str | None:
-    """Hint suffix for LLM retries, e.g. `2/3`."""
-    if attempt > 0 and max_attempts > 0:
-        return f"{attempt}/{max_attempts}"
-    return None
-
-
 def daemon_connect_hint_extra(*, attempt: int, max_attempts: int) -> str | None:
     """Hint suffix for daemon connect retries, e.g. `attempt 2/3`."""
     if max_attempts <= 1 or attempt <= 1:

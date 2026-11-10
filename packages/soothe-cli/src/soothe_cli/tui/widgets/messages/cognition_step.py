@@ -152,10 +152,6 @@ class CognitionStepMessage(Vertical):
         self._last_tool_call_count: int = 0
         self._last_summary: str = ""
         self._input_tokens: int = 0
-        # Retry tracking for running status display
-        self._retry_attempt: int = 0
-        self._max_retry_attempts: int = 0
-        self._retry_error_type: str | None = None
         self._output_tokens: int = 0
         self._interrupt_message: str | None = None
         self._deferred_interrupted: str | None = None
@@ -166,6 +162,8 @@ class CognitionStepMessage(Vertical):
         self._todos: list[dict[str, str]] = []
         self._reasoning_buffer: str = ""
         """Captured thinking-token reasoning forwarded from the LLM provider."""
+        self._pending_reasoning_newline: bool = False
+        """Set by ``start_new_reasoning_line`` to insert ``\\n`` before the next delta."""
         self._execute_assistant_buffer: str = ""
         self._last_completed_execute_prose: str = ""
         """Execute-step prose frozen when ``set_complete`` runs (TUI dedupe vs goal_completion)."""
@@ -265,8 +263,6 @@ class CognitionStepMessage(Vertical):
             task_count=index.task_delegation_count,
             input_tokens=self._input_tokens,
             output_tokens=self._output_tokens,
-            retry_attempt=self._retry_attempt,
-            max_retry_attempts=self._max_retry_attempts,
             format_token=format_token_count,
         )
 
@@ -481,10 +477,23 @@ class CognitionStepMessage(Vertical):
         if self._status == "running":
             self._refresh_execute_assistant_running_display()
 
+    def start_new_reasoning_line(self) -> None:
+        """Mark that the next reasoning delta starts a new LLM call's output.
+
+        Called when the TUI receives a ``soothe.cognition.llm.call.boundary``
+        event. The next ``append_reasoning_delta`` will prepend ``\\n`` so
+        reasoning from different LLM calls within a step appears on separate
+        lines in the thinking pane.
+        """
+        self._pending_reasoning_newline = True
+
     def append_reasoning_delta(self, delta: str) -> None:
         """Accumulate captured thinking-token reasoning for the Reasoning branch."""
         if not delta:
             return
+        if self._pending_reasoning_newline and self._reasoning_buffer:
+            self._reasoning_buffer += "\n"
+        self._pending_reasoning_newline = False
         self._reasoning_buffer += delta
         if self._status in ("running", "pending"):
             self._sync_step_card_surface()
@@ -1260,21 +1269,6 @@ class CognitionStepMessage(Vertical):
         if self._animation_timer is not None:
             self._animation_timer.stop()
             self._animation_timer = None
-
-    def set_retry_status(self, attempt: int, max_attempts: int, error_type: str) -> None:
-        """Update retry status for running animation display.
-
-        Args:
-        attempt: Current attempt number (1-indexed).
-        max_attempts: Maximum attempts allowed.
-        error_type: "timeout" or "rate_limit".
-        """
-        self._retry_attempt = attempt
-        self._max_retry_attempts = max_attempts
-        self._retry_error_type = error_type
-        # Trigger immediate refresh of running status (bypass visibility check)
-        if self._status == "running":
-            self._sync_step_card_surface()
 
     def _update_running_animation(self) -> None:
         """Animation timer callback: advance spinner and repaint the card surface."""

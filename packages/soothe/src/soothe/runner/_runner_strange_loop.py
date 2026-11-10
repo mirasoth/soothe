@@ -14,6 +14,7 @@ from soothe_nano.wire.stream_tool_wire import STREAM_TOOL_CALL_UPDATE
 from soothe.config.constants import DEFAULT_MAX_ITERATIONS
 from soothe.events import (
     ERROR,
+    LLM_CALL_BOUNDARY,
     StrangeLoopCompletedEvent,
     StrangeLoopPlanDecisionEvent,
     StrangeLoopPlanPhaseStatusEvent,
@@ -488,6 +489,7 @@ def _forward_messages_chunk(
     - `messages` mode: `ToolMessage` and `AIMessage` / `AIMessageChunk`
     - `custom` mode: `soothe.stream.tool_call.update` (main graph and subgraph)
     - `custom` mode: curated `soothe.subagent.*` progress (sparse metadata)
+    - `custom` mode: `soothe.cognition.llm.call.boundary` (reasoning line break)
 
     Args:
         chunk: Deepagents stream chunk `(namespace, mode, data)`.
@@ -501,6 +503,8 @@ def _forward_messages_chunk(
             if _is_subagent_wire_custom_chunk(chunk):
                 return True
             if _is_tool_call_update_chunk(chunk):
+                return is_custom_stream_payload_client_visible(data)
+            if str(data.get("type", "")) == LLM_CALL_BOUNDARY:
                 return is_custom_stream_payload_client_visible(data)
             return False
     return _is_tool_stream_chunk(chunk) or _is_ai_messages_stream_chunk(chunk)

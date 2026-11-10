@@ -12,7 +12,6 @@ from soothe_cli.display.spinner_labels import (
     SPINNER_LABEL_TOOLS,
     daemon_connect_hint_extra,
     map_plan_phase_spinner_label,
-    retry_spinner_hint,
 )
 from soothe_cli.tui.textual_adapter import (
     TextualUIAdapter,
@@ -37,14 +36,6 @@ def test_map_plan_phase_spinner_label_delegating() -> None:
 
 def test_map_plan_phase_spinner_label_unknown_falls_back_to_thinking() -> None:
     assert map_plan_phase_spinner_label("Unknown phase") == SPINNER_LABEL_THINKING
-
-
-def test_retry_spinner_hint_with_counts() -> None:
-    assert retry_spinner_hint(attempt=2, max_attempts=3) == "2/3"
-
-
-def test_retry_spinner_hint_without_counts() -> None:
-    assert retry_spinner_hint(attempt=0, max_attempts=0) is None
 
 
 def test_daemon_connect_hint_extra_first_attempt() -> None:

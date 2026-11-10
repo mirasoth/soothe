@@ -42,17 +42,6 @@ def test_compact_step_title_meta_counts_and_tokens() -> None:
     assert meta == " · 45s · 12/1 · ↑8.1K ↓2.0K"
 
 
-def test_compact_step_title_meta_retry() -> None:
-    meta = compact_step_title_meta(
-        elapsed_secs=12,
-        tool_count=0,
-        task_count=0,
-        retry_attempt=1,
-        max_retry_attempts=3,
-    )
-    assert meta == " · 12s · ↻1/3"
-
-
 def test_normalize_todo_items() -> None:
     assert normalize_todo_items(
         [

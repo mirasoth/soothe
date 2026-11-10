@@ -93,6 +93,10 @@ GOAL_DEFERRED = "soothe.cognition.goal.deferred"
 PLAN_CREATED = "soothe.cognition.plan.created"
 PLAN_REFLECTED = "soothe.cognition.plan.reflected"
 
+# LLM call boundary — dispatched by ReasoningBoundaryMiddleware before each
+# LLM invocation so the TUI can separate reasoning from different calls.
+LLM_CALL_BOUNDARY = "soothe.cognition.llm.call.boundary"
+
 # StrangeLoop cognition
 STRANGE_LOOP_STARTED = "soothe.cognition.strange_loop.started"
 STRANGE_LOOP_COMPLETED = "soothe.cognition.strange_loop.completed"
@@ -509,6 +513,18 @@ class RelayReconciledEvent(LifecycleEvent):
     alerts: int = 0
 
 
+class LLMCallBoundaryEvent(LifecycleEvent):
+    """Signals the start of a new LLM call within a step.
+
+    Dispatched by ``ReasoningBoundaryMiddleware.awrap_model_call`` before each
+    LLM invocation so the TUI can insert a line break between reasoning
+    accumulated from different calls within the same step card.
+    """
+
+    type: Literal["soothe.cognition.llm.call.boundary"] = "soothe.cognition.llm.call.boundary"
+    thread_id: str = ""
+
+
 # ---------------------------------------------------------------------------
 # Protocol events
 # ---------------------------------------------------------------------------
@@ -891,6 +907,13 @@ _reg(BRANCH_CREATED, _BranchCreatedEvent, verbosity=VerbosityTier.NORMAL)
 _reg(BRANCH_ANALYZED, _BranchAnalyzedEvent, verbosity=VerbosityTier.INTERNAL)
 _reg(BRANCH_RETRY_STARTED, _BranchRetryStartedEvent, verbosity=VerbosityTier.NORMAL)
 _reg(BRANCH_PRUNED, _BranchPrunedEvent, verbosity=VerbosityTier.INTERNAL)
+
+# -- LLM call boundary -------------------------------------------------------
+_reg(
+    LLM_CALL_BOUNDARY,
+    LLMCallBoundaryEvent,
+    verbosity=VerbosityTier.NORMAL,
+)
 
 
 # ---------------------------------------------------------------------------

@@ -535,3 +535,83 @@ def test_append_reasoning_delta_from_dict_message() -> None:
     assert reasoning_text == "Dict-path reasoning."
     step_card.append_reasoning_delta(reasoning_text)
     assert step_card._reasoning_buffer == "Dict-path reasoning."
+
+
+def test_reasoning_boundary_inserts_newline_between_calls() -> None:
+    """Reasoning from different LLM calls should be separated by a newline."""
+    from soothe_cli.tui.widgets.messages.cognition_step import CognitionStepMessage
+
+    step_card = CognitionStepMessage(step_id="s1", description="test step")
+    step_card.set_running()
+
+    # First LLM call's reasoning
+    step_card.append_reasoning_delta("First call reasoning")
+    assert step_card._reasoning_buffer == "First call reasoning"
+
+    # Boundary event arrives before the second LLM call
+    step_card.start_new_reasoning_line()
+
+    # Second LLM call's reasoning
+    step_card.append_reasoning_delta("Second call reasoning")
+    assert step_card._reasoning_buffer == "First call reasoning\nSecond call reasoning"
+
+
+def test_reasoning_boundary_no_newline_on_empty_buffer() -> None:
+    """Boundary on an empty buffer should not insert a leading newline."""
+    from soothe_cli.tui.widgets.messages.cognition_step import CognitionStepMessage
+
+    step_card = CognitionStepMessage(step_id="s1", description="test step")
+    step_card.set_running()
+
+    step_card.start_new_reasoning_line()
+    step_card.append_reasoning_delta("First reasoning")
+    assert step_card._reasoning_buffer == "First reasoning"
+
+
+def test_reasoning_boundary_consecutive_boundaries() -> None:
+    """Multiple boundaries without intervening deltas should not stack newlines."""
+    from soothe_cli.tui.widgets.messages.cognition_step import CognitionStepMessage
+
+    step_card = CognitionStepMessage(step_id="s1", description="test step")
+    step_card.set_running()
+
+    step_card.append_reasoning_delta("Call one")
+    step_card.start_new_reasoning_line()
+    step_card.start_new_reasoning_line()
+    step_card.append_reasoning_delta("Call two")
+    assert step_card._reasoning_buffer == "Call one\nCall two"
+
+
+def test_reasoning_boundary_splitlines_produces_multiple_lines() -> None:
+    """The renderer's splitlines() should produce separate lines after boundary."""
+    from soothe_cli.display.preview_limits import STEP_CARD_REASONING_PREVIEW_LINES
+    from soothe_cli.settings import get_glyphs
+    from soothe_cli.tui.widgets.messages.cognition_step import CognitionStepMessage
+    from soothe_cli.tui.widgets.messages.cognition_step_activity import (
+        StepActivityTree,
+        StepRowIndex,
+    )
+
+    step_card = CognitionStepMessage(step_id="s1", description="test step")
+    step_card.set_running()
+
+    step_card.append_reasoning_delta("Reasoning from LLM call one")
+    step_card.start_new_reasoning_line()
+    step_card.append_reasoning_delta("Reasoning from LLM call two")
+
+    content = StepActivityTree.render(
+        step_id="s1",
+        step_status="running",
+        index=StepRowIndex(),
+        subagent_notes=[],
+        subagent_notes_by_task={},
+        spinner_position=0,
+        colors=None,
+        g=get_glyphs(),
+        reasoning=step_card._reasoning_buffer,
+        todos=[],
+    )
+    text = str(content)
+    assert "Reasoning from LLM call one" in text
+    assert "Reasoning from LLM call two" in text
+    assert STEP_CARD_REASONING_PREVIEW_LINES >= 2

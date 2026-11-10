@@ -152,13 +152,11 @@ def compact_step_title_meta(
     task_count: int,
     input_tokens: int = 0,
     output_tokens: int = 0,
-    retry_attempt: int = 0,
-    max_retry_attempts: int = 0,
     format_token: Any = None,
 ) -> str:
     """Compact middot meta for the step title.
 
-    Forms: ` · 45s · 12/1 · ↑8.1K ↓2.0K · ↻1/3`. Description is not truncated;
+    Forms: ` · 45s · 12/1 · ↑8.1K ↓2.0K`. Description is not truncated;
     callers append this string after the full step brief.
     """
     parts: list[str] = []
@@ -169,8 +167,6 @@ def compact_step_title_meta(
     if input_tokens or output_tokens:
         fmt = format_token if callable(format_token) else str
         parts.append(f"↑{fmt(int(input_tokens))} ↓{fmt(int(output_tokens))}")
-    if retry_attempt > 0 and max_retry_attempts > 0:
-        parts.append(f"↻{int(retry_attempt)}/{int(max_retry_attempts)}")
     if not parts:
         return ""
     return " · " + " · ".join(parts)
