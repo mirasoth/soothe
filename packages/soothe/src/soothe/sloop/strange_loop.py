@@ -10,10 +10,6 @@ from typing import TYPE_CHECKING, Any
 from soothe_nano.utils.text_preview import log_preview
 
 from soothe.config.constants import DEFAULT_MAX_ITERATIONS
-from soothe.sloop.intention.models import (
-    build_loop_routing_classification,
-    normalize_response_language,
-)
 from soothe.sloop.orchestrator.runtime_context import LoopRuntimeContext
 from soothe.sloop.state.schemas import (
     LoopState,
@@ -21,10 +17,7 @@ from soothe.sloop.state.schemas import (
 )
 from soothe.sloop.state.sloop_manager import StrangeLoopStateManager
 from soothe.sloop.state.working_memory import LoopWorkingMemory
-from soothe.sloop.utils.continue_keyword import (
-    is_continue_keyword,
-    is_interrupt_resume_keyword,
-)
+from soothe.sloop.utils.continue_keyword import is_continue_keyword
 from soothe.sloop.utils.reflection import _default_agent_decision
 from soothe.sloop.utils.structural_continuation import (
     has_resumable_interrupted_goal,
@@ -309,9 +302,7 @@ class StrangeLoop:
         workspace: str | None = None,
         max_iterations: int = DEFAULT_MAX_ITERATIONS,
         loop_id: str | None = None,  # explicit loop_id parameter
-        intent: Any | None = None,  # Intent classification
-        routing_classification: Any | None = None,  # , RoutingClassification
-        intent_classifier: Any | None = None,
+        routing_classification: Any | None = None,  # RoutingClassification
         preferred_subagent: str | None = None,
         shared_pool: Any | None = None,  # SharedPostgreSQLPool for high-concurrency
         clarification_policy: Any | None = None,  # RFC-622: ClarificationPolicy injection
@@ -334,10 +325,7 @@ class StrangeLoop:
             workspace: Thread-specific workspace path.
             max_iterations: Maximum loop iterations.
             loop_id: Loop ID; auto-generated UUID when `None`.
-            intent: Pre-computed `IntentClassification`; classified by the
-                graph's `intent_classify` node when omitted.
             routing_classification: `RoutingClassification` for CoreAgent.
-            intent_classifier: Optional classifier override.
             preferred_subagent: Subagent hint for delegation.
             shared_pool: `SharedPostgreSQLPool` for high-concurrency setups.
             clarification_policy: `ClarificationPolicy` for the
@@ -345,8 +333,7 @@ class StrangeLoop:
             clarification_answer: Hint that `goal` is a resume answer.
             clarification_answers: Per-question answers for multi-question
                 clarifications.
-            resume_interrupted: Skip chitchat fast-path and recover an
-                in-flight `status=running` goal.
+            resume_interrupted: Recover an in-flight `status=running` goal.
             goal_trace: Pre-allocated `GoalLoopTrace` for Langfuse.
             preamble: Ancestor `(user, ai)` message pairs to seed the CE ledger.
             interaction_mode: CoreAgent graph selection
@@ -437,13 +424,11 @@ class StrangeLoop:
 
         runtime_ctx: LoopRuntimeContext | None = None
         try:
-            preclassified_intent = intent
             checkpoint: Any = None
 
             active_goal_trace = goal_trace
             if (
                 active_goal_trace is None
-                and intent_classifier is not None
                 and not clarification_answer
                 and self.config.observability.langfuse.enabled
             ):
@@ -452,10 +437,6 @@ class StrangeLoop:
                     loop_id=state_manager.loop_id,
                 )
 
-            # Intake classification runs in the graph entry node (INTAKE) which
-            # projects the full CE ledger (prior-goal completion + preamble) so
-            # the second goal sees the first goal's context. The graph node
-            # inherits the LangGraph RunnableConfig for tracing.
             checkpoint = await state_manager.load()
 
             # Try to recover from checkpoint (RFC-216: loop-scoped).
@@ -631,17 +612,6 @@ class StrangeLoop:
             # RFC-225: continue_loop when prior goal(s) exist beside the active one.
             continue_loop_mode = len(checkpoint.goal_history) >= 2
 
-            # Client-forced intent (intake_scope) skips in-graph intake
-            # classification; sync routing now. Otherwise the graph INTAKE node
-            # classifies with full ledger context and sets intent itself.
-            if preclassified_intent is not None:
-                synced_routing = build_loop_routing_classification(
-                    preclassified_intent,
-                    preferred_subagent,
-                )
-                if synced_routing is not None:
-                    routing_classification = synced_routing
-
             state = LoopState(
                 goal=execution_goal,
                 goal_user_submission=goal_user_submission,
@@ -652,22 +622,6 @@ class StrangeLoop:
                 workspace=workspace,
                 iteration=iteration,  # Use recovered or initial iteration
                 max_iterations=max_iterations,
-                intent=preclassified_intent,
-                response_language=normalize_response_language(
-                    getattr(preclassified_intent, "response_language", None)
-                    if preclassified_intent is not None
-                    else (
-                        normalize_response_language(
-                            getattr(
-                                getattr(checkpoint, "loop_state", None),
-                                "response_language",
-                                None,
-                            )
-                        )
-                        if clarification_answer and checkpoint is not None
-                        else None
-                    )
-                ),
                 routing_classification=routing_classification,
                 loop_messages=[],  # RFC-624 Phase 4 Stage 2: CE ledger spans all goals
                 approved_plan_path=approved_plan_path,
@@ -705,12 +659,9 @@ class StrangeLoop:
             from soothe.sloop.utils.goal_text import resolve_user_request
 
             if not clarification_answer:
-                # Intake reasoning lives in the graph node now; the resume topic
-                # falls back to the user's own words for all task results.
                 schedule_resume_topic_persistence(
                     config=self.config,
                     loop_id=state_manager.loop_id,
-                    intake_reasoning=None,
                     goal_text=resolve_user_request(state),
                     is_first_loop_goal=checkpoint.total_goals_completed == 0,
                 )
@@ -838,21 +789,6 @@ class StrangeLoop:
                     else:
                         original = apply_clarification_resume_goal_text(state, ce_goal)
                         _hydrate_previous_plan_from_ce(state, ce_goal)
-                        # A bare resume keyword ("retry") must not take the chitchat
-                        # fast-path to END — that would skip the resumed goal's
-                        # remaining work. Only CHITCHAT/None need upgrading; under
-                        # the unified workflow simple and minimal route to DISPATCH.
-                        # At ROOT_EVAL, minimal skips Eval, simple uses an LLM
-                        # decision, and complex runs the structural Eval gate.
-                        if is_interrupt_resume_keyword(user_submission_line):
-                            from soothe.sloop.intention.models import IntakeLabel
-
-                            intent_obj = state.intent
-                            label = (
-                                getattr(intent_obj, "intake_label", None) if intent_obj else None
-                            )
-                            if label in (IntakeLabel.CHITCHAT, None) and intent_obj is not None:
-                                intent_obj.intake_label = IntakeLabel.COMPLEX
                         logger.info(
                             "[Goal] interrupt resume reused CE goal %s: %s",
                             ce_goal.id,
@@ -992,7 +928,6 @@ class StrangeLoop:
                 recovery_valid_resume=recovery_valid_resume,
                 loop_state=state,
                 emit=emit,
-                intent_classifier=intent_classifier,
                 preferred_subagent=preferred_subagent,
                 interaction_mode=interaction_mode,
                 clarification_policy=clarification_policy,

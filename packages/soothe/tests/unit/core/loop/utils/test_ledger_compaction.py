@@ -43,6 +43,13 @@ def test_compact_execute_human_content_uses_brief_and_expected_output() -> None:
     assert "EXPECTED OUTPUT:\nRFC list with scope summaries" in out
 
 
+def test_compact_execute_human_content_omits_unspecified_expected_output() -> None:
+    step = StepAction(id="01", description="Greet the user")
+    out = compact_execute_human_content(step)
+    assert out == "EXECUTION TASK:\nGreet the user"
+    assert "Step completed successfully" not in out
+
+
 def test_compact_execute_human_content_omits_prior_evidence_from_envelope() -> None:
     step = StepAction(id="02", description="Fix failures", expected_output="tests pass")
     envelope = (

@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 # Host may send an execute-phase complexity (``minimal``/``simple``/``complex``)
 # or a routing label (``minimal``/``simple``/``complex``).
-_INTAKE_LABELS = frozenset({"minimal", "simple", "complex"})
+_TASK_COMPLEXITIES = frozenset({"minimal", "simple", "complex"})
 
 _MAX_GOAL_HEADER = 100
 _MAX_GOAL_STEP_DESC = 80
@@ -194,7 +194,7 @@ class CognitionGoalTreeMessage(Vertical):
         self._footer_plain: str = ""
         self._footer_visible: bool = False
         self._footer_tone: str = "muted"  # success | error | muted (step/tool completion parity)
-        self._intake_label: str = ""
+        self._task_complexity: str = ""
         self._spinner_position: int = 0
         self._loop_started_at: float | None = None
         self._steps_static: Static | None = None
@@ -249,9 +249,9 @@ class CognitionGoalTreeMessage(Vertical):
             animate_running=self._loop_executing(),
         )
 
-    def intake_label(self) -> str:
-        """Intake complexity, or empty when the host sent no usable value."""
-        return self._intake_label
+    def task_complexity(self) -> str:
+        """Forced task complexity, or empty when the host sent no usable value."""
+        return self._task_complexity
 
     def _goal_header_content(self) -> Content:
         """Goal title for restored/mounted tree cards (not the live plan panel).
@@ -260,9 +260,9 @@ class CognitionGoalTreeMessage(Vertical):
         `plan_panel_prefix_content` + `_plan_quick_view_header` instead.
         """
         body = self._clip(self._goal_text, _MAX_GOAL_HEADER)
-        intake = self.intake_label()
-        if intake:
-            body = f"{body} · {intake}"
+        complexity = self.task_complexity()
+        if complexity:
+            body = f"{body} · {complexity}"
         try:
             colors = theme.get_theme_colors(self)
         except Exception:  # noqa: BLE001
@@ -531,7 +531,7 @@ class CognitionGoalTreeMessage(Vertical):
         """Step rows (plus terminal footer) for the Ctrl+t plan panel body.
 
         Omits the goal title line: the overlay header carries the short loop
-        id, intake complexity, and elapsed time via `_plan_quick_view_header`.
+        id, task complexity, and elapsed time via `_plan_quick_view_header`.
         """
         parts: list[object] = []
         steps = self._assemble_steps_content(max_line_width=max_line_width)
@@ -628,7 +628,7 @@ class CognitionGoalTreeMessage(Vertical):
         return {
             "goal": self._goal_text,
             "max_iterations": self._max_iterations,
-            "intake_label": self._intake_label,
+            "task_complexity": self._task_complexity,
             "steps": steps_out,
             "footer_visible": self._footer_visible,
             "footer_text": self._footer_plain,
@@ -642,9 +642,9 @@ class CognitionGoalTreeMessage(Vertical):
         """Restore in-memory goal tree state from :meth:`snapshot_dict` output."""
         self._goal_text = str(snap.get("goal", self._goal_text))
         self._max_iterations = int(snap.get("max_iterations", self._max_iterations))
-        raw_intake = str(snap.get("intake_label", "") or "").strip().lower()
-        if raw_intake in _INTAKE_LABELS:
-            self._intake_label = raw_intake
+        raw_complexity = str(snap.get("task_complexity", "") or "").strip().lower()
+        if raw_complexity in _TASK_COMPLEXITIES:
+            self._task_complexity = raw_complexity
         self._footer_plain = str(snap.get("footer_text", ""))
         self._footer_visible = bool(snap.get("footer_visible", False))
         tone = str(snap.get("footer_tone", "muted") or "muted")
@@ -677,12 +677,12 @@ class CognitionGoalTreeMessage(Vertical):
             self._step_order.append(sid)
             self._steps[sid] = st
 
-    def set_intake_label(self, label: str) -> None:
-        """Show intake complexity in the goal header."""
+    def set_task_complexity(self, label: str) -> None:
+        """Show task complexity in the goal header."""
         normalized = (label or "").strip().lower()
-        if normalized not in _INTAKE_LABELS:
+        if normalized not in _TASK_COMPLEXITIES:
             return
-        self._intake_label = normalized
+        self._task_complexity = normalized
         self._sync_goal_tree_widgets()
 
     def sync_plan_steps(self, steps: list[dict[str, Any]]) -> None:

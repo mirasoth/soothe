@@ -10,6 +10,7 @@ from soothe.sloop.middleware.gp_variant_guard import (
     GeneralPurposeVariantGuardMiddleware,
 )
 from soothe.sloop.middleware.intake_task_guard import IntakeOnlyTaskGuardMiddleware
+from soothe.sloop.middleware.reasoning_boundary import ReasoningBoundaryMiddleware
 from soothe.sloop.middleware.westworld import WestWorldMiddleware
 
 __all__ = [
@@ -21,5 +22,6 @@ __all__ = [
     "GeneralPurposeVariantGuardMiddleware",
     "GoalStepGuardMiddleware",
     "IntakeOnlyTaskGuardMiddleware",
+    "ReasoningBoundaryMiddleware",
     "WestWorldMiddleware",
 ]

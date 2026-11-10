@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from soothe.sloop.intention.models import parse_intake_scope
+from soothe.sloop.utils.routing_scope import parse_intake_scope
 
 from soothe_daemon.protocol.intent_hints import is_daemon_intent_hint
 

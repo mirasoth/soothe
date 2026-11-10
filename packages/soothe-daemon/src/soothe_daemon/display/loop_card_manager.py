@@ -35,6 +35,7 @@ from soothe_nano.core.events import (
 
 from soothe_daemon.display.loop_card_ledger import LoopCardLedger
 from soothe_daemon.display.loop_history_probe import filter_derivable_log_events
+from soothe_daemon.display.step_card_reconcile import reconcile_step_card_groups
 
 logger = logging.getLogger(__name__)
 
@@ -630,7 +631,7 @@ class LoopCardManager:
         *,
         loop_status: str | None = None,
     ) -> dict[str, Any]:
-        """Return frozen goal snapshots plus the live card tail."""
+        """Return frozen goal snapshots plus the live card tail with verified step phases."""
         from soothe.display.card_ledger import card_to_wire_dict
 
         from soothe_daemon.display.display_store import get_display_card_store
@@ -644,6 +645,16 @@ class LoopCardManager:
         live_goal_index: int | None = None
         if live_cards and (loop_status or "").strip().lower() == "running":
             live_goal_index = len(goals)
+
+        groups: list[tuple[list[MessageData], bool]] = [
+            (goal.display_cards, False) for goal in goals
+        ]
+        groups.append((live_cards, True))
+        reconciled = await reconcile_step_card_groups(self._daemon, loop_id, groups)
+        for goal, cards in zip(goals, reconciled[:-1], strict=True):
+            goal.display_cards = cards
+        live_cards = reconciled[-1]
+
         return {
             "loop_id": loop_id,
             "goals": [g.to_wire_dict() for g in goals],
@@ -657,7 +668,7 @@ class LoopCardManager:
         loop_id: str,
         send_fn: Callable[[dict[str, Any]], Awaitable[None]],
     ) -> int:
-        """Stream `soothe.card.replay.begin` → `soothe.card.created` × N → `soothe.card.replay.end`."""
+        """Stream reconciled cards as `replay.begin` → `created` × N → `replay.end`."""
         ledger = await self.ensure_for_loop(loop_id)
         if ledger.card_count() == 0:
             return await self._emit_empty_replay(loop_id, send_fn)
@@ -693,7 +704,13 @@ class LoopCardManager:
         send_fn: Callable[[dict[str, Any]], Awaitable[None]],
     ) -> int:
         async with ledger.lock():
-            mutations = ledger.to_mutations_snapshot()
+            cards = ledger.snapshot()
+        [replayed_cards] = await reconcile_step_card_groups(
+            self._daemon,
+            loop_id,
+            [(cards, True)],
+        )
+        mutations = ledger.to_mutations_snapshot(replayed_cards)
         total = len(mutations)
         latest_seq = mutations[-1].seq if mutations else 0
 

@@ -13,7 +13,6 @@ def test_strange_loop_graph_exposes_rfc904_named_nodes() -> None:
     names = set(graph.nodes)
 
     for required in (
-        "intake",
         "enter_loop",
         "dispatch",
         "execute",
@@ -28,6 +27,7 @@ def test_strange_loop_graph_exposes_rfc904_named_nodes() -> None:
 
     # Legacy plan spine is no longer on the live graph.
     for removed in (
+        "intake",
         "gather_evidence",
         "evaluate",
         "generate_plan",

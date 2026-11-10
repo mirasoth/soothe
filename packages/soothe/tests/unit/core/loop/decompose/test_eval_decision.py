@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import pytest
+from soothe_nano.protocols.routing import TaskComplexity
 
 from soothe.sloop.eval.eval_decision import decide_eval_required
-from soothe.sloop.intention.models import IntakeLabel
 
 
 @pytest.mark.asyncio
@@ -15,7 +15,7 @@ async def test_minimal_short_circuits_without_llm() -> None:
         fast_model=object(),  # would crash if called; proves it isn't
         user_goal="trivial question",
         step_history=[],
-        intake_label=IntakeLabel.MINIMAL,
+        task_complexity=TaskComplexity.MINIMAL,
     )
     assert decision.should_run_eval is False
 
@@ -27,7 +27,7 @@ async def test_no_fast_model_fails_safe_to_run_eval() -> None:
         fast_model=None,
         user_goal="do work",
         step_history=[],
-        intake_label=IntakeLabel.SIMPLE,
+        task_complexity=TaskComplexity.SIMPLE,
     )
     assert decision.should_run_eval is True
 
@@ -39,7 +39,7 @@ async def test_simple_with_no_fast_model_fails_safe() -> None:
         fast_model=None,
         user_goal="build the thing",
         step_history=[],
-        intake_label=IntakeLabel.SIMPLE,
+        task_complexity=TaskComplexity.SIMPLE,
     )
     assert decision.should_run_eval is True
     assert "no fast model" in decision.reasoning.lower()

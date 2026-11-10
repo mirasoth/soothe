@@ -89,12 +89,13 @@ GOAL_REPORT = "soothe.cognition.goal.reported"
 GOAL_DIRECTIVES_APPLIED = "soothe.cognition.goal.directives.applied"
 GOAL_DEFERRED = "soothe.cognition.goal.deferred"
 
-# Intent classification
-INTENT_CLASSIFIED = "soothe.cognition.intent.classified"
-
 # Plan cognition (client UX)
 PLAN_CREATED = "soothe.cognition.plan.created"
 PLAN_REFLECTED = "soothe.cognition.plan.reflected"
+
+# LLM call boundary — dispatched by ReasoningBoundaryMiddleware before each
+# LLM invocation so the TUI can separate reasoning from different calls.
+LLM_CALL_BOUNDARY = "soothe.cognition.llm.call.boundary"
 
 # StrangeLoop cognition
 STRANGE_LOOP_STARTED = "soothe.cognition.strange_loop.started"
@@ -315,7 +316,6 @@ class StrangeLoopPlanDecisionEvent(LifecycleEvent):
     iteration: int = 0
     steps: list[dict[str, Any]] = []  # noqa: RUF012
     execution_mode: str = ""
-    intake_label: str = ""
     task_complexity: str = ""
     total_steps: int = 0  # Cumulative total steps across all iterations
     done_steps: int = 0  # Cumulative completed steps across all iterations
@@ -513,6 +513,18 @@ class RelayReconciledEvent(LifecycleEvent):
     alerts: int = 0
 
 
+class LLMCallBoundaryEvent(LifecycleEvent):
+    """Signals the start of a new LLM call within a step.
+
+    Dispatched by ``ReasoningBoundaryMiddleware.awrap_model_call`` before each
+    LLM invocation so the TUI can insert a line break between reasoning
+    accumulated from different calls within the same step card.
+    """
+
+    type: Literal["soothe.cognition.llm.call.boundary"] = "soothe.cognition.llm.call.boundary"
+    thread_id: str = ""
+
+
 # ---------------------------------------------------------------------------
 # Protocol events
 # ---------------------------------------------------------------------------
@@ -551,21 +563,6 @@ class PlanDagSnapshotEvent(ProtocolEvent):
 
     type: Literal["soothe.internal.plan.dag_snapshot"] = "soothe.internal.plan.dag_snapshot"
     steps: list[dict[str, Any]] = []  # noqa: RUF012
-
-
-class IntentClassifiedEvent(ProtocolEvent):
-    """Intent classification result for client visibility.
-
-    Emitted after intent-classify determines an agentic intent,
-    providing reasoning for why the query requires tool execution
-    rather than a direct chitchat-style response.
-    """
-
-    type: Literal["soothe.cognition.intent.classified"] = "soothe.cognition.intent.classified"
-    intent_type: str = "agentic"
-    reasoning: str | None = None
-    intake_label: str = ""
-    task_complexity: str = ""
 
 
 class GoalCreatedEvent(ProtocolEvent):
@@ -849,15 +846,6 @@ _reg(
 _reg(PLAN_REFLECTED, PlanReflectedEvent, summary_template="Reflected: {assessment}")
 _reg(PLAN_DAG_SNAPSHOT, PlanDagSnapshotEvent, verbosity=VerbosityTier.INTERNAL)
 
-# -- Protocol: intent --------------------------------------------------------
-_reg(
-    INTENT_CLASSIFIED,
-    IntentClassifiedEvent,
-    verbosity=VerbosityTier.NORMAL,
-    summary_template="{reasoning}",
-    priority=EventPriority.HIGH,
-)
-
 # -- Protocol: goal ----------------------------------------------------------
 _reg(GOAL_CREATED, GoalCreatedEvent, summary_template="Goal: {description} (priority={priority})")
 _reg(GOAL_COMPLETED, GoalCompletedEvent, summary_template="Goal {goal_id} completed")
@@ -919,6 +907,13 @@ _reg(BRANCH_CREATED, _BranchCreatedEvent, verbosity=VerbosityTier.NORMAL)
 _reg(BRANCH_ANALYZED, _BranchAnalyzedEvent, verbosity=VerbosityTier.INTERNAL)
 _reg(BRANCH_RETRY_STARTED, _BranchRetryStartedEvent, verbosity=VerbosityTier.NORMAL)
 _reg(BRANCH_PRUNED, _BranchPrunedEvent, verbosity=VerbosityTier.INTERNAL)
+
+# -- LLM call boundary -------------------------------------------------------
+_reg(
+    LLM_CALL_BOUNDARY,
+    LLMCallBoundaryEvent,
+    verbosity=VerbosityTier.NORMAL,
+)
 
 
 # ---------------------------------------------------------------------------

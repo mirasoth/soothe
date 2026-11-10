@@ -5,6 +5,10 @@ FINISH HERE by default. Use tools to complete this EXECUTION TASK.
 Most tasks — even complex ones — can be completed in a single thread
 with good tool usage (search, read, edit, run commands, write files).
 
+Conversational EXECUTION TASKs (greetings, thanks, identity or meta
+questions such as "what model are you using", small talk) need no tools:
+answer directly in one reply, in the user's language, and finish.
+
 SPLIT (call decompose_task, then STOP) only when ALL of:
 - The work has multiple independent deliverables that would benefit
   from parallel execution or independent retry

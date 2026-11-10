@@ -8,10 +8,6 @@ from pathlib import Path
 import pytest
 
 from soothe.prompts import SystemTemplates
-from soothe.sloop.intention.prompts import (
-    INTAKE_CLASSIFY_HUMAN_TASK,
-    INTAKE_CLASSIFY_SYSTEM_PROMPT,
-)
 from soothe.subagents.veritas.prompts import build_veritas_system_prompt
 
 _INTERNAL_TERM_RE = re.compile(r"\b(?:IG|RFC)-\d+\b", re.IGNORECASE)
@@ -36,8 +32,6 @@ def test_xml_fragments_omit_internal_terms(path: Path) -> None:
 @pytest.mark.parametrize(
     ("label", "text"),
     [
-        ("intake_classify_system", INTAKE_CLASSIFY_SYSTEM_PROMPT),
-        ("intake_classify_human_task", INTAKE_CLASSIFY_HUMAN_TASK),
         (
             "synthesis_report_system",
             (_FRAGMENTS_DIR / "instructions" / "synthesis_report_system.xml").read_text(

@@ -10,6 +10,7 @@ from soothe_nano.agent import builder as nano_builder
 from soothe.sloop.middleware import (
     GoalStepGuardMiddleware,
     IntakeOnlyTaskGuardMiddleware,
+    ReasoningBoundaryMiddleware,
     WestWorldMiddleware,
 )
 from soothe.sloop.utils.subagent_catalog import partition_subagent_specs
@@ -38,7 +39,7 @@ class AgentBuilder(nano_builder.AgentBuilder):
         # Clear intake-only preferred_subagent before nano ToolEnforcement.
         from soothe.identity.middleware import IdentityMiddleware
 
-        prefix: list[Any] = []
+        prefix: list[Any] = [ReasoningBoundaryMiddleware()]
         if self._identity_runtime is not None and self._identity_runtime.enabled:
             prefix.append(IdentityMiddleware(self._identity_runtime))
         prefix.append(IntakeOnlyTaskGuardMiddleware())

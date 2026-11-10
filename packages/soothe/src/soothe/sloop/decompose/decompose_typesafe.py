@@ -66,24 +66,13 @@ async def decide_finish_vs_split_typesafe(
     *,
     step_description: str,
     user_goal: str,
-    intake_label: str | None = None,
+    task_complexity: str | None = None,
     soothe_config: SootheConfig | None = None,
 ) -> str | None:
     """Decide whether to strip decompose_task via TypeSafe.
 
-    Args:
-        step_description: The step's full description text.
-        user_goal: Original user goal text.
-        intake_label: Intake complexity label, when known.
-        soothe_config: ``SootheConfig`` providing the classifier provider and
-            decision parameters (nano ``classifier`` block).
-
-    Returns:
-        ``"finish"`` when JEV says finish-in-thread with trusted confidence
-        and suppression bar met; ``"split"`` when JEV says split with trusted
-        confidence; ``None`` when the classifier is disabled/unavailable, the
-        verdict is untrusted, or the suppression bar is not met — callers
-        keep the decompose tool unchanged on ``None``.
+    Returns "finish" / "split" on trusted verdicts, else None — callers keep
+    the decompose tool unchanged on None.
     """
     cfg = classifier_config(soothe_config)
     if cfg is None or not cfg.enabled:
@@ -106,8 +95,8 @@ async def decide_finish_vs_split_typesafe(
         "step_description": truncate_text(step_description.strip(), limit=_STEP_DESC_MAX_CHARS),
         "goal": truncate_text(user_goal.strip(), limit=_GOAL_MAX_CHARS),
     }
-    if intake_label:
-        state["intake_label"] = str(intake_label)
+    if task_complexity:
+        state["task_complexity"] = str(task_complexity)
 
     try:
         response = await classifier.ainvoke(ClassifierRequest(state=state, questions=questions))

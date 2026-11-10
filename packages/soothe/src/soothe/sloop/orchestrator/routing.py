@@ -53,22 +53,13 @@ def _has_relay_answer(state: dict[str, Any]) -> bool:
     return bool(recorded_answers(relay_state))
 
 
-def route_after_preprocess(state: dict[str, Any]) -> str:
-    """Branch after enter_loop: chitchat END, wired delegate, or DISPATCH."""
-    label = state.get("intake_label")
-
-    if state.get("intent_route") == "fast_path":
-        logger.debug("[routing] route_after_preprocess → END (chitchat fast-path)")
-        return END
-
+def route_after_enter(state: dict[str, Any]) -> str:
+    """Branch after enter_loop: wired delegate or DISPATCH."""
     if state.get("intent_route") == "wired_subagent":
-        logger.debug("[routing] route_after_preprocess → delegate")
+        logger.debug("[routing] route_after_enter → delegate")
         return DELEGATE
 
-    logger.debug(
-        "[routing] route_after_preprocess → dispatch (label=%s)",
-        getattr(label, "value", label),
-    )
+    logger.debug("[routing] route_after_enter → dispatch")
     return DISPATCH
 
 

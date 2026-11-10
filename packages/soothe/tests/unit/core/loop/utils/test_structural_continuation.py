@@ -6,13 +6,10 @@ from datetime import UTC, datetime
 
 from soothe.sloop.state.execution_checkpoint import GoalIndexEntry
 from soothe.sloop.utils.structural_continuation import (
-    chitchat_may_finalize_checkpoint,
     has_active_running_goal,
-    has_intra_loop_checkpoint_to_continue,
     has_resumable_interrupted_goal,
     is_loop_continuation_phrase,
     is_loop_control_signal,
-    should_bypass_chitchat_fast_path,
 )
 
 
@@ -71,42 +68,6 @@ def test_is_loop_control_signal_includes_keyword_and_phrase() -> None:
     assert not is_loop_control_signal("hello")
 
 
-def test_should_bypass_chitchat_for_control_phrase_on_idle_checkpoint() -> None:
-    checkpoint = _checkpoint(status="idle", goal_status="completed", current_goal_index=-1)
-    assert should_bypass_chitchat_fast_path(checkpoint, "continue this loop")
-    assert should_bypass_chitchat_fast_path(checkpoint, "retry")
-
-
-def test_should_not_bypass_chitchat_without_intra_loop_checkpoint() -> None:
-    empty = _checkpoint(status="running", current_goal_index=-1, empty_history=True)
-    assert not has_intra_loop_checkpoint_to_continue(empty)
-    assert not has_intra_loop_checkpoint_to_continue(None)
-    assert not should_bypass_chitchat_fast_path(empty, "continue")
-    assert not should_bypass_chitchat_fast_path(None, "retry")
-
-
-def test_has_intra_loop_checkpoint_to_continue() -> None:
-    assert has_intra_loop_checkpoint_to_continue(
-        _checkpoint(status="running", goal_status="running")
-    )
-    assert has_intra_loop_checkpoint_to_continue(
-        _checkpoint(status="idle", goal_status="completed", current_goal_index=-1)
-    )
-    assert has_intra_loop_checkpoint_to_continue(
-        _checkpoint(status="idle", goal_status="interrupted")
-    )
-
-
-def test_should_not_bypass_chitchat_for_social_on_running_checkpoint() -> None:
-    checkpoint = _checkpoint(status="running", goal_status="running")
-    assert not should_bypass_chitchat_fast_path(checkpoint, "thanks")
-
-
-def test_should_not_bypass_chitchat_for_social_on_idle_without_running_goal() -> None:
-    checkpoint = _checkpoint(status="idle", goal_status="completed", current_goal_index=-1)
-    assert not should_bypass_chitchat_fast_path(checkpoint, "thanks")
-
-
 def test_has_active_running_goal() -> None:
     assert has_active_running_goal(_checkpoint(status="running", goal_status="running"))
     assert not has_active_running_goal(_checkpoint(status="idle", goal_status="completed"))
@@ -120,25 +81,3 @@ def test_has_resumable_interrupted_goal() -> None:
     # resumable so a retry/continue/resume re-activates it in place.
     assert has_resumable_interrupted_goal(_checkpoint(status="idle", goal_status="interrupted"))
     assert not has_resumable_interrupted_goal(_checkpoint(status="idle", goal_status="completed"))
-
-
-def test_chitchat_finalize_allowed_on_idle_checkpoint_without_running_goal() -> None:
-    assert chitchat_may_finalize_checkpoint(_checkpoint(status="idle", goal_status="completed"))
-    assert not chitchat_may_finalize_checkpoint(_checkpoint(status="idle", goal_status="running"))
-    assert not chitchat_may_finalize_checkpoint(None)
-
-
-def test_chitchat_finalize_allows_fresh_running_chitchat_goal() -> None:
-    """A running goal with duration_ms == 0 is a fresh chitchat goal whose
-    FINALIZE was skipped by the fast-path — chitchat must finalize it."""
-    fresh = _checkpoint(status="running", goal_status="running")
-    assert fresh.goal_history[0].duration_ms == 0
-    assert chitchat_may_finalize_checkpoint(fresh)
-
-
-def test_chitchat_finalize_blocks_running_task_goal_with_work() -> None:
-    """A running goal with duration_ms > 0 is an in-flight task goal — chitchat
-    must NOT finalize it; the normal graph FINALIZE owns its completion."""
-    in_flight = _checkpoint(status="running", goal_status="running")
-    in_flight.goal_history[0].duration_ms = 1500
-    assert not chitchat_may_finalize_checkpoint(in_flight)

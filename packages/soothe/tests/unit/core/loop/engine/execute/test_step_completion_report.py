@@ -30,6 +30,7 @@ async def test_summarize_step_completion_report_returns_llm_text() -> None:
     assert "at most 50 words" in messages[0].content
     assert messages[1].content == "EXECUTION TASK:\nReview API docs"
     assert messages[2].content == "Here is the API summary."
+    assert "never restate completion status" in messages[0].content
 
 
 @pytest.mark.asyncio

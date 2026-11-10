@@ -18,9 +18,9 @@ from soothe.sloop.decompose.runtime import bind_decompose_runtime, reset_decompo
 from soothe.sloop.middleware import DecomposeTaskMiddleware
 from soothe.sloop.utils.config_keys import (
     SOOTHE_DECOMPOSE_STEP_ID_KEY,
-    SOOTHE_INTAKE_LABEL_KEY,
     SOOTHE_INTERACTION_MODE_KEY,
     SOOTHE_IS_DAG_ROOT_KEY,
+    SOOTHE_TASK_COMPLEXITY_KEY,
 )
 
 _CONFIGURABLE = "soothe.sloop.decompose.runtime.langgraph_configurable"
@@ -101,11 +101,11 @@ def test_tool_is_registered_for_the_agent_tool_node() -> None:
 # ── Soft parallelization nudge (complex root steps) ─────────────────────────
 
 
-def _root_conf(intake_label: str | None = "complex") -> dict:
-    """Configurable for a root step with the given intake label."""
+def _root_conf(task_complexity: str | None = "complex") -> dict:
+    """Configurable for a root step with the given task complexity."""
     conf: dict = {SOOTHE_DECOMPOSE_STEP_ID_KEY: "ROOT-01", SOOTHE_IS_DAG_ROOT_KEY: True}
-    if intake_label is not None:
-        conf[SOOTHE_INTAKE_LABEL_KEY] = intake_label
+    if task_complexity is not None:
+        conf[SOOTHE_TASK_COMPLEXITY_KEY] = task_complexity
     return conf
 
 
@@ -136,7 +136,7 @@ def test_child_step_no_nudge_even_if_complex() -> None:
     assert PARALLEL_NUDGE_ADDENDUM not in forwarded.system_message.content
 
 
-def test_root_step_without_intake_label_no_nudge() -> None:
+def test_root_step_without_task_complexity_no_nudge() -> None:
     with patch(_CONFIGURABLE, return_value=_root_conf(None)):
         forwarded = _run_through_hook(DecomposeTaskMiddleware(), _request())
     assert PARALLEL_NUDGE_ADDENDUM not in forwarded.system_message.content

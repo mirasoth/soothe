@@ -122,7 +122,6 @@ class GraphPromptWrapper:
             user_goal=user_goal,
             workspace=state.workspace,
             agent_instructions_max_chars=agent_instructions_max_chars,
-            response_language=getattr(state, "response_language", None),
         )
 
         projection = self.project_ledger(kind="synthesis", state=state, ledger_cfg=ledger_cfg)
@@ -185,17 +184,14 @@ class GraphPromptWrapper:
             AIMessage(content=ai or "(no step output)"),
         ]
 
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
     def _build_step_completion_system_fragment(self, state: LoopState | None) -> str:
         """Return the step-completion system-prompt template (with {max_words} placeholder)."""
         _ = state
         return (
-            "You write brief step-completion status lines for the user watching progress.\n"
+            "You write brief step-completion updates for the user watching progress.\n"
             "Given the execute-step input and assistant output, respond with exactly one "
             "first-person sentence (I/we) of at most {max_words} words.\n"
+            "Describe what was produced or answered; never restate completion status.\n"
             "No preamble, quotes, or bullet points."
         )
 
@@ -206,7 +202,6 @@ class GraphPromptWrapper:
         user_goal: str,
         workspace: str | None = None,
         agent_instructions_max_chars: int = 8000,
-        response_language: object | None = None,
         scratchpad_mode: bool = False,
     ) -> str:
         """Delegate to synthesis_projection.render_synthesis_system_prompt."""
@@ -219,7 +214,6 @@ class GraphPromptWrapper:
             user_goal=user_goal,
             workspace=workspace,
             agent_instructions_max_chars=agent_instructions_max_chars,
-            response_language=response_language,
             scratchpad_mode=scratchpad_mode,
         )
 

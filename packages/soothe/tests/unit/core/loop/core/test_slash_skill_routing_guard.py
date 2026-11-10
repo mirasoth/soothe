@@ -7,15 +7,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from soothe.sloop.intention.models import (
-    IntakeLabel,
-    IntentClassification,
-    TaskComplexity,
-    build_loop_routing_classification,
-)
-from soothe.sloop.orchestrator.routing import route_after_preprocess
+from soothe.sloop.orchestrator.routing import route_after_enter
 from soothe.sloop.stations.preprocess.enter_loop import node_init_or_resume
 from soothe.sloop.strange_loop import StrangeLoop
+from soothe.sloop.utils.routing_scope import build_routing_classification
 
 
 async def _noop_emit(*_args, **_kwargs) -> None:  # type: ignore[no-untyped-def]
@@ -42,17 +37,8 @@ async def _drive_intake(
     preferred_subagent: str | None,
     parsed_skill: object | None,
 ) -> MagicMock:
-    """Run ``run_with_progress`` through intake and return the ``LoopRuntimeContext`` mock."""
+    """Run ``run_with_progress`` through enter_loop and return the ``LoopRuntimeContext`` mock."""
     sl = _make_strange_loop()
-
-    intent_classifier = MagicMock()
-    intent_classifier.classify_intake = AsyncMock(
-        return_value=IntentClassification(
-            intake_label=IntakeLabel.SIMPLE,
-            task_complexity=TaskComplexity.SIMPLE,
-            reasoning="This is a request to use the skill.",
-        )
-    )
 
     ce_instance = MagicMock()
     ce_instance.load = AsyncMock(return_value=False)
@@ -109,9 +95,8 @@ async def _drive_intake(
             workspace=None,
             max_iterations=1,
             loop_id="L1",
-            intent_classifier=intent_classifier,
             preferred_subagent=preferred_subagent,
-            routing_classification=build_loop_routing_classification(None, preferred_subagent),
+            routing_classification=build_routing_classification(None, preferred_subagent),
         )
         async for _event in gen:
             pass
@@ -152,15 +137,10 @@ async def test_slash_specialist_without_skill_keeps_routing_hint() -> None:
 
 @pytest.mark.asyncio
 async def test_enter_loop_skips_wired_branch_without_slash_hint() -> None:
-    """With no explicit hint, intake routes to the normal plan/execute path."""
-    intent = IntentClassification(
-        intake_label=IntakeLabel.SIMPLE,
-        task_complexity=TaskComplexity.SIMPLE,
-    )
+    """With no explicit hint, enter_loop routes to the normal plan/execute path."""
     ctx = SimpleNamespace(
         loop_state=SimpleNamespace(
-            intent=intent,
-            routing_classification=build_loop_routing_classification(intent, None),
+            routing_classification=build_routing_classification(None, None),
             goal="research the seed paper",
             goal_user_submission="research the seed paper",
         ),
@@ -175,22 +155,4 @@ async def test_enter_loop_skips_wired_branch_without_slash_hint() -> None:
     )
     result = await node_init_or_resume(ctx, {})  # type: ignore[arg-type]
     assert result["intent_route"] != "wired_subagent"
-    assert route_after_preprocess(result) != "delegate"
-
-
-@pytest.mark.asyncio
-async def test_stray_wire_subagent_field_is_ignored() -> None:
-    """A model that still emits ``wire_subagent`` cannot influence routing."""
-    intent = IntentClassification.model_validate(
-        {
-            "intake_label": IntakeLabel.SIMPLE,
-            "requires_tool_use": True,
-            "task_complexity": TaskComplexity.SIMPLE,
-            "wire_subagent": "deep_research",
-        }
-    )
-    assert not hasattr(intent, "wire_subagent")
-
-    routing = build_loop_routing_classification(intent, preferred_subagent=None)
-    assert routing is not None
-    assert routing.preferred_subagent is None
+    assert route_after_enter(result) != "delegate"

@@ -39,25 +39,30 @@ _INVALID = "invalid"
 
 _GOAL_MAX_CHARS = 600
 _OUTPUT_MAX_CHARS = 4000
+_PRIOR_OUTPUT_MAX_CHARS = 4000
 
 _INSTRUCTIONS = (
     "Is the final step output a valid goal report? A valid report is "
     "substantive (not a tool log or one-liner), addresses the user goal "
-    "directly, and is coherent enough to serve as the final goal report "
-    "without further synthesis."
+    "directly, is self-contained (it carries the full deliverable rather "
+    "than recapping or referencing content delivered earlier), and is "
+    "coherent enough to serve as the final goal report without further synthesis."
 )
 
 _CRITERIA: dict[str, str] = {
     _VALID: (
         "The output is substantive and addresses the user goal directly: "
-        "it contains a deliverable (design draft, analysis, code, report), "
-        "is coherent and structured, and does not require further synthesis "
-        "to be a useful final response."
+        "it contains the deliverable itself (design draft, analysis, code, report), "
+        "is self-contained — a reader seeing only this output gets the complete "
+        "answer even when prior step output exists — is coherent and structured, "
+        "and does not require further synthesis to be a useful final response."
     ),
     _INVALID: (
         "The output is not a valid goal report: it is a tool call log, a "
         "one-line status, a clarifying question without substantive content, "
-        "a raw data dump, or does not address the user goal."
+        "a raw data dump, does not address the user goal, or it is a closing "
+        "recap/summary that points at a deliverable delivered earlier in the "
+        "step instead of containing the deliverable itself."
     ),
 }
 
@@ -67,6 +72,7 @@ async def validate_report_typesafe(
     user_goal: str,
     step_output: str,
     step_kind: str | None = None,
+    prior_output: str | None = None,
     soothe_config: SootheConfig | None = None,
 ) -> bool | None:
     """Decide whether the final step output is a valid goal report.
@@ -77,6 +83,10 @@ async def validate_report_typesafe(
             candidate goal report).
         step_kind: Step kind of the final completed step, when known
             (e.g. ``"brainstorm"``, ``"action"``, ``"eval"``).
+        prior_output: Tail of the step's pre-final-hop AI text, when the
+            step ran multiple assistant turns. Grounds the
+            self-containedness judgment: a final hop that merely recaps
+            content delivered in earlier hops is not a valid report.
         soothe_config: ``SootheConfig`` providing the classifier provider and
             decision parameters (nano ``classifier`` block).
 
@@ -110,6 +120,10 @@ async def validate_report_typesafe(
     }
     if step_kind:
         state["step_kind"] = step_kind
+    prior = (prior_output or "").strip()
+    if prior:
+        # Tail: the hops closest to the final one carry what a recap would point at.
+        state["prior_step_output"] = prior[-_PRIOR_OUTPUT_MAX_CHARS:]
 
     try:
         response = await classifier.ainvoke(ClassifierRequest(state=state, questions=questions))

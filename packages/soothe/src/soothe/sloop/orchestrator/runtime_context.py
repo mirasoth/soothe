@@ -67,7 +67,6 @@ class LoopRuntimeContext:
     recovery_valid_resume: bool
     loop_state: LoopState
     emit: Callable[[str, Any], Awaitable[None]]
-    intent_classifier: Any | None = None
     preferred_subagent: str | None = None
     interaction_mode: str | None = None
     scratch: LoopPhaseScratch = field(default_factory=LoopPhaseScratch)

@@ -11,7 +11,6 @@ from soothe.config.models import DecomposeLoopConfig, EvalLoopConfig
 from soothe.context.engine import ContextEngine
 from soothe.context.models import StepNode
 from soothe.rails.interpreter import RailEvent
-from soothe.sloop.intention.models import IntakeLabel
 from soothe.sloop.orchestrator.runtime_context import (
     LoopPhaseScratch,
     LoopRuntimeContext,
@@ -36,9 +35,11 @@ def _ctx_with_ce(
     *,
     rail_interpreter: object | None,
     interaction_mode: str | None = None,
-    intake_label: IntakeLabel | None = None,
+    task_complexity: str | None = None,
 ) -> LoopRuntimeContext:
-    intent = SimpleNamespace(intake_label=intake_label) if intake_label is not None else None
+    routing = (
+        SimpleNamespace(task_complexity=task_complexity) if task_complexity is not None else None
+    )
     loop_state = SimpleNamespace(
         goal="do work",
         goal_user_submission="do work",
@@ -47,7 +48,7 @@ def _ctx_with_ce(
         current_decision=None,
         plan_id=None,
         step_results=[],
-        intent=intent,
+        routing_classification=routing,
     )
     strange_loop = SimpleNamespace(
         config=SimpleNamespace(
@@ -200,7 +201,7 @@ async def test_complex_single_leaf_forces_eval() -> None:
         goal.id,
         rail_interpreter=None,
         interaction_mode=None,
-        intake_label=IntakeLabel.COMPLEX,
+        task_complexity="complex",
     )
 
     result = await RootEvalNode()(ctx, {})
@@ -265,7 +266,7 @@ async def test_complex_single_leaf_after_completed_eval_finalizes() -> None:
         goal.id,
         rail_interpreter=None,
         interaction_mode=None,
-        intake_label=IntakeLabel.COMPLEX,
+        task_complexity="complex",
     )
 
     result = await RootEvalNode()(ctx, {})
@@ -301,7 +302,7 @@ async def test_completed_eval_without_verdict_re_audits() -> None:
         goal.id,
         rail_interpreter=None,
         interaction_mode=None,
-        intake_label=IntakeLabel.COMPLEX,
+        task_complexity="complex",
     )
 
     result = await RootEvalNode()(ctx, {})
@@ -345,7 +346,7 @@ async def test_completed_eval_incomplete_verdict_re_audits() -> None:
         goal.id,
         rail_interpreter=None,
         interaction_mode=None,
-        intake_label=IntakeLabel.COMPLEX,
+        task_complexity="complex",
     )
 
     result = await RootEvalNode()(ctx, {})

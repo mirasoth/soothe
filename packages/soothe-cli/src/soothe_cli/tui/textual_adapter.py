@@ -44,7 +44,6 @@ if TYPE_CHECKING:
 from langchain_core.messages import AIMessage, HumanMessage
 from soothe_client.appkit.turn import run_turn_pipeline
 from soothe_client.core.events import (
-    INTENT_CLASSIFIED,
     LOOP_CLARIFICATION_ANSWERED,
     LOOP_CLARIFICATION_DEFERRED,
     LOOP_CLARIFICATION_REQUESTED,
@@ -95,14 +94,12 @@ from soothe_cli.display.spinner_labels import (
     SPINNER_LABEL_EXECUTING,
     SPINNER_LABEL_INPUT,
     SPINNER_LABEL_OFFLOADING,
-    SPINNER_LABEL_RETRYING,
     SPINNER_LABEL_SUBMITTING,
     SPINNER_LABEL_SYNTHESIZING,
     SPINNER_LABEL_THINKING,
     SPINNER_LABEL_TOOLS,
     SPINNER_LABEL_WRITING,
     map_plan_phase_spinner_label,
-    retry_spinner_hint,
 )
 from soothe_cli.runtime.parse.tool_call_resolution import (
     build_streaming_args_overlay,
@@ -177,8 +174,8 @@ from soothe_cli.ux.subagent_wire_display import (
 
 logger = logging.getLogger(__name__)
 
-# LLM retry event type for step card status display
-LLM_RETRY_ATTEMPT = "soothe.cognition.llm.retry.attempt"
+# LLM call boundary — separates reasoning from different LLM calls
+LLM_CALL_BOUNDARY = "soothe.cognition.llm.call.boundary"
 # Plan-phase cognition card (not yet in soothe_client.core.events exports used by CLI).
 STRANGE_LOOP_REASONED = "soothe.cognition.strange_loop.reasoned"
 
@@ -370,7 +367,7 @@ class TextualUIAdapter:
         """Execution mode from the latest ``plan_decision`` (``dependency`` / ``parallel``).
 
         Used for step-card lifecycle (stuck predecessor finalization); the plan
-        panel header shows ``intake_label`` instead.
+        panel header shows ``task_complexity`` instead.
         """
 
         self._plan_step_order: list[str] = []
@@ -4401,11 +4398,7 @@ async def execute_task_textual(
                                 if isinstance(raw_steps, list):
                                     execution_mode = str(data.get("execution_mode", "")).strip()
                                     adapter._last_plan_execution_mode = execution_mode or None
-                                    intake_label = str(
-                                        data.get("task_complexity")
-                                        or data.get("intake_label")
-                                        or ""
-                                    ).strip()
+                                    task_complexity = str(data.get("task_complexity") or "").strip()
                                     _record_plan_step_dag(adapter, raw_steps)
                                     adapter._execute_wave_total = len(raw_steps)
                                     done_steps = int(data.get("done_steps", 0) or 0)
@@ -4422,8 +4415,8 @@ async def execute_task_textual(
                                     tree = adapter._goal_tree_message
                                     if tree is not None:
                                         tree.sync_plan_steps(raw_steps)
-                                        if intake_label:
-                                            tree.set_intake_label(intake_label)
+                                        if task_complexity:
+                                            tree.set_task_complexity(task_complexity)
                                     if execution_mode == "parallel":
                                         ui_coalesce.execute_wave_active = True
                                 continue
@@ -4646,32 +4639,22 @@ async def execute_task_textual(
                                         )
                                     continue
 
-                            # Handle LLM retry events for step card status display
-                            if event_type == LLM_RETRY_ATTEMPT:
-                                # Find the running step card for this thread and update retry status
-                                attempt = int(data.get("attempt", 0))
-                                max_attempts = int(data.get("max_attempts", 0))
-                                error_type = str(data.get("error_type", "timeout"))
-                                # Try to find a running step card via namespace or active steps
+                            # LLM call boundary — signal the step card to start
+                            # a new reasoning line so reasoning from different
+                            # LLM calls within a step doesn't merge into one row.
+                            if event_type == LLM_CALL_BOUNDARY:
                                 widget = None
                                 if ns_key:
                                     widget = adapter._step_by_namespace.get(ns_key)
                                 if widget is None:
-                                    # Fallback: find any running step in current step messages
                                     for step_widget in adapter._current_step_messages.values():
                                         if step_widget._status == "running":  # noqa: SLF001
                                             widget = step_widget
                                             break
-                                if widget is not None:
-                                    widget.set_retry_status(attempt, max_attempts, error_type)
-                                elif adapter._set_spinner and not clarification_pending:
-                                    await adapter._set_spinner(
-                                        SPINNER_LABEL_RETRYING,
-                                        hint_extra=retry_spinner_hint(
-                                            attempt=attempt,
-                                            max_attempts=max_attempts,
-                                        ),
-                                    )
+                                if widget is not None and hasattr(
+                                    widget, "start_new_reasoning_line"
+                                ):
+                                    widget.start_new_reasoning_line()
                                 continue
 
                             if event_type == STRANGE_LOOP_PLAN_PHASE:
@@ -4727,39 +4710,6 @@ async def execute_task_textual(
                                 )
                                 if adapter._set_spinner and not clarification_pending:
                                     await adapter._set_spinner(None)
-                                continue
-
-                            if event_type == INTENT_CLASSIFIED:
-                                intake_label = str(
-                                    data.get("task_complexity") or data.get("intake_label") or ""
-                                ).strip()
-                                if intake_label:
-                                    if adapter._goal_tree_message is None:
-                                        await _ensure_goal_tree_message(adapter)
-                                    tree = adapter._goal_tree_message
-                                    if tree is not None:
-                                        tree.set_intake_label(intake_label)
-                                reasoning = str(data.get("reasoning", "")).strip()
-                                if not reasoning:
-                                    continue
-                                pending_text = pending_text_by_namespace.get(ns_key, "")
-                                if pending_text:
-                                    await _flush_assistant_text_ns(
-                                        adapter,
-                                        pending_text,
-                                        ns_key,
-                                        assistant_message_by_namespace,
-                                        router=router,
-                                    )
-                                    pending_text_by_namespace[ns_key] = ""
-                                    assistant_message_by_namespace.pop(ns_key, None)
-                                intent_widget = CognitionReasonMessage(
-                                    status="",
-                                    iteration=0,
-                                    plan_reasoning=reasoning,
-                                    id=f"intent-{uuid.uuid4().hex[:8]}",
-                                )
-                                await adapter._mount_message(intent_widget)
                                 continue
 
                             if event_type == STRANGE_LOOP_REASONED:

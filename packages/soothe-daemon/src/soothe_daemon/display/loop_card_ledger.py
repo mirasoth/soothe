@@ -128,8 +128,19 @@ class LoopCardLedger:
             self._inner.apply(header)
             self._loaded = True
 
-    def to_mutations_snapshot(self) -> list[CardMutation]:
-        snapshot = self._inner.snapshot()
+    def to_mutations_snapshot(
+        self,
+        cards: Iterable[MessageData] | None = None,
+    ) -> list[CardMutation]:
+        """Produce `create` mutations for the current or supplied card state.
+
+        Args:
+            cards: Cards to serialize; defaults to the live ledger snapshot.
+
+        Returns:
+            One `create` mutation per card in input order.
+        """
+        snapshot = list(cards) if cards is not None else self._inner.snapshot()
         return [
             CardMutation(
                 seq=offset + 1,

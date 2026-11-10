@@ -1,8 +1,7 @@
-"""Goal-loop trace pinning for in-graph intake classify.
+"""Goal-loop trace pinning for the StrangeLoop graph.
 
-Intake classification runs in the graph INTAKE node. The goal trace is pinned
-before the graph runs so the classify LLM and ``strange-loop-graph`` share one
-trace.
+The goal trace is pinned before the graph runs so ``strange-loop-graph`` and
+its inner LLM calls share one Langfuse trace.
 """
 
 from __future__ import annotations
@@ -11,11 +10,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from soothe.sloop.intention.models import (
-    IntakeLabel,
-    IntentClassification,
-    TaskComplexity,
-)
 from soothe.sloop.strange_loop import StrangeLoop
 from soothe.utils.observability.langfuse import GoalLoopTrace
 
@@ -33,18 +27,6 @@ def _make_strange_loop(*, langfuse_enabled: bool = True) -> StrangeLoop:
     config.observability.langfuse.enabled = langfuse_enabled
     config.observability.langfuse.trace_name = "soothe-dev"
     return StrangeLoop(core_agent=MagicMock(), config=config)
-
-
-def _make_classifier(*, is_task: bool = True) -> MagicMock:
-    intent = IntentClassification(
-        intake_label=IntakeLabel.CHITCHAT if not is_task else IntakeLabel.SIMPLE,
-        reasoning="Work request." if is_task else "Greeting.",
-        task_complexity=TaskComplexity.SIMPLE,
-        chitchat_response="Doing well!" if not is_task else None,
-    )
-    classifier = MagicMock()
-    classifier.classify_intake = AsyncMock(return_value=intent)
-    return classifier
 
 
 def _common_patches(sl: StrangeLoop):
@@ -74,7 +56,6 @@ async def test_run_with_progress_pins_goal_trace_before_graph() -> None:
     """Graph ctx receives the pinned GoalLoopTrace when Langfuse is enabled."""
     sl = _make_strange_loop()
 
-    intent_classifier = _make_classifier(is_task=True)
     goal_trace = GoalLoopTrace(
         soothe_config=sl.config,
         trace_id="trace-goal-1",
@@ -123,7 +104,6 @@ async def test_run_with_progress_pins_goal_trace_before_graph() -> None:
             workspace=None,
             max_iterations=1,
             loop_id="L1",
-            intent_classifier=intent_classifier,
         )
         try:
             async for _event in gen:
@@ -142,7 +122,6 @@ async def test_run_with_progress_pins_goal_trace_before_graph() -> None:
 async def test_run_with_progress_skips_begin_goal_loop_when_langfuse_disabled() -> None:
     sl = _make_strange_loop(langfuse_enabled=False)
 
-    intent_classifier = _make_classifier(is_task=True)
     ce_instance, mock_sm = _common_patches(sl)
 
     with (
@@ -182,7 +161,6 @@ async def test_run_with_progress_skips_begin_goal_loop_when_langfuse_disabled() 
             workspace=None,
             max_iterations=1,
             loop_id="L1",
-            intent_classifier=intent_classifier,
         )
         try:
             async for _event in gen:

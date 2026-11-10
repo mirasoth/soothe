@@ -588,14 +588,12 @@ class TestWorkspaceInjection:
         assert prompt.find("<RESPONSE_LANGUAGE_HINT>") < prompt.find("<ENVIRONMENT")
 
     def test_response_language_hint_uses_explicit_language_from_state(self, tmp_path) -> None:
-        from soothe.sloop.intention.models import ResponseLanguage
-
         mw = self._middleware()
         classification = RoutingClassification(task_complexity="simple")
         request = MockModelRequest(
             state={
                 "routing_classification": classification,
-                "response_language": ResponseLanguage.ZH,
+                "response_language": "zh",
                 "workspace": str(tmp_path),
             },
             system_message=SystemMessage(content="original prompt"),

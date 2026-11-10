@@ -102,6 +102,29 @@ class TestTrusted:
         assert "World State Design" in state["step_output"]
         assert state["step_kind"] == "brainstorm"
 
+    @pytest.mark.asyncio
+    async def test_prior_output_included_in_state(self, monkeypatch) -> None:
+        fake = _FakeClassifier(_response("valid", 0.91))
+        _patch(monkeypatch, fake)
+        await validate_report_typesafe(
+            user_goal="g",
+            step_output="Analysis delivered above. In short: it works.",
+            prior_output="# Full Report\n\n" + ("body " * 2000),
+            soothe_config=_CfgStub(),
+        )
+        state = fake.states[0]["state"]
+        prior = state["prior_step_output"]
+        assert len(prior) <= 4000
+        assert prior.endswith("body ") or prior.rstrip().endswith("body")
+
+    @pytest.mark.asyncio
+    async def test_empty_prior_output_omitted_from_state(self, monkeypatch) -> None:
+        fake = _FakeClassifier(_response("valid", 0.91))
+        _patch(monkeypatch, fake)
+        await _validate()
+        state = fake.states[0]["state"]
+        assert "prior_step_output" not in state
+
 
 class TestSuppressionBar:
     @pytest.mark.asyncio

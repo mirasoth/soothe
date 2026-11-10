@@ -1,1 +1,1 @@
-"""Preprocess stations: intake + enter_loop."""
+"""Preprocess stations: enter_loop (loop-graph entry)."""

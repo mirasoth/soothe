@@ -62,7 +62,6 @@ class SootheRunner(
             resolve_planner,
             resolve_policy,
         )
-        from soothe.sloop.intention.classifier import IntentClassifier
 
         init_start = time.perf_counter()
 
@@ -76,29 +75,6 @@ class SootheRunner(
         from soothe.identity.persona import apply_identity_fragment_override
 
         apply_identity_fragment_override(self._config)
-
-        # Initialize intent classifier (core.intention module).
-        # Unified classification is always enabled; classifier is omitted only if fast model is unavailable.
-        fast_model = None
-        try:
-            fast_model = self._config.create_chat_model("fast")
-        except Exception:
-            logger.exception(
-                "Failed to create fast model for classification. Classification will be disabled."
-            )
-            fast_model = None
-
-        if fast_model:
-            self._intent_classifier = IntentClassifier(
-                model=fast_model,
-                assistant_name=self._config.agent.name,
-                soothe_config=self._config,
-                assistant_identity=self._config.agent.assistant_identity,
-            )
-            logger.info("[IntentClassifier] Initialized in LLM mode")
-        else:
-            logger.warning("No fast model available, classification disabled")
-            self._intent_classifier = None
 
         checkpointer_start = time.perf_counter()
         checkpointer_result = resolve_checkpointer(self._config)
@@ -807,8 +783,7 @@ class SootheRunner(
             thread_id: Persistence thread ID; generated when omitted.
             workspace: Thread workspace path; resolved when omitted.
             preferred_subagent: Optional subagent hint for StrangeLoop.
-            intake_scope: Forced intake scope (`minimal`/`simple`/`complex`);
-                skips the intake LLM when set.
+            intake_scope: Forced task complexity (`minimal`/`simple`/`complex`).
             client_loop_id: Daemon loop scope for logging and correlation.
             autopilot_job: Autopilot-dispatched goal bundle; emits a single
                 `GoalCompletionChunk`.

@@ -55,17 +55,11 @@ async def _breakpoint_pending_nodes(compiled: Any, config: dict[str, Any]) -> li
 def _langfuse_goal_output_text(ctx: LoopRuntimeContext) -> str:
     """Best-effort final user-visible text for Langfuse trace output."""
     from soothe.sloop.engine.completion.continuation_context import ledger_goal_completion_text
-    from soothe.sloop.intention.models import IntakeLabel
 
     completion = ledger_goal_completion_text(ctx.loop_state.loop_messages)
     if completion:
         return completion
 
-    intent = getattr(ctx.loop_state, "intent", None)
-    if intent is not None and getattr(intent, "intake_label", None) == IntakeLabel.CHITCHAT:
-        chitchat_response = (getattr(intent, "chitchat_response", None) or "").strip()
-        if chitchat_response:
-            return chitchat_response
     pp = ctx.loop_state.previous_plan
     if pp is not None:
         if pp.full_output and str(pp.full_output).strip():

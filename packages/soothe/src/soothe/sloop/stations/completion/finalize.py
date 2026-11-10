@@ -45,28 +45,11 @@ _GOAL_COMPLETION_LEDGER_HUMAN_BASE = (
 )
 
 
-def _goal_completion_ledger_human_content(state: LoopState) -> str:
+def _goal_completion_ledger_human_content() -> str:
     """Human ledger line for goal completion (synthesis prompt; all complexities)."""
-    from soothe.sloop.intention.models import (
-        ResponseLanguage,
-        normalize_response_language,
-    )
-
-    language = normalize_response_language(getattr(state, "response_language", None))
-    if language is None or language == ResponseLanguage.OTHER:
-        return (
-            _GOAL_COMPLETION_LEDGER_HUMAN_BASE
-            + " Use the same primary natural language as the user's request."
-        )
-    display = {
-        ResponseLanguage.EN: "English",
-        ResponseLanguage.ZH: "Chinese",
-        ResponseLanguage.JA: "Japanese",
-        ResponseLanguage.KO: "Korean",
-    }.get(language, language.value)
     return (
         _GOAL_COMPLETION_LEDGER_HUMAN_BASE
-        + f" Write user-facing prose in {display} ({language.value})."
+        + " Use the same primary natural language as the user's request."
     )
 
 
@@ -98,7 +81,7 @@ def _append_goal_completion_ledger_pair(
     if not text:
         return
     human_msg = LoopHumanMessage(
-        content=_goal_completion_ledger_human_content(state),
+        content=_goal_completion_ledger_human_content(),
         thread_id=state.thread_id,
         iteration=iteration_completed,
         goal_summary=(state.goal[:200] if state.goal else None),
@@ -512,6 +495,25 @@ async def _finalize_plan_mode_reject(
     return {"last_outcome": "completed"}
 
 
+def _toolless_single_leaf(nodes: dict[str, Any] | None) -> bool:
+    """True when the goal ran as one completed step with zero tool calls.
+
+    Conversational turns finish this way; their streamed answer is already the
+    final user-facing reply, so report validation would only add latency.
+    """
+    if not nodes or len(nodes) != 1:
+        return False
+    node = next(iter(nodes.values()))
+    if getattr(node, "status", None) != "completed" or getattr(node, "parent_step_id", None):
+        return False
+    execution = getattr(node, "execution", None)
+    if execution is None:
+        return False
+    return not getattr(execution, "tool_call_count", 0) and not getattr(
+        execution, "subagent_task_completions", 0
+    )
+
+
 async def node_goal_completion(
     ctx: LoopRuntimeContext, graph_state: dict[str, Any]
 ) -> dict[str, Any]:
@@ -674,6 +676,7 @@ async def node_goal_completion(
             )
 
             step_kind = None
+            prior_output = None
             if goal_steps:
                 _completed = [
                     n for n in goal_steps.values() if getattr(n, "status", None) == "completed"
@@ -684,30 +687,43 @@ async def node_goal_completion(
                         reverse=True,
                     )
                     step_kind = str(getattr(_completed[0], "kind", "") or "") or None
+                    _outcome = getattr(getattr(_completed[0], "execution", None), "outcome", None)
+                    if isinstance(_outcome, dict):
+                        prior_output = str(_outcome.get("prior_ai_output") or "") or None
 
-            report_valid = await validate_report_typesafe(
-                user_goal=state.goal or "",
-                step_output=final_output,
-                step_kind=step_kind,
-                soothe_config=strange_loop.config,
-            )
-            if report_valid is False:
+            bypass_validation = _toolless_single_leaf(goal_steps)
+            if bypass_validation:
                 logger.info(
-                    "Goal completion: report validation=invalid; falling back to synthesis",
+                    "Goal completion: action=ledger_direct passthrough (toolless single leaf) chars=%d",
+                    len(final_output),
                 )
-                action = CompletionStrategy.SYNTHESIZE
-                final_output = None
             else:
-                if report_valid is True:
+                report_valid = await validate_report_typesafe(
+                    user_goal=state.goal or "",
+                    step_output=final_output,
+                    step_kind=step_kind,
+                    prior_output=prior_output,
+                    soothe_config=strange_loop.config,
+                )
+            if not bypass_validation:
+                if report_valid is False:
+                    logger.info(
+                        "Goal completion: report validation=invalid; falling back to synthesis",
+                    )
+                    action = CompletionStrategy.SYNTHESIZE
+                    final_output = None
+                elif report_valid is True:
                     logger.info(
                         "Goal completion: action=ledger_direct passthrough (validated) chars=%d",
                         len(final_output),
                     )
                 else:
+                    # RFC-SLP-004 fail-safe: unavailable/untrusted verdict -> synthesize.
                     logger.info(
-                        "Goal completion: action=ledger_direct passthrough (validation unavailable) chars=%d",
-                        len(final_output),
+                        "Goal completion: report validation unavailable; falling back to synthesis",
                     )
+                    action = CompletionStrategy.SYNTHESIZE
+                    final_output = None
 
     if action == CompletionStrategy.SYNTHESIZE:
         # RFC-624 Phase 4 Stage 2: No restore needed.

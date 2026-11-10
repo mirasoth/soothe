@@ -27,11 +27,11 @@ from soothe.sloop.decompose.tool import build_decompose_task_tool
 from soothe.sloop.utils.config_keys import (
     SOOTHE_DECOMPOSE_STEP_ID_KEY,
     SOOTHE_EVAL_STEP_ID_KEY,
-    SOOTHE_INTAKE_LABEL_KEY,
     SOOTHE_INTERACTION_MODE_KEY,
     SOOTHE_IS_DAG_ROOT_KEY,
     SOOTHE_MAX_BRANCH_ROOT_KEY,
     SOOTHE_STEP_DESCRIPTION_KEY,
+    SOOTHE_TASK_COMPLEXITY_KEY,
     SOOTHE_USER_GOAL_KEY,
 )
 
@@ -88,7 +88,7 @@ async def _try_jev_finish_vs_split(conf: dict[str, Any]) -> str | None:
     soothe_config = conf.get("soothe_config")
     step_description = conf.get(SOOTHE_STEP_DESCRIPTION_KEY, "")
     user_goal = conf.get(SOOTHE_USER_GOAL_KEY, "")
-    intake_label = conf.get(SOOTHE_INTAKE_LABEL_KEY)
+    task_complexity = conf.get(SOOTHE_TASK_COMPLEXITY_KEY)
 
     if not step_description:
         return None
@@ -101,7 +101,7 @@ async def _try_jev_finish_vs_split(conf: dict[str, Any]) -> str | None:
         verdict = await decide_finish_vs_split_typesafe(
             step_description=step_description,
             user_goal=user_goal,
-            intake_label=intake_label,
+            task_complexity=task_complexity,
             soothe_config=soothe_config,
         )
     except Exception as exc:  # noqa: BLE001 — never block on the classifier
@@ -359,8 +359,12 @@ class DecomposeTaskMiddleware(AgentMiddleware):
             # parallelization, not forced to split (avoids the
             # DECOMPOSE_FIRST_HINT pass-through chain regression).
             is_root = conf.get(SOOTHE_IS_DAG_ROOT_KEY) is True
-            intake_label = conf.get(SOOTHE_INTAKE_LABEL_KEY)
-            if is_root and isinstance(intake_label, str) and intake_label.lower() == "complex":
+            task_complexity = conf.get(SOOTHE_TASK_COMPLEXITY_KEY)
+            if (
+                is_root
+                and isinstance(task_complexity, str)
+                and task_complexity.lower() == "complex"
+            ):
                 addendum = f"{addendum}\n\n{PARALLEL_NUDGE_ADDENDUM}"
 
         system = request.system_message

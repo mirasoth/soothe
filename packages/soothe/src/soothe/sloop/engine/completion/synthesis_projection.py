@@ -65,7 +65,6 @@ def render_synthesis_system_prompt(
     user_goal: str,
     workspace: str | None = None,
     agent_instructions_max_chars: int = 8000,
-    response_language: object | None = None,
     scratchpad_mode: bool = False,
 ) -> str:
     """Render system instructions from the synthesis template (no orchestration terms).
@@ -103,7 +102,7 @@ def render_synthesis_system_prompt(
             user_goal=user_goal,
             scratchpad_mode=scratchpad_mode,
         ),
-        SystemTemplates.build_response_language_hint(response_language),
+        SystemTemplates.build_response_language_hint(None),
     ]
     if workspace:
         block = ProjectInstructions.load(

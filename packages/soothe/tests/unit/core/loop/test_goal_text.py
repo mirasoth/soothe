@@ -4,11 +4,6 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from soothe.sloop.intention.models import (
-    IntakeLabel,
-    IntentClassification,
-    TaskComplexity,
-)
 from soothe.sloop.state.schemas import LoopState
 from soothe.sloop.utils.goal_text import (
     apply_clarification_resume_goal_text,
@@ -24,10 +19,6 @@ def test_resolve_planning_goal_prefers_goal_user_submission() -> None:
         goal="using existing daemon. Run all tests",
         goal_user_submission="Run all Go and TypeScript client tests and fix all errors",
         thread_id="t",
-        intent=IntentClassification(
-            intake_label=IntakeLabel.COMPLEX,
-            task_complexity=TaskComplexity.COMPLEX,
-        ),
     )
     assert resolve_planning_goal(state) == (
         "Run all Go and TypeScript client tests and fix all errors"

@@ -314,12 +314,14 @@ def build_dependent_execution_hints(
     from soothe.prompts import user_finish_or_split_hint_lines
 
     root = bool(step.is_dag_root if is_dag_root is None else is_dag_root)
+    expected_text = (expected_output or "").strip()
     instruction_lines = [
         *user_finish_or_split_hint_lines(is_dag_root=root),
         "- Complete only this EXECUTION TASK; do not do work meant for other "
         "tasks that will run in later threads",
-        "- Produce output matching the EXPECTED OUTPUT specification",
     ]
+    if expected_text:
+        instruction_lines.append("- Produce output matching the EXPECTED OUTPUT specification")
     if has_predecessor_evidence:
         instruction_lines.insert(
             0,
@@ -330,7 +332,7 @@ def build_dependent_execution_hints(
             1,
             "- Apply fixes or follow-up actions using concrete details from prior outcomes",
         )
-    expected_body = f"- {expected_output.strip()}" if (expected_output or "").strip() else None
+    expected_body = f"- {expected_text}" if expected_text else None
     return ExecuteStepEnvelopeBody(
         expected_output=expected_body,
         instructions="\n".join(instruction_lines),

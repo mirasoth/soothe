@@ -75,3 +75,23 @@ class TestExecutionGuidanceEnvelopeIntegration:
         assert "EXPECTED OUTPUT:" not in envelope
         assert "INSTRUCTIONS:" not in envelope
         assert "EXECUTION TASK:" in envelope
+
+    def test_default_step_envelope_has_no_completion_status_prose(self) -> None:
+        """Steps without a deliverable never see a status line as expected output."""
+        step = StepAction(id="01", description="Greet the user")
+        body = build_dependent_execution_hints(
+            step,
+            has_predecessor_evidence=False,
+            expected_output=step.expected_output,
+        )
+        envelope = UserMessageBuilder().build_execute_step_message(
+            step.description,
+            step_id=step.id,
+            short_description=step.description,
+            expected_output=body.expected_output,
+            instructions=body.instructions,
+        )
+        assert body.expected_output is None
+        assert "EXPECTED OUTPUT:" not in envelope
+        assert "Step completed successfully" not in envelope
+        assert "EXPECTED OUTPUT specification" not in body.instructions

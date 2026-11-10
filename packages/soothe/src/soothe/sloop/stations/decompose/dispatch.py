@@ -26,9 +26,10 @@ from soothe.sloop.utils.goal_text import resolve_user_request
 logger = logging.getLogger(__name__)
 
 
-def _intent_field(ctx: LoopRuntimeContext, name: str) -> str:
-    """Read a wire-safe string from the classified intent, or empty."""
-    raw = getattr(getattr(ctx.loop_state, "intent", None), name, None)
+def _forced_complexity(ctx: LoopRuntimeContext) -> str:
+    """Wire-safe string of the client-forced task complexity, or empty."""
+    routing = getattr(ctx.loop_state, "routing_classification", None)
+    raw = getattr(routing, "task_complexity", None)
     return str(getattr(raw, "value", raw) or "").strip().lower()
 
 
@@ -45,7 +46,7 @@ def _step_action_from_node(node: StepNode) -> StepAction:
         id=node.id,
         description=title,
         full_description=full,
-        expected_output=node.expected_output or "Step completed successfully",
+        expected_output=node.expected_output,
         dependencies=list(node.dependencies) or None,
         execution_hint=hint,
         kind=kind,  # type: ignore[arg-type]
@@ -77,24 +78,16 @@ async def _ensure_root_step(ctx: LoopRuntimeContext) -> str | None:
             root_id = next(iter(goal.steps.nodes))
     else:
         goal_text = resolve_user_request(ctx.loop_state) or ctx.loop_state.goal or "Execute task"
-        intent = getattr(ctx.loop_state, "intent", None)
-        short_title = (getattr(intent, "task_short_description", None) or "").strip()
-        raw_complexity = getattr(intent, "task_complexity", None) if intent else None
-        root_complexity = (
-            getattr(raw_complexity, "value", raw_complexity)
-            if raw_complexity is not None
-            else "simple"
-        )
         plan_id = allocate_plan_id()
         root_id = f"{plan_id}-01"
         root = StepNode(
             id=root_id,
-            description=short_title or goal_text,
+            description=goal_text,
             full_description=goal_text,
             status="pending",
             parent_step_id=None,
             plan_iteration=0,
-            task_complexity=root_complexity,
+            task_complexity=_forced_complexity(ctx) or "simple",
         )
         await _maybe_await(ce.add_step(goal_id, root))
         logger.info("[dispatch] created root step %s for goal %s", root_id, goal_id)
@@ -188,21 +181,13 @@ class DispatchNode(LoopNode):
             goal_text = (
                 resolve_user_request(ctx.loop_state) or ctx.loop_state.goal or "Execute task"
             )
-            intent = getattr(ctx.loop_state, "intent", None)
-            short_title = (getattr(intent, "task_short_description", None) or "").strip()
-            raw_complexity = getattr(intent, "task_complexity", None) if intent else None
-            fallback_complexity = (
-                getattr(raw_complexity, "value", raw_complexity)
-                if raw_complexity is not None
-                else "simple"
-            )
             plan_id = allocate_plan_id()
             step = StepAction(
                 id=f"{plan_id}-01",
-                description=short_title or goal_text,
+                description=goal_text,
                 full_description=goal_text,
                 is_dag_root=True,
-                task_complexity=fallback_complexity,
+                task_complexity=_forced_complexity(ctx) or "simple",
             )
             decision = AgentDecision(
                 type="execute_steps",
@@ -323,8 +308,7 @@ class DispatchNode(LoopNode):
                             for s in claimed
                         ],
                         "execution_mode": "parallel",
-                        "intake_label": _intent_field(ctx, "intake_label"),
-                        "task_complexity": _intent_field(ctx, "task_complexity"),
+                        "task_complexity": _forced_complexity(ctx),
                         "total_steps": len(decision.steps),
                         "done_steps": len(ctx.loop_state.step_results),
                     },

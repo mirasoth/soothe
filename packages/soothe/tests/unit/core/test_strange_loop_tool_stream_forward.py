@@ -371,3 +371,23 @@ def test_internal_custom_event_not_forwarded() -> None:
         {"type": "soothe.internal.policy.checked", "verdict": "allow"},
     )
     assert _forward_messages_chunk(chunk) is False
+
+
+def test_llm_call_boundary_forwarded() -> None:
+    """The LLM call boundary event must be forwarded to the TUI."""
+    chunk = (
+        (),
+        "custom",
+        {"type": "soothe.cognition.llm.call.boundary", "thread_id": "t-1"},
+    )
+    assert _forward_messages_chunk(chunk) is True
+
+
+def test_llm_call_boundary_namespaced_forwarded() -> None:
+    """Namespaced boundary events (from execute subgraphs) are forwarded."""
+    chunk = (
+        ("execute:thread-abc",),
+        "custom",
+        {"type": "soothe.cognition.llm.call.boundary", "thread_id": "t-1"},
+    )
+    assert _forward_messages_chunk(chunk) is True

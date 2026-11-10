@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from soothe_nano.core.events import (
     ERROR,
-    LLM_RETRY_ATTEMPT,
     MEMORY_RECALLED,
     MEMORY_STORED,
     POLICY_CHECKED,
@@ -29,9 +28,9 @@ from .catalog import (
     GOAL_FAILED,
     GOAL_REMOVED,
     GOAL_REPORT,
-    INTENT_CLASSIFIED,  #
     ITERATION_COMPLETED,
     ITERATION_STARTED,
+    LLM_CALL_BOUNDARY,
     LOOP_COMPLETED,
     LOOP_CREATED,
     LOOP_STARTED,
@@ -75,9 +74,9 @@ from .catalog import (
     GoalFailedEvent,
     GoalRemovedEvent,
     GoalReportEvent,
-    IntentClassifiedEvent,  #
     IterationCompletedEvent,
     IterationStartedEvent,
+    LLMCallBoundaryEvent,
     LoopCompletedEvent,
     LoopCreatedEvent,
     LoopStartedEvent,
@@ -122,7 +121,7 @@ __all__ = [
     # All event constants (from catalog)
     "ITERATION_STARTED",
     "ITERATION_COMPLETED",
-    "LLM_RETRY_ATTEMPT",
+    "LLM_CALL_BOUNDARY",
     "CHECKPOINT_SAVED",
     "RECOVERY_RESUMED",
     "LOOP_CREATED",
@@ -135,7 +134,6 @@ __all__ = [
     "GOAL_REPORT",
     "GOAL_DIRECTIVES_APPLIED",
     "GOAL_DEFERRED",
-    "INTENT_CLASSIFIED",  #
     "PLAN_CREATED",
     "PLAN_BATCH_STARTED",
     "PLAN_REFLECTED",
@@ -188,6 +186,7 @@ __all__ = [
     # Event model classes
     "IterationStartedEvent",
     "IterationCompletedEvent",
+    "LLMCallBoundaryEvent",
     "LoopCreatedEvent",
     "LoopStartedEvent",
     "LoopCompletedEvent",
@@ -210,7 +209,6 @@ __all__ = [
     "WiredSubagentFailedEvent",
     "WiredSubagentCancelledEvent",
     # Intent events
-    "IntentClassifiedEvent",
     # Other events
     "MemoryRecalledEvent",
     "MemoryStoredEvent",
