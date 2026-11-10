@@ -10,7 +10,6 @@ so the TUI can insert a line break between reasoning from different calls.
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -23,27 +22,17 @@ from langchain.agents.middleware.types import (
 
 from soothe.events.catalog import LLM_CALL_BOUNDARY
 
-logger = logging.getLogger(__name__)
 
+def _emit_boundary() -> None:
+    """Dispatch the boundary event via the LangGraph stream writer."""
+    try:
+        from langgraph.config import get_stream_writer  # type: ignore[import]
 
-def _emit_boundary(request: ModelRequest[Any]) -> None:
-    """Dispatch the boundary event via ``request.runtime.stream_writer``."""
-    stream_writer = getattr(getattr(request, "runtime", None), "stream_writer", None)
-    if not callable(stream_writer):
-        return
-    thread_id = ""
-    try:
-        config = getattr(getattr(request, "runtime", None), "config", None)
-        if isinstance(config, dict):
-            configurable = config.get("configurable")
-            if isinstance(configurable, dict):
-                thread_id = str(configurable.get("thread_id") or "")
-    except Exception:  # noqa: BLE001 — observability only
-        pass
-    try:
-        stream_writer({"type": LLM_CALL_BOUNDARY, "thread_id": thread_id})
+        writer = get_stream_writer()
+        if callable(writer):
+            writer({"type": LLM_CALL_BOUNDARY})
     except Exception:  # noqa: BLE001 — observability only, never fatal
-        logger.debug("Failed to emit LLM call boundary event", exc_info=True)
+        pass
 
 
 class ReasoningBoundaryMiddleware(AgentMiddleware):
@@ -55,7 +44,7 @@ class ReasoningBoundaryMiddleware(AgentMiddleware):
         handler: Callable[[ModelRequest[ContextT]], ModelResponse[Any]],
     ) -> ModelResponse[Any]:
         """Emit boundary event before the sync model call."""
-        _emit_boundary(request)
+        _emit_boundary()
         return handler(request)
 
     async def awrap_model_call(
@@ -64,7 +53,7 @@ class ReasoningBoundaryMiddleware(AgentMiddleware):
         handler: Callable[[ModelRequest[ContextT]], Awaitable[ModelResponse[Any]]],
     ) -> ModelResponse[Any]:
         """Emit boundary event before the async model call."""
-        _emit_boundary(request)
+        _emit_boundary()
         return await handler(request)
 
 
