@@ -13,12 +13,14 @@ from langchain.agents.middleware.types import (
     ModelRequest,
     ModelResponse,
 )
-from langchain_core.messages import ToolMessage
+from langchain_core.messages import SystemMessage, ToolMessage
 
 from soothe.prompts import (
     ASK_MODE_ADDENDUM,
+    CONTEXT_PRESSURE_SPLIT_HINT,
     PARALLEL_NUDGE_ADDENDUM,
     PLAN_MODE_ADDENDUM,
+    SPLIT_CANDIDATE_ADDENDUM,
     THREAD_POLICY_SYSTEM_ADDENDUM,
     WRITE_TODOS_TOOL_DESCRIPTION,
 )
@@ -39,7 +41,7 @@ logger = logging.getLogger(__name__)
 
 _DECOMPOSE_TOOL = build_decompose_task_tool()
 
-# Per-step dedup for the injection DEBUG log. ``modify_request`` fires on
+# Per-step dedup for the injection DEBUG log. `modify_request` fires on
 # every model call within a step, so without dedup a single step floods the
 # log with identical "injecting decompose_task" lines (1549× in one loop was
 # observed). This is ephemeral diagnostic state — not loop state — and never
@@ -48,12 +50,25 @@ _INJECTION_LOGGED_STEPS: set[str] = set()
 _INJECTION_LOG_CAP = 512
 
 # Per-step cache for the TypeSafe finish-vs-split decision. Set from
-# ``awrap_model_call`` (async) before ``modify_request`` (sync) runs, so the
+# `awrap_model_call` (async) before `modify_request` (sync) runs, so the
 # sync hook can read the cached verdict without making its own async call.
-# ``None`` = not yet evaluated; ``"finish"`` = strip decompose; anything else
-# = keep decompose (fail-safe).
+# `None` = not yet evaluated; "finish" = strip decompose; "split" = root
+# nudge / re-check addendum; anything else = keep decompose (fail-safe).
 _jev_finish_split: ContextVar[str | None] = ContextVar("jev_finish_split", default=None)
 _jev_finish_split_step: ContextVar[str | None] = ContextVar("jev_finish_split_step", default=None)
+
+# RFC-SLP-006 §2: mid-thread re-check state. Tool completions accumulate in
+# `_jev_tool_calls`; crossing a recheck_tool_calls milestone (bounded by
+# `_jev_rechecks_done`) invalidates the verdict cache so the next model
+# call re-evaluates with the trajectory. Never re-evaluates without new tool
+# results — the 7d10 classifier-churn lesson.
+_jev_tool_calls: ContextVar[int] = ContextVar("jev_tool_calls", default=0)
+_jev_recent_tools: ContextVar[list[str] | None] = ContextVar("jev_recent_tools", default=None)
+_jev_rechecks_done: ContextVar[int] = ContextVar("jev_rechecks_done", default=0)
+
+_RECENT_TOOL_DIGESTS = 8
+_TOOL_DIGEST_CHARS = 120
+_DEFAULT_CONTEXT_LIMIT = 200_000
 
 
 def reset_decompose_injection_log_state() -> None:
@@ -61,16 +76,110 @@ def reset_decompose_injection_log_state() -> None:
     _INJECTION_LOGGED_STEPS.clear()
 
 
+def _decompose_cfg(conf: dict[str, Any]) -> Any | None:
+    """Best-effort `agent.loop.decompose` config; None when absent."""
+    sc = conf.get("soothe_config")
+    try:
+        return sc.agent.loop.decompose
+    except AttributeError:
+        return None
+
+
+def _recheck_interval(conf: dict[str, Any]) -> int:
+    """Tool-completion milestone interval for re-checks; 0 disables."""
+    value = getattr(_decompose_cfg(conf), "recheck_tool_calls", 10)
+    return value if isinstance(value, int) and value > 0 else 0
+
+
+def _max_rechecks(conf: dict[str, Any]) -> int:
+    value = getattr(_decompose_cfg(conf), "max_rechecks_per_step", 2)
+    return value if isinstance(value, int) and value > 0 else 0
+
+
+def _split_hint_pct(conf: dict[str, Any]) -> float:
+    value = getattr(_decompose_cfg(conf), "split_hint_threshold_pct", 0.60)
+    return float(value) if isinstance(value, (int, float)) and value > 0 else 0.0
+
+
+def _root_split_nudge_enabled(conf: dict[str, Any]) -> bool:
+    return getattr(_decompose_cfg(conf), "root_split_nudge", True) is not False
+
+
+def _context_limit(conf: dict[str, Any]) -> int:
+    sc = conf.get("soothe_config")
+    try:
+        return int(sc.agent.loop.context_window_limit)
+    except (AttributeError, TypeError, ValueError):
+        return _DEFAULT_CONTEXT_LIMIT
+
+
+def _system_text(request: Any) -> str:
+    """Existing system message text (str content or joined text blocks)."""
+    system = getattr(request, "system_message", None)
+    content = getattr(system, "content", None)
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(b.get("text", "") for b in content if isinstance(b, dict))
+    return ""
+
+
+def _estimate_request_tokens(request: Any) -> int:
+    """Coarse token estimate: message text bytes ÷ 4 (hint-only precision)."""
+    total = 0
+    for message in getattr(request, "messages", None) or []:
+        content = getattr(message, "content", None)
+        if isinstance(content, str):
+            total += len(content)
+        elif isinstance(content, list):
+            total += sum(len(str(b.get("text", ""))) for b in content if isinstance(b, dict))
+    return total // 4
+
+
+def _context_pressure_hint(request: Any, conf: dict[str, Any]) -> str | None:
+    """RFC-SLP-006 §5: split hint below the compaction threshold."""
+    pct = _split_hint_pct(conf)
+    if pct <= 0:
+        return None
+    threshold = int(_context_limit(conf) * pct)
+    if _estimate_request_tokens(request) < threshold:
+        return None
+    return CONTEXT_PRESSURE_SPLIT_HINT
+
+
+def _track_tool_completion(tool_name: str, result: Any) -> None:
+    """Count tool completions on agent-mode step threads; arm re-checks (RFC-SLP-006 §2)."""
+    conf = _decompose_runtime.langgraph_configurable()
+    if conf.get(SOOTHE_EVAL_STEP_ID_KEY):
+        return
+    step_id = _decompose_runtime.current_step_id() or conf.get(SOOTHE_DECOMPOSE_STEP_ID_KEY)
+    if not step_id:
+        return
+    if conf.get(SOOTHE_INTERACTION_MODE_KEY) in ("plan", "ask"):
+        return
+    interval = _recheck_interval(conf)
+    if interval <= 0:
+        return
+    count = _jev_tool_calls.get() + 1
+    _jev_tool_calls.set(count)
+    content = getattr(result, "content", result)
+    digests = list(_jev_recent_tools.get() or [])
+    digests.append(f"{tool_name}: {str(content)[:_TOOL_DIGEST_CHARS]}")
+    _jev_recent_tools.set(digests[-_RECENT_TOOL_DIGESTS:])
+    if count % interval == 0 and _jev_rechecks_done.get() < _max_rechecks(conf):
+        _jev_rechecks_done.set(_jev_rechecks_done.get() + 1)
+        _jev_finish_split_step.set(None)
+        logger.info("[decompose] re-check armed at tool call %d (step=%s)", count, step_id)
+
+
 async def _try_jev_finish_vs_split(conf: dict[str, Any]) -> str | None:
     """Run a TypeSafe finish-vs-split decision for the current step.
 
-    Returns ``"finish"`` when JEV says the step should finish in-thread with
-    trusted confidence (decompose_task can be stripped). Returns ``None``
-    for any other verdict, untrusted, or unavailable — callers keep the
-    decompose tool (fail-safe).
-
-    The result is cached in ``_jev_finish_split`` keyed by step id so the
-    sync ``modify_request`` hook can read it without an async call.
+    Returns "finish" / "split" on trusted verdicts, None otherwise. The
+    verdict is cached in `_jev_finish_split` keyed by step id so the sync
+    `modify_request` hook can read it without an async call. On a re-check
+    (cache invalidated mid-step), an untrusted or unavailable verdict keeps
+    the prior surface — a t=0 strip stays sticky.
     """
     step_id = _decompose_runtime.current_step_id() or conf.get(SOOTHE_DECOMPOSE_STEP_ID_KEY)
     if not step_id:
@@ -81,7 +190,8 @@ async def _try_jev_finish_vs_split(conf: dict[str, Any]) -> str | None:
     if cached_step == step_id:
         return _jev_finish_split.get()
 
-    # Not yet evaluated — run the JEV decision.
+    # Not yet evaluated (or invalidated for a re-check) — run the decision.
+    previous_verdict = _jev_finish_split.get()
     _jev_finish_split_step.set(step_id)
     _jev_finish_split.set(None)
 
@@ -102,24 +212,41 @@ async def _try_jev_finish_vs_split(conf: dict[str, Any]) -> str | None:
             step_description=step_description,
             user_goal=user_goal,
             task_complexity=task_complexity,
+            tool_call_count=_jev_tool_calls.get(),
+            recent_tools=_jev_recent_tools.get(),
             soothe_config=soothe_config,
         )
     except Exception as exc:  # noqa: BLE001 — never block on the classifier
         logger.info("[decompose] typesafe finish/split unavailable (%s)", exc)
-        return None
+        _jev_finish_split.set(previous_verdict)
+        return previous_verdict
 
     if verdict == "finish":
         _jev_finish_split.set("finish")
         logger.info("[decompose] typesafe: finish in-thread (step=%s)", step_id)
         return "finish"
 
-    return None
+    if verdict == "split":
+        _jev_finish_split.set("split")
+        logger.info(
+            "[decompose] typesafe: split (step=%s recheck=%s)",
+            step_id,
+            _jev_rechecks_done.get() > 0,
+        )
+        return "split"
+
+    # Untrusted verdict — keep the prior surface (strip stays sticky).
+    _jev_finish_split.set(previous_verdict)
+    return previous_verdict
 
 
 def _reset_jev_finish_split_cache() -> None:
-    """Clear the JEV finish-vs-split cache (test isolation)."""
+    """Clear the JEV finish-vs-split cache and re-check state (test isolation)."""
     _jev_finish_split.set(None)
     _jev_finish_split_step.set(None)
+    _jev_tool_calls.set(0)
+    _jev_recent_tools.set(None)
+    _jev_rechecks_done.set(0)
 
 
 def _override_write_todos_description(tools: list[Any]) -> list[Any]:
@@ -177,7 +304,32 @@ class DecomposeTaskMiddleware(AgentMiddleware):
         return mode if mode in ("plan", "ask") else None
 
     # ------------------------------------------------------------------
-    # Tool-call guard (coded policy)
+    # Agent-mode optional addenda (RFC-SLP-006)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _agent_addenda(conf: dict[str, Any]) -> list[str]:
+        """Agent-mode optional prompt fragments for the current step.
+
+        P1 nudge: a DAG root with client-forced complexity OR a trusted t=0
+        split verdict. P2 addendum: a mid-step re-check flipped to split.
+        """
+        fragments: list[str] = []
+        is_root = conf.get(SOOTHE_IS_DAG_ROOT_KEY) is True
+        verdict = _jev_finish_split.get()
+        task_complexity = conf.get(SOOTHE_TASK_COMPLEXITY_KEY)
+        forced_complex = isinstance(task_complexity, str) and task_complexity.lower() == "complex"
+        rechecked = _jev_rechecks_done.get() > 0
+
+        if is_root and (forced_complex or (verdict == "split" and not rechecked)):
+            if forced_complex or _root_split_nudge_enabled(conf):
+                fragments.append(PARALLEL_NUDGE_ADDENDUM)
+        elif verdict == "split" and rechecked:
+            fragments.append(SPLIT_CANDIDATE_ADDENDUM)
+        return fragments
+
+    # ------------------------------------------------------------------
+    # Tool-call guard (coded policy) + re-check tracking
     # ------------------------------------------------------------------
 
     async def awrap_tool_call(
@@ -185,20 +337,19 @@ class DecomposeTaskMiddleware(AgentMiddleware):
         request: Any,
         handler: Callable[[Any], Awaitable[Any]],
     ) -> Any:
-        """Intercept `decompose_task` in plan/ask modes.
-
-        Even though the tool is stripped from the schema, a forced
-        `tool_choice` or cached tool map might still route a call here.
-        Return a `ToolMessage` that guides the LLM to finish in-thread.
-        """
+        """Intercept `decompose_task` in plan/ask modes; track completions."""
         tool_call = getattr(request, "tool_call", None) or {}
         tool_name = str(tool_call.get("name", ""))
         if tool_name != "decompose_task":
-            return await handler(request)
+            result = await handler(request)
+            _track_tool_completion(tool_name, result)
+            return result
         conf = _decompose_runtime.langgraph_configurable()
         mode = self._active_mode(conf)
         if mode is None:
-            return await handler(request)
+            result = await handler(request)
+            _track_tool_completion(tool_name, result)
+            return result
         step_id = _decompose_runtime.current_step_id() or conf.get(
             SOOTHE_DECOMPOSE_STEP_ID_KEY, "?"
         )
@@ -234,11 +385,15 @@ class DecomposeTaskMiddleware(AgentMiddleware):
         tool_call = getattr(request, "tool_call", None) or {}
         tool_name = str(tool_call.get("name", ""))
         if tool_name != "decompose_task":
-            return handler(request)
+            result = handler(request)
+            _track_tool_completion(tool_name, result)
+            return result
         conf = _decompose_runtime.langgraph_configurable()
         mode = self._active_mode(conf)
         if mode is None:
-            return handler(request)
+            result = handler(request)
+            _track_tool_completion(tool_name, result)
+            return result
         step_id = _decompose_runtime.current_step_id() or conf.get(
             SOOTHE_DECOMPOSE_STEP_ID_KEY, "?"
         )
@@ -285,6 +440,7 @@ class DecomposeTaskMiddleware(AgentMiddleware):
         mode = self._active_mode(conf)
         tools = list(request.tools or [])
         tools = _override_write_todos_description(tools)
+        agent_optional: list[str] = []
 
         if mode in ("plan", "ask"):
             # Coded policy: strip decompose_task so the LLM can't call it.
@@ -299,9 +455,9 @@ class DecomposeTaskMiddleware(AgentMiddleware):
             )
         else:
             # Agent mode: check JEV finish-vs-split cache first.
-            # When JEV says "finish" with trusted confidence, strip
-            # decompose_task so the LLM has a narrower action space.
+            # "finish" strips decompose_task; anything else keeps it.
             jev_verdict = _jev_finish_split.get()
+            agent_optional = self._agent_addenda(conf)
             if jev_verdict == "finish":
                 before = len(tools)
                 tools = _strip_decompose_tool(tools)
@@ -333,51 +489,50 @@ class DecomposeTaskMiddleware(AgentMiddleware):
                         len(tools),
                         already_present,
                     )
+                # P5: context-pressure split hint — only when the tool is
+                # actually available to act on it.
+                hint = _context_pressure_hint(request, conf)
+                if hint is not None and hint not in agent_optional:
+                    agent_optional.append(hint)
 
-        # Build system-prompt addendum.
-        addendum = THREAD_POLICY_SYSTEM_ADDENDUM
+        # Build the system-prompt addendum. Each fragment is checked against
+        # the existing system text individually so a fragment appearing
+        # mid-step (re-check verdict, pressure hint) never duplicates the
+        # base policy.
+        existing_text = _system_text(request)
+        base = THREAD_POLICY_SYSTEM_ADDENDUM
         # Inject the branch cap so the LLM stays under the limit.
         max_branch_root = conf.get(SOOTHE_MAX_BRANCH_ROOT_KEY)
         if isinstance(max_branch_root, int) and max_branch_root > 0:
-            addendum = (
-                f"{addendum}\n\n"
+            base = (
+                f"{base}\n\n"
                 f"## decompose_task subtask limit\n\n"
                 f"Propose at most {max_branch_root} child subtasks per "
                 f"decompose_task call. Excess subtasks are truncated."
             )
         if mode == "ask":
-            addendum = f"{addendum}\n\n{ASK_MODE_ADDENDUM}"
+            base = f"{base}\n\n{ASK_MODE_ADDENDUM}"
         elif mode == "plan":
-            addendum = f"{addendum}\n\n{PLAN_MODE_ADDENDUM}"
-        else:
-            # Agent mode: soft parallelization nudge for complex root steps.
-            # Fires only on a DAG root (never child steps — prevents recursive
-            # fan-out nudging at every decompose layer) when the intake LLM
-            # classified the goal as complex ("multi-phase / parallel
-            # workstreams"). Language-independent semantic signal — no keyword
-            # matching. Soft, not mandatory: the LLM is invited to *assess*
-            # parallelization, not forced to split (avoids the
-            # DECOMPOSE_FIRST_HINT pass-through chain regression).
-            is_root = conf.get(SOOTHE_IS_DAG_ROOT_KEY) is True
-            task_complexity = conf.get(SOOTHE_TASK_COMPLEXITY_KEY)
-            if (
-                is_root
-                and isinstance(task_complexity, str)
-                and task_complexity.lower() == "complex"
-            ):
-                addendum = f"{addendum}\n\n{PARALLEL_NUDGE_ADDENDUM}"
+            base = f"{base}\n\n{PLAN_MODE_ADDENDUM}"
+
+        pending: list[str] = []
+        if base and base not in existing_text:
+            pending.append(base)
+        for fragment in agent_optional:
+            if fragment and fragment not in base and fragment not in existing_text:
+                pending.append(fragment)
+
+        if not pending:
+            return request.override(tools=tools)
+        addendum = "\n\n".join(pending)
 
         system = request.system_message
         if system is not None and hasattr(system, "content"):
             content = system.content
-            if isinstance(content, str) and addendum not in content:
-                from langchain_core.messages import SystemMessage
-
+            if isinstance(content, str):
                 new_system = SystemMessage(content=f"{content}\n\n{addendum}")
                 return request.override(tools=tools, system_message=new_system)
             if isinstance(content, list):
-                from langchain_core.messages import SystemMessage
-
                 new_blocks = [
                     *content,
                     {"type": "text", "text": f"\n\n{addendum}"},
@@ -402,10 +557,10 @@ class DecomposeTaskMiddleware(AgentMiddleware):
     ) -> ModelResponse[Any]:
         """Apply decompose injection before the async model call.
 
-        Before the sync ``modify_request`` runs, evaluate the TypeSafe
-        finish-vs-split decision for the current step (once per step,
-        cached in a contextvar). The cached verdict is read by
-        ``modify_request`` to decide whether to strip ``decompose_task``.
+        Before the sync `modify_request` runs, evaluate the TypeSafe
+        finish-vs-split decision for the current step (once per step at t=0,
+        re-run after a re-check milestone invalidates the cache). The cached
+        verdict is read by `modify_request` to shape the tool surface.
         """
         conf = _decompose_runtime.langgraph_configurable()
         step_id = _decompose_runtime.current_step_id() or conf.get(SOOTHE_DECOMPOSE_STEP_ID_KEY)

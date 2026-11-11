@@ -2549,6 +2549,7 @@ class Executor:
             decompose_tokens = bind_decompose_runtime(
                 step_id=step.id,
                 sink=self.decompose_proposals,
+                step_kind=step.kind,
                 verdict_sink=self.coverage_verdicts if step.kind == "eval" else None,
                 clarification_sink=self.coverage_clarifications if step.kind == "eval" else None,
             )

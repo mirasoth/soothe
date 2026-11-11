@@ -5,25 +5,36 @@ from __future__ import annotations
 import asyncio
 import logging
 from types import SimpleNamespace
-from unittest.mock import patch
+from typing import Any
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from langchain.agents.middleware.types import ModelRequest
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
-from soothe.prompts import PARALLEL_NUDGE_ADDENDUM
-from soothe.sloop.decompose.middleware import reset_decompose_injection_log_state
+from soothe.prompts import (
+    CONTEXT_PRESSURE_SPLIT_HINT,
+    PARALLEL_NUDGE_ADDENDUM,
+    SPLIT_CANDIDATE_ADDENDUM,
+)
+from soothe.sloop.decompose.middleware import (
+    _reset_jev_finish_split_cache,
+    reset_decompose_injection_log_state,
+)
 from soothe.sloop.decompose.runtime import bind_decompose_runtime, reset_decompose_runtime
 from soothe.sloop.middleware import DecomposeTaskMiddleware
 from soothe.sloop.utils.config_keys import (
     SOOTHE_DECOMPOSE_STEP_ID_KEY,
     SOOTHE_INTERACTION_MODE_KEY,
     SOOTHE_IS_DAG_ROOT_KEY,
+    SOOTHE_STEP_DESCRIPTION_KEY,
     SOOTHE_TASK_COMPLEXITY_KEY,
+    SOOTHE_USER_GOAL_KEY,
 )
 
 _CONFIGURABLE = "soothe.sloop.decompose.runtime.langgraph_configurable"
+_TYPESAFE = "soothe.sloop.decompose.decompose_typesafe.decide_finish_vs_split_typesafe"
 
 
 def _request() -> ModelRequest:
@@ -230,3 +241,258 @@ def test_injection_log_fires_again_for_a_new_step(caplog: pytest.LogCaptureFixtu
 
     injection_logs = [r for r in caplog.records if "injecting decompose_task" in r.getMessage()]
     assert len(injection_logs) == 2
+
+
+# ── RFC-SLP-006: root split nudge, evidence re-check, pressure hint ────────
+
+
+def _stub_soothe_config(**decompose_overrides: object) -> object:
+    """Minimal soothe_config stub exposing agent.loop.decompose knobs."""
+    from types import SimpleNamespace
+
+    fields: dict[str, object] = {
+        "recheck_tool_calls": 10,
+        "max_rechecks_per_step": 2,
+        "split_hint_threshold_pct": 0.60,
+        "root_split_nudge": True,
+    }
+    fields.update(decompose_overrides)
+    decompose = SimpleNamespace(**fields)
+    return SimpleNamespace(
+        agent=SimpleNamespace(
+            loop=SimpleNamespace(decompose=decompose, context_window_limit=200_000)
+        )
+    )
+
+
+def _jev_conf(**extra: object) -> dict:
+    conf: dict = {
+        SOOTHE_DECOMPOSE_STEP_ID_KEY: "ROOT-01",
+        SOOTHE_STEP_DESCRIPTION_KEY: "build the thing",
+        SOOTHE_USER_GOAL_KEY: "build",
+    }
+    conf.update(extra)
+    return conf
+
+
+def test_root_trusted_split_verdict_gets_parallel_nudge() -> None:
+    """P1: a trusted root 'split' verdict earns the nudge (organic path)."""
+    _reset_jev_finish_split_cache()
+    reset_decompose_injection_log_state()
+    conf = _jev_conf(**{SOOTHE_IS_DAG_ROOT_KEY: True})
+    with (
+        patch(_CONFIGURABLE, return_value=conf),
+        patch(_TYPESAFE, new=AsyncMock(return_value="split")),
+    ):
+        forwarded = _run_through_hook(DecomposeTaskMiddleware(), _request())
+    assert PARALLEL_NUDGE_ADDENDUM in forwarded.system_message.content
+    assert "decompose_task" in _tool_names(forwarded)
+
+
+def test_root_untrusted_split_verdict_no_nudge() -> None:
+    _reset_jev_finish_split_cache()
+    reset_decompose_injection_log_state()
+    conf = _jev_conf(**{SOOTHE_IS_DAG_ROOT_KEY: True})
+    with (
+        patch(_CONFIGURABLE, return_value=conf),
+        patch(_TYPESAFE, new=AsyncMock(return_value=None)),
+    ):
+        forwarded = _run_through_hook(DecomposeTaskMiddleware(), _request())
+    assert PARALLEL_NUDGE_ADDENDUM not in forwarded.system_message.content
+
+
+def test_non_root_split_verdict_no_nudge() -> None:
+    _reset_jev_finish_split_cache()
+    reset_decompose_injection_log_state()
+    conf = _jev_conf()
+    with (
+        patch(_CONFIGURABLE, return_value=conf),
+        patch(_TYPESAFE, new=AsyncMock(return_value="split")),
+    ):
+        forwarded = _run_through_hook(DecomposeTaskMiddleware(), _request())
+    assert PARALLEL_NUDGE_ADDENDUM not in forwarded.system_message.content
+    assert "decompose_task" in _tool_names(forwarded)
+
+
+def test_root_split_nudge_disabled_by_config() -> None:
+    _reset_jev_finish_split_cache()
+    reset_decompose_injection_log_state()
+    conf = _jev_conf(
+        **{
+            SOOTHE_IS_DAG_ROOT_KEY: True,
+            "soothe_config": _stub_soothe_config(root_split_nudge=False),
+        }
+    )
+    with (
+        patch(_CONFIGURABLE, return_value=conf),
+        patch(_TYPESAFE, new=AsyncMock(return_value="split")),
+    ):
+        forwarded = _run_through_hook(DecomposeTaskMiddleware(), _request())
+    assert PARALLEL_NUDGE_ADDENDUM not in forwarded.system_message.content
+
+
+def test_recheck_split_reinjects_tool_and_addendum() -> None:
+    """P2: t=0 finish strips; a milestone re-check that flips to split
+    re-injects the tool and surfaces the split-candidate addendum."""
+
+    async def scenario() -> tuple[ModelRequest, ModelRequest]:
+        verdicts = iter(["finish", "split"])
+        middleware = DecomposeTaskMiddleware()
+        conf = _jev_conf(**{"soothe_config": _stub_soothe_config(recheck_tool_calls=1)})
+        seen: dict[str, ModelRequest] = {}
+
+        async def capture(key: str) -> Any:
+            async def handler(req: ModelRequest) -> str:
+                seen[key] = req
+                return "response"
+
+            return handler
+
+        with (
+            patch(_CONFIGURABLE, return_value=conf),
+            patch(_TYPESAFE, new=AsyncMock(side_effect=lambda **_: next(verdicts))),
+        ):
+            await middleware.awrap_model_call(_request(), await capture("first"))
+
+            async def tool_handler(req: Any) -> str:
+                return "tool output"
+
+            await middleware.awrap_tool_call(
+                SimpleNamespace(tool_call={"name": "read_file", "id": "t1"}),
+                tool_handler,
+            )
+            await middleware.awrap_model_call(_request(), await capture("second"))
+        return seen["first"], seen["second"]
+
+    first, second = asyncio.run(scenario())
+    assert "decompose_task" not in _tool_names(first)
+    assert "decompose_task" in _tool_names(second)
+    assert SPLIT_CANDIDATE_ADDENDUM in second.system_message.content
+    assert SPLIT_CANDIDATE_ADDENDUM not in first.system_message.content
+
+
+def test_rechecks_bounded_by_max_per_step() -> None:
+    """P2: with max_rechecks_per_step=1 the second milestone never re-arms."""
+
+    async def scenario() -> int:
+        calls = 0
+
+        async def verdict(**_: object) -> str | None:
+            nonlocal calls
+            calls += 1
+            return "split"
+
+        middleware = DecomposeTaskMiddleware()
+        conf = _jev_conf(
+            **{"soothe_config": _stub_soothe_config(recheck_tool_calls=1, max_rechecks_per_step=1)}
+        )
+
+        async def model_handler(req: ModelRequest) -> str:
+            return "response"
+
+        async def tool_handler(req: Any) -> str:
+            return "out"
+
+        with patch(_CONFIGURABLE, return_value=conf), patch(_TYPESAFE, new=verdict):
+            await middleware.awrap_model_call(_request(), model_handler)
+            await middleware.awrap_tool_call(
+                SimpleNamespace(tool_call={"name": "read_file", "id": "t1"}), tool_handler
+            )
+            await middleware.awrap_model_call(_request(), model_handler)
+            await middleware.awrap_tool_call(
+                SimpleNamespace(tool_call={"name": "read_file", "id": "t2"}), tool_handler
+            )
+            await middleware.awrap_model_call(_request(), model_handler)
+        return calls
+
+    assert asyncio.run(scenario()) == 2  # t=0 + one re-check; second milestone capped
+
+
+def test_recheck_untrusted_keeps_strip_sticky() -> None:
+    """P2: an untrusted re-check preserves the t=0 finish surface."""
+
+    async def scenario() -> ModelRequest:
+        verdicts = iter(["finish", None])
+        middleware = DecomposeTaskMiddleware()
+        conf = _jev_conf(**{"soothe_config": _stub_soothe_config(recheck_tool_calls=1)})
+        seen: dict[str, ModelRequest] = {}
+
+        async def model_handler(key: str):
+            async def handler(req: ModelRequest) -> str:
+                seen[key] = req
+                return "response"
+
+            return handler
+
+        with (
+            patch(_CONFIGURABLE, return_value=conf),
+            patch(_TYPESAFE, new=AsyncMock(side_effect=lambda **_: next(verdicts))),
+        ):
+            await middleware.awrap_model_call(_request(), await model_handler("first"))
+
+            async def tool_handler(req: Any) -> str:
+                return "out"
+
+            await middleware.awrap_tool_call(
+                SimpleNamespace(tool_call={"name": "grep", "id": "t1"}), tool_handler
+            )
+            await middleware.awrap_model_call(_request(), await model_handler("second"))
+        return seen["second"]
+
+    second = asyncio.run(scenario())
+    assert "decompose_task" not in _tool_names(second)
+
+
+def _big_request() -> ModelRequest:
+    return ModelRequest(
+        model=GenericFakeChatModel(messages=iter([AIMessage(content="ok")])),
+        messages=[HumanMessage(content="x" * 600_000)],
+        system_message=SystemMessage(content="orig"),
+        tools=[SimpleNamespace(name="read_file")],
+        state={},
+    )
+
+
+def test_context_pressure_hint_fires_at_threshold() -> None:
+    """P5: coarse estimate at 0.60 of the context limit fires the hint."""
+    reset_decompose_injection_log_state()
+    conf = _jev_conf(**{"soothe_config": _stub_soothe_config()})
+    with patch(_CONFIGURABLE, return_value=conf):
+        forwarded = _run_through_hook(DecomposeTaskMiddleware(), _big_request())
+    assert CONTEXT_PRESSURE_SPLIT_HINT in forwarded.system_message.content
+
+
+def test_context_pressure_hint_silent_below_threshold() -> None:
+    reset_decompose_injection_log_state()
+    conf = _jev_conf(**{"soothe_config": _stub_soothe_config()})
+    with patch(_CONFIGURABLE, return_value=conf):
+        forwarded = _run_through_hook(DecomposeTaskMiddleware(), _request())
+    assert CONTEXT_PRESSURE_SPLIT_HINT not in forwarded.system_message.content
+
+
+def test_context_pressure_hint_absent_when_tool_stripped() -> None:
+    """P5: no hint when a finish verdict stripped the tool — nothing to act on."""
+    _reset_jev_finish_split_cache()
+    reset_decompose_injection_log_state()
+    conf = _jev_conf(**{"soothe_config": _stub_soothe_config()})
+    with (
+        patch(_CONFIGURABLE, return_value=conf),
+        patch(_TYPESAFE, new=AsyncMock(return_value="finish")),
+    ):
+        forwarded = _run_through_hook(DecomposeTaskMiddleware(), _big_request())
+    assert "decompose_task" not in _tool_names(forwarded)
+    assert CONTEXT_PRESSURE_SPLIT_HINT not in forwarded.system_message.content
+
+
+def test_recheck_and_hint_never_fire_in_plan_mode() -> None:
+    reset_decompose_injection_log_state()
+    conf = _jev_conf(
+        **{
+            SOOTHE_INTERACTION_MODE_KEY: "plan",
+            "soothe_config": _stub_soothe_config(recheck_tool_calls=1),
+        }
+    )
+    with patch(_CONFIGURABLE, return_value=conf):
+        forwarded = _run_through_hook(DecomposeTaskMiddleware(), _big_request())
+    assert "decompose_task" not in _tool_names(forwarded)
+    assert CONTEXT_PRESSURE_SPLIT_HINT not in forwarded.system_message.content

@@ -140,6 +140,26 @@ class CoverageSignal(BaseModel):
         )
 
 
+class DecomposeQuality(BaseModel):
+    """Per-proposal decomposition outcome record (RFC-SLP-006 §3).
+
+    Computed at action-tree green from the StepDAG alone; signal-only —
+    no decision consumes it in v1.
+    """
+
+    parent_step_id: str
+    child_count: int = 0
+    single_child: bool = False
+    sequential_only: bool = False
+    independent_children: int = 0
+    deepest_chain_len: int = 0
+    child_failures: int = 0
+    child_retries: int = 0
+    child_tool_calls_sum: int = 0
+    child_duration_ms_sum: int = 0
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
 # ── Step DAG ────────────────────────────────────────────────────────────
 
 
@@ -264,8 +284,13 @@ class StepDAG(BaseModel):
             return True
         return False
 
-    def lineage_depth(self, step_id: str) -> int:
-        """Depth along `parent_step_id` chain (root = 1). Missing id → 0."""
+    def action_lineage_depth(self, step_id: str) -> int:
+        """Depth along the parent chain, skipping `kind=eval` audit tiers.
+
+        Root action step = 1; eval nodes never count (RFC-SLP-006 §6), so
+        coverage-continuation children keep the same decompose headroom as
+        root children. Missing id → 0.
+        """
         if step_id not in self.nodes:
             return 0
         depth = 0
@@ -273,10 +298,11 @@ class StepDAG(BaseModel):
         current: str | None = step_id
         while current is not None and current not in seen:
             seen.add(current)
-            depth += 1
             node = self.nodes.get(current)
             if node is None:
                 break
+            if node.kind != "eval":
+                depth += 1
             current = node.parent_step_id
         return depth
 
@@ -454,6 +480,12 @@ class GoalNode(BaseModel):
     coverage_signals: list[CoverageSignal] = Field(
         default_factory=list,
         description="Bounded ring of coverage signals (PCE / eval close).",
+    )
+
+    # RFC-SLP-006: bounded ring of decomposition outcome records.
+    decompose_quality: list[DecomposeQuality] = Field(
+        default_factory=list,
+        description="Bounded ring of per-proposal decompose quality records.",
     )
 
     # Retry/backoff (from Goal, RFC-204)

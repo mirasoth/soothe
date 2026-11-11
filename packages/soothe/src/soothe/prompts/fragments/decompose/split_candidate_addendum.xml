@@ -1,0 +1,10 @@
+<SPLIT_CANDIDATE_ADDENDUM>
+## Re-assessment: this step spans independent workstreams
+
+The finish-vs-split monitor re-evaluated this step with its execution
+evidence and classified the remaining work as spanning independent areas.
+
+If 2+ independent parts remain, call decompose_task with one subtask per
+area now — each child thread gets a fresh context budget. If the remaining
+work is one cohesive deliverable, finish it here.
+</SPLIT_CANDIDATE_ADDENDUM>

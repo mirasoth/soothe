@@ -39,6 +39,7 @@ class ReconcileResult:
     committed_step_ids: list[str] = field(default_factory=list)
     decomposed_parent_ids: list[str] = field(default_factory=list)
     rejected: list[ReconcileRejection] = field(default_factory=list)
+    sequential_only_parents: set[str] = field(default_factory=set)
     plan_id: str | None = None
     llm_used: bool = False
 
@@ -88,26 +89,44 @@ def _drop_new_node_cycles(nodes: list[StepNode]) -> None:
         node.dependencies = [d for d in node.dependencies if (d, node.id) not in to_remove]
 
 
+def _is_pure_chain(subtasks: list[ProposedSubtask]) -> bool:
+    """True when children form a pure sequential chain (RFC-SLP-006 §4).
+
+    Child i depends on exactly child i-1 and nothing else; child 0 has no
+    sibling deps. Such a proposal gains nothing over finishing in-thread.
+    """
+    if len(subtasks) < 2:
+        return False
+    for i, sub in enumerate(subtasks):
+        deps = sorted(sub.depends_on_local or [])
+        expected = [i - 1] if i > 0 else []
+        if deps != expected:
+            return False
+    return True
+
+
 def plan_commit_from_proposals(
     dag: StepDAG,
     proposals: list[DecompositionProposal],
     *,
     config: DecomposeLoopConfig,
     plan_id: str | None = None,
-) -> tuple[list[StepNode], list[str], list[ReconcileRejection], str]:
+) -> tuple[list[StepNode], list[str], list[ReconcileRejection], str, set[str]]:
     """Build StepNodes to commit without mutating `dag`.
 
     Returns:
-        `(new_nodes, parents_to_mark_decomposed, rejections, plan_id)`.
+        `(new_nodes, parents_to_mark_decomposed, rejections, plan_id,
+        sequential_only_parents)`.
     """
     rejections: list[ReconcileRejection] = []
     if not proposals:
-        return [], [], [], plan_id or allocate_plan_id()
+        return [], [], [], plan_id or allocate_plan_id(), set()
 
     scoped_plan_id = plan_id or allocate_plan_id()
     ordered = sorted(proposals, key=lambda p: (p.wave_seq, p.parent_step_id))
 
     accepted: list[tuple[str, list[ProposedSubtask]]] = []
+    sequential_only_parents: set[str] = set()
     for prop in ordered:
         parent_id = prop.parent_step_id
         parent = dag.nodes.get(parent_id)
@@ -117,7 +136,7 @@ def plan_commit_from_proposals(
         if parent.status in ("completed", "failed", "skipped", "superseded"):
             rejections.append(ReconcileRejection(parent_id, f"parent_status_{parent.status}"))
             continue
-        depth = dag.lineage_depth(parent_id)
+        depth = dag.action_lineage_depth(parent_id)
         if depth >= config.max_depth:
             rejections.append(ReconcileRejection(parent_id, "max_depth_exceeded"))
             continue
@@ -157,10 +176,12 @@ def plan_commit_from_proposals(
                 cap,
             )
             subtasks = subtasks[:cap]
+        if _is_pure_chain(subtasks):
+            sequential_only_parents.add(parent_id)
         accepted.append((parent_id, subtasks))
 
     if not accepted:
-        return [], [], rejections, scoped_plan_id
+        return [], [], rejections, scoped_plan_id, sequential_only_parents
 
     # Exact dedup: first occurrence wins as primary; later same-key → secondary.
     merged: dict[str, tuple[str, list[str], ProposedSubtask, list[int] | None]] = {}
@@ -184,7 +205,7 @@ def plan_commit_from_proposals(
     if len(dag.nodes) + len(merged) > config.max_steps:
         for parent_id, _ in accepted:
             rejections.append(ReconcileRejection(parent_id, "max_steps_exceeded"))
-        return [], [], rejections, scoped_plan_id
+        return [], [], rejections, scoped_plan_id, set()
 
     keys_ordered = sorted(merged.keys())
     local_ids = _next_local_ids(len(keys_ordered))
@@ -230,7 +251,13 @@ def plan_commit_from_proposals(
         new_nodes.append(node)
 
     _drop_new_node_cycles(new_nodes)
-    return new_nodes, sorted(parents_to_decompose), rejections, scoped_plan_id
+    return (
+        new_nodes,
+        sorted(parents_to_decompose),
+        rejections,
+        scoped_plan_id,
+        sequential_only_parents,
+    )
 
 
 async def reconcile_proposals_deterministic(
@@ -248,14 +275,18 @@ async def reconcile_proposals_deterministic(
             rejected=[ReconcileRejection("*", f"goal_not_found:{goal_id}")],
         )
 
-    new_nodes, parents, rejections, scoped_plan_id = plan_commit_from_proposals(
+    new_nodes, parents, rejections, scoped_plan_id, sequential_only = plan_commit_from_proposals(
         goal.steps,
         proposals,
         config=config,
         plan_id=plan_id,
     )
     if not new_nodes:
-        return ReconcileResult(rejected=rejections, plan_id=scoped_plan_id)
+        return ReconcileResult(
+            rejected=rejections,
+            sequential_only_parents=sequential_only,
+            plan_id=scoped_plan_id,
+        )
 
     plan_iteration = 0
     for pid in parents:
@@ -276,10 +307,17 @@ async def reconcile_proposals_deterministic(
         parents,
         len(rejections),
     )
+    if sequential_only:
+        logger.info(
+            "Decompose sequential-only children committed (parents=%s) — no "
+            "parallelism gained over in-thread execution",
+            sorted(sequential_only),
+        )
     return ReconcileResult(
         committed_step_ids=[n.id for n in new_nodes],
         decomposed_parent_ids=parents,
         rejected=rejections,
+        sequential_only_parents=sequential_only,
         plan_id=scoped_plan_id,
         llm_used=False,
     )

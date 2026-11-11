@@ -35,7 +35,7 @@ def test_plan_commit_assigns_ids_and_marks_parents() -> None:
             ],
         )
     ]
-    nodes, parents, rejected, plan_id = plan_commit_from_proposals(
+    nodes, parents, rejected, plan_id, _ = plan_commit_from_proposals(
         dag, proposals, config=_cfg(), plan_id="ABC"
     )
     assert not rejected
@@ -57,7 +57,7 @@ def test_branch_cap_truncates_root_overflow() -> None:
             subtasks=[ProposedSubtask(description=f"c{i}") for i in range(6)],
         )
     ]
-    nodes, parents, rejected, _ = plan_commit_from_proposals(
+    nodes, parents, rejected, _, _ = plan_commit_from_proposals(
         dag, proposals, config=_cfg(max_branch_root=5)
     )
     assert not rejected
@@ -83,7 +83,7 @@ def test_inner_branch_cap_truncates() -> None:
             subtasks=[ProposedSubtask(description=f"c{i}") for i in range(4)],
         )
     ]
-    nodes, parents, rejected, _ = plan_commit_from_proposals(
+    nodes, parents, rejected, _, _ = plan_commit_from_proposals(
         dag, proposals, config=_cfg(max_branch_inner=3)
     )
     assert not rejected
@@ -98,14 +98,14 @@ def test_max_depth_reject() -> None:
             "B": StepNode(id="B", description="b", status="active", parent_step_id="A"),
         }
     )
-    # lineage_depth(B)=3; max_depth=3 → reject
+    # action_lineage_depth(B)=3; max_depth=3 → reject
     proposals = [
         DecompositionProposal(
             parent_step_id="B",
             subtasks=[ProposedSubtask(description="too deep")],
         )
     ]
-    nodes, _, rejected, _ = plan_commit_from_proposals(dag, proposals, config=_cfg(max_depth=3))
+    nodes, _, rejected, _, _ = plan_commit_from_proposals(dag, proposals, config=_cfg(max_depth=3))
     assert not nodes
     assert rejected[0].reason == "max_depth_exceeded"
 
@@ -127,7 +127,7 @@ def test_exact_dedup_secondary_parents() -> None:
             subtasks=[ProposedSubtask(description="shared   work")],
         ),
     ]
-    nodes, parents, rejected, _ = plan_commit_from_proposals(
+    nodes, parents, rejected, _, _ = plan_commit_from_proposals(
         dag, proposals, config=_cfg(), plan_id="XYZ"
     )
     assert not rejected
@@ -149,7 +149,7 @@ def test_max_steps_reject() -> None:
             ],
         )
     ]
-    nodes, _, rejected, _ = plan_commit_from_proposals(dag, proposals, config=_cfg(max_steps=2))
+    nodes, _, rejected, _, _ = plan_commit_from_proposals(dag, proposals, config=_cfg(max_steps=2))
     assert not nodes
     assert rejected[0].reason == "max_steps_exceeded"
 
@@ -176,7 +176,7 @@ def test_eval_reconcile_filters_out_of_scope_subtasks() -> None:
             ),
         ],
     )
-    nodes, parents, rejected, _ = plan_commit_from_proposals(
+    nodes, parents, rejected, _, _ = plan_commit_from_proposals(
         dag,
         [proposal],
         config=_cfg(),
@@ -204,7 +204,7 @@ def test_eval_reconcile_rejects_identical_continuation() -> None:
         parent_step_id="E2",
         subtasks=[ProposedSubtask(description="same remaining work")],
     )
-    nodes, parents, rejected, _ = plan_commit_from_proposals(
+    nodes, parents, rejected, _, _ = plan_commit_from_proposals(
         dag,
         [proposal],
         config=_cfg(),
@@ -212,6 +212,90 @@ def test_eval_reconcile_rejects_identical_continuation() -> None:
     assert nodes == []
     assert parents == []
     assert rejected[-1].reason == "identical_eval_continuation"
+
+
+# ── RFC-SLP-006: sequential-only flag + eval-continuation depth ────────────
+
+
+def test_sequential_only_chain_flagged() -> None:
+    """A pure c0←c1←c2 chain is flagged; a fork is not."""
+    dag = StepDAG(nodes={"ROOT": StepNode(id="ROOT", description="root", status="active")})
+    proposals = [
+        DecompositionProposal(
+            parent_step_id="ROOT",
+            subtasks=[
+                ProposedSubtask(description="a"),
+                ProposedSubtask(description="b", depends_on_local=[0]),
+                ProposedSubtask(description="c", depends_on_local=[1]),
+            ],
+        )
+    ]
+    _, _, rejected, _, sequential = plan_commit_from_proposals(dag, proposals, config=_cfg())
+    assert not rejected
+    assert sequential == {"ROOT"}
+
+    forked_dag = StepDAG(nodes={"ROOT": StepNode(id="ROOT", description="root", status="active")})
+    forked = [
+        DecompositionProposal(
+            parent_step_id="ROOT",
+            subtasks=[
+                ProposedSubtask(description="x"),
+                ProposedSubtask(description="y", depends_on_local=[0]),
+                ProposedSubtask(description="z", depends_on_local=[0]),
+            ],
+        )
+    ]
+    _, _, _, _, sequential_forked = plan_commit_from_proposals(forked_dag, forked, config=_cfg())
+    assert sequential_forked == set()
+
+
+def _eval_continuation_dag() -> StepDAG:
+    return StepDAG(
+        nodes={
+            "ROOT": StepNode(id="ROOT", description="root", status="decomposed"),
+            "EVAL": StepNode(
+                id="EVAL",
+                description="audit",
+                status="decomposed",
+                parent_step_id="ROOT",
+                kind="eval",
+            ),
+            "C": StepNode(
+                id="C", description="continuation", status="active", parent_step_id="EVAL"
+            ),
+        }
+    )
+
+
+def test_eval_continuation_child_can_decompose() -> None:
+    """RFC-SLP-006 §6: the eval tier does not consume decomposition depth."""
+    proposals = [
+        DecompositionProposal(
+            parent_step_id="C",
+            subtasks=[ProposedSubtask(description="leaf work")],
+        )
+    ]
+    nodes, parents, rejected, _, _ = plan_commit_from_proposals(
+        _eval_continuation_dag(), proposals, config=_cfg()
+    )
+    assert not rejected
+    assert parents == ["C"]
+    assert len(nodes) == 1
+
+
+def test_eval_continuation_grandchild_blocked() -> None:
+    """Depth 3 action lineage is still the hard floor under default max_depth."""
+    dag = _eval_continuation_dag()
+    dag.add_step(StepNode(id="GC", description="grandchild", status="active", parent_step_id="C"))
+    proposals = [
+        DecompositionProposal(
+            parent_step_id="GC",
+            subtasks=[ProposedSubtask(description="too deep")],
+        )
+    ]
+    nodes, _, rejected, _, _ = plan_commit_from_proposals(dag, proposals, config=_cfg())
+    assert not nodes
+    assert rejected[0].reason == "max_depth_exceeded"
 
 
 @pytest.mark.asyncio

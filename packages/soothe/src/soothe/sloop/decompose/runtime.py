@@ -12,6 +12,7 @@ from soothe.context.decomposition import DecompositionProposal
 logger = logging.getLogger(__name__)
 
 _current_step_id: ContextVar[str | None] = ContextVar("decompose_step_id", default=None)
+_current_step_kind: ContextVar[str | None] = ContextVar("decompose_step_kind", default=None)
 _wave_seq: ContextVar[int] = ContextVar("decompose_wave_seq", default=0)
 _proposal_sink: ContextVar[list[DecompositionProposal] | None] = ContextVar(
     "decompose_proposal_sink", default=None
@@ -32,6 +33,7 @@ class DecomposeRuntimeTokens:
     """Tokens to reset after a step thread finishes."""
 
     step: Token[str | None]
+    step_kind: Token[str | None]
     wave: Token[int]
     sink: Token[list[DecompositionProposal] | None]
     verdict: Token[list[dict[str, Any]] | None] | None = None
@@ -43,10 +45,11 @@ def bind_decompose_runtime(
     step_id: str,
     sink: list[DecompositionProposal],
     wave_seq: int = 0,
+    step_kind: str | None = None,
     verdict_sink: list[dict[str, Any]] | None = None,
     clarification_sink: list[dict[str, Any]] | None = None,
 ) -> DecomposeRuntimeTokens:
-    """Bind step id, proposal sink, and optional verdict/clarification sinks for a CoreAgent turn."""
+    """Bind step id/kind, proposal sink, and optional verdict/clarification sinks."""
     logger.debug(
         "[decompose] bind runtime step=%s wave=%d sink_id=%d sink_bound=%s verdict_bound=%s clar_bound=%s",
         step_id,
@@ -64,6 +67,7 @@ def bind_decompose_runtime(
         clarification_token = _clarification_sink.set(clarification_sink)
     return DecomposeRuntimeTokens(
         step=_current_step_id.set(step_id),
+        step_kind=_current_step_kind.set(step_kind),
         wave=_wave_seq.set(wave_seq),
         sink=_proposal_sink.set(sink),
         verdict=verdict_token,
@@ -88,6 +92,7 @@ def reset_decompose_runtime(tokens: DecomposeRuntimeTokens) -> None:
         clar_count,
     )
     _current_step_id.reset(tokens.step)
+    _current_step_kind.reset(tokens.step_kind)
     _wave_seq.reset(tokens.wave)
     _proposal_sink.reset(tokens.sink)
     if tokens.verdict is not None:
@@ -99,6 +104,11 @@ def reset_decompose_runtime(tokens: DecomposeRuntimeTokens) -> None:
 def current_step_id() -> str | None:
     """Return the decompose step id for the current task context, if any."""
     return _current_step_id.get()
+
+
+def current_step_kind() -> str | None:
+    """Return the bound step's kind ("action" / "eval"), if any."""
+    return _current_step_kind.get()
 
 
 def current_wave_seq() -> int:

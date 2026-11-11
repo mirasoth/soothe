@@ -42,6 +42,7 @@ _SPLIT = "split"
 
 _STEP_DESC_MAX_CHARS = 800
 _GOAL_MAX_CHARS = 600
+_RECENT_TOOLS_CAP = 8
 
 _INSTRUCTIONS = (
     "Should this step finish in the current thread, or is it complex enough "
@@ -67,12 +68,16 @@ async def decide_finish_vs_split_typesafe(
     step_description: str,
     user_goal: str,
     task_complexity: str | None = None,
+    tool_call_count: int | None = None,
+    recent_tools: list[str] | None = None,
     soothe_config: SootheConfig | None = None,
 ) -> str | None:
     """Decide whether to strip decompose_task via TypeSafe.
 
     Returns "finish" / "split" on trusted verdicts, else None — callers keep
-    the decompose tool unchanged on None.
+    the decompose tool unchanged on None. tool_call_count / recent_tools
+    carry mid-thread execution evidence for RFC-SLP-006 re-checks; t=0
+    calls omit them.
     """
     cfg = classifier_config(soothe_config)
     if cfg is None or not cfg.enabled:
@@ -97,6 +102,10 @@ async def decide_finish_vs_split_typesafe(
     }
     if task_complexity:
         state["task_complexity"] = str(task_complexity)
+    if tool_call_count is not None:
+        state["tool_call_count"] = tool_call_count
+    if recent_tools:
+        state["recent_tools"] = "\n".join(recent_tools[:_RECENT_TOOLS_CAP])
 
     try:
         response = await classifier.ainvoke(ClassifierRequest(state=state, questions=questions))

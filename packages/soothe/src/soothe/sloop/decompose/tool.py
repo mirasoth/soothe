@@ -13,6 +13,7 @@ from soothe.prompts import DECOMPOSE_TASK_TOOL_DESCRIPTION
 from soothe.sloop.decompose.runtime import (
     current_proposal_sink,
     current_step_id,
+    current_step_kind,
     current_wave_seq,
     langgraph_configurable,
 )
@@ -52,10 +53,23 @@ def _build_and_queue(
     step_id: str,
     sink: list[DecompositionProposal],
 ) -> str:
-    """Parse, branch-cap-truncate, and queue the proposal. Returns the tool result."""
+    """Parse, guard, branch-cap-truncate, and queue the proposal."""
     parsed = [_parse_subtask(s) for s in (subtasks or [])]
     if not parsed:
         return "Error: no subtasks provided. Provide at least one subtask."
+    # RFC-SLP-006 §4: one subtask on an action parent gains no parallelism
+    # (extra wave + reconcile barrier + child context warmup) — refuse and
+    # guide in-thread. Eval parents are exempt: a single remaining subtask
+    # from a coverage verdict is continuation, not parallelization.
+    if len(parsed) == 1 and current_step_kind() == "action":
+        logger.info("[decompose] refused single-subtask proposal (step=%s)", step_id)
+        return (
+            "Error: a single subtask gains nothing over finishing in this "
+            "thread — it adds a dispatch wave and a fresh context warmup "
+            "for no parallelism. Continue the work in THIS thread (use "
+            "write_todos to track it) and finish here. Call decompose_task "
+            "only with 2+ independent subtasks."
+        )
     conf = langgraph_configurable()
     max_branch = _resolve_max_branch_root(conf)
     if len(parsed) > max_branch:

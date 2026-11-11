@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Proactive Coverage Evaluation (PCE): a per-loop, signal-only monitor that observes the goal DAG during execution and appends coverage signals (typesafe-first with bounded LLM escalation, fingerprint-cached per goal); ROOT_EVAL forces a coverage Eval for single-leaf goals when signals require an audit, and finalize report validation carries the latest signal, so goals no longer finalize fully unverified.
 - `agent.loop.pce` config block (tool-call/elapsed milestones, debounce, per-goal pass and escalation caps, signal ring, ROOT_EVAL gate settle timeout); the monitor never runs in plan/ask modes.
+- Intelligent decompose decision (RFC-SLP-006): a trusted root "split" verdict from the finish-vs-split classifier now injects the parallel nudge (the organic path left dead after intake-classification removal); the verdict re-runs at tool-call milestones and context pressure with the tool trajectory as state, and a trusted mid-step "split" re-injects a stripped `decompose_task` (a finish strip stays sticky); a context-pressure hint fires below the compaction threshold.
+- Decompose shape guards and telemetry: single-subtask proposals on action parents are refused pre-queue with in-thread guidance (eval continuation parents exempt); pure-sequential child chains are flagged at reconcile; a per-proposal `DecomposeQuality` ring on the goal record captures child count/shape/outcomes at action-tree green (signal-only).
+- Eval audit tiers no longer consume lineage depth (`lineage_depth` → `action_lineage_depth`), so coverage-continuation children get the same `decompose_task` headroom as root children instead of being forced leaves.
+- `agent.loop.decompose` gains `root_split_nudge`, `recheck_tool_calls`, `max_rechecks_per_step`, `split_hint_threshold_pct`, and `quality_ring_size`.
 
 ### Fixed
 

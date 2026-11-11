@@ -1,0 +1,8 @@
+<CONTEXT_PRESSURE_SPLIT_HINT>
+## Context pressure is high
+
+This thread is consuming most of its context window. If the remaining work
+has independent parts, call decompose_task now — child threads start with
+fresh contexts, which is cheaper than compacting this thread and losing
+evidence. Otherwise finish the current deliverable here.
+</CONTEXT_PRESSURE_SPLIT_HINT>

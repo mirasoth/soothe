@@ -16,7 +16,7 @@ from soothe.sloop.decompose.tool import build_decompose_task_tool
 
 def test_decompose_tool_queues_proposal() -> None:
     sink: list[DecompositionProposal] = []
-    tokens = bind_decompose_runtime(step_id="AAA-01", sink=sink, wave_seq=1)
+    tokens = bind_decompose_runtime(step_id="AAA-01", sink=sink, wave_seq=1, step_kind="action")
     try:
         tool = build_decompose_task_tool()
         result = tool.invoke(
@@ -27,7 +27,12 @@ def test_decompose_tool_queues_proposal() -> None:
                         "description": "child A",
                         "full_description": "do A thoroughly",
                         "expected_output": "A done",
-                    }
+                    },
+                    {
+                        "description": "child B",
+                        "full_description": "do B thoroughly",
+                        "expected_output": "B done",
+                    },
                 ],
             }
         )
@@ -39,6 +44,33 @@ def test_decompose_tool_queues_proposal() -> None:
     finally:
         reset_decompose_runtime(tokens)
     assert current_step_id() is None
+
+
+def test_decompose_tool_refuses_single_subtask_on_action_parent() -> None:
+    """RFC-SLP-006 §4: one subtask gains no parallelism — refuse, guide in-thread."""
+    sink: list[DecompositionProposal] = []
+    tokens = bind_decompose_runtime(step_id="AAA-01", sink=sink, step_kind="action")
+    try:
+        tool = build_decompose_task_tool()
+        result = tool.invoke({"task": "root work", "subtasks": [{"description": "only child"}]})
+        assert result.startswith("Error:")
+        assert "write_todos" in result
+        assert len(sink) == 0
+    finally:
+        reset_decompose_runtime(tokens)
+
+
+def test_decompose_tool_allows_single_subtask_on_eval_parent() -> None:
+    """Eval parents are exempt: a single remaining subtask is continuation."""
+    sink: list[DecompositionProposal] = []
+    tokens = bind_decompose_runtime(step_id="EVAL-1", sink=sink, step_kind="eval")
+    try:
+        tool = build_decompose_task_tool()
+        result = tool.invoke({"task": "coverage", "subtasks": [{"description": "only remaining"}]})
+        assert "queued" in result.lower()
+        assert len(sink) == 1
+    finally:
+        reset_decompose_runtime(tokens)
 
 
 def test_decompose_tool_errors_without_runtime() -> None:

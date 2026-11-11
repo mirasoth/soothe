@@ -273,6 +273,92 @@ async def _emit_dag_idle_rail_event(
         logger.warning("[root_eval] RailEvent dag_idle handle failed", exc_info=True)
 
 
+def _sibling_dependency_shape(children: list[Any]) -> tuple[bool, int, int]:
+    """(sequential_only, independent_children, deepest_chain_len) over siblings."""
+    ids = {c.id for c in children}
+    sibling_deps = {
+        c.id: [d for d in (c.dependencies or []) if d in ids and d != c.id] for c in children
+    }
+    independent = sum(1 for deps in sibling_deps.values() if not deps)
+
+    def chain_len(node_id: str, seen: frozenset[str] = frozenset()) -> int:
+        best = 0
+        for dep in sibling_deps.get(node_id, []):
+            if dep not in seen:
+                best = max(best, chain_len(dep, seen | {node_id}))
+        return 1 + best
+
+    deepest = max((chain_len(c.id) for c in children), default=0)
+    sequential_only = (
+        len(children) >= 2
+        and all(len(deps) <= 1 for deps in sibling_deps.values())
+        and independent == 1
+        and deepest == len(children)
+    )
+    return sequential_only, independent, deepest
+
+
+async def _record_decompose_quality(ctx: LoopRuntimeContext, goal: Any) -> None:
+    """Append DecomposeQuality records for terminal decomposed parents (RFC-SLP-006 §3).
+
+    Signal-only: computed from the StepDAG at action-tree green; idempotent
+    per parent; ring-bounded. Never gates execution.
+    """
+    from soothe.context.models import DecomposeQuality
+
+    cfg = getattr(ctx.strange_loop.config.agent.loop, "decompose", None)
+    ring_size = positive_config_int(getattr(cfg, "quality_ring_size", 20), 20)
+    recorded = {q.parent_step_id for q in goal.decompose_quality}
+    appended = False
+    for parent in goal.steps.nodes.values():
+        if parent.status != "decomposed" or parent.id in recorded:
+            continue
+        children = [
+            n
+            for n in goal.steps.nodes.values()
+            if n.parent_step_id == parent.id or parent.id in (n.secondary_parent_step_ids or [])
+        ]
+        if not children or any(c.status in ("pending", "active", "decomposed") for c in children):
+            continue
+        sequential_only, independent, deepest = _sibling_dependency_shape(children)
+        record = DecomposeQuality(
+            parent_step_id=parent.id,
+            child_count=len(children),
+            single_child=len(children) == 1,
+            sequential_only=sequential_only,
+            independent_children=independent,
+            deepest_chain_len=deepest,
+            child_failures=sum(1 for c in children if c.status == "failed"),
+            child_retries=sum(c.retry_count for c in children),
+            child_tool_calls_sum=sum(
+                (c.execution.tool_call_count if c.execution else 0) for c in children
+            ),
+            child_duration_ms_sum=sum(
+                (c.execution.duration_ms if c.execution else 0) for c in children
+            ),
+        )
+        goal.decompose_quality.append(record)
+        appended = True
+        logger.info(
+            "[root_eval] decompose_quality parent=%s children=%d single=%s seq_only=%s "
+            "independent=%d deepest=%d",
+            parent.id,
+            record.child_count,
+            record.single_child,
+            record.sequential_only,
+            record.independent_children,
+            record.deepest_chain_len,
+        )
+        try:
+            await ctx.emit("decompose_quality", record.model_dump(mode="python"))
+        except Exception:
+            logger.debug("[root_eval] decompose_quality event emit failed", exc_info=True)
+    if appended:
+        if len(goal.decompose_quality) > ring_size:
+            del goal.decompose_quality[: len(goal.decompose_quality) - ring_size]
+        ctx.ce.defer_save()
+
+
 class RootEvalNode(LoopNode):
     """Insert a fresh Eval StepNode when coverage audit is required."""
 
@@ -340,6 +426,7 @@ class RootEvalNode(LoopNode):
                 # through above) so rail rules don't fire a false complete_job.
                 if goal.steps.action_tree_green():
                     await _emit_dag_idle_rail_event(ctx, goal)
+                    await _record_decompose_quality(ctx, goal)
 
                 # RFC-SLP-005: let in-flight boundary passes (step
                 # completion) land their signal before the gate decides.

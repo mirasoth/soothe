@@ -42,11 +42,14 @@ ASK_MODE_ADDENDUM = _read_xml_body("decompose/ask_mode_addendum.xml")
 PLAN_MODE_ADDENDUM = _read_xml_body("decompose/plan_mode_addendum.xml")
 PARALLEL_NUDGE_ADDENDUM = _read_xml_body("decompose/parallel_nudge_addendum.xml")
 WESTWORLD_FANOUT_ADDENDUM = _read_xml_body("decompose/westworld_fanout_addendum.xml")
+SPLIT_CANDIDATE_ADDENDUM = _read_xml_body("decompose/split_candidate_addendum.xml")
+CONTEXT_PRESSURE_SPLIT_HINT = _read_xml_body("decompose/context_pressure_split_hint.xml")
 
 
 __all__ = [
     "APPROVED_PLAN_EXECUTE_HINT",
     "ASK_MODE_ADDENDUM",
+    "CONTEXT_PRESSURE_SPLIT_HINT",
     "COVERAGE_VERDICT_TOOL_DESCRIPTION",
     "DECOMPOSE_TASK_TOOL_DESCRIPTION",
     "EVAL_DECISION_SYSTEM",
@@ -54,6 +57,7 @@ __all__ = [
     "PARALLEL_NUDGE_ADDENDUM",
     "PLAN_MODE_ADDENDUM",
     "PROMPT_TIMESTAMP_FRAGMENT",
+    "SPLIT_CANDIDATE_ADDENDUM",
     "THREAD_POLICY_SYSTEM_ADDENDUM",
     "THREAD_USER_HINT_CHILD_FRAGMENT",
     "THREAD_USER_HINT_ROOT_FRAGMENT",

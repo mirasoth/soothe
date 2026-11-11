@@ -213,15 +213,24 @@ class TestStepDAGDecomposeStatuses:
         dag.mark_failed("R", StepExecution(error="x"))
         assert dag.tree_green() is False
 
-    def test_lineage_depth(self) -> None:
+    def test_action_lineage_depth(self) -> None:
         dag = StepDAG()
         dag.add_step(StepNode(id="R", description="root"))
         dag.add_step(StepNode(id="A", description="a", parent_step_id="R"))
         dag.add_step(StepNode(id="B", description="b", parent_step_id="A"))
-        assert dag.lineage_depth("R") == 1
-        assert dag.lineage_depth("A") == 2
-        assert dag.lineage_depth("B") == 3
-        assert dag.lineage_depth("missing") == 0
+        assert dag.action_lineage_depth("R") == 1
+        assert dag.action_lineage_depth("A") == 2
+        assert dag.action_lineage_depth("B") == 3
+        assert dag.action_lineage_depth("missing") == 0
+
+    def test_action_lineage_depth_skips_eval_tiers(self) -> None:
+        """RFC-SLP-006 §6: eval audit tiers never consume decomposition depth."""
+        dag = StepDAG()
+        dag.add_step(StepNode(id="R", description="root"))
+        dag.add_step(StepNode(id="E", description="audit", parent_step_id="R", kind="eval"))
+        dag.add_step(StepNode(id="C", description="continuation", parent_step_id="E"))
+        assert dag.action_lineage_depth("E") == 1  # eval itself is depth-free
+        assert dag.action_lineage_depth("C") == 2  # root-tier headroom, not 3
 
     def test_single_completed_action_skips_eval(self) -> None:
         dag = StepDAG(nodes={"R": StepNode(id="R", description="root", status="completed")})

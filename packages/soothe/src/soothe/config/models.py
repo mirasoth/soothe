@@ -870,7 +870,9 @@ class DecomposeLoopConfig(BaseModel):
         default=3,
         ge=1,
         le=20,
-        description="Max parent_step_id lineage depth per goal.",
+        description=(
+            "Max action-lineage decomposition depth per goal (kind=eval audit tiers do not count)."
+        ),
     )
     max_steps: int = Field(
         default=30,
@@ -895,6 +897,43 @@ class DecomposeLoopConfig(BaseModel):
         ge=1,
         le=50,
         description="Max children per non-root decompose_task proposal.",
+    )
+    root_split_nudge: bool = Field(
+        default=True,
+        description=(
+            "RFC-SLP-006: inject the parallel nudge when the finish-vs-split "
+            "verdict on a DAG root is a trusted split."
+        ),
+    )
+    recheck_tool_calls: int = Field(
+        default=10,
+        ge=0,
+        le=100,
+        description=(
+            "RFC-SLP-006: re-run finish-vs-split after every N tool "
+            "completions in a step; 0 disables re-checks."
+        ),
+    )
+    max_rechecks_per_step: int = Field(
+        default=2,
+        ge=0,
+        le=10,
+        description="RFC-SLP-006: bound on mid-step finish-vs-split re-checks per step.",
+    )
+    split_hint_threshold_pct: float = Field(
+        default=0.60,
+        ge=0.0,
+        le=0.95,
+        description=(
+            "RFC-SLP-006: context-pressure split hint fires at this fraction "
+            "of the context window limit; 0 disables the hint."
+        ),
+    )
+    quality_ring_size: int = Field(
+        default=20,
+        ge=1,
+        le=100,
+        description="RFC-SLP-006: bounded ring of DecomposeQuality records per goal.",
     )
 
 
