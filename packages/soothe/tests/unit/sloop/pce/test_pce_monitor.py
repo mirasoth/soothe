@@ -7,6 +7,7 @@ typesafe verdict is patched so no real classifier is invoked.
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from typing import Any
 
 from soothe.config.models import PceLoopConfig
@@ -80,13 +81,13 @@ def _monitor(ce: _FakeCE, **cfg_over: Any) -> PceMonitor:
     cfg = PceLoopConfig(**cfg_over)
     monitor = PceMonitor(loop_id="loop-1", context_engine=ce, pce_config=cfg)
     # Back-to-back passes in tests: pretend the previous pass was long ago.
-    monitor._last_pass_monotonic = 0.0
+    monitor._last_pass_monotonic = float("-inf")
     return monitor
 
 
 def _arm(monitor: PceMonitor) -> None:
     """Bypass the debounce so consecutive test passes run immediately."""
-    monitor._last_pass_monotonic = 0.0
+    monitor._last_pass_monotonic = float("-inf")
 
 
 async def test_fingerprint_cache_skips_unchanged_state(monkeypatch):
@@ -119,6 +120,21 @@ async def test_milestone_counter_change_re_evaluates(monkeypatch):
 
     assert stub.calls == 2
     assert len(ce.goal.coverage_signals) == 2
+
+
+async def test_first_pass_runs_on_host_with_short_uptime(monkeypatch):
+    """A freshly booted host has monotonic() < interval; pass 1 must still run."""
+    ce = _FakeCE()
+    stub = _VerdictStub(PceVerdict(kind="on_track", confidence=0.9, source="typesafe"))
+    monkeypatch.setattr(monitor_mod, "decide_pce_verdict_typesafe", stub)
+    monkeypatch.setattr(monitor_mod, "time", SimpleNamespace(monotonic=lambda: 100.0))
+    monitor = PceMonitor(
+        loop_id="loop-1", context_engine=ce, pce_config=PceLoopConfig(min_pass_interval_s=3600)
+    )
+
+    await monitor._maybe_pass([PceEvent(kind="step_started", step_id="S1")])
+
+    assert stub.calls == 1
 
 
 async def test_debounce_absorbs_events_without_pass(monkeypatch):

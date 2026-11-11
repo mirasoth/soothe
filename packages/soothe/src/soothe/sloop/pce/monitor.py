@@ -58,7 +58,8 @@ class PceMonitor:
         # RFC-SLP-005: fingerprint cache is per-goal so switching between
         # goals neither suppresses nor invalidates another goal's passes.
         self._last_fingerprints: dict[str, str] = {}
-        self._last_pass_monotonic: float = 0.0
+        # ``-inf`` = never ran; 0.0 would debounce hosts with uptime < interval.
+        self._last_pass_monotonic: float = float("-inf")
         self._passes_per_goal: dict[str, int] = {}
         self._escalations_per_goal: dict[str, int] = {}
         self._last_kinds_per_goal: dict[str, str] = {}
