@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Step-completion cognition summaries quote the step output inside the user turn instead of ending the prompt with the raw assistant message, and replies far past the word budget are discarded — the fast model could previously continue the step's truncated output and surface multi-thousand-char step-internal content as TUI cognition cards.
+- A validation-rejected `LEDGER_DIRECT` report now rides along as the synthesis stall fallback, so a dead synthesis stream passes the step report through instead of degrading to the `Completed N/N steps` stub.
 - Show the interrupted goal's elapsed time, step progress, tool calls, and token totals in the TUI `Stream cancelled` line, and keep plan panel step rows at their real intermediate state instead of resetting every row to `0s – Stream cancelled`.
 
 ## [v1.3.0] - 2026-11-10

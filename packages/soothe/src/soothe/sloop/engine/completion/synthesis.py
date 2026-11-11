@@ -81,6 +81,8 @@ class SynthesisGenerator:
         self,
         goal: str,
         state: LoopState,
+        *,
+        fallback_text: str | None = None,
     ) -> AsyncGenerator:
         """Generate synthesis via LLM streaming.
 
@@ -101,6 +103,8 @@ class SynthesisGenerator:
         Args:
             goal: Goal description.
             state: Loop state with thread context and execution ledger (`loop_messages`).
+            fallback_text: Preferred body when the stream stalls (e.g. a
+                validation-rejected ledger report); generated stub when None.
 
         Yields:
             LangGraph `messages`-mode stream tuples tagged with `phase=goal_completion`.
@@ -183,7 +187,7 @@ class SynthesisGenerator:
                     "Synthesis scratchpad stream timed out after %.1fs; using fallback summary",
                     timeout_seconds,
                 )
-                async for chunk in self._yield_fallback_chunk(state):
+                async for chunk in self._yield_fallback_chunk(state, fallback_text):
                     yield chunk
                 synthesis_elapsed_ms = int((time.perf_counter() - synthesis_start) * 1000)
                 logger.info(
@@ -207,6 +211,7 @@ class SynthesisGenerator:
                     graph_config,
                     state,
                     idle_seconds,
+                    fallback_text,
                 ):
                     yield chunk
 
@@ -390,12 +395,14 @@ class SynthesisGenerator:
         graph_config: dict[str, Any],
         state: LoopState,
         idle_seconds: float,
+        fallback_text: str | None = None,
     ) -> AsyncGenerator:
         """Yield tagged synthesis chunks guarded by the idle watchdog.
 
         A stall before any text re-dispatches a fresh stream up to
-        _SYNTHESIS_STALL_RETRY_MAX times, then yields the fallback summary;
-        a stall after partial text keeps the partial report.
+        _SYNTHESIS_STALL_RETRY_MAX times, then yields the fallback summary
+        (`fallback_text` when provided); a stall after partial text keeps
+        the partial report.
         """
         for attempt in range(_SYNTHESIS_STALL_RETRY_MAX + 1):
             reader = GraphStreamChunkReader(
@@ -450,7 +457,7 @@ class SynthesisGenerator:
                 "Synthesis stream stalled on all %d attempts; using fallback summary",
                 _SYNTHESIS_STALL_RETRY_MAX + 1,
             )
-            async for chunk in self._yield_fallback_chunk(state):
+            async for chunk in self._yield_fallback_chunk(state, fallback_text):
                 yield chunk
             return
 
@@ -460,13 +467,24 @@ class SynthesisGenerator:
             return 0.0
         return max(0.0, float(self._soothe_config.agent.loop.dispatch_idle_seconds))
 
-    async def _yield_fallback_chunk(self, state: LoopState) -> AsyncGenerator:
+    async def _yield_fallback_chunk(
+        self,
+        state: LoopState,
+        fallback_text: str | None = None,
+    ) -> AsyncGenerator:
         """Yield a fallback summary as a tagged goal-completion message chunk."""
         from langchain_core.messages import AIMessage
 
-        plan_result = state.previous_plan
-        fallback_text = generate_user_fallback_summary(state, plan_result)
-        fallback_msg = AIMessage(content=fallback_text)
+        text = (fallback_text or "").strip()
+        if text:
+            logger.warning(
+                "Synthesis fallback: using provided text (%d chars)",
+                len(text),
+            )
+        else:
+            plan_result = state.previous_plan
+            text = generate_user_fallback_summary(state, plan_result)
+        fallback_msg = AIMessage(content=text)
         yield tag_messages_stream_chunk_for_goal_completion(
             ((), "messages", (fallback_msg, {})),
             thread_id=state.thread_id,

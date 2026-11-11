@@ -15,6 +15,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _CONTENT_CAP = 8000
+# A reply this far past the word budget means the model continued the step
+# output instead of summarizing; it is discarded, not clipped.
+_WORD_BUDGET_TOLERANCE = 3
 
 
 async def summarize_step_completion_report(
@@ -78,6 +81,15 @@ async def summarize_step_completion_report(
         raw = str(content or "").strip()
     except Exception:
         logger.warning("Step completion report LLM call failed", exc_info=True)
+        return None
+
+    word_count = len(raw.split())
+    if raw and word_count > word_limit * _WORD_BUDGET_TOLERANCE:
+        logger.warning(
+            "Step completion report discarded: %d words exceeds budget %d",
+            word_count,
+            word_limit * _WORD_BUDGET_TOLERANCE,
+        )
         return None
 
     return raw or None

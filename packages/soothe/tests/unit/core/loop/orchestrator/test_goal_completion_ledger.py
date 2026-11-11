@@ -75,7 +75,7 @@ async def test_synthesize_appends_goal_completion_ledger_pair() -> None:
     sm.record_iteration = AsyncMock()
     sm.finalize_goal = AsyncMock()
 
-    async def fake_gen(self, goal, state):  # noqa: ARG002
+    async def fake_gen(self, goal, state, *, fallback_text=None):  # noqa: ARG002
         yield ((), "messages", (AIMessage(content="final synth body"), {}))
 
     ctx = _ctx(
@@ -161,7 +161,7 @@ async def test_goal_completion_logs_planning_dag_at_info(
     sm.record_iteration = AsyncMock()
     sm.finalize_goal = AsyncMock()
 
-    async def fake_gen(self, goal, state):  # noqa: ARG002
+    async def fake_gen(self, goal, state, *, fallback_text=None):  # noqa: ARG002
         yield ((), "messages", (AIMessage(content="synth only"), {}))
 
     ctx = _ctx(
@@ -219,7 +219,7 @@ async def test_goal_completion_dag_reflects_finalized_goal_status(
     sm.record_iteration = AsyncMock()
     sm.finalize_goal = AsyncMock()
 
-    async def fake_gen(self, goal, state):  # noqa: ARG002
+    async def fake_gen(self, goal, state, *, fallback_text=None):  # noqa: ARG002
         yield ((), "messages", (AIMessage(content="done"), {}))
 
     ctx = _ctx(
@@ -369,7 +369,7 @@ async def test_ledger_direct_untrusted_validation_falls_back_to_synthesis() -> N
         goal=goal,
     )
 
-    async def fake_gen(self, _goal: str, _state: LoopState):  # noqa: ARG002
+    async def fake_gen(self, _goal: str, _state: LoopState, *, fallback_text=None):  # noqa: ARG002
         yield ((), "messages", (AIMessage(content="clean synthesis"), {}))
 
     with (
@@ -398,6 +398,76 @@ async def test_ledger_direct_untrusted_validation_falls_back_to_synthesis() -> N
         if getattr(m, "phase", None) == "goal_completion" and isinstance(m, LoopAIMessage)
     )
     assert gc_ai.content == "clean synthesis"
+
+
+@pytest.mark.asyncio
+async def test_ledger_direct_invalid_validation_passes_report_as_synthesis_fallback() -> None:
+    """The validation-rejected report rides along as the synthesis stall fallback."""
+    ce = _make_ce()
+    loop_state = LoopState(goal="g", thread_id="thr-1")
+    goal = GoalNode(description="g")
+    ce._dag.add_goal(goal)
+    loop_state.bind_ce(ce, goal.id)
+    ce.ledger.record_message(
+        LoopHumanMessage(
+            content="Execute: x",
+            thread_id="thr-1",
+            iteration=0,
+            phase="execute_step",
+        ),
+        phase="execute_step",
+    )
+    ce.ledger.record_message(
+        LoopAIMessage(
+            content="raw step output",
+            thread_id="thr-1",
+            iteration=0,
+            phase="execute_step",
+        ),
+        phase="execute_step",
+    )
+    plan_result = PlanResult(status="done", goal_progress="complete", require_goal_completion=False)
+    pm = StepPlanManagerAdapter(subengine=ce.planning.step, goal_id=goal.id)
+    pm.determine_completion_strategy = Mock(return_value=CompletionStrategy.LEDGER_DIRECT)
+
+    strange_loop = Mock()
+    strange_loop.loop_planner = Mock()
+    strange_loop.loop_planner._model = Mock()
+    strange_loop.core_agent = Mock()
+
+    sm = Mock()
+    sm.record_iteration = AsyncMock()
+    sm.finalize_goal = AsyncMock()
+
+    ctx = _ctx(
+        loop_state=loop_state,
+        plan_manager=pm,
+        strange_loop=strange_loop,
+        state_manager=sm,
+        plan_result=plan_result,
+        ce=ce,
+        goal=goal,
+    )
+
+    captured: dict = {}
+
+    async def fake_gen(self, _goal: str, _state: LoopState, *, fallback_text=None):  # noqa: ARG002
+        captured["fallback_text"] = fallback_text
+        yield ((), "messages", (AIMessage(content="clean synthesis"), {}))
+
+    with (
+        patch(
+            "soothe.sloop.engine.completion.report_validation_typesafe.validate_report_typesafe",
+            AsyncMock(return_value=False),
+        ),
+        patch.object(SynthesisGenerator, "generate_synthesis", fake_gen),
+    ):
+        await node_goal_completion(ctx, {})
+
+    if ctx.ledger_reconciliation_task is not None:
+        await ctx.ledger_reconciliation_task
+
+    assert captured["fallback_text"] == "raw step output"
 
 
 @pytest.mark.asyncio
@@ -459,7 +529,7 @@ async def test_ledger_direct_empty_last_hop_blob_never_reaches_wire() -> None:
         goal=goal,
     )
 
-    async def fake_gen(self, _goal: str, _state: LoopState):  # noqa: ARG002
+    async def fake_gen(self, _goal: str, _state: LoopState, *, fallback_text=None):  # noqa: ARG002
         yield ((), "messages", (AIMessage(content="clean synthesis"), {}))
 
     with (
@@ -583,7 +653,7 @@ async def test_empty_ledger_direct_falls_back_to_synthesis() -> None:
         goal=goal,
     )
 
-    async def fake_gen(self, _goal: str, _state: LoopState):  # noqa: ARG002
+    async def fake_gen(self, _goal: str, _state: LoopState, *, fallback_text=None):  # noqa: ARG002
         yield ((), "messages", (AIMessage(content="Synthesized World Cup update."), {}))
 
     with patch.object(SynthesisGenerator, "generate_synthesis", fake_gen):
@@ -709,7 +779,7 @@ async def test_synthesis_fallback_sets_skip_replay_false() -> None:
         goal=goal,
     )
 
-    async def empty_gen(self, _goal: str, _state: LoopState):  # noqa: ARG002
+    async def empty_gen(self, _goal: str, _state: LoopState, *, fallback_text=None):  # noqa: ARG002
         if False:
             yield None
 

@@ -651,6 +651,7 @@ async def node_goal_completion(
         )
 
     final_output = None
+    ledger_fallback_text: str | None = None
     used_synthesis_fallback = False
 
     if action == CompletionStrategy.LEDGER_DIRECT:
@@ -721,6 +722,8 @@ async def node_goal_completion(
                     logger.info(
                         "Goal completion: report validation=invalid; falling back to synthesis",
                     )
+                    # Prefer the rejected report over the stub if synthesis stalls.
+                    ledger_fallback_text = final_output
                     action = CompletionStrategy.SYNTHESIZE
                     final_output = None
                 elif report_valid is True:
@@ -733,6 +736,7 @@ async def node_goal_completion(
                     logger.info(
                         "Goal completion: report validation unavailable; falling back to synthesis",
                     )
+                    ledger_fallback_text = final_output
                     action = CompletionStrategy.SYNTHESIZE
                     final_output = None
 
@@ -744,7 +748,9 @@ async def node_goal_completion(
         accum = GoalCompletionAccumState()
         chunk_count = 0
 
-        async for inner in synthesis_gen.generate_synthesis(state.goal, state):
+        async for inner in synthesis_gen.generate_synthesis(
+            state.goal, state, fallback_text=ledger_fallback_text
+        ):
             chunk_count += 1
             for msg in iter_messages_for_act_aggregation(inner):
                 update_goal_completion_from_message(accum, msg)

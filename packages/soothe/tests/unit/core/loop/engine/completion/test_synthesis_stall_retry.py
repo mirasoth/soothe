@@ -125,6 +125,21 @@ async def test_stall_on_all_attempts_yields_fallback() -> None:
 
 
 @pytest.mark.asyncio
+async def test_stall_on_all_attempts_prefers_provided_fallback_text() -> None:
+    """A validation-rejected ledger report beats the generated stub on stall."""
+    attempts = _SYNTHESIS_STALL_RETRY_MAX + 1
+    llm = _ScriptedLlm([_stalled_stream for _ in range(attempts)])
+    gen = _generator(llm)
+
+    events = []
+    async for event in gen.generate_synthesis("g", _state(), fallback_text="rejected ledger body"):
+        events.append(event)
+
+    assert llm.calls == attempts
+    assert _collected_text(events) == "rejected ledger body"
+
+
+@pytest.mark.asyncio
 async def test_stall_after_partial_text_is_not_retried() -> None:
     """A stall after partial text keeps the partial report; no duplicate stream."""
     llm = _ScriptedLlm([lambda: _partial_then_stall_stream("partial report")])

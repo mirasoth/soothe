@@ -169,19 +169,21 @@ class GraphPromptWrapper:
 
             [
                 SystemMessage(step_completion_system),
-                HumanMessage(step_input),
-                AIMessage(step_output),
+                HumanMessage(task + quoted step output),
             ]
         """
-        from langchain_core.messages import AIMessage
-
         system = self._build_step_completion_system_fragment(None).format(max_words=max_words)
         human = (human_content or "").strip()[:8000]
         ai = (ai_content or "").strip()[:8000]
+        # Quote the step output inside the user turn: a trailing AIMessage
+        # invites the model to continue the step's text instead of summarizing.
+        body = (
+            f"Execution task:\n{human or '(no step input)'}\n\n"
+            f"Assistant output:\n{ai or '(no step output)'}"
+        )
         return [
             SystemMessage(content=system),
-            HumanMessage(content=human or "(no step input)"),
-            AIMessage(content=ai or "(no step output)"),
+            HumanMessage(content=body),
         ]
 
     def _build_step_completion_system_fragment(self, state: LoopState | None) -> str:
