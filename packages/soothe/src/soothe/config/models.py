@@ -922,12 +922,6 @@ class PceLoopConfig(BaseModel):
         le=500,
         description="Tool calls per active step between PCE milestone passes.",
     )
-    token_milestone: int = Field(
-        default=50000,
-        ge=1000,
-        le=10_000_000,
-        description="Input tokens per step between PCE milestone passes.",
-    )
     elapsed_milestone_s: int = Field(
         default=600,
         ge=30,
@@ -957,6 +951,16 @@ class PceLoopConfig(BaseModel):
         ge=1,
         le=100,
         description="CoverageSignal ring bound per goal.",
+    )
+    gate_settle_timeout_s: int = Field(
+        default=20,
+        ge=0,
+        le=120,
+        description=(
+            "Bounded wait at the ROOT_EVAL gate for in-flight PCE boundary "
+            "passes, so completion signals land before the gate reads them "
+            "(0 disables)."
+        ),
     )
 
 

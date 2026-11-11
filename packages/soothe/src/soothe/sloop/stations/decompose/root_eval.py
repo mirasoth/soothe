@@ -127,12 +127,36 @@ def _dispatch_waves_exhausted(ctx: LoopRuntimeContext) -> tuple[bool, int, int]:
     return wave >= max_waves, wave, max_waves
 
 
+async def _settle_pce_monitor(ctx: LoopRuntimeContext) -> None:
+    """Bounded wait for in-flight PCE boundary passes (RFC-SLP-005).
+
+    Step-completion events fire just before this gate runs; the boundary
+    pass takes seconds (LLM). Settling lets the gate read the fresh
+    completion signal instead of deciding without it. Fail-open: no
+    monitor, no config, or timeout simply proceeds.
+    """
+    import contextlib
+
+    from soothe.sloop.pce.events import lookup_monitor
+
+    monitor = lookup_monitor(getattr(ctx.state_manager, "loop_id", None))
+    if monitor is None:
+        return
+    timeout = 0.0
+    try:
+        timeout = float(
+            getattr(ctx.strange_loop.config.agent.loop.pce, "gate_settle_timeout_s", 0) or 0
+        )
+    except AttributeError:
+        return
+    if timeout > 0:
+        with contextlib.suppress(Exception):
+            await monitor.settle(timeout)
+
+
 def _pce_audit_signals(goal: Any) -> list[Any]:
     """Unconsumed PCE signals that force a coverage Eval (RFC-SLP-005)."""
-    signals = getattr(goal, "coverage_signals", None)
-    if not isinstance(signals, list):
-        return []
-    return [s for s in signals if getattr(s, "consumed_by", None) is None and s.requires_audit()]
+    return [s for s in goal.coverage_signals if s.consumed_by is None and s.requires_audit()]
 
 
 def _consume_pce_signals(goal: Any, consumer: str, signals: list[Any]) -> None:
@@ -142,10 +166,7 @@ def _consume_pce_signals(goal: Any, consumer: str, signals: list[Any]) -> None:
 
 def _pce_signal_lines(goal: Any, limit: int = 5) -> list[str]:
     """Latest unconsumed signals rendered as untrusted evidence lines."""
-    raw = getattr(goal, "coverage_signals", None)
-    signals = (
-        [s for s in raw if getattr(s, "consumed_by", None) is None] if isinstance(raw, list) else []
-    )
+    signals = [s for s in goal.coverage_signals if s.consumed_by is None]
     return [
         f"- kind={s.kind} conf={s.confidence:.2f} source={s.source} (untrusted monitor signal)"
         for s in signals[-limit:]
@@ -319,6 +340,10 @@ class RootEvalNode(LoopNode):
                 # through above) so rail rules don't fire a false complete_job.
                 if goal.steps.action_tree_green():
                     await _emit_dag_idle_rail_event(ctx, goal)
+
+                # RFC-SLP-005: let in-flight boundary passes (step
+                # completion) land their signal before the gate decides.
+                await _settle_pce_monitor(ctx)
 
                 latest = goal.steps.latest_eval()
                 if latest is not None:

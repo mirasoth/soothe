@@ -17,9 +17,9 @@ def _emit_pce(ctx: Any, kind: str, **payload: Any) -> None:
     from soothe.sloop.pce.events import emit_pce_event
 
     emit_pce_event(
-        getattr(ctx.state_manager, "loop_id", None),
+        ctx.state_manager.loop_id,
         kind,
-        goal_id=getattr(ctx, "ce_goal_id", None),
+        goal_id=ctx.ce_goal_id,
         **payload,
     )
 

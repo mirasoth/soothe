@@ -135,7 +135,6 @@ def message_to_widget(data: MessageData) -> Widget:
             goal = str(snap.get("goal", "")).strip()
             w = CognitionGoalTreeMessage(
                 goal=goal or " ",
-                max_iterations=int(snap.get("max_iterations", 0)),
                 id=data.id,
             )
             if snap:

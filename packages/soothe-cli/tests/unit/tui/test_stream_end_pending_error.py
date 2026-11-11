@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from time import time
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -145,6 +146,10 @@ def test_finalize_pending_steps_interrupts_running_when_goal_still_open() -> Non
     adapter._goal_tree_message = tree
     running = MagicMock()
     running._status = "running"
+    running._start_time = time() - 4
+    running._input_tokens = 800
+    running._output_tokens = 120
+    running._build_row_index.return_value.main_tool_count = 3
     adapter._current_step_messages = {"S-01": running}
 
     adapter.finalize_pending_steps_with_error(
@@ -153,6 +158,11 @@ def test_finalize_pending_steps_interrupts_running_when_goal_still_open() -> Non
         interrupt_goal_tree=True,
     )
 
-    running.set_interrupted.assert_called_once_with("Stream ended unexpectedly")
+    label = running.set_interrupted.call_args.args[0]
+    assert label.startswith("Stream ended unexpectedly · ")
+    assert "0/1 steps" in label
+    assert "3 tools" in label
+    assert "↑800 ↓120" in label
     assert tree._footer_tone == "error"
     assert "Stream ended unexpectedly" in tree._footer_plain
+    assert "3 tools" in tree._footer_plain

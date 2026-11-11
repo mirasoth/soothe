@@ -7,7 +7,11 @@ from time import time
 from unittest.mock import MagicMock, PropertyMock, patch
 
 from soothe_cli.settings import get_glyphs
-from soothe_cli.tui.widgets.messages.cognition_goal_tree import CognitionGoalTreeMessage
+from soothe_cli.tui.textual_adapter import TextualUIAdapter
+from soothe_cli.tui.widgets.messages.cognition_goal_tree import (
+    CognitionGoalTreeMessage,
+    collect_running_step_stats,
+)
 from soothe_cli.tui.widgets.plan_quick_view_overlay import (
     PlanQuickViewOverlay,
     _plan_quick_view_header,
@@ -87,7 +91,7 @@ def test_plan_quick_view_body_omits_goal_text() -> None:
 
 def test_plan_quick_view_content_shows_pending_and_running() -> None:
     """Goal tree snapshot includes planned steps."""
-    tree = CognitionGoalTreeMessage(goal="Refactor module", max_iterations=3, id="gt-2")
+    tree = CognitionGoalTreeMessage(goal="Refactor module", id="gt-2")
     tree.sync_plan_steps(
         [
             {"id": "STEP-1", "description": "Read files"},
@@ -854,3 +858,192 @@ def test_goal_tree_snapshot_round_trips_token_fields() -> None:
     assert st.input_tokens == 1200
     assert st.output_tokens == 340
     assert restored.goal_token_suffix() == tree.goal_token_suffix()
+
+
+# ---------------------------------------------------------------------------
+# Interrupted-goal execution stats
+# ---------------------------------------------------------------------------
+
+
+def _partly_executed_tree() -> CognitionGoalTreeMessage:
+    """One done step, one running step with live counters, one untouched step."""
+    tree = CognitionGoalTreeMessage(goal="Ship", id="gt-interrupt-stats")
+    tree.mark_loop_started(time() - 12)
+    tree.sync_plan_steps(
+        [
+            {"id": "S-01", "description": "Read files"},
+            {"id": "S-02", "description": "Apply edits"},
+            {"id": "S-03", "description": "Write tests"},
+        ]
+    )
+    tree.complete_step(
+        "S-01",
+        True,
+        2_300,
+        2,
+        "wrote summary",
+        input_tokens=900,
+        output_tokens=180,
+    )
+    tree.set_step_phase("S-02", "running", description="Apply edits")
+    running = tree._steps["S-02"]
+    running.started_at = time() - 7
+    running.tool_call_count = 3
+    running.input_tokens = 300
+    running.output_tokens = 120
+    return tree
+
+
+def test_interrupt_footer_reports_execution_stats() -> None:
+    """The cancel line carries progress, tool calls, elapsed, and tokens."""
+    tree = _partly_executed_tree()
+    tree.set_interrupted("Stream cancelled")
+
+    footer = tree._footer_plain
+    assert footer.startswith("Stream cancelled · ")
+    assert "1/3 steps" in footer
+    assert "5 tools" in footer
+    assert "12s" in footer
+    assert "↑1.2K" in footer
+    assert "↓300" in footer
+    assert tree.interrupted_status_label("Stream cancelled") == footer
+
+
+def test_interrupted_running_row_keeps_real_elapsed_and_counters() -> None:
+    """A cancelled step keeps its worked time instead of resetting to `0s`."""
+    tree = _partly_executed_tree()
+    tree.set_interrupted("Stream cancelled")
+
+    row = tree._steps["S-02"]
+    assert row.phase == "error"
+    assert row.duration_ms >= 6_900
+    content = tree.plan_quick_view_content().plain
+    assert "7s" in content
+    assert "3 tools" in content
+    assert "↑300" in content
+    assert "interrupted" in content
+    assert " — Stream cancelled" not in content
+
+
+def test_completed_rows_keep_their_results_after_interrupt() -> None:
+    """Finished steps stay finished with their outcome text intact."""
+    tree = _partly_executed_tree()
+    tree.set_interrupted("Stream cancelled")
+
+    row = tree._steps["S-01"]
+    assert row.phase == "done"
+    assert row.summary == "wrote summary"
+    content = tree.plan_quick_view_content().plain
+    assert "wrote summary" in content
+    assert "2.3s" in content
+
+
+def test_not_started_rows_stay_pending_after_interrupt() -> None:
+    """Steps that never ran are not reported as failed with the cancel reason."""
+    tree = _partly_executed_tree()
+    tree.set_interrupted("Stream cancelled")
+
+    row = tree._steps["S-03"]
+    assert row.phase == "pending"
+    assert row.summary == ""
+    content = tree.plan_quick_view_content().plain
+    assert "not started" in content
+    assert content.count("Stream cancelled") == 1
+
+
+def test_panel_header_keeps_frozen_elapsed_after_interrupt() -> None:
+    """The plan panel title keeps the interrupt-time wall clock, not a live timer."""
+    tree = _partly_executed_tree()
+    assert tree.loop_elapsed_label() == "12s"
+    tree.set_interrupted("Stream cancelled")
+
+    label = tree.loop_elapsed_label()
+    assert label == "12s"
+    with patch(
+        "soothe_cli.tui.widgets.messages.cognition_goal_tree.time",
+        return_value=time() + 60,
+    ):
+        assert tree.loop_elapsed_label() == label
+
+
+def test_failed_goal_header_has_no_ticking_timer() -> None:
+    """A failed (not interrupted) goal clears the title's elapsed timer."""
+    tree = _partly_executed_tree()
+    tree.set_loop_finished(
+        status="failed",
+        goal_progress="low",
+        completion_summary="blocked",
+        total_steps=1,
+    )
+
+    assert tree._footer_tone == "error"
+    assert tree.loop_elapsed_label() is None
+
+
+def test_snapshot_round_trips_frozen_interrupt_state() -> None:
+    """Restoring an interrupted plan keeps its footer, elapsed, and row phases."""
+    tree = _partly_executed_tree()
+    tree.set_interrupted("Stream cancelled")
+    label = tree.loop_elapsed_label()
+
+    restored = CognitionGoalTreeMessage(goal="Restore", id="gt-interrupt-restore")
+    restored._apply_snapshot(tree.snapshot_dict())
+
+    assert restored.loop_elapsed_label() == label
+    assert "Stream cancelled" in restored._footer_plain
+    assert restored._steps["S-03"].phase == "pending"
+    assert restored._footer_tone == "error"
+
+
+def test_new_goal_clears_frozen_interrupt_state() -> None:
+    """Reusing the tree for a follow-on goal resets the interrupted run."""
+    tree = _partly_executed_tree()
+    tree.set_interrupted("Stream cancelled")
+    tree.mark_loop_started()
+
+    assert tree._loop_interrupted_at is None
+    assert not tree._footer_visible
+    assert tree._step_order == []
+    assert tree.loop_elapsed_label() == "0s"
+
+
+def test_collect_running_step_stats_only_reads_running_cards() -> None:
+    """Live stats come only from cards still executing."""
+    running = MagicMock()
+    running._status = "running"
+    running._start_time = 123.0
+    running._input_tokens = 800
+    running._output_tokens = 120
+    running._build_row_index.return_value.main_tool_count = 4
+    done = MagicMock()
+    done._status = "success"
+
+    stats = collect_running_step_stats({"S-01": running, "S-02": done})
+
+    assert stats == {"S-01": (4, 123.0, 800, 120)}
+
+
+def test_finalize_pending_steps_reports_stats_on_step_card_and_footer() -> None:
+    """The transcript cancel line and the panel footer share one stats snapshot."""
+    adapter = TextualUIAdapter(
+        mount_message=MagicMock(),
+        update_status=MagicMock(),
+    )
+    tree = _partly_executed_tree()
+    adapter._goal_tree_message = tree
+    card = MagicMock()
+    card._status = "running"
+    card._start_time = time() - 7
+    card._input_tokens = 300
+    card._output_tokens = 120
+    card._build_row_index.return_value.main_tool_count = 3
+    adapter._current_step_messages = {"S-02": card}
+
+    adapter.finalize_pending_steps_with_error("Stream cancelled")
+
+    label = card.set_interrupted.call_args.args[0]
+    assert label.startswith("Stream cancelled · ")
+    assert "1/3 steps" in label
+    assert "5 tools" in label
+    assert "Stream cancelled" in tree._footer_plain
+    assert "1/3 steps" in tree._footer_plain

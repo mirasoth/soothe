@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Mapping
 from time import time
 from typing import TYPE_CHECKING, Any
 
@@ -42,6 +43,8 @@ _MAX_GOAL_HEADER = 100
 _MAX_GOAL_STEP_DESC = 80
 _MAX_STEP_SUMMARY_TAIL = 80
 _MAX_DEPENDENCY_IDS = 3
+_MAX_INTERRUPT_REASON = 64
+_MAX_INTERRUPT_LABEL = 120
 
 _DONE_WITH_TOOLS_RE = re.compile(r"^Done(?:\s*\[\d+\s+tools?\])?$", re.IGNORECASE)
 
@@ -66,8 +69,8 @@ def _plan_quick_view_step_summary(
 ) -> str:
     """Return a Ctrl+T-safe step summary tail.
 
-    Hides redundant `Done [N tools]` text (stats already show tool count) and
-    legacy success payloads that still carry error-shaped summary strings.
+    Hides redundant `Done [N tools]` text and error-shaped summaries on
+    successful steps (the row stats already carry both).
     """
     tail = (summary or "").strip()
     if not tail or tail in ("Done", "Failed"):
@@ -89,6 +92,30 @@ def _normalize_step_dependencies(raw_deps: Any) -> tuple[str, ...]:
     if not isinstance(raw_deps, list):
         return ()
     return tuple(str(dep).strip() for dep in raw_deps if str(dep).strip())
+
+
+def collect_running_step_stats(
+    step_cards: Mapping[str, Any],
+) -> dict[str, tuple[int, float | None, int, int]]:
+    """Read live tool, timing, and token counters from running step cards.
+
+    Each value is `(tool_count, started_at, input_tokens, output_tokens)`.
+    Called by the plan panel refresh and again at interrupt time, so the
+    interrupted-run snapshot does not depend on the panel being visible.
+    """
+    stats: dict[str, tuple[int, float | None, int, int]] = {}
+    for sid, card in step_cards.items():
+        if getattr(card, "_status", "") != "running":
+            continue
+        index = card._build_row_index()
+        started_at = card._start_time
+        stats[sid] = (
+            max(0, int(getattr(index, "main_tool_count", 0) or 0)),
+            started_at if isinstance(started_at, (int, float)) else None,
+            max(0, int(getattr(card, "_input_tokens", 0) or 0)),
+            max(0, int(getattr(card, "_output_tokens", 0) or 0)),
+        )
+    return stats
 
 
 class _StepLineState:
@@ -176,27 +203,25 @@ class CognitionGoalTreeMessage(Vertical):
         self,
         *,
         goal: str,
-        max_iterations: int = 0,
         **kwargs: Any,
     ) -> None:
         """Initialize an empty goal tree (steps render as events arrive).
 
         Args:
         goal: Primary goal text (clipped for header).
-        max_iterations: Retained for snapshot/restore parity; not rendered.
         **kwargs: Passed to `Vertical`.
         """
         super().__init__(**kwargs)
         self._goal_text = goal.strip()
-        self._max_iterations = int(max_iterations)
         self._step_order: list[str] = []
         self._steps: dict[str, _StepLineState] = {}
         self._footer_plain: str = ""
         self._footer_visible: bool = False
-        self._footer_tone: str = "muted"  # success | error | muted (step/tool completion parity)
+        self._footer_tone: str = "muted"
         self._task_complexity: str = ""
         self._spinner_position: int = 0
         self._loop_started_at: float | None = None
+        self._loop_interrupted_at: float | None = None
         self._steps_static: Static | None = None
         # Goal-level accumulator for orphan usage chunks that arrive before any
         # step card is bound (parallel waves). ``goal_token_totals`` sums these
@@ -273,7 +298,7 @@ class CognitionGoalTreeMessage(Vertical):
         )
 
     def _goal_footer_styled_content(self) -> Content:
-        """Footer content for loop finished / interrupted (parity with step/tool status lines).
+        """Footer content for loop finished / interrupted.
 
         The `done` (success) footer shares the title line's de-emphasized
         `SECONDARY_TEXT_STYLE` so the completion status blends with the
@@ -294,11 +319,50 @@ class CognitionGoalTreeMessage(Vertical):
         return Content.styled(f"{gutter}{plain}", theme.SECONDARY_TEXT_STYLE)
 
     def loop_elapsed_label(self) -> str | None:
-        """Wall-clock elapsed while the goal loop is open, for the plan panel title."""
-        if not self._loop_executing():
+        """Wall-clock elapsed for the plan panel title, frozen after an interrupt."""
+        if self._loop_executing():
+            return self._goal_elapsed_label()
+        if (
+            self._footer_visible
+            and self._footer_tone == "error"
+            and self._loop_interrupted_at is not None
+        ):
+            return self._goal_elapsed_label()
+        return None
+
+    def _goal_elapsed_label(self) -> str | None:
+        """Elapsed wall clock from loop start to now (or to the frozen interrupt)."""
+        started = self._loop_started_at
+        if started is None:
             return None
-        started = self._loop_started_at or time()
-        return format_running_elapsed(time() - started)
+        ended = self._loop_interrupted_at if self._loop_interrupted_at is not None else time()
+        return format_running_elapsed(max(0.0, ended - started))
+
+    def execution_stats_suffix(self) -> str:
+        """Compact snapshot of loop work: `2/5 steps · 7 tools · 12s · ↑1.2K ↓345`."""
+        parts: list[str] = []
+        total = len(self._step_order)
+        if total:
+            done = sum(1 for st in self._steps.values() if st.phase == "done")
+            parts.append(f"{done}/{total} steps")
+        tools = sum(max(0, int(st.tool_call_count)) for st in self._steps.values())
+        if tools:
+            parts.append(f"{tools} tools")
+        elapsed = self._goal_elapsed_label()
+        if elapsed:
+            parts.append(elapsed)
+        tokens = self.goal_token_suffix()
+        if tokens:
+            parts.append(tokens)
+        return " · ".join(parts)
+
+    def interrupted_status_label(self, reason: str) -> str:
+        """Compose `Stream cancelled · 2/5 steps · 7 tools · 12s · ↑1.2K ↓345`."""
+        label = self._clip((reason or "Interrupted").strip(), _MAX_INTERRUPT_REASON)
+        stats = self.execution_stats_suffix()
+        if stats:
+            label = f"{label} · {stats}"
+        return self._clip(label, _MAX_INTERRUPT_LABEL)
 
     def goal_token_totals(self) -> tuple[int, int]:
         """Cumulative `(input_tokens, output_tokens)` across all step rows.
@@ -350,6 +414,7 @@ class CognitionGoalTreeMessage(Vertical):
         """
         if self._loop_started_at is None or self._footer_visible:
             self._loop_started_at = started_at if started_at is not None else time()
+            self._loop_interrupted_at = None
             if self._footer_visible:
                 self._footer_visible = False
                 self._footer_plain = ""
@@ -390,10 +455,12 @@ class CognitionGoalTreeMessage(Vertical):
             if not parts:
                 return ""
             return " · " + " · ".join(parts)
-        if st.phase not in ("done", "error"):
+        if st.phase == "error":
+            parts = [format_duration_ms(st.duration_ms)]
+        elif st.phase == "done":
+            parts = [format_duration(max(0.001, st.duration_ms / 1000.0))]
+        else:
             return ""
-        dur_s = max(0.001, st.duration_ms / 1000.0)
-        parts = [format_duration(dur_s)]
         if st.tool_call_count > 0:
             parts.append(f"{st.tool_call_count} tools")
         parts.extend(token_parts)
@@ -434,14 +501,24 @@ class CognitionGoalTreeMessage(Vertical):
         step_label = display_step_id(st.step_id)
         step_prefix = f"{step_label}: " if step_label else ""
         dep_suffix = _dependency_suffix(st.dependencies)
-        queued_suffix = " · queued" if st.phase == "queued" else ""
+        state_suffix = " · queued" if st.phase == "queued" else ""
+        if (
+            self._footer_visible
+            and self._footer_tone == "error"
+            and st.phase
+            in (
+                "pending",
+                "queued",
+            )
+        ):
+            state_suffix = " · not started"
         stats_suffix = self._step_stats_suffix(st)
         summary_suffix = self._step_summary_suffix(st)
         lead = f"{icon} {step_prefix}"
 
         def assemble(desc: str, *, include_summary: bool) -> str:
             summary = summary_suffix if include_summary else ""
-            return f"{lead}{desc}{dep_suffix}{queued_suffix}{stats_suffix}{summary}"
+            return f"{lead}{desc}{dep_suffix}{state_suffix}{stats_suffix}{summary}"
 
         width = max_line_width or PLAN_QUICK_VIEW_STEP_LINE_MAX_CHARS
         desc = self._clip(st.description, _MAX_GOAL_STEP_DESC)
@@ -453,10 +530,10 @@ class CognitionGoalTreeMessage(Vertical):
         if len(line) <= width:
             return line
 
-        fixed_len = len(f"{lead}{dep_suffix}{queued_suffix}{stats_suffix}")
+        fixed_len = len(f"{lead}{dep_suffix}{state_suffix}{stats_suffix}")
         budget = width - fixed_len
         clipped_desc = self._clip(st.description, budget)
-        return f"{lead}{clipped_desc}{dep_suffix}{queued_suffix}{stats_suffix}"
+        return f"{lead}{clipped_desc}{dep_suffix}{state_suffix}{stats_suffix}"
 
     def _goal_tree_step_line_content(
         self,
@@ -464,7 +541,7 @@ class CognitionGoalTreeMessage(Vertical):
         *,
         max_line_width: int | None = None,
     ) -> Content:
-        """One goal→step row: dim tree gutter, foreground body (parity with `CognitionStepMessage` tool rows)."""
+        """One goal→step row: dim tree gutter, foreground body."""
         try:
             colors = theme.get_theme_colors(self)
         except Exception:  # noqa: BLE001
@@ -627,13 +704,13 @@ class CognitionGoalTreeMessage(Vertical):
             )
         return {
             "goal": self._goal_text,
-            "max_iterations": self._max_iterations,
             "task_complexity": self._task_complexity,
             "steps": steps_out,
             "footer_visible": self._footer_visible,
             "footer_text": self._footer_plain,
             "footer_tone": self._footer_tone,
             "loop_started_at": self._loop_started_at,
+            "loop_interrupted_at": self._loop_interrupted_at,
             "goal_in_tokens": self._goal_in_tokens,
             "goal_out_tokens": self._goal_out_tokens,
         }
@@ -641,7 +718,6 @@ class CognitionGoalTreeMessage(Vertical):
     def _apply_snapshot(self, snap: dict[str, Any]) -> None:
         """Restore in-memory goal tree state from :meth:`snapshot_dict` output."""
         self._goal_text = str(snap.get("goal", self._goal_text))
-        self._max_iterations = int(snap.get("max_iterations", self._max_iterations))
         raw_complexity = str(snap.get("task_complexity", "") or "").strip().lower()
         if raw_complexity in _TASK_COMPLEXITIES:
             self._task_complexity = raw_complexity
@@ -651,6 +727,8 @@ class CognitionGoalTreeMessage(Vertical):
         self._footer_tone = tone if tone in ("success", "error", "muted") else "muted"
         loop_started_raw = snap.get("loop_started_at")
         self._loop_started_at = float(loop_started_raw) if loop_started_raw is not None else None
+        interrupted_raw = snap.get("loop_interrupted_at")
+        self._loop_interrupted_at = float(interrupted_raw) if interrupted_raw is not None else None
         self._goal_in_tokens = max(0, int(snap.get("goal_in_tokens", 0)))
         self._goal_out_tokens = max(0, int(snap.get("goal_out_tokens", 0)))
         self._step_order = []
@@ -833,9 +911,6 @@ class CognitionGoalTreeMessage(Vertical):
         cs = (completion_summary or "").strip()
         if cs:
             parts.append(self._clip(cs, 100))
-        # Append cumulative token suffix (parity with step rows / panel header).
-        # ``goal_token_suffix`` returns "" when no tokens recorded, so the footer
-        # stays clean for token-less runs.
         token_suffix = self.goal_token_suffix()
         if token_suffix:
             parts.append(token_suffix)
@@ -851,26 +926,28 @@ class CognitionGoalTreeMessage(Vertical):
         self._sync_goal_tree_widgets()
 
     def set_interrupted(self, message: str) -> None:
-        """Mark running steps as failed and show a footer (stream cancel/error).
+        """Show a stats-bearing cancel/error footer and freeze the loop state.
 
-        When the loop already finished successfully and no step is still
-        open, preserve the success footer (late stream-end safety net must
-        not overwrite a completed goal).
+        Completed rows keep their results, running rows keep their real
+        elapsed time and counters, and rows that never started stay pending.
+        A late stream-end safety net must not overwrite a success footer.
         """
-        msg = (message or "Interrupted").strip()
-        marked = False
-        for sid in list(self._step_order):
-            st = self._steps.get(sid)
-            if st is not None and st.phase in ("pending", "queued", "running"):
-                st.phase = "error"
-                st.success = False
-                st.duration_ms = 0
-                st.summary = msg
-                st.started_at = None
-                marked = True
-        if not marked and self._footer_visible and self._footer_tone == "success":
+        msg = (message or "").strip()
+        running_rows = [st for st in self._steps.values() if st.phase == "running"]
+        if not running_rows and self._footer_visible and self._footer_tone == "success":
             return
-        self._footer_plain = self._clip(msg, 120)
+        if self._loop_interrupted_at is None:
+            self._loop_interrupted_at = time()
+        stopped_at = self._loop_interrupted_at
+        for st in running_rows:
+            st.phase = "error"
+            st.success = False
+            if st.started_at is not None:
+                st.duration_ms = max(0, int((stopped_at - st.started_at) * 1000))
+                st.started_at = None
+            summary = st.summary.strip()
+            st.summary = f"{summary} (interrupted)" if summary else "interrupted"
+        self._footer_plain = self.interrupted_status_label(msg)
         self._footer_visible = True
         self._footer_tone = "error"
         self._sync_goal_tree_widgets()

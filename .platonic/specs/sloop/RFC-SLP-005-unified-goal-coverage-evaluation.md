@@ -113,8 +113,9 @@ coalesce.
 * **Step boundaries**: step started / completed / failed, decompose
   committed, close_report filed.
 * **Budget milestones per active step**: every `tool_call_interval`
-  tool calls (default 25), `token_milestone` input tokens (default
-  50k), `elapsed_milestone_s` (default 600s).
+  tool calls (default 25) and `elapsed_milestone_s` (default 600s).
+  A token-count milestone is deferred until a mid-step token emitter
+  exists (hop `usage_metadata`).
 
 ### Evaluation pass
 
@@ -199,7 +200,6 @@ agent:
     pce:
       enabled: true
       tool_call_interval: 25
-      token_milestone: 50000
       elapsed_milestone_s: 600
       min_pass_interval_s: 30
       max_passes_per_goal: 20

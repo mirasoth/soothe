@@ -6,14 +6,15 @@ typesafe verdict is patched so no real classifier is invoked.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from soothe.config.models import PceLoopConfig
 from soothe.context.models import CoverageSignal, GoalNode, StepNode
 from soothe.sloop.pce import monitor as monitor_mod
-from soothe.sloop.pce.events import PceEvent
+from soothe.sloop.pce.events import PceEvent, lookup_monitor
 from soothe.sloop.pce.monitor import PceMonitor
-from soothe.sloop.pce.typesafe_pce import PceVerdict
+from soothe.sloop.pce.typesafe_pce import PceLlmVerdict, PceVerdict
 
 
 class _FakeCE:
@@ -214,6 +215,89 @@ async def test_fingerprint_cache_is_per_goal(monkeypatch):
     )
     assert stub.calls == 2, "unchanged goal A state must hit A's cache entry"
     assert len(ce.goal_a.coverage_signals) == 1
+
+
+# Boundary latency: no typesafe round trip when the LLM succeeds.
+async def test_boundary_events_go_straight_to_llm(monkeypatch):
+    ce = _FakeCE()
+    typesafe = _VerdictStub(PceVerdict(kind="on_track", confidence=0.9, source="typesafe"))
+    monkeypatch.setattr(monitor_mod, "decide_pce_verdict_typesafe", typesafe)
+
+    llm_calls = {"n": 0}
+
+    async def _llm_ok(fast_model, snapshot_input, **kwargs):
+        llm_calls["n"] += 1
+        return PceLlmVerdict(kind="goal_likely_complete", confidence=0.9, reasoning="done")
+
+    monkeypatch.setattr(monitor_mod, "pce_llm_verdict", _llm_ok)
+    monitor = _monitor(ce)
+
+    await monitor._maybe_pass([PceEvent(kind="step_completed", step_id="S1")])
+
+    assert llm_calls["n"] == 1
+    assert typesafe.calls == 0, "boundary pass must skip the typesafe round trip"
+    assert ce.goal.coverage_signals[-1].kind == "goal_likely_complete"
+    assert ce.goal.coverage_signals[-1].evidence.get("source") == "llm"
+
+
+async def test_boundary_llm_failure_falls_back_to_typesafe(monkeypatch):
+    ce = _FakeCE()
+    typesafe = _VerdictStub(PceVerdict(kind="on_track", confidence=0.8, source="typesafe"))
+    monkeypatch.setattr(monitor_mod, "decide_pce_verdict_typesafe", typesafe)
+
+    async def _llm_fail(fast_model, snapshot_input, **kwargs):
+        return None
+
+    monkeypatch.setattr(monitor_mod, "pce_llm_verdict", _llm_fail)
+    monitor = _monitor(ce)
+
+    await monitor._maybe_pass([PceEvent(kind="step_completed", step_id="S1")])
+
+    assert typesafe.calls == 1
+    assert ce.goal.coverage_signals[-1].evidence.get("source") == "typesafe"
+
+
+async def test_settle_returns_immediately_when_idle():
+    import time as _time
+
+    monitor = _monitor(_FakeCE())
+    start = _time.monotonic()
+    await monitor.settle(5.0)
+    assert _time.monotonic() - start < 1.0
+
+
+async def test_settle_waits_for_in_flight_pass():
+    import time as _time
+
+    monitor = _monitor(_FakeCE())
+    monitor._pass_in_flight = True
+
+    async def _finish_pass():
+        await asyncio.sleep(0.2)
+        monitor._pass_in_flight = False
+
+    task = asyncio.create_task(_finish_pass())
+    start = _time.monotonic()
+    await monitor.settle(5.0)
+    elapsed = _time.monotonic() - start
+    await task
+    assert 0.1 < elapsed < 2.0, "settle must return once the pass finishes"
+
+
+async def test_monitor_registry_lookup(monkeypatch):
+    from soothe.sloop.pce.events import reset_pce_registry
+
+    reset_pce_registry()
+    ce = _FakeCE()
+    stub = _VerdictStub(PceVerdict(kind="on_track", confidence=0.9, source="typesafe"))
+    monkeypatch.setattr(monitor_mod, "decide_pce_verdict_typesafe", stub)
+    monitor = _monitor(ce)
+    monitor.start()
+    try:
+        assert lookup_monitor(monitor.loop_id) is monitor
+    finally:
+        await monitor.stop()
+    assert lookup_monitor(monitor.loop_id) is None
 
 
 async def test_max_passes_per_goal_cap(monkeypatch):

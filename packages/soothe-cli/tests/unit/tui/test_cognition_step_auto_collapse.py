@@ -82,21 +82,6 @@ async def test_set_interrupted_auto_collapses_card() -> None:
         assert card._interrupt_message == "Connection lost"
 
 
-@pytest.mark.asyncio
-async def test_set_interrupted_empty_message_auto_collapses() -> None:
-    """Interrupted with empty message still auto-collapses; status hidden."""
-    card = CognitionStepMessage("S-04", "Silent cancel", id="step-silent")
-    async with _StepCardApp(card).run_test() as pilot:
-        card.set_running()
-        card.set_interrupted("")
-        await pilot.pause()
-
-        assert card._card_collapsed is True
-        assert card.has_class("-collapsed")
-        assert card._detail_widget is not None
-        assert card._detail_widget.display is False
-
-
 # ── click to expand ─────────────────────────────────────────────────────
 
 

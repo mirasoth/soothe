@@ -875,15 +875,15 @@ class _MessagesMixin:
                         )
                     )
 
-    _INTERRUPT_UI_MESSAGE = "Stream cancelled"
-
-    async def _tear_down_interrupt_ui(self, message: str | None = None) -> None:
+    async def _tear_down_interrupt_ui(self) -> None:
         """Immediately stop in-flight step/goal UI when the user interrupts a turn.
 
         Daemon cancel and worker teardown can take several seconds; without an
         eager UI pass the thinking spinner stays live after interrupt.
         """
-        label = message or self._INTERRUPT_UI_MESSAGE
+        from soothe_cli.tui.textual_adapter import STREAM_CANCELLED_MESSAGE
+
+        label = STREAM_CANCELLED_MESSAGE
         adapter = getattr(self, "_ui_adapter", None)
         if adapter is not None:
             if adapter._tool_to_step or adapter._tool_display_by_call_id:

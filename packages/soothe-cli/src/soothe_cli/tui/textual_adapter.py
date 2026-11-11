@@ -165,7 +165,10 @@ from soothe_cli.tui.widgets.messages import (
     flush_deferred_tools_refreshes,
     reset_turn_tool_refresh_state,
 )
-from soothe_cli.tui.widgets.messages.cognition_goal_tree import _normalize_step_dependencies
+from soothe_cli.tui.widgets.messages.cognition_goal_tree import (
+    _normalize_step_dependencies,
+    collect_running_step_stats,
+)
 from soothe_cli.ux.subagent_wire_display import (
     SubagentWireRenderKind,
     classify_subagent_wire_render,
@@ -173,6 +176,8 @@ from soothe_cli.ux.subagent_wire_display import (
 )
 
 logger = logging.getLogger(__name__)
+
+STREAM_CANCELLED_MESSAGE = "Stream cancelled"
 
 # LLM call boundary — separates reasoning from different LLM calls
 LLM_CALL_BOUNDARY = "soothe.cognition.llm.call.boundary"
@@ -382,6 +387,16 @@ class TextualUIAdapter:
         self._goal_tree_message: CognitionGoalTreeMessage | None = None
         """In-memory goal→steps state for the Ctrl+t plan quick view (not mounted in #messages)."""
 
+    def _sync_goal_tree_live_stats(self) -> None:
+        """Snapshot live step counters before a terminal footer freezes the plan."""
+        tree = self._goal_tree_message
+        if tree is None:
+            return
+        try:
+            tree.sync_running_live_stats(collect_running_step_stats(self._current_step_messages))
+        except Exception:  # noqa: BLE001
+            logger.debug("failed to snapshot live goal tree stats", exc_info=True)
+
     def finalize_pending_tools_with_error(
         self,
         error: str,
@@ -399,6 +414,8 @@ class TextualUIAdapter:
         overwriting a terminal plan-panel footer (stream-end after a
         successful goal completion).
         """
+        tree = self._goal_tree_message
+        self._sync_goal_tree_live_stats()
         for tcid, step_w in list(self._tool_to_step.items()):
             step_w.set_tool_error(tcid, error, duration_ms=0)
         _clear_adapter_step_tool_registry(self, clear_step_messages=False)
@@ -409,8 +426,8 @@ class TextualUIAdapter:
         self._file_change_previews_shown.clear()
         self._file_change_widgets.clear()
         self._file_preview_assistant_id = None
-        if interrupt_goal_tree and self._goal_tree_message is not None:
-            self._goal_tree_message.set_interrupted(error)
+        if interrupt_goal_tree and tree is not None:
+            tree.set_interrupted(error)
 
         # Clear active streaming message to avoid stale "active" state in the store.
         if self._set_active_message:
@@ -432,6 +449,13 @@ class TextualUIAdapter:
         interrupt_goal_tree: When False, skip plan-panel `set_interrupted`
         (preserves a success footer after goal completion).
         """
+        tree = self._goal_tree_message
+        self._sync_goal_tree_live_stats()
+        display_message = (
+            tree.interrupted_status_label(message)
+            if tree is not None and interrupt_goal_tree
+            else message
+        )
         targets = {
             sid: step_msg
             for sid, step_msg in self._current_step_messages.items()
@@ -446,7 +470,7 @@ class TextualUIAdapter:
         if targets or not only_in_flight:
             _finalize_orphan_subagent_cards(self, success=False, summary=message)
         for step_msg in targets.values():
-            step_msg.set_interrupted(message)
+            step_msg.set_interrupted(display_message)
         _clear_adapter_step_tool_registry(self)
         self._orphan_cards_by_invocation.clear()
         self._last_completed_main_step_execute_prose = ""
@@ -515,10 +539,10 @@ def _stream_end_pending_error_message(
     )
 
     if bool(getattr(daemon_session, "last_turn_cancellation_seen", False)):
-        return "Stream cancelled"
+        return STREAM_CANCELLED_MESSAGE
     end_state = getattr(daemon_session, "last_turn_end_state", None)
     if end_state == "stopped":
-        return "Stream cancelled"
+        return STREAM_CANCELLED_MESSAGE
     if end_state == "connection_lost":
         return "Connection lost during stream"
     err_msg = getattr(daemon_session, "last_turn_error_message", None) or ""
@@ -1695,20 +1719,16 @@ async def _ensure_goal_tree_message(
     adapter: TextualUIAdapter,
     *,
     goal: str = "",
-    max_iterations: int = 0,
 ) -> CognitionGoalTreeMessage:
     """Create or refresh in-memory goal tree state for the plan quick view."""
     tree = adapter._goal_tree_message
     if tree is not None:
         if goal.strip():
             tree._goal_text = goal.strip()
-        if max_iterations > 0:
-            tree._max_iterations = max_iterations
         tree.mark_loop_started()
         return tree
     widget = CognitionGoalTreeMessage(
         goal=goal.strip() or "Goal",
-        max_iterations=max_iterations,
         id=f"goal-tree-{uuid.uuid4().hex[:8]}",
     )
     widget.mark_loop_started()
@@ -2698,11 +2718,15 @@ async def _handle_interrupt_cleanup(
     # Mark tools as rejected AFTER saving state
     _reject_step_tool_rows(adapter)
 
+    tree = adapter._goal_tree_message
+    interrupt_label = STREAM_CANCELLED_MESSAGE
+    adapter._sync_goal_tree_live_stats()
+    if tree is not None:
+        tree.set_interrupted(interrupt_label)
+        interrupt_label = tree.interrupted_status_label(interrupt_label)
     for step_msg in list(adapter._current_step_messages.values()):
-        step_msg.set_interrupted("")
+        step_msg.set_interrupted(interrupt_label)
     _clear_adapter_step_tool_registry(adapter)
-    if adapter._goal_tree_message is not None:
-        adapter._goal_tree_message.set_interrupted("Stream cancelled")
 
     adapter._last_completed_main_step_execute_prose = ""
     adapter._last_main_flushed_assistant_prose = ""
@@ -4202,12 +4226,7 @@ async def execute_task_textual(
                                     adapter._last_completed_main_step_execute_prose = ""
                                     adapter._last_main_flushed_assistant_prose = ""
                                     goal = str(data.get("goal", "")).strip()
-                                    max_iter = int(data.get("max_iterations", 0) or 0)
-                                    await _ensure_goal_tree_message(
-                                        adapter,
-                                        goal=goal,
-                                        max_iterations=max_iter,
-                                    )
+                                    await _ensure_goal_tree_message(adapter, goal=goal)
                                 pending_text = pending_text_by_namespace.get(ns_key, "")
                                 if pending_text:
                                     await _flush_assistant_text_ns(

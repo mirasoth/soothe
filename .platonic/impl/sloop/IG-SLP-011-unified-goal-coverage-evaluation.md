@@ -32,7 +32,7 @@ validation consume signals as evidence.
 
 - `events.py`: `PceEvent` (kind: `step_started | step_completed |
   step_failed | decompose_committed | close_report_filed |
-  tool_milestone | token_milestone | elapsed_milestone`, plus step/goal
+  tool_milestone | elapsed_milestone`, plus step/goal
   ids and milestone payload) and `PceEventQueue` — bounded
   `asyncio.Queue` (maxsize 256, drop-oldest on overflow; events are
   hints, losing one is safe).
@@ -59,7 +59,9 @@ validation consume signals as evidence.
   snapshot → fingerprint check (skip if unchanged since last verdict) →
   typesafe verdict → escalate if untrusted / conflicting consecutive
   verdicts / boundary event → append `CoverageSignal` to the active
-  goal's `coverage_signals` ring. Caps: `max_passes_per_goal` (20),
+  goal's `coverage_signals` ring. Boundary batches skip the typesafe
+  round trip and go straight to the LLM (typesafe fallback when the LLM
+  is unavailable) — the ROOT_EVAL gate needs fresh signals fast. Caps: `max_passes_per_goal` (20),
   `max_llm_escalations_per_goal` (5). Every failure path is
   log-and-skip; the monitor never raises into the loop.
 
@@ -77,9 +79,11 @@ validation consume signals as evidence.
 
 - Add `PceLoopConfig` after `EvalLoopConfig` (config/models.py:902):
   `enabled: bool = True`, `tool_call_interval: int = 25`,
-  `token_milestone: int = 50000`, `elapsed_milestone_s: int = 600`,
+  `elapsed_milestone_s: int = 600`,
   `min_pass_interval_s: int = 30`, `max_passes_per_goal: int = 20`,
-  `max_llm_escalations_per_goal: int = 5`, `signal_ring_size: int = 20`.
+  `max_llm_escalations_per_goal: int = 5`, `signal_ring_size: int = 20`,
+  `gate_settle_timeout_s: int = 20` (bounded ROOT_EVAL wait for in-flight
+  boundary passes; 0 disables).
 - Wire `pce: PceLoopConfig` onto the loop config that owns `eval`
   (`config.agent.loop`).
 
@@ -105,10 +109,7 @@ validation consume signals as evidence.
   active, so the completion pass hit the unchanged-fingerprint skip.
 - `elapsed_milestone` needs no executor hook: the monitor's queue wait
   times out at `elapsed_milestone_s` and synthesizes the event.
-- `token_milestone` is NOT emitted in this change: mid-step input-token
-  sums are not available at the tool-completion site (usage lands on the
-  final AIMessage per pass). The event kind, monitor milestone state,
-  and config remain; an emitter can piggyback on hop usage_metadata later.
+- `token_milestone` was removed in the post-impl cleanse: no mid-step input-token sums exist at the tool-completion site, so the config field and event kind had no producer. Re-add both together with an emitter based on hop `usage_metadata`.
 - Emission is fire-and-forget into the bounded queue; executor never
   awaits monitor consumption. `_emit_pce` has no broad except — the
   graph-interrupt guard test forbids swallow-sites on the stream path,
@@ -116,6 +117,10 @@ validation consume signals as evidence.
 
 ### `packages/soothe/src/soothe/sloop/stations/decompose/root_eval.py`
 
+- Gate settle: before the insert/skip decision, ROOT_EVAL calls
+  `_settle_pce_monitor(ctx)` → `PceMonitor.settle(gate_settle_timeout_s)`
+  so the completion-time signal lands before the gate reads it.
+  Fail-open: no monitor / timeout / 0 config simply proceeds.
 - Fourth eval-required condition, evaluated before the
   `eval skip predicate` branch (~line 346): unconsumed
   (`consumed_by is None`) signals on the current goal of kind
@@ -167,3 +172,29 @@ pytest run has a pre-existing asyncio fixture conflict.
 No PCE-initiated execution changes; no `routing_classification`
 population; no finish-vs-split classifier cache fix. `eval_close`
 signal backfill is a follow-up (Open Question 2).
+
+## Post-Implementation Cleanse (2026-11-11)
+
+Rule 6/19 pass after live verification (loops 01a1c5c0, 01a1c88e).
+
+- Removed `token_milestone` entirely (config field, event kind,
+  `input_tokens` absorb key): no producer existed — mid-step input-token
+  sums are not available at the tool-completion site. Re-add both together
+  with an emitter based on hop `usage_metadata`.
+- Removed unused `PceEvent.ts` field (written, never read).
+- Trimmed `sloop/pce/__init__.py` to the house-style docstring: all
+  consumers import submodules directly, so the re-export block was unused
+  indirection.
+- Absorb simplified to `tool_milestone` → `tool_count` only: the
+  synthesized elapsed event carries no payload, so the other absorb keys
+  were no-ops.
+- Replaced Mock-tolerance `getattr`/`isinstance` guards in
+  `root_eval`/`finalize`/`record_progress` with direct typed access
+  (`GoalNode.coverage_signals` always exists; the auto-final test Mock
+  now sets `coverage_signals = []`).
+
+Kept: `elapsed_milestone_s` (drives the monitor queue-wait timeout),
+`close_requires_eval` on the snapshot (fingerprint input),
+`reset_pce_registry` (test isolation).
+
+Net −65/+17 lines; full suite and `verify_finally.sh` green after the pass.

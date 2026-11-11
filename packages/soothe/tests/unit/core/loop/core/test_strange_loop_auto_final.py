@@ -56,6 +56,7 @@ def _make_mock_ce(*, ledger_entries: list | None = None) -> Mock:
     mock_ce = Mock()
     mock_goal = Mock()
     mock_goal.id = "test-goal-id"
+    mock_goal.coverage_signals = []
     # Real StepDAG so DISPATCH / RECONCILE / ROOT_EVAL can claim and green-check.
     mock_goal.steps = StepDAG(
         nodes={

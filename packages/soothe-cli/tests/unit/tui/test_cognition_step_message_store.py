@@ -29,18 +29,6 @@ def test_step_progress_round_trip_completed() -> None:
     assert w2.has_tool_call_row("tc-1")
 
 
-def test_step_set_interrupted_hides_footer_when_message_empty() -> None:
-    """User cancel (Esc) stops the step without a chat footer line."""
-    step = CognitionStepMessage(step_id="s1", description="Run tools", id="stp-silent")
-    step._status = "running"
-    step._status_widget = MagicMock()
-
-    step.set_interrupted("")
-
-    assert step._status_widget.display is False
-    assert step._interrupt_message == ""
-
-
 def test_step_set_interrupted_shows_message_when_provided() -> None:
     """Stream errors still surface an explicit interrupted label."""
     step = CognitionStepMessage(step_id="s2", description="Run", id="stp-msg")

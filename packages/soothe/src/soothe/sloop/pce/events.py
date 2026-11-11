@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -26,7 +25,6 @@ PCE_EVENT_KINDS = (
     "decompose_committed",
     "close_report_filed",
     "tool_milestone",
-    "token_milestone",
     "elapsed_milestone",
 )
 
@@ -50,7 +48,6 @@ class PceEvent:
     step_id: str | None = None
     goal_id: str | None = None
     payload: dict[str, Any] = field(default_factory=dict)
-    ts: float = field(default_factory=time.monotonic)
 
 
 class PceEventQueue:
@@ -85,9 +82,11 @@ class PceEventQueue:
         return self._queue.empty()
 
 
-# Per-loop registry so deep executor/station code can emit without
-# threading a queue handle through the graph state.
+# Per-loop registries so deep executor/station code can emit without
+# threading a queue handle through the graph state, and so stations can
+# look up the running monitor (e.g. the root_eval gate settle).
 _LOOP_QUEUES: dict[str, PceEventQueue] = {}
+_LOOP_MONITORS: dict[str, Any] = {}
 
 
 def register_loop(loop_id: str, queue: PceEventQueue) -> None:
@@ -96,6 +95,15 @@ def register_loop(loop_id: str, queue: PceEventQueue) -> None:
 
 def unregister_loop(loop_id: str) -> None:
     _LOOP_QUEUES.pop(loop_id, None)
+    _LOOP_MONITORS.pop(loop_id, None)
+
+
+def register_monitor(loop_id: str, monitor: Any) -> None:
+    _LOOP_MONITORS[loop_id] = monitor
+
+
+def lookup_monitor(loop_id: str | None) -> Any | None:
+    return _LOOP_MONITORS.get(loop_id or "")
 
 
 def emit_pce_event(
@@ -119,5 +127,6 @@ def emit_pce_event(
 
 
 def reset_pce_registry() -> None:
-    """Clear the loop registry (test isolation)."""
+    """Clear the loop registries (test isolation)."""
     _LOOP_QUEUES.clear()
+    _LOOP_MONITORS.clear()

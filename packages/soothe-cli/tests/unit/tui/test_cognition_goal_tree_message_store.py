@@ -28,7 +28,6 @@ def test_cognition_goal_tree_message_store_round_trip() -> None:
     """Serialize and restore a goal→steps tree card."""
     w = CognitionGoalTreeMessage(
         goal="Ship the feature",
-        max_iterations=8,
         id="msg-gt-01",
     )
     w.set_step_phase("s1", "running", description="Read code")

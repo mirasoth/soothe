@@ -21,6 +21,7 @@ from soothe.sloop.pce.events import (
     PceEvent,
     PceEventQueue,
     register_loop,
+    register_monitor,
     unregister_loop,
 )
 from soothe.sloop.pce.projection import fingerprint, snapshot_goal_dag, snapshot_text
@@ -64,11 +65,13 @@ class PceMonitor:
         # Latest milestone counters per step (folded into the fingerprint).
         self._milestone_state: dict[str, dict[str, Any]] = {}
         self._task: asyncio.Task | None = None
+        self._pass_in_flight = False
 
     # ── lifecycle ───────────────────────────────────────────────────
 
     def start(self) -> asyncio.Task:
         register_loop(self.loop_id, self.queue)
+        register_monitor(self.loop_id, self)
         self._task = asyncio.create_task(self._run(), name=f"loop-pce:{self.loop_id}")
         logger.info("[pce] monitor started (loop=%s)", self.loop_id)
         return self._task
@@ -80,6 +83,20 @@ class PceMonitor:
             with contextlib.suppress(asyncio.CancelledError):
                 await self._task
         logger.info("[pce] monitor stopped (loop=%s)", self.loop_id)
+
+    async def settle(self, timeout_s: float) -> None:
+        """Wait for pending events and any in-flight pass (bounded, fail-open).
+
+        The root_eval gate calls this so freshly-emitted boundary events
+        (step completion) produce their signal before the gate reads it.
+        """
+        if timeout_s <= 0:
+            return
+        deadline = time.monotonic() + float(timeout_s)
+        while time.monotonic() < deadline:
+            if not self._pass_in_flight and self.queue.empty():
+                return
+            await asyncio.sleep(0.1)
 
     # ── main loop ───────────────────────────────────────────────────
 
@@ -100,6 +117,13 @@ class PceMonitor:
                 logger.warning("[pce] pass failed (loop=%s)", self.loop_id, exc_info=True)
 
     async def _maybe_pass(self, events: list[PceEvent]) -> None:
+        self._pass_in_flight = True
+        try:
+            await self._maybe_pass_inner(events)
+        finally:
+            self._pass_in_flight = False
+
+    async def _maybe_pass_inner(self, events: list[PceEvent]) -> None:
         now = time.monotonic()
         if now - self._last_pass_monotonic < float(self._cfg.min_pass_interval_s):
             # Debounced: absorb milestone counters so they are not lost.
@@ -123,40 +147,28 @@ class PceMonitor:
             logger.debug("[pce] pass skipped: unchanged fingerprint (loop=%s)", self.loop_id)
             return
 
-        try:
-            verdict = await decide_pce_verdict_typesafe(
-                snapshot_text(snapshot), soothe_config=self._soothe_config
-            )
-        except Exception:  # noqa: BLE001 — classifier failure skips the pass
-            logger.warning("[pce] typesafe verdict failed", exc_info=True)
-            self._last_fingerprints[goal.id] = state_fp
-            self._last_pass_monotonic = now
-            return
-        escalate = verdict is None or any(e.kind in BOUNDARY_EVENT_KINDS for e in events)
-        if verdict is not None:
+        boundary = any(e.kind in BOUNDARY_EVENT_KINDS for e in events)
+        verdict: PceVerdict | None = None
+        if boundary:
+            # Boundary latency: the gate is about to read signals, so go
+            # straight to the LLM; fall back to typesafe when it fails.
+            verdict = await self._escalate(goal, snapshot)
+        if verdict is None:
+            try:
+                verdict = await decide_pce_verdict_typesafe(
+                    snapshot_text(snapshot), soothe_config=self._soothe_config
+                )
+            except Exception:  # noqa: BLE001 — classifier failure skips the pass
+                logger.warning("[pce] typesafe verdict failed", exc_info=True)
+                self._last_fingerprints[goal.id] = state_fp
+                self._last_pass_monotonic = now
+                return
+        if verdict is not None and not boundary:
             last_kind = self._last_kinds_per_goal.get(goal.id)
             if last_kind is not None and last_kind != verdict.kind:
-                escalate = True
-        if escalate and self._escalations_per_goal.get(goal.id, 0) < int(
-            self._cfg.max_llm_escalations_per_goal
-        ):
-            try:
-                llm = await pce_llm_verdict(
-                    self._fast_model,
-                    snapshot_text(snapshot),
-                    soothe_config=self._soothe_config,
-                )
-            except Exception:  # noqa: BLE001 — escalation failure keeps typesafe
-                logger.warning("[pce] LLM escalation failed", exc_info=True)
-                llm = None
-            if llm is not None:
-                self._escalations_per_goal[goal.id] = self._escalations_per_goal.get(goal.id, 0) + 1
-                verdict = PceVerdict(
-                    kind=llm.kind,
-                    confidence=float(llm.confidence),
-                    source="llm",
-                    reasoning=llm.reasoning,
-                )
+                verdict = await self._escalate(goal, snapshot) or verdict
+        elif verdict is None:
+            verdict = await self._escalate(goal, snapshot)
         if verdict is None:
             # No usable verdict — record nothing, do not block.
             self._last_fingerprints[goal.id] = state_fp
@@ -190,6 +202,31 @@ class PceMonitor:
 
     # ── helpers ─────────────────────────────────────────────────────
 
+    # LLM escalation under the per-goal cap; None when unavailable.
+    async def _escalate(self, goal: Any, snapshot: Any) -> PceVerdict | None:
+        if self._escalations_per_goal.get(goal.id, 0) >= int(
+            self._cfg.max_llm_escalations_per_goal
+        ):
+            return None
+        try:
+            llm = await pce_llm_verdict(
+                self._fast_model,
+                snapshot_text(snapshot),
+                soothe_config=self._soothe_config,
+            )
+        except Exception:  # noqa: BLE001 — escalation failure keeps typesafe
+            logger.warning("[pce] LLM escalation failed", exc_info=True)
+            return None
+        if llm is None:
+            return None
+        self._escalations_per_goal[goal.id] = self._escalations_per_goal.get(goal.id, 0) + 1
+        return PceVerdict(
+            kind=llm.kind,
+            confidence=float(llm.confidence),
+            source="llm",
+            reasoning=llm.reasoning,
+        )
+
     # Milestone counters scoped to this goal's steps.
     def _goal_milestone_state(self, goal: Any) -> dict[str, Any]:
         try:
@@ -200,13 +237,12 @@ class PceMonitor:
 
     def _absorb_milestones(self, events: list[PceEvent]) -> None:
         for event in events:
-            if event.kind in ("tool_milestone", "token_milestone", "elapsed_milestone"):
+            if event.kind == "tool_milestone":
                 key = event.step_id or "_loop"
-                current = self._milestone_state.setdefault(key, {})
-                for field_name in ("tool_count", "input_tokens", "elapsed_s"):
-                    value = event.payload.get(field_name)
-                    if value is not None:
-                        current[field_name] = value
+                if event.payload.get("tool_count") is not None:
+                    self._milestone_state.setdefault(key, {})["tool_count"] = event.payload[
+                        "tool_count"
+                    ]
 
     def _active_goal(self, snapshot: Any) -> Any:
         active_id = snapshot.active_goal_id
