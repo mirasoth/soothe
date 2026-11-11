@@ -1,0 +1,6 @@
+"""Proactive Coverage Evaluation (RFC-SLP-005).
+
+Signal-only goal-DAG observer: typesafe-first verdicts, fingerprint
+cache, LLM escalation, CoverageSignal records consumed by ROOT_EVAL and
+finalize. Never drives execution directly.
+"""

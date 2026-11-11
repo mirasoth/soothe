@@ -20,6 +20,7 @@ from soothe_cli.display.tool_display import display_width, truncate_to_width
 from soothe_cli.runtime.presentation.id_format import compact_id_suffix
 from soothe_cli.settings import get_glyphs
 from soothe_cli.tui.widgets.messages._helpers import _RUNNING_SPINNER_INTERVAL_SECONDS
+from soothe_cli.tui.widgets.messages.cognition_goal_tree import collect_running_step_stats
 
 if TYPE_CHECKING:
     from textual.app import ComposeResult
@@ -112,24 +113,6 @@ def get_live_goal_tree(app: Any) -> CognitionGoalTreeMessage | None:
         return None
     tree = getattr(adapter, "_goal_tree_message", None)
     return tree
-
-
-def _goal_tree_running_live_stats(
-    adapter: Any,
-) -> dict[str, tuple[int, float | None, int, int]]:
-    """Collect live tool counts, start times, and token counts from running step cards."""
-    stats: dict[str, tuple[int, float | None, int, int]] = {}
-    for sid, card in getattr(adapter, "_current_step_messages", {}).items():
-        if card._status != "running":
-            continue
-        idx = card._build_row_index()
-        stats[sid] = (
-            idx.main_tool_count,
-            card._start_time,
-            card._input_tokens,
-            card._output_tokens,
-        )
-    return stats
 
 
 class PlanQuickViewOverlay(Vertical):
@@ -340,7 +323,9 @@ class PlanQuickViewOverlay(Vertical):
         try:
             adapter = getattr(self.app, "_ui_adapter", None)
             if adapter is not None:
-                tree.sync_running_live_stats(_goal_tree_running_live_stats(adapter))
+                tree.sync_running_live_stats(
+                    collect_running_step_stats(getattr(adapter, "_current_step_messages", {}))
+                )
             tree.tick_running_spinner()
             max_line_width = self._plan_quick_view_line_width()
             self._content.update(tree.plan_quick_view_content(max_line_width=max_line_width))

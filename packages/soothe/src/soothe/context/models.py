@@ -100,6 +100,46 @@ class StepCloseReport(BaseModel):
         return self.early_exit or bool(self.deferred_items)
 
 
+# ── Coverage signals (RFC-SLP-005) ───────────────────────────
+
+# Signal kinds that force a coverage Eval at ROOT_EVAL when unconsumed.
+AUDIT_REQUIRING_SIGNAL_KINDS = frozenset({"coverage_gap", "runaway_step", "stalled", "scope_drift"})
+# Confidence floor below which goal_likely_complete also forces an audit.
+GOAL_LIKELY_COMPLETE_AUDIT_BAR = 0.8
+
+
+class CoverageSignal(BaseModel):
+    """Coverage/progress observation appended to a GoalNode (RFC-SLP-005).
+
+    Written by the PCE monitor; consumed by ROOT_EVAL / finalize via
+    consumed_by. Signal-only: signals never drive execution directly.
+    """
+
+    signal_id: str = Field(default_factory=lambda: uuid.uuid4().hex[:12])
+    goal_id: str
+    source: Literal["pce", "eval_close"] = "pce"
+    kind: Literal[
+        "on_track",
+        "coverage_gap",
+        "goal_likely_complete",
+        "runaway_step",
+        "stalled",
+        "scope_drift",
+    ]
+    confidence: float = 0.0
+    evidence: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    consumed_by: Literal["root_eval", "finalize"] | None = None
+
+    def requires_audit(self) -> bool:
+        """Whether this signal forces a coverage Eval at ROOT_EVAL."""
+        if self.kind in AUDIT_REQUIRING_SIGNAL_KINDS:
+            return True
+        return (
+            self.kind == "goal_likely_complete" and self.confidence < GOAL_LIKELY_COMPLETE_AUDIT_BAR
+        )
+
+
 # ── Step DAG ────────────────────────────────────────────────────────────
 
 
@@ -408,6 +448,12 @@ class GoalNode(BaseModel):
     evidence_ledger: list[EvidenceEntry] = Field(
         default_factory=list,
         description="Append-only evidence ids (schema retained for persistence).",
+    )
+
+    # RFC-SLP-005: bounded ring of PCE coverage signals.
+    coverage_signals: list[CoverageSignal] = Field(
+        default_factory=list,
+        description="Bounded ring of coverage signals (PCE / eval close).",
     )
 
     # Retry/backoff (from Goal, RFC-204)

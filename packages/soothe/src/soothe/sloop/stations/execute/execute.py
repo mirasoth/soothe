@@ -426,6 +426,15 @@ async def _persist_planner_ask_step_outcome(
         else:
             await ctx.ce.fail_step(ctx.ce_goal_id, result.step_id, execution)
         ctx.ce.defer_save()
+        # RFC-SLP-005: terminal event after the CE status flip.
+        from soothe.sloop.pce.events import emit_pce_event
+
+        emit_pce_event(
+            ctx.state_manager.loop_id,
+            "step_completed" if result.success else "step_failed",
+            goal_id=ctx.ce_goal_id,
+            step_id=result.step_id,
+        )
     except Exception:
         logger.warning(
             "[execute] CE step feedback failed for planner ask step %s",

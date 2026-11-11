@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from time import time
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -21,7 +22,7 @@ async def test_interrupt_cleanup_marks_goal_tree_interrupted() -> None:
         set_spinner=AsyncMock(),
         set_active_message=MagicMock(),
     )
-    tree = CognitionGoalTreeMessage(goal="analyze logs", max_iterations=3)
+    tree = CognitionGoalTreeMessage(goal="analyze logs")
     tree.set_step_phase("TRA-01", "running", description="scan soothe.log")
     adapter._goal_tree_message = tree
 
@@ -40,6 +41,48 @@ async def test_interrupt_cleanup_marks_goal_tree_interrupted() -> None:
 
     assert tree._goal_tree_status() == "error"
     assert "Stream cancelled" in (tree._footer_plain or "")
+
+
+@pytest.mark.asyncio
+async def test_interrupt_cleanup_reports_stats_on_step_card() -> None:
+    """Worker-cancel cleanup writes the same stats line on the step card."""
+    adapter = TextualUIAdapter(
+        mount_message=AsyncMock(),
+        update_status=lambda _s: None,
+        set_spinner=AsyncMock(),
+        set_active_message=MagicMock(),
+    )
+    tree = CognitionGoalTreeMessage(goal="analyze logs")
+    tree.mark_loop_started(time() - 9)
+    tree.sync_plan_steps([{"id": "TRA-01", "description": "scan soothe.log"}])
+    tree.set_step_phase("TRA-01", "running", description="scan soothe.log")
+    adapter._goal_tree_message = tree
+    card = MagicMock()
+    card._status = "running"
+    card._start_time = time() - 9
+    card._input_tokens = 500
+    card._output_tokens = 40
+    card._build_row_index.return_value.main_tool_count = 2
+    adapter._current_step_messages = {"TRA-01": card}
+
+    daemon_session = MagicMock()
+    daemon_session.cancel_remote_query = AsyncMock()
+    daemon_session.aupdate_loop_state = AsyncMock()
+
+    await _handle_interrupt_cleanup(
+        adapter=adapter,
+        config={"configurable": {"thread_id": "loop-1"}},
+        daemon_session=daemon_session,
+        pending_text_by_namespace={},
+        turn_stats=SessionStats(),
+        start_time=0.0,
+    )
+
+    label = card.set_interrupted.call_args.args[0]
+    assert label.startswith("Stream cancelled · ")
+    assert "2 tools" in label
+    assert "9s" in label
+    assert "↑500" in label
 
 
 @pytest.mark.asyncio

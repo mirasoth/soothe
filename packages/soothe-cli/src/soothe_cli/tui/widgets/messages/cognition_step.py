@@ -1482,11 +1482,8 @@ class CognitionStepMessage(Vertical):
         except Exception:  # noqa: BLE001  # Unmounted widget (tests / no Textual app)
             colors = theme.DARK_COLORS
         if self._status_widget:
-            if message.strip():
-                self._status_widget.update(Content.styled(message, colors.error))
-                self._status_widget.display = True
-            else:
-                self._status_widget.display = False
+            self._status_widget.update(Content.styled(message, colors.error))
+            self._status_widget.display = True
         self._auto_collapse_on_terminal()
 
     def _sync_task_row_status_from_subagent(self, task_key: str, success: bool) -> None:

@@ -108,6 +108,16 @@ class ReconcileNode(LoopNode):
                 result.decomposed_parent_ids,
                 [f"{r.parent_step_id}:{r.reason}" for r in result.rejected],
             )
+            if result.committed_step_ids:
+                # RFC-SLP-005: wake the PCE monitor on committed decompositions.
+                from soothe.sloop.pce.events import emit_pce_event
+
+                emit_pce_event(
+                    ctx.state_manager.loop_id,
+                    "decompose_committed",
+                    goal_id=ctx.ce_goal_id,
+                    committed=len(result.committed_step_ids),
+                )
             if not result.committed_step_ids:
                 from soothe.context.models import StepExecution
 

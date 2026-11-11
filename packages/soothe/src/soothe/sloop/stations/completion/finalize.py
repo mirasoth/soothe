@@ -698,11 +698,22 @@ async def node_goal_completion(
                     len(final_output),
                 )
             else:
+                # RFC-SLP-005: latest unconsumed PCE signal joins the
+                # validation context so skipped-Eval goals are not unverified.
+                pce_signal_summary = None
+                unconsumed = [s for s in _goal.coverage_signals if s.consumed_by is None]
+                if unconsumed:
+                    latest = unconsumed[-1]
+                    pce_signal_summary = (
+                        f"kind={latest.kind} conf={latest.confidence:.2f} source={latest.source}"
+                    )
+                    latest.consumed_by = "finalize"
                 report_valid = await validate_report_typesafe(
                     user_goal=state.goal or "",
                     step_output=final_output,
                     step_kind=step_kind,
                     prior_output=prior_output,
+                    pce_signal=pce_signal_summary,
                     soothe_config=strange_loop.config,
                 )
             if not bypass_validation:

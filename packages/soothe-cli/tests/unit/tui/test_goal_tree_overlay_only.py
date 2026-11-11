@@ -15,14 +15,9 @@ async def test_ensure_goal_tree_message_does_not_mount_to_messages() -> None:
     mount = AsyncMock()
     adapter = TextualUIAdapter(mount_message=mount, update_status=MagicMock())
 
-    tree = await _ensure_goal_tree_message(
-        adapter,
-        goal="Ship the feature",
-        max_iterations=8,
-    )
+    tree = await _ensure_goal_tree_message(adapter, goal="Ship the feature")
 
     mount.assert_not_called()
     assert adapter._goal_tree_message is tree
     assert tree._goal_text == "Ship the feature"
-    assert tree._max_iterations == 8
     assert not getattr(tree, "is_mounted", False)
