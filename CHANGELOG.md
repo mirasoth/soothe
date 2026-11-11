@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.3.1] - 2026-11-11
+
 ### Added
 
 - Proactive Coverage Evaluation (PCE): a per-loop, signal-only monitor that observes the goal DAG during execution and appends coverage signals (typesafe-first with bounded LLM escalation, fingerprint-cached per goal); ROOT_EVAL forces a coverage Eval for single-leaf goals when signals require an audit, and finalize report validation carries the latest signal, so goals no longer finalize fully unverified.
@@ -15,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Show the interrupted goal's elapsed time, step progress, tool calls, and token totals in the TUI `Stream cancelled` line, and keep plan panel step rows at their real intermediate state instead of resetting every row to `0s – Stream cancelled`.
+
+[Compare with previous version]: https://github.com/mirasoth/soothe/compare/v1.3.0...v1.3.1
 
 ## [v1.3.0] - 2026-11-10
 
