@@ -95,7 +95,7 @@ def test_count_distinct_tool_call_ids_dedupes() -> None:
 
 
 def test_step_activity_tree_shows_collapsed_tool_overflow() -> None:
-    """Step card shows +N more tools when preview is capped."""
+    """Step card collapses historical tool calls on the first tools-area line."""
     from types import SimpleNamespace
 
     from soothe_cli.tui.widgets.messages.cognition_step_activity import StepActivityTree
@@ -133,7 +133,11 @@ def test_step_activity_tree_shows_collapsed_tool_overflow() -> None:
         g=g,
         preview_limit=1,
     )
-    assert "+4 more tools" in str(content)
+    text = str(content)
+    assert "+4 more tools" in text
+    # The collapse line is the first row of the tools pane, ahead of the one
+    # visible (newest) tool row.
+    assert text.index("+4 more tools") < text.index("Grep")
 
 
 def test_completed_footer_uses_dim_style_like_tool_activity() -> None:

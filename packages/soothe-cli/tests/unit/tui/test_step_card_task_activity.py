@@ -362,6 +362,8 @@ def test_step_shows_latest_five_main_tools() -> None:
     assert "Grep(m1)" not in text
     assert "Grep(m0)" not in text
     assert "+2 more tools" in text
+    # The collapse line leads the tools pane (before the visible newest rows).
+    assert text.index("+2 more tools") < text.index("Grep(m2)")
 
 
 def test_step_without_task_rows_still_shows_main_tools() -> None:

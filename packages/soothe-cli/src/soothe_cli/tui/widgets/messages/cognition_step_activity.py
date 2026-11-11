@@ -1020,7 +1020,9 @@ class StepActivityTree:
     spent on a bare section name.
 
     Task delegation rows stay flat markers inside the tools pane; while a task
-    runs, its line shows that task's subgraph tool count. The files pane shows
+    runs, its line shows that task's subgraph tool count. When tool rows exceed
+    the preview cap, a `· +N more tools` line leads the pane to collapse the
+    older calls, keeping the newest rows at the bottom. The files pane shows
     the latest file-write rows with action labels and line deltas (always
     rendered when such rows exist — no config gate). The thinking pane shows
     the latest reasoning lines in an italic muted tone.
@@ -1094,6 +1096,19 @@ class StepActivityTree:
         animate_tools = step_status == "running"
         failure_phases = ("error", "rejected", "failed")
 
+        # Collapse historical (overflow) tool calls at the top of the tools pane,
+        # so the newest tool rows sit at the bottom nearest the step footer. A
+        # trailing footer would read as "new tools hidden"; here the hidden rows
+        # are the older ones, which chronologically belong above the preview.
+        hidden_tools = len(main_source) - len(main_preview)
+        if hidden_tools > 0:
+            label = f"· +{hidden_tools} more tool{'s' if hidden_tools != 1 else ''}"
+            tool_lines.append(
+                PaneLine(
+                    segs=[("  ", theme.SECONDARY_TEXT_STYLE), (label, theme.SECONDARY_TEXT_STYLE)]
+                )
+            )
+
         for task_row in index.task_delegations:
             task_key = task_delegation_dedupe_key(task_row, step_id)
             task_phase = (task_row.phase or "pending").strip().lower()
@@ -1165,14 +1180,6 @@ class StepActivityTree:
                 )
             )
 
-        hidden_tools = len(main_source) - len(main_preview)
-        if hidden_tools > 0:
-            label = f"· +{hidden_tools} more tool{'s' if hidden_tools != 1 else ''}"
-            tool_lines.append(
-                PaneLine(
-                    segs=[("  ", theme.SECONDARY_TEXT_STYLE), (label, theme.SECONDARY_TEXT_STYLE)]
-                )
-            )
         for note in subagent_notes:
             text = (note or "").strip()
             if not text:

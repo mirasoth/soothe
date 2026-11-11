@@ -126,12 +126,27 @@ def test_rows_are_flat_with_right_aligned_meta() -> None:
     assert "600ms" in row
 
 
-def test_overflow_footer_stays_inside_the_pane() -> None:
+def test_overflow_collapse_is_first_line_of_tools_area() -> None:
+    """Historical tool calls collapse above the preview, not below it.
+
+    The `+N more tools` line is the first row of the tools pane so the newest
+    tool rows sit at the bottom; a trailing footer would wrongly imply new
+    calls are hidden.
+    """
     text = _render(
         [_tool(f"c{i}", "grep", {"pattern": f"p{i}"}) for i in range(6)],
         preview_limit=2,
     )
     assert "+4 more tools" in text
+    lines = text.splitlines()
+    header_idx = next(i for i, ln in enumerate(lines) if TOOLS_HEADER in ln)
+    collapse_idx = next(i for i, ln in enumerate(lines) if "+4 more tools" in ln)
+    shown_rows = [i for i, ln in enumerate(lines) if "Grep(" in ln]
+    # The collapse line leads the pane (immediately after its header) and every
+    # visible tool row is below it.
+    assert collapse_idx == header_idx + 1
+    assert shown_rows
+    assert all(i > collapse_idx for i in shown_rows)
 
 
 # ---------------------------------------------------------------------------
