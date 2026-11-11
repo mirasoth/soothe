@@ -111,9 +111,18 @@ jobs:
         # Ubuntu 24.04 uses deb822 (.sources) as well as legacy (.list) formats.
         sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' \
           /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null || true
-        sudo apt-get update
-        sudo apt-get install -y libxml2-dev libxslt-dev ripgrep silversearcher-ag
-      timeout-minutes: 5
+        # Retry apt update/install — GitHub Ubuntu 26.04 runners have intermittent DNS issues.
+        for attempt in 1 2 3 4 5; do
+          sudo apt-get update && \
+          sudo apt-get install -y libxml2-dev libxslt-dev ripgrep silversearcher-ag && break
+          echo "apt attempt $attempt failed, retrying in 15s..."
+          sleep 15
+        done
+        dpkg -l libxml2-dev libxslt-dev ripgrep silversearcher-ag >/dev/null 2>&1 || {
+          echo "Failed to install system dependencies after 5 attempts"
+          exit 1
+        }
+      timeout-minutes: 10
 
     - name: Wait for soothe-nano on PyPI
       run: |
