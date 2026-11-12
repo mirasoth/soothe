@@ -1,4 +1,4 @@
-"""Tests for Context Engine planning submodule (RFC-624 Phase 3c).
+"""Tests for Context Engine planning submodule.
 
 Covers: completion.py heuristics, StepPlanningSubengine, StepPlanManagerAdapter,
 GoalScheduler, GoalPlanningSubengine, PlanningFacade.

@@ -1,4 +1,4 @@
-"""Ledger updates from ``goal_completion`` node (RFC-214)."""
+"""Ledger updates from ``goal_completion`` node."""
 
 from __future__ import annotations
 
@@ -322,7 +322,7 @@ async def test_ledger_direct_appends_goal_completion_ledger_pair() -> None:
 
 @pytest.mark.asyncio
 async def test_ledger_direct_untrusted_validation_falls_back_to_synthesis() -> None:
-    """RFC-SLP-004: unavailable/untrusted report verdict -> synthesize, not passthrough."""
+    """unavailable/untrusted report verdict -> synthesize, not passthrough."""
     ce = _make_ce()
     loop_state = LoopState(goal="g", thread_id="thr-1")
     goal = GoalNode(description="g")

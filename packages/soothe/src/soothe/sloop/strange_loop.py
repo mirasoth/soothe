@@ -226,7 +226,7 @@ class StrangeLoop:
         Args:
             mode: `"auto"` or `"manual"`.
             interaction_mode: `"bypass"` or `None` (default graph); recorded
-                on the context — the RFC-634 `AutoModeMiddleware` gate reads
+                on the context — the `AutoModeMiddleware` gate reads
                 bypass per step from the graph configurable.
 
         Returns:

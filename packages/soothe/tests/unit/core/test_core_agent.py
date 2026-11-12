@@ -1,4 +1,4 @@
-"""Unit tests for CoreAgent class (RFC-0023 Layer 1 interface)."""
+"""Unit tests for CoreAgent class (Layer 1 interface)."""
 
 from __future__ import annotations
 

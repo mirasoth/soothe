@@ -1,4 +1,4 @@
-"""Unit tests for RFC-227 PriorProgressDigest and ToolCallHead schemas."""
+"""Unit tests for PriorProgressDigest and ToolCallHead schemas."""
 
 from __future__ import annotations
 

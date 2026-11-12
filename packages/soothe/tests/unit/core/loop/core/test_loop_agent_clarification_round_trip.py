@@ -128,7 +128,7 @@ def _make_config(max_iterations: int = 4) -> Any:
 
 @pytest.mark.asyncio
 async def test_planner_ask_user_round_trip_records_answer_as_step_result() -> None:
-    """RFC-904: planner ask_user waves are replaced by DISPATCH-claimed steps.
+    """Planner ask_user waves are replaced by DISPATCH-claimed steps.
 
     Full ask_user clarification round-trip moves to StepNode.questions (P4).
     This test verifies the decompose path still completes a goal end-to-end.

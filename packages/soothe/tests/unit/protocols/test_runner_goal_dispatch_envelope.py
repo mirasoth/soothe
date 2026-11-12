@@ -1,4 +1,4 @@
-"""Tests for GoalDispatchEnvelope + LoopRunRequest.autopilot_job (RFC-222 revised)."""
+"""Tests for GoalDispatchEnvelope + LoopRunRequest.autopilot_job (revised)."""
 
 from __future__ import annotations
 

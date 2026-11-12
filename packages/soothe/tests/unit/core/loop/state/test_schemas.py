@@ -1,4 +1,4 @@
-"""Unit tests for Layer 2 StrangeLoop schemas (RFC-0008)."""
+"""Unit tests for Layer 2 StrangeLoop schemas."""
 
 from __future__ import annotations
 

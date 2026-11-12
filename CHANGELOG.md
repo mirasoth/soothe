@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Finish-vs-split state (verdict cache, tool-call counter, re-check budget) moved from bare ContextVars to a runtime-bound per-step holder (`JevStepState`): LangGraph runs each hop in a copied context, so the cache never hit across hops — one classifier call per hop (observed in loop f353) — and the mid-step re-check milestones never accumulated; the holder is created per step by `bind_decompose_runtime` and shared by every hop, with a cross-hop regression test.
+- Cleansed all docstrings and config field descriptions in the soothe package of internal RFC-/IG- design-doc identifiers (docstrings must stand alone per agent rules; comments keep theirs), and added a docstring term-hygiene guard test to prevent regression.
 - Step-completion cognition summaries quote the step output inside the user turn instead of ending the prompt with the raw assistant message, and replies far past the word budget are discarded — the fast model could previously continue the step's truncated output and surface multi-thousand-char step-internal content as TUI cognition cards.
 - A validation-rejected `LEDGER_DIRECT` report now rides along as the synthesis stall fallback, so a dead synthesis stream passes the step report through instead of degrading to the `Completed N/N steps` stub.
 - Show the interrupted goal's elapsed time, step progress, tool calls, and token totals in the TUI `Stream cancelled` line, and keep plan panel step rows at their real intermediate state instead of resetting every row to `0s – Stream cancelled`.

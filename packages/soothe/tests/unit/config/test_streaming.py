@@ -69,7 +69,7 @@ def test_create_chat_model_for_spec_with_params_streaming():
 
 
 def test_model_cache_includes_streaming_key():
-    """Verify cached models have streaming enabled (RFC-627 LLMFactory).
+    """Verify cached models have streaming enabled (LLMFactory).
 
     nano 1.1.16 resolves streaming from the provider config and passes it
     to the model constructor; streaming is no longer part of the cache key

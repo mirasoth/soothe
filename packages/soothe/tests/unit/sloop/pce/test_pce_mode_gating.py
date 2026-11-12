@@ -1,4 +1,4 @@
-"""PCE monitor spawn gating tests (RFC-SLP-005).
+"""PCE monitor spawn gating tests.
 
 The monitor must never spawn in plan/ask interaction modes or when the
 pce config is disabled.

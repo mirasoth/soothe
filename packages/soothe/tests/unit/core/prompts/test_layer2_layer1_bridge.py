@@ -1,4 +1,4 @@
-"""Integration tests for StrangeLoop execution guidance (RFC-214).
+"""Integration tests for StrangeLoop execution guidance.
 
 Execution guidance is delivered in the per-turn user message envelope
 (``EXPECTED OUTPUT`` / ``INSTRUCTIONS`` via ``UserMessageBuilder.build_execute_step_message``),
@@ -25,7 +25,7 @@ def _envelope_body(*, expected_output: str | None) -> ExecuteStepEnvelopeBody:
 
 
 class TestExecutionGuidanceEnvelopeIntegration:
-    """RFC-214: guidance in user envelope via UserMessageBuilder."""
+    """Guidance in user envelope via UserMessageBuilder."""
 
     def test_envelope_includes_expected_output_and_instructions(self) -> None:
         """Executor-format guidance appears in EXPECTED OUTPUT and INSTRUCTIONS sections."""

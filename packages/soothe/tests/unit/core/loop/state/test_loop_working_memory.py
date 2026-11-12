@@ -1,4 +1,4 @@
-"""Loop working memory (RFC-203)."""
+"""Loop working memory."""
 
 from __future__ import annotations
 

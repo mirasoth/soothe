@@ -1,4 +1,4 @@
-"""Integration tests for ContextEngine step-plan adapter (RFC-624)."""
+"""Integration tests for ContextEngine step-plan adapter."""
 
 from __future__ import annotations
 
@@ -146,7 +146,7 @@ class TestStepPlanManagerAdapterIntegration:
 
 
 class TestLedgerAdapterCEOnly:
-    """Verify _record_ledger_message writes to CE LedgerManager (RFC-624 Phase 4 Stage 2)."""
+    """Verify _record_ledger_message writes to CE LedgerManager."""
 
     @pytest.mark.asyncio
     async def test_ce_ledger_receives_all_phases(self) -> None:

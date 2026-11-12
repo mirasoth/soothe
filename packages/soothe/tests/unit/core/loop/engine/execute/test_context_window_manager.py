@@ -1,4 +1,4 @@
-"""Unit tests for ContextWindowManager (RFC-224).
+"""Unit tests for ContextWindowManager.
 
 Tests cover:
 - estimate_checkpoint_tokens: Token count estimation from checkpoint messages
@@ -219,7 +219,7 @@ class TestCheckAndCompactIfNeeded:
         """Compaction not implemented yet → logs warning, returns None.
 
         Note: Full compaction implementation pending SummarizationMiddleware
-        API verification (RFC-224 Phase 3).
+        API verification.
         """
         config = MockConfig(context_limit=100, threshold_pct=0.80)
         mock_checkpointer = AsyncMock()

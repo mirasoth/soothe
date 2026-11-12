@@ -1,4 +1,4 @@
-"""Tests for ContextEngine public API, callbacks, and lossless persistence (RFC-624 Phase 3a)."""
+"""Tests for ContextEngine public API, callbacks, and lossless persistence."""
 
 from __future__ import annotations
 
@@ -197,7 +197,7 @@ class TestLosslessPersistence:
 
     @pytest.mark.asyncio
     async def test_pre_rfc624_ledger_format_loads_via_normalize(self) -> None:
-        """Pre-RFC-624 ledger rows (type + content + phase) upgrade on read."""
+        """Pre- ledger rows (type + content + phase) upgrade on read."""
         from soothe.context.store_sqlite import SqliteContextPersistence
 
         persistence = SqliteContextPersistence(loop_id="test", db_path=Path(":memory:"))

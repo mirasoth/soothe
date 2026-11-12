@@ -1,4 +1,4 @@
-"""SQLite RFC-225 status clobber guard for loops with goal history."""
+"""SQLite status clobber guard for loops with goal history."""
 
 from __future__ import annotations
 
@@ -111,7 +111,7 @@ def test_force_status_overrides_goal_guard(sqlite_conn: sqlite3.Connection) -> N
     """Reconciler force-demote must persist ``status`` even with goals.
 
     Regression for the d15f incident: the stale-loop reconciler logged
-    ``running -> idle`` every 5 min forever because the RFC-225 guard
+    ``running -> idle`` every 5 min forever because the guard
     silently dropped the ``status`` write for a loop with goal_records.
     ``force_status=True`` is the authoritative bypass for confirmed-dead
     zombies (no active runner, past the staleness threshold).

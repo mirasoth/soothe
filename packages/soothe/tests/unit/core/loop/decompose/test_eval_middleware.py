@@ -1,4 +1,4 @@
-"""Tests for the RFC-905 coverage-audit Eval middleware."""
+"""Tests for the coverage-audit Eval middleware."""
 
 from __future__ import annotations
 

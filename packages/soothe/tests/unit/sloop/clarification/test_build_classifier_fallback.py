@@ -1,6 +1,6 @@
 """Unit tests for `build_classifier` TypeSafe → LLM fallback resolution.
 
-Covers the IG-LOOP-017 resolution order: TypeSafe first, LLM fast-model
+Covers the resolution order: TypeSafe first, LLM fast-model
 fallback whenever TypeSafe fails, `None` when the fast model cannot be
 resolved, and `None` when the classifier is disabled (no LLM attempt).
 """

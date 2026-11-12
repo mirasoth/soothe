@@ -1,4 +1,4 @@
-"""Tests for SqliteContextPersistence (RFC-624 Phase 4 Step 1)."""
+"""Tests for SqliteContextPersistence."""
 
 from __future__ import annotations
 
@@ -125,7 +125,7 @@ class TestSqliteContextPersistence:
         assert loaded == []
 
     async def test_cross_goal_accumulation(self, persistence: SqliteContextPersistence) -> None:
-        """Verify that successive goals accumulate in the DAG (RFC-624 Phase 4 Step 1)."""
+        """Verify that successive goals accumulate in the DAG."""
         # Goal 1
         dag1 = GoalStepDAG()
         goal1 = GoalNode(description="First goal")

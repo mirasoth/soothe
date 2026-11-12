@@ -1,4 +1,4 @@
-"""Tests for RFC-626 goal_records schema upgrade on SQLite open."""
+"""Tests for goal_records schema upgrade on SQLite open."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ def _legacy_goal_records_columns(db_path: Path) -> set[str]:
 
 
 def test_migrate_goal_records_drops_legacy_columns(tmp_path: Path) -> None:
-    """Opening a pre-RFC-626 database upgrades goal_records to the slim index."""
+    """Opening a pre- database upgrades goal_records to the slim index."""
     db_path = tmp_path / "legacy.db"
     with sqlite3.connect(db_path) as db:
         db.execute("""

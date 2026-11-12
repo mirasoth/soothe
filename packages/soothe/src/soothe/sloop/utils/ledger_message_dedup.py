@@ -1,4 +1,4 @@
-"""reference-based dedup for CoreAgent ledger projection."""
+"""Reference-based dedup for CoreAgent ledger projection."""
 
 from __future__ import annotations
 

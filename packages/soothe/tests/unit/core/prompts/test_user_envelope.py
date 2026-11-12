@@ -1,4 +1,4 @@
-"""Tests for RFC-214 user message envelopes (scenario-based format)."""
+"""Tests for user message envelopes (scenario-based format)."""
 
 from __future__ import annotations
 

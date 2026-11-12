@@ -119,7 +119,7 @@ async def test_completed_emits_before_finalize_goal_persistence() -> None:
 
 @pytest.mark.asyncio
 async def test_terminal_bootstrap_skips_duplicate_record_iteration() -> None:
-    """record_iteration → goal_completion must not checkpoint twice (RFC-226)."""
+    """record_iteration → goal_completion must not checkpoint twice."""
     ce = ContextEngine(
         persistence=SqliteContextPersistence(loop_id="test", db_path=Path(":memory:"))
     )

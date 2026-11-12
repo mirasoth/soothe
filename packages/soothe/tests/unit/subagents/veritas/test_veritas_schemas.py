@@ -1,4 +1,4 @@
-"""Unit tests for the per-request veritas JSON Schema (RFC-623)."""
+"""Unit tests for the per-request veritas JSON Schema."""
 
 from __future__ import annotations
 

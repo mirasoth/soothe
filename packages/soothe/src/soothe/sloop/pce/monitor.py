@@ -1,4 +1,4 @@
-"""PCE monitor — per-loop parallel coverage observer (RFC-SLP-005).
+"""PCE monitor — per-loop parallel coverage observer.
 
 Signal-only: the monitor snapshots the goal DAG, runs typesafe-first
 verdicts (fingerprint-cached), escalates to a fast LLM when needed, and

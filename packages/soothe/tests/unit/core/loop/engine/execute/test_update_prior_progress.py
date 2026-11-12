@@ -1,4 +1,4 @@
-"""Unit tests for Executor._update_prior_progress (RFC-227).
+"""Unit tests for Executor._update_prior_progress.
 
 Payloads mirror production: ``Executor._stream_and_collect`` returns a
 ``_ExecuteStepResult`` dataclass containing ``messages`` list with
@@ -545,7 +545,7 @@ def test_called_from_append_parallel_wave_ledger() -> None:
 
 
 def test_step_summary_truncates_long_full_description() -> None:
-    """WaveStepProgress.description is capped at 500 chars (RFC-227 digest)."""
+    """WaveStepProgress.description is capped at 500 chars (digest)."""
     ex = _executor()
     state = LoopState(goal="g", thread_id="t1", iteration=1)
     long_brief = "In ws_command_client.py, " + ("detail " * 200)

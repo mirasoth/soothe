@@ -1,4 +1,4 @@
-"""Unit tests for parallel branch predecessor ledger replay (RFC-214)."""
+"""Unit tests for parallel branch predecessor ledger replay."""
 
 from __future__ import annotations
 

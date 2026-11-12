@@ -1,4 +1,4 @@
-"""Unit tests for AutoClarificationPolicy (RFC-622, RFC-623, RFC-634)."""
+"""Unit tests for AutoClarificationPolicy."""
 
 from __future__ import annotations
 
@@ -497,7 +497,7 @@ async def test_rail_pause_uses_fallback_and_skips_veritas() -> None:
 
 @pytest.mark.asyncio
 async def test_coverage_gate_routes_to_veritas() -> None:
-    """coverage_gate is NOT a human gate — veritas determines (IG-LOOP-015)."""
+    """coverage_gate is NOT a human gate — veritas determines."""
     calls: list[ClarificationRequest] = []
 
     async def _veritas(req: ClarificationRequest) -> VeritasAnswerSchema:

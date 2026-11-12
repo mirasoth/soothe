@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from contextvars import ContextVar, Token
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from soothe.context.decomposition import DecompositionProposal
@@ -29,6 +29,28 @@ _clarification_sink: ContextVar[list[dict[str, Any]] | None] = ContextVar(
 
 
 @dataclass
+class JevStepState:
+    """Per-step finish-vs-split state, shared across LangGraph hops.
+
+    LangGraph runs each node in a copied context, so ContextVar writes in
+    one hop never reach the next — a bare ContextVar cache re-evaluates on
+    every model call and the tool-call counter resets between the tool
+    node and the model node. `bind_decompose_runtime` creates one instance
+    per step before the agent runs; every hop mutates this shared object,
+    so the verdict cache and re-check milestones accumulate.
+    """
+
+    verdict: str | None = None
+    evaluated: bool = False
+    tool_calls: int = 0
+    recent_tools: list[str] = field(default_factory=list)
+    rechecks_done: int = 0
+
+
+_jev_state: ContextVar[JevStepState | None] = ContextVar("decompose_jev_state", default=None)
+
+
+@dataclass
 class DecomposeRuntimeTokens:
     """Tokens to reset after a step thread finishes."""
 
@@ -36,6 +58,7 @@ class DecomposeRuntimeTokens:
     step_kind: Token[str | None]
     wave: Token[int]
     sink: Token[list[DecompositionProposal] | None]
+    jev: Token[JevStepState | None]
     verdict: Token[list[dict[str, Any]] | None] | None = None
     clarification: Token[list[dict[str, Any]] | None] | None = None
 
@@ -70,6 +93,7 @@ def bind_decompose_runtime(
         step_kind=_current_step_kind.set(step_kind),
         wave=_wave_seq.set(wave_seq),
         sink=_proposal_sink.set(sink),
+        jev=_jev_state.set(JevStepState()),
         verdict=verdict_token,
         clarification=clarification_token,
     )
@@ -95,6 +119,7 @@ def reset_decompose_runtime(tokens: DecomposeRuntimeTokens) -> None:
     _current_step_kind.reset(tokens.step_kind)
     _wave_seq.reset(tokens.wave)
     _proposal_sink.reset(tokens.sink)
+    _jev_state.reset(tokens.jev)
     if tokens.verdict is not None:
         _verdict_sink.reset(tokens.verdict)
     if tokens.clarification is not None:
@@ -104,6 +129,11 @@ def reset_decompose_runtime(tokens: DecomposeRuntimeTokens) -> None:
 def current_step_id() -> str | None:
     """Return the decompose step id for the current task context, if any."""
     return _current_step_id.get()
+
+
+def current_jev_state() -> JevStepState | None:
+    """Return the runtime-bound finish-vs-split state for the current step, if any."""
+    return _jev_state.get()
 
 
 def current_step_kind() -> str | None:
@@ -131,7 +161,7 @@ def current_clarification_sink() -> list[dict[str, Any]] | None:
 
     Populated by `coverage_verdict` when an Eval step reports a user-decision
     gate (`CoverageClarification`); drained by reconcile to route straight to
-    `await_clarification` (IG-LOOP-015).
+    `await_clarification`.
     """
     return _clarification_sink.get()
 

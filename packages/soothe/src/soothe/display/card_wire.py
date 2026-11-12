@@ -1,4 +1,4 @@
-"""Parse and apply daemon ``soothe.card.*`` wire frames (RFC-413).
+"""Parse and apply daemon ``soothe.card.*`` wire frames.
 
 Live frames arrive as ``event`` / ``mode=custom`` with ``data.type`` from
 ``soothe_nano.core.events.CARD_*``. Clients apply them onto a card-id map;

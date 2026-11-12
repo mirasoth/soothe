@@ -1,7 +1,7 @@
 """Tests for the tool-approval ↔ clarification bridge.
 
 Covers: AutoClarificationPolicy routing for tool_approval (hardcoded human
-gate, IG-LOOP-015), answer_to_decision mapping, and the resume-payload
+gate,), answer_to_decision mapping, and the resume-payload
 translator in node_execute that converts a relay answer into the HITL
 decisions shape.
 """
@@ -224,7 +224,7 @@ def test_build_clarification_resume_payload_non_instructive_reject_no_message() 
 
 
 def test_auto_policy_routes_tool_approval_to_human() -> None:
-    """tool_approval is hardcoded to route to the human relay (IG-LOOP-015);
+    """tool_approval is hardcoded to route to the human relay;
     the force_manual_origins whitelist no longer exists."""
     from soothe.sloop.clarification.auto import _HUMAN_GATE_ORIGINS
 

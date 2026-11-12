@@ -1,4 +1,4 @@
-"""Unit tests for LLM-structured Eval decision (RFC-905 path B)."""
+"""Unit tests for LLM-structured Eval decision (path B)."""
 
 from __future__ import annotations
 

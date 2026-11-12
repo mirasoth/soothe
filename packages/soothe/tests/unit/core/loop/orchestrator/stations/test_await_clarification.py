@@ -131,7 +131,7 @@ class _AutoPolicyStub(AutoClarificationPolicy):
     """Auto-policy stub overriding `answer` so no real veritas call runs.
 
     Subclasses `AutoClarificationPolicy` so `_mode_for_policy`'s isinstance
-    check recognizes it as auto (IG-LOOP-015)."""
+    check recognizes it as auto."""
 
     def __init__(self, *, raises: ClarificationDeferredError | None = None) -> None:
         async def _stub_veritas(_req: ClarificationRequest) -> VeritasAnswerSchema:
@@ -428,7 +428,7 @@ class _HeadOnlyPolicyStub:
 
 
 async def test_station_resolves_one_request_per_visit() -> None:
-    """RFC-634: the static pre-filter is gone (the inline gates resolve
+    """The static pre-filter is gone (the inline gates resolve
     deterministic verdicts before any interrupt), so a same-thread follower
     is no longer batched — it stays queued for its own visit."""
     ctx = _StubCtx(policy=_HeadOnlyPolicyStub())

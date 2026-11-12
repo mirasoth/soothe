@@ -1,4 +1,4 @@
-"""Unit tests for the LLM fast-model classifier adapter (IG-LOOP-017).
+"""Unit tests for the LLM fast-model classifier adapter.
 
 `LLMChoiceClassifier` is the structural stand-in for `TypeSafeClassifier`
 when the TypeSafe backend is unavailable. It must produce the same

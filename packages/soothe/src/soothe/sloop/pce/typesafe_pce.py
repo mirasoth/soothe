@@ -1,4 +1,4 @@
-"""Typesafe-first PCE verdict with LLM escalation (RFC-SLP-005).
+"""Typesafe-first PCE verdict with LLM escalation.
 
 A Choice question maps the goal-DAG snapshot onto one of the six signal
 kinds. The drift guard reuses nano's verdict_trusted: untrusted

@@ -409,7 +409,7 @@ def test_project_execute_step_graph_input_predecessor_includes_non_overlapping_s
 
 
 def test_project_execute_step_graph_input_skips_checkpoint_present_rows() -> None:
-    """RFC-214: do not replay ledger rows already on the CoreAgent branch checkpoint."""
+    """Do not replay ledger rows already on the CoreAgent branch checkpoint."""
     step_02 = StepAction(id="02", description="second", dependencies=["01"])
     decision = AgentDecision(
         type="execute_steps",

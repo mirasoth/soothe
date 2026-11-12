@@ -610,7 +610,7 @@ async def test_stream_and_collect_emits_late_tool_call_update_on_tool_message() 
 
 @pytest.mark.asyncio
 async def test_stream_and_collect_counts_execute_namespace_tool_message() -> None:
-    """Execute-namespace ToolMessages must count toward main_tool_count (RFC-628)."""
+    """Execute-namespace ToolMessages must count toward main_tool_count."""
     from soothe_nano.wire.stream_tool_wire import STREAM_TOOL_CALL_UPDATE
 
     ai = AIMessage(

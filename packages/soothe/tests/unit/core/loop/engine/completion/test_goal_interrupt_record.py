@@ -1,4 +1,4 @@
-"""Tests for the ``goal_interrupted`` ledger marker writer (RFC-214 carry-forward).
+"""Tests for the ``goal_interrupted`` ledger marker writer (carry-forward).
 
 Covers ``append_goal_interrupted_ledger_pair``: the marker is only written when
 the interrupted goal produced ``execute_step`` evidence, the AI body is a

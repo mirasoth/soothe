@@ -58,7 +58,7 @@ def build_veritas_answerer(
     Both inline consumers share this constructor so model selection, context
     depth, retry policy, and confidence coercion stay in one place:
 
-    `AskUserGateMiddleware` (RFC-635) — built once per CoreAgent graph,
+    `AskUserGateMiddleware` — built once per CoreAgent graph,
       called per `ask_user` tool call with per-run trace ids.
     `AutoClarificationPolicy` (station) — built once per goal run for
       rail_pause / planner-emitted questions and gate fail-safes.
@@ -346,7 +346,7 @@ async def _decision_fast_path(
     request: ClarificationRequest,
     classifier: Any | None,
 ) -> tuple[str, Any] | None:
-    """RFC-LOOP-030 fast path: Jev first, LLM second.
+    """fast path: Jev first, LLM second.
 
     Applicable only to requests carrying an approval subject — the
     `tool_approval` origin's `action_requests` metadata. Open question

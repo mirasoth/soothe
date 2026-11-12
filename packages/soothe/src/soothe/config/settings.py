@@ -630,7 +630,7 @@ class SootheConfig(BaseSettings):
     """Container workspace path mapping."""
 
     workspace_sync: WorkspaceSyncConfig = Field(default_factory=WorkspaceSyncConfig)
-    """Durable object-store workspace sync backend (RFC-906)."""
+    """Durable object-store workspace sync backend."""
 
     optimization: OptimizationConfig = Field(default_factory=OptimizationConfig)
     """Semantic optimization for risk and relationship heuristics."""

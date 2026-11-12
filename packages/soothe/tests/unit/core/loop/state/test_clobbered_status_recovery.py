@@ -1,4 +1,4 @@
-"""Regression test for RFC-225 daemon-clobbered status recovery.
+"""Regression test for daemon-clobbered status recovery.
 
 Reproduces the failure mode where the daemon's pre-query
 ``update_loop_metadata`` overwrites ``status="idle"`` (left by
@@ -11,8 +11,8 @@ Reproduces the failure mode where the daemon's pre-query
 2. ``postgres_backend.update_loop_metadata``: drop ``status`` from external
    writes when goal_history is non-empty (StrangeLoop owns status then).
 
-RFC-624 Phase 4 Stage 2: seed_loop_ledger_from_prior_goal is deleted.
-CE ledger spans all goals via ce.load(), so prior context is available
+seed_loop_ledger_from_prior_goal is deleted.
+CE ledger spans all goals via ce.load, so prior context is available
 without explicit seeding.
 """
 

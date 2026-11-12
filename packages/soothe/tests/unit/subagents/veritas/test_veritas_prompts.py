@@ -1,4 +1,4 @@
-"""Tests for veritas system/user prompt builders (RFC-622)."""
+"""Tests for veritas system/user prompt builders."""
 
 from __future__ import annotations
 

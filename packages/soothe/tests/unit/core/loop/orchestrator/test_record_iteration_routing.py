@@ -1,4 +1,4 @@
-"""Tests for RFC-226 record_iteration → goal_completion fast-exit routing."""
+"""Tests for record_iteration → goal_completion fast-exit routing."""
 
 from soothe.sloop.orchestrator.routing import route_after_record_iteration
 

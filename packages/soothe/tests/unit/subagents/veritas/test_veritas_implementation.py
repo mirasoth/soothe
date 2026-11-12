@@ -1,4 +1,4 @@
-"""Unit tests for veritas implementation (RFC-622, RFC-623)."""
+"""Unit tests for veritas implementation."""
 
 from __future__ import annotations
 
@@ -337,7 +337,7 @@ async def test_structured_dict_questions_do_not_crash(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """RFC-622: clarification questions may be QuestionSpec.model_dump() dicts.
+    """Clarification questions may be QuestionSpec.model_dump dicts.
 
     Regression: in auto clarification mode, ``_preview_questions`` eagerly formatted
     dict questions into the debug log and crashed with

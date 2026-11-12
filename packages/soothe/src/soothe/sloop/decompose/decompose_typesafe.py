@@ -76,7 +76,7 @@ async def decide_finish_vs_split_typesafe(
 
     Returns "finish" / "split" on trusted verdicts, else None — callers keep
     the decompose tool unchanged on None. tool_call_count / recent_tools
-    carry mid-thread execution evidence for RFC-SLP-006 re-checks; t=0
+    carry mid-thread execution evidence for re-checks; t=0
     calls omit them.
     """
     cfg = classifier_config(soothe_config)

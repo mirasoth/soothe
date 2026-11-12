@@ -1,4 +1,4 @@
-"""Routing short-circuits + await_clarification edges (RFC-622, RFC-904)."""
+"""Routing short-circuits + await_clarification edges."""
 
 from __future__ import annotations
 

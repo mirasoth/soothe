@@ -94,7 +94,7 @@ class CoverageVerdict(BaseModel):
     When false, `remaining_subtasks` are queued as a `DecompositionProposal`
     so reconcile materializes continuation steps for the next plan-execute wave.
 
-    `pending_clarification` (IG-LOOP-015) reports a user-decision gate that
+    `pending_clarification` reports a user-decision gate that
     blocks the goal: the verdict routes it straight to `await_clarification`
     via the relay instead of materializing an execution step whose brief is
     "ask the user" (closes the search_tools spiral observed in loop b047).

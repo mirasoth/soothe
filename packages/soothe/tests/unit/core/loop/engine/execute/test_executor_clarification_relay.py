@@ -1,4 +1,4 @@
-"""Stream-wrapper clarification relay path (RFC-622)."""
+"""Stream-wrapper clarification relay path."""
 
 from __future__ import annotations
 

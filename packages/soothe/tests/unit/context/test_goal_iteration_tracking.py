@@ -1,4 +1,4 @@
-"""Tests for GoalNode iteration tracking and evidence ledger schema (RFC-624)."""
+"""Tests for GoalNode iteration tracking and evidence ledger schema."""
 
 import asyncio
 

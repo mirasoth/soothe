@@ -1,4 +1,4 @@
-"""Tests for shared resolution core (RFC-621)."""
+"""Tests for shared resolution core."""
 
 from __future__ import annotations
 

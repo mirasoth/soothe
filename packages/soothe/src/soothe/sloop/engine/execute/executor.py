@@ -332,9 +332,9 @@ class Executor:
             fast_model: Fast model for lightweight classification calls.
             interaction_mode: CoreAgent interaction mode
                 (`agent`/`ask`/`plan`/`bypass`).
-            clarification_mode: RFC-634 resolved clarification mode
+            clarification_mode: resolved clarification mode
                 (`auto`/`manual`) propagated to the AutoModeMiddleware gate.
-            human_attached: RFC-634 whether a human relay answers
+            human_attached: whether a human relay answers
                 interrupts; gates safety escalation vs autopilot reject.
             interaction_mode_provider: Live-read callable returning the
                 current `interaction_mode` from the runtime context. When

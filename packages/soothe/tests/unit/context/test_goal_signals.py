@@ -1,4 +1,4 @@
-"""CoverageSignal persistence tests (RFC-SLP-005).
+"""CoverageSignal persistence tests.
 
 Signals live on GoalNode and round-trip through the sqlite context
 store, so a reloaded loop keeps its signal history.

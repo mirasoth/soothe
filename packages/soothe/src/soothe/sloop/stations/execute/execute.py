@@ -102,7 +102,7 @@ def _build_loop_state_view(
 def _resolved_clarification_mode(ctx: LoopRuntimeContext) -> str | None:
     """Derive the live clarification mode from the attached policy type.
 
-    RFC-634: propagated to the executor's configurable so
+    Propagated to the executor's configurable so
     `AutoModeMiddleware` can decide interrupt vs inline resolution. Returns
     `None` when no policy is attached (headless runs without clarification).
     """
@@ -125,7 +125,7 @@ def _maybe_record_gate_answer(chunk: Any, state: Any) -> bool:
     Returns True when the chunk is a `clarification_auto_answered` custom
     event (consumed here — not forwarded as a stream event). The entry shape
     matches `await_clarification`'s history append so later veritas calls
-    see prior gate Q&A (RFC-635).
+    see prior gate Q&A.
     """
     if not (isinstance(chunk, tuple) and len(chunk) == _STREAM_CHUNK_LEN):
         return False

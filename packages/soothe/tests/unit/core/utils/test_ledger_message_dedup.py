@@ -1,4 +1,4 @@
-"""RFC-214 core_agent_message_id dedup helpers."""
+"""core_agent_message_id dedup helpers."""
 
 from __future__ import annotations
 

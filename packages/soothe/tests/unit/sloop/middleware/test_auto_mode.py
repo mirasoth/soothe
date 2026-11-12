@@ -90,7 +90,7 @@ def test_gate_respects_tools_filter() -> None:
 
 
 class TestDenyRuleReject:
-    """User-configured deny rules (the host extension point — RFC-LOOP-030
+    """User-configured deny rules (the host extension point —
     moved the built-ins into nano's severity-tiered registry)."""
 
     @staticmethod
@@ -147,7 +147,7 @@ class TestDenyRuleReject:
         assert result is None
 
     def test_builtin_deny_rules_migrated_to_nano(self) -> None:
-        """RFC-LOOP-030: the built-in rule list is empty by default — the
+        """The built-in rule list is empty by default — the
         built-ins live in nano's severity registry."""
         assert ToolApprovalConfig().deny_rules == []
 

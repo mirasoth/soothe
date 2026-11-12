@@ -1,4 +1,4 @@
-"""Tests for loop worker file logging (RFC-221)."""
+"""Tests for loop worker file logging."""
 
 from __future__ import annotations
 

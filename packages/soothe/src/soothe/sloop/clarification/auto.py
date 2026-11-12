@@ -51,7 +51,7 @@ class AutoClarificationPolicy:
     Autopilot fallback: returns a synthetic retry answer prompting the LLM
     to try a different action.
 
-    Routing (IG-LOOP-015): `tool_approval` and the structural human gates
+    Routing: `tool_approval` and the structural human gates
     (`plan_mode_review`, `rail_pause`) skip veritas and go straight to the
     human relay. Every other origin (`execute`, `coverage_gate`, …) is
     determined by veritas — confident → auto-answer, defer → human relay.
@@ -162,7 +162,7 @@ class AutoClarificationPolicy:
     async def _answer_veritas(self, request: ClarificationRequest) -> ClarificationAnswer:
         """Veritas LLM auto-answer with confidence-based fallback.
 
-        RFC-635: requests carrying the `gate_deferred` marker already ran
+        Requests carrying the `gate_deferred` marker already ran
         veritas inline (`AskUserGateMiddleware`) and deferred — skip the LLM
         call and route straight through the fallback ladder (human when
         attached, autopilot retry, hard defer).
@@ -230,7 +230,7 @@ class AutoClarificationPolicy:
     async def _answer_gate_deferred(self, request: ClarificationRequest) -> ClarificationAnswer:
         """Route a gate-deferred question through the fallback ladder.
 
-        `AskUserGateMiddleware` already ran veritas inline (RFC-635) — the
+        `AskUserGateMiddleware` already ran veritas inline — the
         gate defers only for genuine "I don't know" verdicts, so the station
         goes straight to the human relay when one is attached, the autopilot
         retry sentinel when enabled, or a hard defer (park) otherwise.

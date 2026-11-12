@@ -1,4 +1,4 @@
-"""Unit tests for Eval text recovery (RFC-905 fail-safe)."""
+"""Unit tests for Eval text recovery (fail-safe)."""
 
 from __future__ import annotations
 

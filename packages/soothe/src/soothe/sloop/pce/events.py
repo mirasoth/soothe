@@ -1,4 +1,4 @@
-"""PCE event plumbing (RFC-SLP-005).
+"""PCE event plumbing.
 
 Bounded per-loop queue of step-boundary and budget-milestone events.
 Stations and the executor emit fire-and-forget via `emit_pce_event`;

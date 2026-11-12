@@ -1,6 +1,6 @@
 """Tool-approval evaluator shared by the `AutoModeMiddleware` inline gate.
 
-RFC-634: deterministic evaluation for a single tool call — deny rules → loop
+Deterministic evaluation for a single tool call — deny rules → loop
 allowlist (exact signature) → nano operation security (with rule-family
 allowlist override). The middleware maps the result onto its decision table
 (auto/manual mode, bypass, human attachment) and owns all interrupt /

@@ -1,4 +1,4 @@
-"""Unit tests for approved-plan → DISPATCH / execute grounding (RFC-904)."""
+"""Unit tests for approved-plan → DISPATCH / execute grounding."""
 
 from __future__ import annotations
 

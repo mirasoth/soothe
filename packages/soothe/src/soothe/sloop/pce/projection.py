@@ -1,4 +1,4 @@
-"""Goal-DAG snapshot and fingerprint for PCE passes (RFC-SLP-005).
+"""Goal-DAG snapshot and fingerprint for PCE passes.
 
 The snapshot is a compact projection of the full Context Engine goal DAG
 (completed, ongoing, interrupted goals plus their steps) with a ledger

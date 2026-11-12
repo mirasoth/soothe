@@ -1,5 +1,5 @@
-"""Unit tests for the deny-list-first tool-approval evaluator (RFC-634,
-updated for RFC-LOOP-030 severity tiering).
+"""Unit tests for the deny-list-first tool-approval evaluator (,
+updated for severity tiering).
 
 `evaluate_action` evaluates a single tool call: user deny rules → loop
 allowlist (signature / prefix / rule family) → nano safety (hard-deny
@@ -60,7 +60,7 @@ class TestDenyRules:
         assert result.stage == "deny_rule"
 
     def test_default_deny_rules_empty(self) -> None:
-        """RFC-LOOP-030: built-ins live in nano; the host list is empty."""
+        """Built-ins live in nano; the host list is empty."""
         assert ToolApprovalConfig().deny_rules == []
 
 
@@ -149,7 +149,7 @@ class TestMigratedBuiltins:
 
 class TestSafetyChecks:
     def test_git_dir_rejected_by_safety(self) -> None:
-        """RFC-LOOP-030: dangerous components are `high` on write — a risk
+        """Dangerous components are `high` on write — a risk
         hint, not a hard escalation."""
         result = _pipeline().evaluate_action(
             "edit_file", {"file_path": "/workspace/.git/config"}, workspace_root="/workspace"
@@ -297,7 +297,7 @@ class TestCompoundCommands:
 
     def test_compound_safety_check_rejects(self) -> None:
         """cd && shred — the sub-critical rule fires in the compound and
-        surfaces as a risk hint (RFC-LOOP-030)."""
+        surfaces as a risk hint."""
         result = _pipeline().evaluate_action(
             "run_command", {"command": "cd /workspace && shred /etc/passwd"}
         )
@@ -331,7 +331,7 @@ class TestPipelineDisabled:
 
 
 class TestBypassMode:
-    """RFC-634: bypass skips safety escalation; deny rules reject
+    """Bypass skips safety escalation; deny rules reject
     across all modes (they are absolute by design)."""
 
     def test_bypass_approves_dangerous_command(self) -> None:

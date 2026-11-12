@@ -90,7 +90,7 @@ def _drop_new_node_cycles(nodes: list[StepNode]) -> None:
 
 
 def _is_pure_chain(subtasks: list[ProposedSubtask]) -> bool:
-    """True when children form a pure sequential chain (RFC-SLP-006 §4).
+    """True when children form a pure sequential chain.
 
     Child i depends on exactly child i-1 and nothing else; child 0 has no
     sibling deps. Such a proposal gains nothing over finishing in-thread.
@@ -334,9 +334,9 @@ def drain_executor_proposals(executor: Any) -> list[DecompositionProposal]:
 
 
 def drain_executor_clarifications(executor: Any) -> list[dict[str, Any]]:
-    """Drain coverage-emitted user-decision gates queued on an Executor (IG-LOOP-015).
+    """Drain coverage-emitted user-decision gates queued on an Executor.
 
-    Each entry is a `CoverageClarification.model_dump()` (with ``reason`` and
+    Each entry is a `CoverageClarification.model_dump` (with ``reason`` and
     ``questions`` as QuestionSpec dicts). Reconcile routes these straight to
     `await_clarification` instead of materializing execution steps.
     """

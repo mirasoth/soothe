@@ -1,4 +1,4 @@
-"""Tests for SystemPromptMiddleware (RFC-214 volatility-tiered architecture)."""
+"""Tests for SystemPromptMiddleware (volatility-tiered architecture)."""
 
 import re
 from types import SimpleNamespace
@@ -105,7 +105,7 @@ class MockModelRequest(ModelRequest[dict]):
 
 
 def test_simple_query_gets_minimal_prompt():
-    """Minimal task complexity (e.g. chitchat intake) should receive minimal system prompt (RFC-214)."""
+    """Minimal task complexity (e.g. chitchat intake) should receive minimal system prompt."""
     config = SootheConfig()
     middleware = SystemPromptMiddleware(config=config)
 
@@ -190,7 +190,7 @@ def test_no_classification_uses_fallback_prompt():
 
 
 def test_execution_hints_extracted_to_state():
-    """RFC-214: Execution hints extracted from state for user envelope, not merged into system."""
+    """Execution hints extracted from state for user envelope, not merged into system."""
     config = SootheConfig()
     middleware = SystemPromptMiddleware(config=config)
     classification = RoutingClassification(task_complexity="simple")
@@ -236,7 +236,7 @@ def test_custom_system_prompt_for_complex_queries():
 
 
 def test_all_prompts_do_not_include_date():
-    """RFC-214: Date line is NOT in system prompt - it's in user message envelope."""
+    """Date line is NOT in system prompt - it's in user message envelope."""
     config = SootheConfig()
     middleware = SystemPromptMiddleware(config=config)
 
@@ -358,7 +358,7 @@ def test_goal_synthesis_disables_all_tools() -> None:
 
 
 def test_memory_section_uses_memory_summary_tag():
-    """RFC-214: Memory section should use <MEMORY_SUMMARY> tag."""
+    """Memory section should use <MEMORY_SUMMARY> tag."""
     from soothe_nano.protocols.memory import MemoryItem
 
     config = SootheConfig()

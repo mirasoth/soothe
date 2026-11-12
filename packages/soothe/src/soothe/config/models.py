@@ -901,7 +901,7 @@ class DecomposeLoopConfig(BaseModel):
     root_split_nudge: bool = Field(
         default=True,
         description=(
-            "RFC-SLP-006: inject the parallel nudge when the finish-vs-split "
+            "inject the parallel nudge when the finish-vs-split "
             "verdict on a DAG root is a trusted split."
         ),
     )
@@ -910,22 +910,21 @@ class DecomposeLoopConfig(BaseModel):
         ge=0,
         le=100,
         description=(
-            "RFC-SLP-006: re-run finish-vs-split after every N tool "
-            "completions in a step; 0 disables re-checks."
+            "re-run finish-vs-split after every N tool completions in a step; 0 disables re-checks."
         ),
     )
     max_rechecks_per_step: int = Field(
         default=2,
         ge=0,
         le=10,
-        description="RFC-SLP-006: bound on mid-step finish-vs-split re-checks per step.",
+        description="bound on mid-step finish-vs-split re-checks per step.",
     )
     split_hint_threshold_pct: float = Field(
         default=0.60,
         ge=0.0,
         le=0.95,
         description=(
-            "RFC-SLP-006: context-pressure split hint fires at this fraction "
+            "context-pressure split hint fires at this fraction "
             "of the context window limit; 0 disables the hint."
         ),
     )
@@ -933,7 +932,7 @@ class DecomposeLoopConfig(BaseModel):
         default=20,
         ge=1,
         le=100,
-        description="RFC-SLP-006: bounded ring of DecomposeQuality records per goal.",
+        description="bounded ring of DecomposeQuality records per goal.",
     )
 
 
@@ -949,7 +948,7 @@ class EvalLoopConfig(BaseModel):
 
 
 class PceLoopConfig(BaseModel):
-    """Proactive Coverage Evaluation monitor limits (RFC-SLP-005)."""
+    """Proactive Coverage Evaluation monitor limits."""
 
     enabled: bool = Field(
         default=True,
@@ -1366,7 +1365,7 @@ class ToolApprovalRule(BaseModel):
 def _default_deny_rules() -> list[ToolApprovalRule]:
     """Default deny rules — user-defined overrides only.
 
-    RFC-LOOP-030: the built-in rules migrated into nano's severity-tiered
+    The built-in rules migrated into nano's severity-tiered
     registry (`command.restricted.*` at `high`, sensitive system paths at
     `critical` on write). Only user-configured rules belong here; they are
     absolute rejects across all modes.
@@ -1487,13 +1486,13 @@ class ClarificationConfig(BaseModel):
     """
 
     tool_approval: ToolApprovalConfig = Field(default_factory=ToolApprovalConfig)
-    """multi-stage tool-approval pipeline. When enabled,
+    """Multi-stage tool-approval pipeline. When enabled,
     deterministic deny → safety → allow stages resolve most tool_approval
     interrupts without an LLM. Veritas remains the final guard for ambiguous
     cases."""
 
     ask_user_gate: AskUserGateConfig = Field(default_factory=AskUserGateConfig)
-    """RFC-635 inline veritas fast path for `ask_user` calls in auto mode.
+    """Inline veritas fast path for `ask_user` calls in auto mode.
     Confident answers resolve inline (no interrupt, no graph hop); defer /
     failure questions carry a `gate_deferred` marker so the station skips
     its veritas call and routes straight to the human relay, retry
@@ -1524,7 +1523,7 @@ class VeritasConfig(BaseModel):
     decision_fast_path: DecisionFastPathConfig = Field(
         default_factory=lambda: DecisionFastPathConfig()
     )
-    """RFC-LOOP-030 calibrated decision-model fast path inside the answerer:
+    """Calibrated decision-model fast path inside the answerer:
     Jev first, LLM second."""
 
 

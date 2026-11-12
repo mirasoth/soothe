@@ -1,4 +1,4 @@
-"""Unit tests for do-or-decompose THREAD prompt copy (RFC-904)."""
+"""Unit tests for do-or-decompose THREAD prompt copy."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""PCE monitor pass-control tests (RFC-SLP-005).
+"""PCE monitor pass-control tests.
 
 Fingerprint cache, debounce, caps, ring bound, and fail-safety. The
 typesafe verdict is patched so no real classifier is invoked.

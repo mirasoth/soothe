@@ -3,7 +3,7 @@
 All values come from the LangGraph `configurable` written by the executor
 per step thread — the same channel the old `interrupt_on` `when` predicates
 used (workspace, tool-approval allowlist, interaction mode) plus the two
-RFC-634 additions (clarification mode, human attachment).
+additions (clarification mode, human attachment).
 """
 
 from __future__ import annotations

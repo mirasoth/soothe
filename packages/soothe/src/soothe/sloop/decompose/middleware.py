@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
-from contextvars import ContextVar
 from typing import Any
 
 from langchain.agents.middleware.types import (
@@ -49,23 +48,13 @@ _DECOMPOSE_TOOL = build_decompose_task_tool()
 _INJECTION_LOGGED_STEPS: set[str] = set()
 _INJECTION_LOG_CAP = 512
 
-# Per-step cache for the TypeSafe finish-vs-split decision. Set from
-# `awrap_model_call` (async) before `modify_request` (sync) runs, so the
-# sync hook can read the cached verdict without making its own async call.
-# `None` = not yet evaluated; "finish" = strip decompose; "split" = root
-# nudge / re-check addendum; anything else = keep decompose (fail-safe).
-_jev_finish_split: ContextVar[str | None] = ContextVar("jev_finish_split", default=None)
-_jev_finish_split_step: ContextVar[str | None] = ContextVar("jev_finish_split_step", default=None)
-
-# RFC-SLP-006 §2: mid-thread re-check state. Tool completions accumulate in
-# `_jev_tool_calls`; crossing a recheck_tool_calls milestone (bounded by
-# `_jev_rechecks_done`) invalidates the verdict cache so the next model
-# call re-evaluates with the trajectory. Never re-evaluates without new tool
-# results — the 7d10 classifier-churn lesson.
-_jev_tool_calls: ContextVar[int] = ContextVar("jev_tool_calls", default=0)
-_jev_recent_tools: ContextVar[list[str] | None] = ContextVar("jev_recent_tools", default=None)
-_jev_rechecks_done: ContextVar[int] = ContextVar("jev_rechecks_done", default=0)
-
+# RFC-SLP-006 §2: finish-vs-split state lives on the runtime-bound
+# JevStepState holder, NOT bare ContextVars — LangGraph runs each node in
+# a copied context, so ContextVar writes inside one hop never reach the
+# next (the 7d10 churn; loop f353 showed one classifier call per hop).
+# `bind_decompose_runtime` creates the holder per step before the agent
+# runs; every hop mutates the same object, so the verdict cache and
+# re-check milestones accumulate across hops.
 _RECENT_TOOL_DIGESTS = 8
 _TOOL_DIGEST_CHARS = 120
 _DEFAULT_CONTEXT_LIMIT = 200_000
@@ -137,7 +126,7 @@ def _estimate_request_tokens(request: Any) -> int:
 
 
 def _context_pressure_hint(request: Any, conf: dict[str, Any]) -> str | None:
-    """RFC-SLP-006 §5: split hint below the compaction threshold."""
+    """Split hint below the compaction threshold."""
     pct = _split_hint_pct(conf)
     if pct <= 0:
         return None
@@ -148,7 +137,10 @@ def _context_pressure_hint(request: Any, conf: dict[str, Any]) -> str | None:
 
 
 def _track_tool_completion(tool_name: str, result: Any) -> None:
-    """Count tool completions on agent-mode step threads; arm re-checks (RFC-SLP-006 §2)."""
+    """Count tool completions on agent-mode step threads; arm re-checks."""
+    state = _decompose_runtime.current_jev_state()
+    if state is None:
+        return
     conf = _decompose_runtime.langgraph_configurable()
     if conf.get(SOOTHE_EVAL_STEP_ID_KEY):
         return
@@ -160,40 +152,35 @@ def _track_tool_completion(tool_name: str, result: Any) -> None:
     interval = _recheck_interval(conf)
     if interval <= 0:
         return
-    count = _jev_tool_calls.get() + 1
-    _jev_tool_calls.set(count)
+    state.tool_calls += 1
     content = getattr(result, "content", result)
-    digests = list(_jev_recent_tools.get() or [])
-    digests.append(f"{tool_name}: {str(content)[:_TOOL_DIGEST_CHARS]}")
-    _jev_recent_tools.set(digests[-_RECENT_TOOL_DIGESTS:])
-    if count % interval == 0 and _jev_rechecks_done.get() < _max_rechecks(conf):
-        _jev_rechecks_done.set(_jev_rechecks_done.get() + 1)
-        _jev_finish_split_step.set(None)
-        logger.info("[decompose] re-check armed at tool call %d (step=%s)", count, step_id)
+    state.recent_tools.append(f"{tool_name}: {str(content)[:_TOOL_DIGEST_CHARS]}")
+    del state.recent_tools[:-_RECENT_TOOL_DIGESTS]
+    if state.tool_calls % interval == 0 and state.rechecks_done < _max_rechecks(conf):
+        state.rechecks_done += 1
+        state.evaluated = False
+        logger.info(
+            "[decompose] re-check armed at tool call %d (step=%s)", state.tool_calls, step_id
+        )
 
 
 async def _try_jev_finish_vs_split(conf: dict[str, Any]) -> str | None:
     """Run a TypeSafe finish-vs-split decision for the current step.
 
-    Returns "finish" / "split" on trusted verdicts, None otherwise. The
-    verdict is cached in `_jev_finish_split` keyed by step id so the sync
-    `modify_request` hook can read it without an async call. On a re-check
-    (cache invalidated mid-step), an untrusted or unavailable verdict keeps
-    the prior surface — a t=0 strip stays sticky.
+    State lives on the runtime-bound JevStepState: ``evaluated`` caches the
+    verdict across hops (identical state never re-evaluates — the 7d10
+    churn lesson); a re-check milestone clears it so the next model call
+    re-evaluates with the tool trajectory. An untrusted or unavailable
+    verdict keeps the prior surface — a t=0 strip stays sticky.
     """
     step_id = _decompose_runtime.current_step_id() or conf.get(SOOTHE_DECOMPOSE_STEP_ID_KEY)
-    if not step_id:
+    state = _decompose_runtime.current_jev_state()
+    if not step_id or state is None:
         return None
 
-    # Already evaluated for this step — return cached result.
-    cached_step = _jev_finish_split_step.get()
-    if cached_step == step_id:
-        return _jev_finish_split.get()
-
-    # Not yet evaluated (or invalidated for a re-check) — run the decision.
-    previous_verdict = _jev_finish_split.get()
-    _jev_finish_split_step.set(step_id)
-    _jev_finish_split.set(None)
+    # Already evaluated for this step (or this re-check round) — cached.
+    if state.evaluated:
+        return state.verdict
 
     soothe_config = conf.get("soothe_config")
     step_description = conf.get(SOOTHE_STEP_DESCRIPTION_KEY, "")
@@ -201,7 +188,8 @@ async def _try_jev_finish_vs_split(conf: dict[str, Any]) -> str | None:
     task_complexity = conf.get(SOOTHE_TASK_COMPLEXITY_KEY)
 
     if not step_description:
-        return None
+        state.evaluated = True
+        return state.verdict
 
     try:
         from soothe.sloop.decompose.decompose_typesafe import (
@@ -212,41 +200,44 @@ async def _try_jev_finish_vs_split(conf: dict[str, Any]) -> str | None:
             step_description=step_description,
             user_goal=user_goal,
             task_complexity=task_complexity,
-            tool_call_count=_jev_tool_calls.get(),
-            recent_tools=_jev_recent_tools.get(),
+            tool_call_count=state.tool_calls,
+            recent_tools=state.recent_tools,
             soothe_config=soothe_config,
         )
     except Exception as exc:  # noqa: BLE001 — never block on the classifier
         logger.info("[decompose] typesafe finish/split unavailable (%s)", exc)
-        _jev_finish_split.set(previous_verdict)
-        return previous_verdict
+        state.evaluated = True
+        return state.verdict
 
+    state.evaluated = True
     if verdict == "finish":
-        _jev_finish_split.set("finish")
+        state.verdict = "finish"
         logger.info("[decompose] typesafe: finish in-thread (step=%s)", step_id)
         return "finish"
 
     if verdict == "split":
-        _jev_finish_split.set("split")
+        state.verdict = "split"
         logger.info(
             "[decompose] typesafe: split (step=%s recheck=%s)",
             step_id,
-            _jev_rechecks_done.get() > 0,
+            state.rechecks_done > 0,
         )
         return "split"
 
     # Untrusted verdict — keep the prior surface (strip stays sticky).
-    _jev_finish_split.set(previous_verdict)
-    return previous_verdict
+    return state.verdict
 
 
-def _reset_jev_finish_split_cache() -> None:
-    """Clear the JEV finish-vs-split cache and re-check state (test isolation)."""
-    _jev_finish_split.set(None)
-    _jev_finish_split_step.set(None)
-    _jev_tool_calls.set(0)
-    _jev_recent_tools.set(None)
-    _jev_rechecks_done.set(0)
+def _jev_verdict() -> str | None:
+    """Current finish-vs-split verdict for the bound step, if any."""
+    state = _decompose_runtime.current_jev_state()
+    return state.verdict if state is not None else None
+
+
+def _jev_rechecked() -> bool:
+    """Whether a mid-step re-check has run for the bound step."""
+    state = _decompose_runtime.current_jev_state()
+    return state is not None and state.rechecks_done > 0
 
 
 def _override_write_todos_description(tools: list[Any]) -> list[Any]:
@@ -316,10 +307,10 @@ class DecomposeTaskMiddleware(AgentMiddleware):
         """
         fragments: list[str] = []
         is_root = conf.get(SOOTHE_IS_DAG_ROOT_KEY) is True
-        verdict = _jev_finish_split.get()
+        verdict = _jev_verdict()
         task_complexity = conf.get(SOOTHE_TASK_COMPLEXITY_KEY)
         forced_complex = isinstance(task_complexity, str) and task_complexity.lower() == "complex"
-        rechecked = _jev_rechecks_done.get() > 0
+        rechecked = _jev_rechecked()
 
         if is_root and (forced_complex or (verdict == "split" and not rechecked)):
             if forced_complex or _root_split_nudge_enabled(conf):
@@ -456,7 +447,7 @@ class DecomposeTaskMiddleware(AgentMiddleware):
         else:
             # Agent mode: check JEV finish-vs-split cache first.
             # "finish" strips decompose_task; anything else keeps it.
-            jev_verdict = _jev_finish_split.get()
+            jev_verdict = _jev_verdict()
             agent_optional = self._agent_addenda(conf)
             if jev_verdict == "finish":
                 before = len(tools)

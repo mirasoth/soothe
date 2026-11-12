@@ -91,7 +91,7 @@ async def validate_report_typesafe(
         soothe_config: ``SootheConfig`` providing the classifier provider and
             decision parameters (nano ``classifier`` block).
         pce_signal: Latest unconsumed PCE coverage signal summary
-            (kind + confidence), when one exists (RFC-SLP-005).
+            (kind + confidence), when one exists.
 
     Returns:
         `True` when the output is a valid goal report (passthrough),

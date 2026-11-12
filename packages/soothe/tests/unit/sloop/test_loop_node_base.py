@@ -1,4 +1,4 @@
-"""Tests for the ``LoopNode`` lifecycle base and typed contracts (RFC-903 P1).
+"""Tests for the ``LoopNode`` lifecycle base and typed contracts (P1).
 
 P1 is non-breaking: these tests exercise the new types and the driver in
 isolation. No existing node is migrated yet — ``wrap_node`` legacy detection

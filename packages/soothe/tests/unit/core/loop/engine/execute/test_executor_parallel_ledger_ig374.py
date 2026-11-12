@@ -1,4 +1,4 @@
-"""Parallel execute records RFC-214 ledger rows for Plan-assess.
+"""Parallel execute records ledger rows for Plan-assess.
 
 Ledger records only CoreAgent input + final assistant response.
 Tool outputs (delegate_final, ToolMessage) are never recorded to ledger.

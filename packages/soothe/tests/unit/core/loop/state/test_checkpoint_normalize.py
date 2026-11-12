@@ -47,7 +47,7 @@ def test_normalize_created_status_maps_to_ready() -> None:
 
 
 def test_normalize_strips_enriched_goal_history_fields() -> None:
-    """Pre-RFC-626 goal_history rows drop goal content on load."""
+    """Pre- goal_history rows drop goal content on load."""
     normalized = normalize_checkpoint_data(
         {
             "loop_id": "loop-b",

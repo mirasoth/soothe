@@ -1,4 +1,4 @@
-"""Tests for workspace host convention path mapping (RFC-621)."""
+"""Tests for workspace host convention path mapping."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from soothe.workspace.resolution import (
 
 
 class TestTranslateClientPathToContainer:
-    """Tests for translate_client_path_to_container (RFC-621)."""
+    """Tests for translate_client_path_to_container."""
 
     def test_identity_when_not_configured(self):
         assert translate_client_path_to_container("/foo/bar") == Path("/foo/bar").resolve()
@@ -74,7 +74,7 @@ class TestTranslateClientPathToContainer:
 
 
 class TestTranslateContainerPathToClient:
-    """Tests for translate_container_path_to_client (RFC-621)."""
+    """Tests for translate_container_path_to_client."""
 
     def test_identity_when_not_configured(self):
         assert translate_container_path_to_client("/foo/bar") == Path("/foo/bar").resolve()
@@ -113,7 +113,7 @@ class TestTranslateContainerPathToClient:
 
 
 class TestWorkspaceMountConfig:
-    """Tests for WorkspaceMountConfig model (RFC-621)."""
+    """Tests for WorkspaceMountConfig model."""
 
     def test_both_none_is_valid(self):
         cfg = WorkspaceMountConfig()

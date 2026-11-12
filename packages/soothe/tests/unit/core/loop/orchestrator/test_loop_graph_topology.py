@@ -1,4 +1,4 @@
-"""Loop Graph node topology (RFC-904 decompose cutover)."""
+"""Loop Graph node topology (decompose cutover)."""
 
 from unittest.mock import MagicMock
 

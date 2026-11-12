@@ -1,4 +1,4 @@
-"""Tests for DecomposeQuality recording at action-tree green (RFC-SLP-006 §3)."""
+"""Tests for DecomposeQuality recording at action-tree green."""
 
 from __future__ import annotations
 

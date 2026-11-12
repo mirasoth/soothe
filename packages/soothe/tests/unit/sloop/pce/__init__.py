@@ -1,1 +1,1 @@
-"""RFC-SLP-005 PCE unit tests."""
+"""PCE unit tests."""

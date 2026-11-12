@@ -1,4 +1,4 @@
-"""Tests GoalIndexEntry persistence through SQLite (RFC-626)."""
+"""Tests GoalIndexEntry persistence through SQLite."""
 
 from __future__ import annotations
 

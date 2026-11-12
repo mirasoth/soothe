@@ -1,4 +1,4 @@
-"""Unit tests for JWT token management (RFC-307).
+"""Unit tests for JWT token management.
 
 Tests JWTManager: access/refresh token generation, validation, expiry, and key resolution.
 """

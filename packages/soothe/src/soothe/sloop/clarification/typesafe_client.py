@@ -27,7 +27,7 @@ Two invariants hold for every consumer:
   `verdict_trusted` rejects low-confidence and near-tie verdicts.
 - **Unavailable degrades, never blocks.** When the TypeSafe backend cannot be
   built, `build_classifier` falls back to an `LLMChoiceClassifier` backed by
-  the `fast` model role (see IG-LOOP-017). If the fallback is disabled or the
+  the `fast` model role (see). If the fallback is disabled or the
   fast model cannot be resolved, it returns `None` so the caller degrades to
   its fail-safe default instead of blocking.
 """

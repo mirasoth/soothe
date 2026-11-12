@@ -1,4 +1,4 @@
-"""Tests for Context Engine adapters (RFC-624 Phase 3)."""
+"""Tests for Context Engine adapters."""
 
 from __future__ import annotations
 

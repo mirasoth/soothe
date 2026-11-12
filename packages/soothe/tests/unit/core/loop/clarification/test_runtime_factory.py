@@ -1,4 +1,4 @@
-"""Unit tests for the runtime clarification-policy factory (RFC-622)."""
+"""Unit tests for the runtime clarification-policy factory."""
 
 from __future__ import annotations
 
@@ -62,7 +62,7 @@ class TestBuildClarificationPolicyForRunner:
         assert isinstance(policy, InteractiveClarificationPolicy)
 
     def test_manual_mode_has_no_pipeline_pre_filter(self) -> None:
-        """RFC-634: the station-side pre-filter is gone — manual mode asks
+        """The station-side pre-filter is gone — manual mode asks
         the human for every tool_approval request the gate escalates."""
         config = _make_config()
         config.agent.clarification.tool_approval.enabled = True
@@ -94,14 +94,14 @@ class TestBuildClarificationPolicyForRunner:
         config.create_chat_model.assert_not_called()
 
     def test_auto_without_human_attached_has_no_fallback(self) -> None:
-        """RFC-623: autopilot path keeps the hard-defer behavior."""
+        """Autopilot path keeps the hard-defer behavior."""
         config = _make_config()
         policy = build_clarification_policy_for_runner(config, mode="auto", human_attached=False)
         assert isinstance(policy, AutoClarificationPolicy)
         assert policy.interactive_fallback is None
 
     def test_auto_with_human_attached_wires_fallback(self) -> None:
-        """RFC-623: interactive runs gain a TUI fallback for veritas failures."""
+        """Interactive runs gain a TUI fallback for veritas failures."""
         config = _make_config()
         policy = build_clarification_policy_for_runner(config, mode="auto", human_attached=True)
         assert isinstance(policy, AutoClarificationPolicy)

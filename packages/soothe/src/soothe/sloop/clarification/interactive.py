@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 class InteractiveClarificationPolicy:
     """Relay clarifications to a human via the TUI with a durable pause.
 
-    RFC-634: tool-approval requests arrive from `AutoModeMiddleware` with
+    Tool-approval requests arrive from `AutoModeMiddleware` with
     the escalated safety `rule_id` in `request.metadata["escalated_rule_id"]`
     (deterministic verdicts never reach the station). The rule id is stamped
     onto the human answer's audit so `node_execute` records a rule-level

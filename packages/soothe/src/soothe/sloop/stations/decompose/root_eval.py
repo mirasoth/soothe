@@ -128,7 +128,7 @@ def _dispatch_waves_exhausted(ctx: LoopRuntimeContext) -> tuple[bool, int, int]:
 
 
 async def _settle_pce_monitor(ctx: LoopRuntimeContext) -> None:
-    """Bounded wait for in-flight PCE boundary passes (RFC-SLP-005).
+    """Bounded wait for in-flight PCE boundary passes.
 
     Step-completion events fire just before this gate runs; the boundary
     pass takes seconds (LLM). Settling lets the gate read the fresh
@@ -155,7 +155,7 @@ async def _settle_pce_monitor(ctx: LoopRuntimeContext) -> None:
 
 
 def _pce_audit_signals(goal: Any) -> list[Any]:
-    """Unconsumed PCE signals that force a coverage Eval (RFC-SLP-005)."""
+    """Unconsumed PCE signals that force a coverage Eval."""
     return [s for s in goal.coverage_signals if s.consumed_by is None and s.requires_audit()]
 
 
@@ -299,7 +299,7 @@ def _sibling_dependency_shape(children: list[Any]) -> tuple[bool, int, int]:
 
 
 async def _record_decompose_quality(ctx: LoopRuntimeContext, goal: Any) -> None:
-    """Append DecomposeQuality records for terminal decomposed parents (RFC-SLP-006 §3).
+    """Append DecomposeQuality records for terminal decomposed parents.
 
     Signal-only: computed from the StepDAG at action-tree green; idempotent
     per parent; ring-bounded. Never gates execution.

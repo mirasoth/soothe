@@ -47,7 +47,7 @@ def test_decompose_tool_queues_proposal() -> None:
 
 
 def test_decompose_tool_refuses_single_subtask_on_action_parent() -> None:
-    """RFC-SLP-006 §4: one subtask gains no parallelism — refuse, guide in-thread."""
+    """One subtask gains no parallelism — refuse, guide in-thread."""
     sink: list[DecompositionProposal] = []
     tokens = bind_decompose_runtime(step_id="AAA-01", sink=sink, step_kind="action")
     try:

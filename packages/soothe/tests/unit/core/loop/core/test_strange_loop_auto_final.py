@@ -286,7 +286,7 @@ async def test_completed_payload_for_summary_path() -> None:
 
 @pytest.mark.asyncio
 async def test_main_thread_id_normalizes_to_loop_id_on_initialize() -> None:
-    """RFC-223: StrangeLoop main thread id must align to loop_id."""
+    """StrangeLoop main thread id must align to loop_id."""
     mock_core = _make_mock_core_with_checkpointer()
     mock_core.astream = AsyncMock()
 

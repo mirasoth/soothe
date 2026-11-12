@@ -1,4 +1,4 @@
-"""PCE event queue and registry tests (RFC-SLP-005)."""
+"""PCE event queue and registry tests."""
 
 from __future__ import annotations
 

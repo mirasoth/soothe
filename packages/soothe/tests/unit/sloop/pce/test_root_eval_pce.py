@@ -1,4 +1,4 @@
-"""ROOT_EVAL PCE signal consumption tests (RFC-SLP-005).
+"""ROOT_EVAL PCE signal consumption tests.
 
 The fourth eval-required condition: unconsumed audit-requiring signals
 force a coverage Eval even for single-leaf goals.

@@ -1,4 +1,4 @@
-"""Loop-scoped WebSocket helpers for integration tests (RFC-503, RFC-450).
+"""Loop-scoped WebSocket helpers for integration tests.
 
 These wrap the protocol-1 ``request`` / ``subscribe`` / ``notify`` flows so
 tests use the daemon's ``loop_*`` RPC methods directly — no legacy

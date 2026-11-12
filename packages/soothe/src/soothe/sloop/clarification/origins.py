@@ -29,7 +29,7 @@ ORIGIN_COVERAGE_GATE: Final = "coverage_gate"
 
 When an Eval step reports the goal blocked on a user decision, the verdict
 routes straight to `await_clarification` via the relay — no execution step
-is materialized. Veritas arbitrates it like `execute` (IG-LOOP-015)."""
+is materialized. Veritas arbitrates it like `execute`."""
 
 ClarificationOrigin = Literal[
     "execute",

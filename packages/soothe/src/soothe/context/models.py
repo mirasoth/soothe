@@ -109,7 +109,7 @@ GOAL_LIKELY_COMPLETE_AUDIT_BAR = 0.8
 
 
 class CoverageSignal(BaseModel):
-    """Coverage/progress observation appended to a GoalNode (RFC-SLP-005).
+    """Coverage/progress observation appended to a GoalNode.
 
     Written by the PCE monitor; consumed by ROOT_EVAL / finalize via
     consumed_by. Signal-only: signals never drive execution directly.
@@ -141,7 +141,7 @@ class CoverageSignal(BaseModel):
 
 
 class DecomposeQuality(BaseModel):
-    """Per-proposal decomposition outcome record (RFC-SLP-006 §3).
+    """Per-proposal decomposition outcome record.
 
     Computed at action-tree green from the StepDAG alone; signal-only —
     no decision consumes it in v1.
@@ -287,7 +287,7 @@ class StepDAG(BaseModel):
     def action_lineage_depth(self, step_id: str) -> int:
         """Depth along the parent chain, skipping `kind=eval` audit tiers.
 
-        Root action step = 1; eval nodes never count (RFC-SLP-006 §6), so
+        Root action step = 1; eval nodes never count, so
         coverage-continuation children keep the same decompose headroom as
         root children. Missing id → 0.
         """

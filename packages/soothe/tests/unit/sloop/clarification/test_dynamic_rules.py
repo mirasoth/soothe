@@ -1,4 +1,4 @@
-"""Unit tests for the loop-scoped dynamic-rule layer (RFC-LOOP-030)."""
+"""Unit tests for the loop-scoped dynamic-rule layer."""
 
 from __future__ import annotations
 

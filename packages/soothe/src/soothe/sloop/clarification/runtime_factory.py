@@ -52,7 +52,7 @@ def build_clarification_policy_for_runner(
 ) -> ClarificationPolicy:
     """Build the clarification policy a runner injects into `LoopRuntimeContext`.
 
-    RFC-634: tool-approval evaluation lives in `AutoModeMiddleware` (built by
+    Tool-approval evaluation lives in `AutoModeMiddleware` (built by
     the CoreAgent builder); this factory only wires the clarification
     policies — veritas auto-answering for question origins, the interactive
     relay for human decisions.

@@ -70,7 +70,7 @@ def test_incomplete_verdict_with_subtasks_queues_proposal() -> None:
 
 
 def test_pending_clarification_routes_to_clarification_sink() -> None:
-    """IG-LOOP-015: a user-decision gate routes to the clarification sink,
+    """A user-decision gate routes to the clarification sink,
     never to the proposal sink — no execution step is materialized."""
     proposals: list = []
     verdicts: list = []

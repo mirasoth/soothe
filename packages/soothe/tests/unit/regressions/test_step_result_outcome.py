@@ -1,4 +1,4 @@
-"""Unit tests for StepExecutionRecord outcome metadata (RFC-211).
+"""Unit tests for StepExecutionRecord outcome metadata.
 
 Tests that StepExecutionRecord correctly uses outcome metadata instead of output field.
 """
@@ -7,7 +7,7 @@ from soothe.sloop.state.schemas import StepExecutionRecord
 
 
 def test_step_result_no_output_field():
-    """StepExecutionRecord should not have 'output' field (RFC-211)."""
+    """StepExecutionRecord should not have 'output' field."""
     result = StepExecutionRecord(
         step_id="test_step",
         success=True,

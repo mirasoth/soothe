@@ -54,18 +54,22 @@ tree-green (signal-only).
 
 ### `packages/soothe/src/soothe/sloop/decompose/middleware.py`
 
-- `_try_jev_finish_vs_split`: cache trusted "split" verdicts too
-  (`_jev_finish_split.set("split")`); read the trajectory contextvars when
-  re-evaluating and pass `tool_call_count` / `recent_tools` into the
-  classifier call.
-- New per-step contextvars: `_jev_tool_calls` (int), `_jev_recent_tools`
-  (bounded list of `"{name}: {digest}"`, last 8, digest ≤ 120 chars),
-  `_jev_rechecks_done` (int).
+- `_try_jev_finish_vs_split`: cache trusted "split" verdicts too; pass
+  `tool_call_count` / `recent_tools` from the step state into the classifier
+  call.
+- Finish-vs-split state lives on a runtime-bound `JevStepState` holder
+  (verdict / evaluated / tool_calls / recent_tools (last 8, digest ≤ 120
+  chars) / rechecks_done), created per step by `bind_decompose_runtime`.
+  Bare ContextVars do NOT work here: LangGraph runs each node in a copied
+  context, so writes in one hop never reach the next (loop f353 showed one
+  classifier call per hop and milestones that never accumulated). The holder
+  is bound in the executor context before the agent runs; every hop mutates
+  the same object.
 - `awrap_tool_call` (after the existing plan/ask guard passthrough):
-  increment `_jev_tool_calls`, append the digest, and when the count hits a
-  `recheck_tool_calls` multiple AND `_jev_rechecks_done <
-  max_rechecks_per_step` → increment the recheck counter and reset
-  `_jev_finish_split_step` so the next `awrap_model_call` re-evaluates.
+  increment `state.tool_calls`, append the digest, and when the count hits a
+  `recheck_tool_calls` multiple AND `state.rechecks_done <
+  max_rechecks_per_step` → increment the recheck counter and clear
+  `state.evaluated` so the next `awrap_model_call` re-evaluates.
   Never re-evaluate without new tool results (churn guard).
 - `modify_request` (agent branch), in order:
   1. verdict "finish" → strip (unchanged);

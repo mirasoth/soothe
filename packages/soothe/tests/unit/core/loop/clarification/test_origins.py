@@ -23,7 +23,7 @@ def test_clarification_origins_are_live_only() -> None:
 
 
 def test_coverage_gate_origin_is_distinct() -> None:
-    """IG-LOOP-015: coverage_verdict user-decision gates carry their own origin."""
+    """coverage_verdict user-decision gates carry their own origin."""
     assert ORIGIN_COVERAGE_GATE == "coverage_gate"
     assert ORIGIN_COVERAGE_GATE != ORIGIN_EXECUTE
     assert ORIGIN_COVERAGE_GATE in CLARIFICATION_ORIGINS

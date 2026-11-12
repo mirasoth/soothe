@@ -268,7 +268,7 @@ def _eval_continuation_dag() -> StepDAG:
 
 
 def test_eval_continuation_child_can_decompose() -> None:
-    """RFC-SLP-006 §6: the eval tier does not consume decomposition depth."""
+    """The eval tier does not consume decomposition depth."""
     proposals = [
         DecompositionProposal(
             parent_step_id="C",

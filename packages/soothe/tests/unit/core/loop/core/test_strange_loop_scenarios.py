@@ -1,4 +1,4 @@
-"""Integration tests for Layer 2 StrangeLoop (RFC-0008)."""
+"""Integration tests for Layer 2 StrangeLoop."""
 
 from __future__ import annotations
 

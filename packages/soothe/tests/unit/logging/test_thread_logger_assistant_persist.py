@@ -1,4 +1,4 @@
-"""ThreadLogger persistence of loop-tagged assistant output (RFC-413 resume parity).
+"""ThreadLogger persistence of loop-tagged assistant output (resume parity).
 
 When the loop emits ``loop_assistant_messages_chunk`` for ``plan_direct`` or
 ``goal_completion`` (LEDGER_DIRECT strategy), the text never reaches the

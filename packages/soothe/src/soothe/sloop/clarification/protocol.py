@@ -71,7 +71,7 @@ class ClarificationAnswer:
 
     `human` (relay) and `veritas` (LLM) are the only values produced today.
     `static` (rule/allow-deny decisions) and `fallback` are retained purely
-    for deserialization compatibility: RFC-634 moved deterministic verdicts
+    for deserialization compatibility: deterministic verdicts moved
     into the inline gates, but persisted answers from earlier runs still
     carry these values and must keep loading.
     """

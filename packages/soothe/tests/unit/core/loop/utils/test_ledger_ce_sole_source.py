@@ -1,4 +1,4 @@
-"""Tests for RFC-624 Phase 4 Stage 2: CE-only ledger writes."""
+"""Tests for: CE-only ledger writes."""
 
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ def _make_ce() -> ContextEngine:
 
 
 class TestRecordLedgerMessageCEOnly:
-    """_record_ledger_message writes to CE only (RFC-624 Phase 4 Stage 2)."""
+    """_record_ledger_message writes to CE only."""
 
     def test_writes_to_ce_ledger(self) -> None:
         ce = _make_ce()

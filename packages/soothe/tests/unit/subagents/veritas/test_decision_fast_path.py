@@ -1,4 +1,4 @@
-"""Unit tests for the veritas decision fast path (RFC-LOOP-030).
+"""Unit tests for the veritas decision fast path.
 
 Jev first, LLM second: approval-shaped requests are classified by the
 calibrated decision model; trusted allow/reject resolves inline with

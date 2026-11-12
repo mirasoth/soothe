@@ -1,9 +1,9 @@
-"""Unit tests for IdentityService (RFC-307).
+"""Unit tests for IdentityService.
 
 Tests user management, AKSK provisioning, JWT authentication, token rotation,
 revocation, and external identity mapping.
 
-The IdentityService uses asyncio.get_event_loop().run_until_complete() internally,
+The IdentityService uses asyncio.get_event_loop.run_until_complete internally,
 so tests must run synchronously with a pre-set event loop.
 """
 

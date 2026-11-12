@@ -173,7 +173,7 @@ class TestStepDAGProperties:
 
 
 class TestStepDAGDecomposeStatuses:
-    """RFC-904 status and tree_green helpers."""
+    """status and tree_green helpers."""
 
     def test_decomposed_not_ready(self) -> None:
         dag = StepDAG()
@@ -224,7 +224,7 @@ class TestStepDAGDecomposeStatuses:
         assert dag.action_lineage_depth("missing") == 0
 
     def test_action_lineage_depth_skips_eval_tiers(self) -> None:
-        """RFC-SLP-006 §6: eval audit tiers never consume decomposition depth."""
+        """Eval audit tiers never consume decomposition depth."""
         dag = StepDAG()
         dag.add_step(StepNode(id="R", description="root"))
         dag.add_step(StepNode(id="E", description="audit", parent_step_id="R", kind="eval"))

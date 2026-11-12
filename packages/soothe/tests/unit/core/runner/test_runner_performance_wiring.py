@@ -1,4 +1,4 @@
-"""Integration tests for runner performance-related wiring (RFC-0008)."""
+"""Integration tests for runner performance-related wiring."""
 
 import os
 

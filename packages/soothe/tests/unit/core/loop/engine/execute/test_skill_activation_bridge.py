@@ -1,4 +1,4 @@
-"""Tests for executor skill-activation bridge helpers (RFC-105)."""
+"""Tests for executor skill-activation bridge helpers."""
 
 from __future__ import annotations
 

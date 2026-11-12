@@ -1,4 +1,4 @@
-"""Unit tests for tool-approval rule pattern matching (RFC-622)."""
+"""Unit tests for tool-approval rule pattern matching."""
 
 from __future__ import annotations
 

@@ -52,7 +52,7 @@ class AgentBuilder(nano_builder.AgentBuilder):
         return tuple(prefix)
 
     def _build_ask_user_gate(self) -> Any | None:
-        """Build the RFC-635 inline veritas fast path for `ask_user` calls.
+        """Build the inline veritas fast path for `ask_user` calls.
 
         The gate answers confident questions inline (no interrupt, no graph
         hop); defer / failure questions fall through to the station with a
@@ -78,7 +78,7 @@ class AgentBuilder(nano_builder.AgentBuilder):
         )
 
     def _build_auto_mode_gate(self) -> Any | None:
-        """Build the RFC-634 inline tool-approval gate from config.
+        """Build the inline tool-approval gate from config.
 
         The gate replaces the old `interrupt_on` HITL wiring: deny-rule and
         autopilot-safety rejects resolve inline; human-decision cases emit

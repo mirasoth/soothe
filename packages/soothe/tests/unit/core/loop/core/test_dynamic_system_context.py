@@ -1,4 +1,4 @@
-"""Unit tests for dynamic system context injection (RFC-104)."""
+"""Unit tests for dynamic system context injection."""
 
 from __future__ import annotations
 
@@ -205,7 +205,7 @@ class TestComplexityMapping:
         return SystemPromptMiddleware(config)
 
     def test_minimal_complexity_no_extra_sections(self, middleware: SystemPromptMiddleware) -> None:
-        """Minimal task complexity gets minimal prompt with ENVIRONMENT (RFC-214: no date in system prompt)."""
+        """Minimal task complexity gets minimal prompt with ENVIRONMENT (: no date in system prompt)."""
         prompt = middleware._get_prompt_for_complexity("minimal", {})
 
         assert "<SOOTHE_" not in prompt
@@ -214,7 +214,7 @@ class TestComplexityMapping:
         assert "<ENVIRONMENT" in prompt  # ENVIRONMENT is always included for minimal tier
 
     def test_simple_gets_environment_only(self, middleware: SystemPromptMiddleware) -> None:
-        """Simple complexity gets ENVIRONMENT section (RFC-214: WORKSPACE_RULES when workspace set)."""
+        """Simple complexity gets ENVIRONMENT section (: WORKSPACE_RULES when workspace set)."""
         state = {
             "workspace": Path("/project"),
         }
@@ -234,7 +234,7 @@ class TestComplexityMapping:
         assert "Today's date is" not in prompt
 
     def test_complex_gets_environment_only(self, middleware: SystemPromptMiddleware) -> None:
-        """Complex complexity gets ENVIRONMENT section (RFC-214: WORKSPACE_RULES when workspace set)."""
+        """Complex complexity gets ENVIRONMENT section (: WORKSPACE_RULES when workspace set)."""
         state = {
             "workspace": Path("/project"),
             "thread_context": {"thread_id": "abc", "conversation_turns": 1},
