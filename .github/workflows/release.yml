@@ -106,9 +106,23 @@ jobs:
       run: uv python install 3.12
 
     - name: Install system dependencies
+      continue-on-error: true
       run: |
-        sudo apt-get update
-        sudo apt-get install -y libxml2-dev libxslt-dev ripgrep silversearcher-ag
+        # Pin to canonical archive; Azure mirror (azure.archive.ubuntu.com) is flaky.
+        # Ubuntu 24.04 uses deb822 (.sources) as well as legacy (.list) formats.
+        sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' \
+          /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null || true
+        # Retry apt update/install — GitHub Ubuntu 26.04 runners have intermittent DNS issues.
+        for attempt in 1 2 3; do
+          sudo apt-get update && \
+          sudo apt-get install -y libxml2-dev libxslt-dev ripgrep silversearcher-ag && break
+          echo "apt attempt $attempt failed, retrying in 15s..."
+          sleep 15
+        done
+        dpkg -l libxml2-dev libxslt-dev ripgrep silversearcher-ag >/dev/null 2>&1 \
+          && echo "System deps installed" \
+          || echo "⚠ System deps not installed — tests requiring them may skip"
+      timeout-minutes: 8
 
     - name: Wait for soothe-nano on PyPI
       run: |

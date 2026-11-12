@@ -9,8 +9,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Proactive Coverage Evaluation (PCE): a per-loop, signal-only monitor that observes the goal DAG during execution and appends coverage signals (typesafe-first with bounded LLM escalation, fingerprint-cached per goal); ROOT_EVAL forces a coverage Eval for single-leaf goals when signals require an audit, and finalize report validation carries the latest signal, so goals no longer finalize fully unverified.
-- `agent.loop.pce` config block (tool-call/elapsed milestones, debounce, per-goal pass and escalation caps, signal ring, ROOT_EVAL gate settle timeout); the monitor never runs in plan/ask modes.
 - Intelligent decompose decision (RFC-SLP-006): a trusted root "split" verdict from the finish-vs-split classifier now injects the parallel nudge (the organic path left dead after intake-classification removal); the verdict re-runs at tool-call milestones and context pressure with the tool trajectory as state, and a trusted mid-step "split" re-injects a stripped `decompose_task` (a finish strip stays sticky); a context-pressure hint fires below the compaction threshold.
 - Decompose shape guards and telemetry: single-subtask proposals on action parents are refused pre-queue with in-thread guidance (eval continuation parents exempt); pure-sequential child chains are flagged at reconcile; a per-proposal `DecomposeQuality` ring on the goal record captures child count/shape/outcomes at action-tree green (signal-only).
 - Eval audit tiers no longer consume lineage depth (`lineage_depth` → `action_lineage_depth`), so coverage-continuation children get the same `decompose_task` headroom as root children instead of being forced leaves.
@@ -22,8 +20,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cleansed all docstrings and config field descriptions in the soothe package of internal RFC-/IG- design-doc identifiers (docstrings must stand alone per agent rules; comments keep theirs), and added a docstring term-hygiene guard test to prevent regression.
 - Step-completion cognition summaries quote the step output inside the user turn instead of ending the prompt with the raw assistant message, and replies far past the word budget are discarded — the fast model could previously continue the step's truncated output and surface multi-thousand-char step-internal content as TUI cognition cards.
 - A validation-rejected `LEDGER_DIRECT` report now rides along as the synthesis stall fallback, so a dead synthesis stream passes the step report through instead of degrading to the `Completed N/N steps` stub.
-- Show the interrupted goal's elapsed time, step progress, tool calls, and token totals in the TUI `Stream cancelled` line, and keep plan panel step rows at their real intermediate state instead of resetting every row to `0s – Stream cancelled`.
 - Collapse historical tool calls on the first line of the TUI step-card tools pane (`+N more tools`), keeping the newest tool rows at the bottom instead of implying new calls are hidden.
+
+## [v1.3.1] - 2026-11-11
+
+### Added
+
+- Proactive Coverage Evaluation (PCE): a per-loop, signal-only monitor that observes the goal DAG during execution and appends coverage signals (typesafe-first with bounded LLM escalation, fingerprint-cached per goal); ROOT_EVAL forces a coverage Eval for single-leaf goals when signals require an audit, and finalize report validation carries the latest signal, so goals no longer finalize fully unverified.
+- `agent.loop.pce` config block (tool-call/elapsed milestones, debounce, per-goal pass and escalation caps, signal ring, ROOT_EVAL gate settle timeout); the monitor never runs in plan/ask modes.
+
+### Fixed
+
+- Show the interrupted goal's elapsed time, step progress, tool calls, and token totals in the TUI `Stream cancelled` line, and keep plan panel step rows at their real intermediate state instead of resetting every row to `0s – Stream cancelled`.
+
+[Compare with previous version]: https://github.com/mirasoth/soothe/compare/v1.3.0...v1.3.1
 
 ## [v1.3.0] - 2026-11-10
 
