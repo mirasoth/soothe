@@ -19,6 +19,18 @@ Built on [soothe-nano](https://github.com/mirasoth/soothe-nano) and an [enhanced
 
 ---
 
+## 🎬 Showcase
+
+<div align="center">
+
+![Soothe in action](assets/soothe-demo.gif)
+
+*A one-shot goal: Soothe plans, reads the repo, and reports back — no human in the loop.*
+
+</div>
+
+---
+
 ## ✨ Vision
 
 We believe autonomous agents should work the way great teams do: given a clear objective, they plan, act, remember, and adapt — without someone watching every step.
