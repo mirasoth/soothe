@@ -6,7 +6,6 @@
   [![CI](https://github.com/mirasoth/soothe/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/mirasoth/soothe/actions/workflows/ci.yml)
   [![PyPI version](https://img.shields.io/pypi/v/soothe)](https://pypi.org/project/soothe/)
   [![Python](https://img.shields.io/pypi/pyversions/soothe)](https://pypi.org/project/soothe/)
-  [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/mirasoth/soothe)
 
   🎥 [Watch the demo video on Vimeo](https://player.vimeo.com/video/1185023866?h=72febe1ed2) · 📖 [Documentation Wiki](https://mirasoth.github.io/soothe/)
 </div>
@@ -141,8 +140,6 @@ Soothe is the center of a small, focused ecosystem. Each project has one job:
 | Project | What it is |
 |---------|------------|
 | [**FlowJet**](https://github.com/mirasoth/flowjet) | A coding-agent host that runs Soothe's StrangeLoop stream in-process — no daemon required. Optimized for direct stream consumption and server sessions. |
-| [**fj-ai**](https://github.com/caesar0301/fj-ai) | A lightweight one-shot coding CLI built on soothe-nano alone — the minimal nano path, for when you don't need the full orchestration stack. |
-| [**soothe-plugins**](https://github.com/mirasoth/soothe-plugins) | Community plugins — optional delegated subagents (e.g. **weaver**) and extensions. `pip install soothe-plugins`. |
 
 ### Dependency direction
 
