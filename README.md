@@ -141,22 +141,6 @@ Soothe is the center of a small, focused ecosystem. Each project has one job:
 |---------|------------|
 | [**FlowJet**](https://github.com/mirasoth/flowjet) | A coding-agent host that runs Soothe's StrangeLoop stream in-process — no daemon required. Optimized for direct stream consumption and server sessions. |
 
-### Dependency direction
-
-```text
-soothe-sdk            ← shared contracts (leaf)
-soothe-deepagents     ← deepagents fork (leaf)
-        ↓
-soothe-nano           ← Coding CoreAgent
-        ↓
-soothe                ← host: StrangeLoop, ContextEngine, LoopRails, runner
-        ↓
-soothe-daemon         ← soothed process
-        ↑
-soothe-cli            ← Typer + Textual TUI
-```
-
-One-way DAG, enforced by `scripts/check_module_import_boundaries.sh` in CI.
 
 ---
 
