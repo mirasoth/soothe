@@ -7,12 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.3.2] - 2026-11-16
+
 ### Added
 
 - Intelligent decompose decision (RFC-SLP-006): a trusted root "split" verdict from the finish-vs-split classifier now injects the parallel nudge (the organic path left dead after intake-classification removal); the verdict re-runs at tool-call milestones and context pressure with the tool trajectory as state, and a trusted mid-step "split" re-injects a stripped `decompose_task` (a finish strip stays sticky); a context-pressure hint fires below the compaction threshold.
 - Decompose shape guards and telemetry: single-subtask proposals on action parents are refused pre-queue with in-thread guidance (eval continuation parents exempt); pure-sequential child chains are flagged at reconcile; a per-proposal `DecomposeQuality` ring on the goal record captures child count/shape/outcomes at action-tree green (signal-only).
 - Eval audit tiers no longer consume lineage depth (`lineage_depth` → `action_lineage_depth`), so coverage-continuation children get the same `decompose_task` headroom as root children instead of being forced leaves.
 - `agent.loop.decompose` gains `root_split_nudge`, `recheck_tool_calls`, `max_rechecks_per_step`, `split_hint_threshold_pct`, and `quality_ring_size`.
+
+### Changed
+
+- Bump `soothe-nano` floor from `2.0.8` to `2.0.9` and `soothe-client-python` floor from `1.2.0` to `1.2.1`; raise the `pillow` upper bound in `soothe-cli` from `<12.0.0` to `<13.0.0` to unblock nano 2.0.9's `browser-use>=1.0.0` → `pillow==12.3.0` transitive.
 
 ### Fixed
 
@@ -21,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Step-completion cognition summaries quote the step output inside the user turn instead of ending the prompt with the raw assistant message, and replies far past the word budget are discarded — the fast model could previously continue the step's truncated output and surface multi-thousand-char step-internal content as TUI cognition cards.
 - A validation-rejected `LEDGER_DIRECT` report now rides along as the synthesis stall fallback, so a dead synthesis stream passes the step report through instead of degrading to the `Completed N/N steps` stub.
 - Collapse historical tool calls on the first line of the TUI step-card tools pane (`+N more tools`), keeping the newest tool rows at the bottom instead of implying new calls are hidden.
+
+[Compare with previous version]: https://github.com/mirasoth/soothe/compare/v1.3.1...v1.3.2
 
 ## [v1.3.1] - 2026-11-11
 

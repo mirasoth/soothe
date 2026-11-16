@@ -322,19 +322,17 @@ def test_curated_subagent_wire_custom_forwarded() -> None:
 
 
 def test_browser_use_step_wire_custom_forwarded() -> None:
-    """browser_use steps must be foundation-registered or orphan cards stay empty."""
+    """browser_use events must be foundation-registered or orphan cards stay empty."""
     import soothe_nano.subagents.browser_use.events  # noqa: F401
 
     chunk = (
         (),
         "custom",
         {
-            "type": "soothe.subagent.browser_use.step.completed",
-            "step_index": 2,
-            "url": "https://example.com",
-            "action_preview": "navigate",
-            "status": "done",
+            "type": "soothe.subagent.browser_use.completed",
             "duration_ms": 12,
+            "success": True,
+            "summary": "navigated to example.com",
             "invocation_id": "abc",
         },
     )

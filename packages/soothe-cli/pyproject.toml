@@ -22,7 +22,7 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
-    "soothe-client-python>=1.2.0,<2.0.0",  # WebSocket transport + wire/display/ux contracts (absorbed from soothe-sdk in v1.1.0)
+    "soothe-client-python>=1.2.1,<2.0.0",  # WebSocket transport + wire/display/ux contracts (absorbed from soothe-sdk in v1.1.0)
     "langchain-core>=1.6.0,<2.0.0",  # card_binder message types (CLI-owned transcript binder)
     "typer>=0.9.0,<2.0.0",          # CLI framework
     "textual>=8.0.0,<10.0.0",       # TUI framework
@@ -31,7 +31,7 @@ dependencies = [
     "pyyaml>=6.0.0,<7.0.0",         # Config loading
     "python-dotenv>=1.0.0,<2.0.0",  # .env loading
     "websockets>=12.0,<16.0",       # WebSocket transport
-    "pillow>=10.0.0,<12.0.0",       # TUI image paste and path attachments
+    "pillow>=10.0.0,<13.0.0",       # TUI image paste and path attachments
 ]
 
 [project.optional-dependencies]
