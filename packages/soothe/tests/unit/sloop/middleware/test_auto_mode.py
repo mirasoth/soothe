@@ -622,6 +622,106 @@ class TestVeritasLeg:
         state = _state([_tc("run_command", {"command": _HINT_COMMAND})])
         assert await gate.aafter_model(state, _veritas_runtime()) is None
 
+    @pytest.mark.asyncio
+    async def test_prose_approve_answer_allows_inline(self) -> None:
+        """Affirmative prose ('yes, approve the run_command tool call')
+        resolves as approve — the regression from loop 6eb7 where veritas
+        reached the right verdict but the wrong wire shape deferred to the
+        human."""
+        from soothe.subagents.veritas.schemas import VeritasAnswerSchema
+
+        prose = VeritasAnswerSchema(
+            defer=False,
+            answers=["yes, approve the run_command tool call"],
+            confidence=0.80,
+            rationale="importing anjian data requires executing commands",
+            answer_is_question=[False],
+        )
+        answerer, calls = _answer(prose)
+        gate = _gate(veritas_answer=answerer)
+        state = _state([_tc("run_command", {"command": _HINT_COMMAND})])
+        assert await gate.aafter_model(state, _veritas_runtime()) is None
+        assert len(calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_prose_approve_with_rationale_allows(self) -> None:
+        """Longer affirmative prose also maps to approve."""
+        from soothe.subagents.veritas.schemas import VeritasAnswerSchema
+
+        prose = VeritasAnswerSchema(
+            defer=False,
+            answers=["yes, approve the run_command tool call for importing anjian demo data"],
+            confidence=0.80,
+            rationale="demo data import is goal-aligned",
+            answer_is_question=[False],
+        )
+        answerer, _ = _answer(prose)
+        gate = _gate(veritas_answer=answerer)
+        state = _state([_tc("run_command", {"command": _HINT_COMMAND})])
+        assert await gate.aafter_model(state, _veritas_runtime()) is None
+
+    @pytest.mark.asyncio
+    async def test_prose_deny_answer_rejects_inline(self) -> None:
+        """Negative prose ('no, reject — too risky') maps to deny."""
+        from soothe.subagents.veritas.schemas import VeritasAnswerSchema
+
+        prose = VeritasAnswerSchema(
+            defer=False,
+            answers=["no, reject — this command is too risky for the demo"],
+            confidence=0.85,
+            rationale="destructive operation",
+            answer_is_question=[False],
+        )
+        answerer, _ = _answer(prose)
+        gate = _gate(veritas_answer=answerer)
+        state = _state([_tc("run_command", {"command": _HINT_COMMAND})])
+        result = await gate.aafter_model(state, _veritas_runtime())
+        assert result is not None
+        tool_msg = next(m for m in result["messages"] if isinstance(m, ToolMessage))
+        assert tool_msg.status == "error"
+        assert "veritas denied" in tool_msg.content
+
+    @pytest.mark.asyncio
+    async def test_prose_with_both_tokens_deny_wins(self) -> None:
+        """A phrase containing both approve and deny tokens stays safe
+        (deny wins) — 'yes, but I'd reject this' → deny."""
+        from soothe.subagents.veritas.schemas import VeritasAnswerSchema
+
+        prose = VeritasAnswerSchema(
+            defer=False,
+            answers=["yes, but I'd reject this action"],
+            confidence=0.6,
+            rationale="mixed signal",
+            answer_is_question=[False],
+        )
+        answerer, _ = _answer(prose)
+        gate = _gate(veritas_answer=answerer)
+        state = _state([_tc("run_command", {"command": _HINT_COMMAND})])
+        result = await gate.aafter_model(state, _veritas_runtime())
+        assert result is not None
+        tool_msg = next(m for m in result["messages"] if isinstance(m, ToolMessage))
+        assert tool_msg.status == "error"
+
+    @pytest.mark.asyncio
+    async def test_truly_unmappable_answer_still_defers(self) -> None:
+        """An answer with no approve/deny token at all still defers."""
+        from soothe.subagents.veritas.schemas import VeritasAnswerSchema
+
+        prose = VeritasAnswerSchema(
+            defer=False,
+            answers=["perhaps we should reconsider the approach"],
+            confidence=0.3,
+            rationale="uncertain",
+            answer_is_question=[False],
+        )
+        answerer, _ = _answer(prose)
+        gate = _gate(veritas_answer=answerer)
+        state = _state([_tc("run_command", {"command": _HINT_COMMAND})])
+        result = await gate.aafter_model(state, _veritas_runtime())
+        assert result is not None
+        tool_msg = next(m for m in result["messages"] if isinstance(m, ToolMessage))
+        assert "unmappable" in tool_msg.content
+
 
 # ---------------------------------------------------------------------------
 # Builder wiring

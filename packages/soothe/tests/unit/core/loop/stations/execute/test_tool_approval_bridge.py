@@ -47,6 +47,12 @@ from soothe.sloop.relay.outbox import (
         ("change", "edit"),
         ("", "approve"),  # default safe
         ("unknown token", "approve"),  # default safe
+        # Prose-shaped answers (veritas may emit prose instead of a bare token).
+        ("yes, approve the run_command tool call", "approve"),
+        ("no, reject — too risky", "reject"),
+        ("deny this action, it's destructive", "reject"),
+        ("edit the file_path argument", "edit"),
+        ("reject and edit the args", "reject"),  # reject wins over edit
     ],
 )
 def test_answer_to_decision_mapping(answer: str, expected: str) -> None:

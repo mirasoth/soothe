@@ -8,6 +8,7 @@ means editing this module only, not the executor capture site. The
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
@@ -23,9 +24,14 @@ if TYPE_CHECKING:
         ClarificationRequest,
     )
 
-_APPROVE_TOKENS = frozenset({"approve", "yes", "ok", "allow", "accept", "proceed", "y"})
-_REJECT_TOKENS = frozenset({"reject", "no", "deny", "block", "cancel", "n"})
-_EDIT_TOKENS = frozenset({"edit", "modify", "change", "revise"})
+# Decision tokens for mapping relay answers to HITL DecisionType. The veritas
+# LLM / TUI may emit prose ("no, reject — too risky") instead of a bare token;
+# word-boundary matching maps the verdict without re-judging it. Reject wins
+# over edit on a tie so "reject and edit the args" stays safe.
+_REJECT_TOKENS = ("reject", "no", "deny", "block", "cancel", "n", "denied", "rejecting")
+_EDIT_TOKENS = ("edit", "modify", "change", "revise", "editing", "modifying")
+_REJECT_RE = re.compile(r"\b(" + "|".join(_REJECT_TOKENS) + r")\b", re.IGNORECASE)
+_EDIT_RE = re.compile(r"\b(" + "|".join(_EDIT_TOKENS) + r")\b", re.IGNORECASE)
 
 
 def answer_to_decision(answer: str) -> str:
@@ -35,11 +41,17 @@ def answer_to_decision(answer: str) -> str:
     deepagents middleware expects `"approve"` / `"edit"` / `"reject"`. Defaults
     to `"approve"` for unrecognized positive-ish answers and `"reject"` only
     on an explicit reject token.
+
+    Word-boundary match so prose-shaped answers ("no, reject — too risky")
+    resolve as cleanly as a bare "reject" token. Reject wins over edit on a
+    tie so "reject and edit the args" stays safe.
     """
-    token = (answer or "").strip().lower()
-    if token in _REJECT_TOKENS:
+    text = (answer or "").strip()
+    if not text:
+        return "approve"
+    if _REJECT_RE.search(text):
         return "reject"
-    if token in _EDIT_TOKENS:
+    if _EDIT_RE.search(text):
         return "edit"
     return "approve"
 

@@ -16,6 +16,7 @@ calls.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any, Literal
 
 from langchain.agents.middleware.types import AgentMiddleware
@@ -42,9 +43,34 @@ _SIGNATURE_PREVIEW_CHARS = 120
 # Verdicts for a single gated tool call.
 VerdictAction = Literal["allow", "reject", "escalate"]
 
-# Answer tokens the veritas leg maps onto gate outcomes.
-_APPROVE_TOKENS = frozenset({"approve", "allow", "proceed", "yes"})
-_DENY_TOKENS = frozenset({"deny", "reject", "pause", "stop", "no"})
+# Answer tokens the veritas leg maps onto gate outcomes. The veritas LLM
+# already produced a structured verdict (`defer=False`, confidence score);
+# these normalize the verdict token's wire shape. Veritas sometimes emits
+# affirmative prose ("yes, approve the run_command tool call") instead of a
+# bare token — word-boundary matching maps the verdict without re-judging it.
+_APPROVE_TOKENS = ("approve", "allow", "proceed", "yes", "approved", "approving")
+_DENY_TOKENS = ("deny", "reject", "pause", "stop", "no", "denied", "rejecting")
+_APPROVE_RE = re.compile(r"\b(" + "|".join(_APPROVE_TOKENS) + r")\b", re.IGNORECASE)
+_DENY_RE = re.compile(r"\b(" + "|".join(_DENY_TOKENS) + r")\b", re.IGNORECASE)
+
+
+def _classify_veritas_token(answer_text: str) -> Literal["approve", "deny", "unknown"]:
+    """Map a veritas answer string to a gate outcome.
+
+    Word-boundary match so prose-shaped answers ("yes, approve the
+    run_command tool call") resolve as cleanly as a bare "approve" token.
+    Deny wins on a tie so a phrase like "yes, but I'd reject" stays safe.
+    """
+    if not answer_text:
+        return "unknown"
+    has_deny = _DENY_RE.search(answer_text) is not None
+    has_approve = _APPROVE_RE.search(answer_text) is not None
+    if has_deny:
+        return "deny"
+    if has_approve:
+        return "approve"
+    return "unknown"
+
 
 # Configurable key the executor writes the per-step LoopStateView under.
 _LOOP_VIEW_KEY = "soothe_veritas_loop_view"
@@ -210,14 +236,15 @@ class AutoModeMiddleware(AgentMiddleware):
             return _Verdict("escalate", escalated)
 
         token = (answer.answers[0] if answer.answers else "").strip().lower()
-        if token in _APPROVE_TOKENS:
+        outcome = _classify_veritas_token(token)
+        if outcome == "approve":
             if self._dynamic_rules:
                 # Prefix (run_command) / signature (path tools) generalization —
                 # rule-family grants stay a human-approval concern (executor).
                 self._grants.record(name, args, source=answer.source)
             return _Verdict("allow", result)
 
-        if token in _DENY_TOKENS:
+        if outcome == "deny":
             reject = ApprovalResult(
                 "reject",
                 "default_approve",

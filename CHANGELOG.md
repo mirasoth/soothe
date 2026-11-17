@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Veritas prose-shaped approve/deny answers now resolve inline instead of deferring to the human: the auto-mode gate matched verdict tokens by exact set membership, so an affirmative answer like "yes, approve the run_command tool call" fell through to an unmappable-answer defer and surfaced a tool-approval popup; word-boundary token classification maps the verdict wire shape without re-judging it (deny wins on a tie), eliminating the spurious human-relay popups observed in loop 6eb7.
+- Relay resume translator (`answer_to_decision`) shared the same prose-matching gap: exact set membership on `_REJECT_TOKENS` / `_EDIT_TOKENS` meant a prose deny ("no, reject — too risky") silently defaulted to `"approve"`; switched to word-boundary regex matching (reject wins over edit on a tie) and removed the dead `_APPROVE_TOKENS` frozenset that was never referenced.
+
 ## [v1.3.2] - 2026-11-16
 
 ### Added
