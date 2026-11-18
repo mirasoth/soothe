@@ -18,6 +18,7 @@ from soothe_cli.display.card import (
     _card_dot_prefix_content,
 )
 from soothe_cli.display.preview_limits import PLAN_QUICK_VIEW_STEP_LINE_MAX_CHARS
+from soothe_cli.display.text_preview import preview_line
 from soothe_cli.runtime.presentation.duration_format import (
     format_duration,
     format_duration_ms,
@@ -231,14 +232,10 @@ class CognitionGoalTreeMessage(Vertical):
 
     @staticmethod
     def _clip(text: str, max_len: int) -> str:
-        t = (text or "").strip().replace("\n", " ")
-        if max_len <= 0:
+        """Clip text to one line within a character budget."""
+        if max_len <= 1:
             return "…"
-        if len(t) <= max_len:
-            return t
-        if max_len == 1:
-            return "…"
-        return t[: max_len - 1].rstrip() + "…"
+        return preview_line(text, max_chars=max_len)
 
     def _loop_executing(self) -> bool:
         """True from loop start until a terminal footer (done / interrupted)."""

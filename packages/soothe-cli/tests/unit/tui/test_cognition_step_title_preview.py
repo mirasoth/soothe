@@ -3,8 +3,26 @@
 from __future__ import annotations
 
 from soothe_cli.display.preview_limits import STEP_CARD_TITLE_MAX_CHARS
+from soothe_cli.display.text_preview import preview_line
 from soothe_cli.display.tool_display import display_width
 from soothe_cli.tui.widgets.messages.cognition_step import CognitionStepMessage
+
+
+def test_preview_line_respects_char_budget_and_custom_ellipsis() -> None:
+    out = preview_line("a\n\nb " * 50, max_chars=20, ellipsis="...")
+    assert len(out) <= 20
+    assert out.endswith("...")
+    assert "\n" not in out
+
+
+def test_preview_line_respects_column_budget_with_reserved_cols() -> None:
+    out = preview_line("中文标题" * 20, max_cols=12, reserved_cols=2)
+    assert display_width(out) <= 10
+    assert out.endswith("…")
+
+
+def test_preview_line_keeps_short_text() -> None:
+    assert preview_line("  Scan   files\n", max_chars=80) == "Scan files"
 
 
 def test_long_description_renders_as_single_line_preview() -> None:

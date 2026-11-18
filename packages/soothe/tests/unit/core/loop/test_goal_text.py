@@ -1,4 +1,4 @@
-"""Tests for resolve_planning_goal (verbatim user submission)."""
+"""Tests for goal text resolution helpers."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from soothe.sloop.state.schemas import LoopState
 from soothe.sloop.utils.goal_text import (
     apply_clarification_resume_goal_text,
     resolve_clarification_resume_ce_goal,
+    resolve_execution_goal_text,
     resolve_interrupt_resume_ce_goal,
     resolve_planning_goal,
     resolve_user_request,
@@ -42,6 +43,20 @@ def test_resolve_user_request_prefers_goal_user_submission() -> None:
 def test_resolve_user_request_falls_back_to_state_goal() -> None:
     state = LoopState(goal="raw user goal", thread_id="t")
     assert resolve_user_request(state) == "raw user goal"
+
+
+def test_resolve_execution_goal_text_prefers_verbatim_submission() -> None:
+    state = LoopState(
+        goal="execution-only goal",
+        goal_user_submission="verbatim user line",
+        thread_id="t",
+    )
+    assert resolve_execution_goal_text(state) == "verbatim user line"
+
+
+def test_resolve_execution_goal_text_uses_stable_fallback() -> None:
+    state = LoopState(goal="   ", thread_id="t")
+    assert resolve_execution_goal_text(state) == "Execute task"
 
 
 def test_resolve_clarification_resume_ce_goal_prefers_loop_assigned_active() -> None:

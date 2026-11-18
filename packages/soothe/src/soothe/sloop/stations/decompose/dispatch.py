@@ -21,13 +21,13 @@ from soothe.sloop.state.schemas import (
     allocate_plan_id,
 )
 from soothe.sloop.utils.config_keys import positive_config_int
-from soothe.sloop.utils.goal_text import resolve_user_request
+from soothe.sloop.utils.goal_text import (
+    resolve_execution_goal_text,
+    resolve_user_request,
+)
+from soothe.sloop.utils.step_title import ROOT_STEP_TITLE, preview_step_title
 
 logger = logging.getLogger(__name__)
-
-# Root THREADs stand for the whole submission; echoing the verbatim request as
-# their TUI title duplicates the user message and can fill the screen.
-ROOT_STEP_TITLE = "Execute user goal"
 
 
 def _forced_complexity(ctx: LoopRuntimeContext) -> str:
@@ -81,7 +81,7 @@ async def _ensure_root_step(ctx: LoopRuntimeContext) -> str | None:
         if root_id is None:
             root_id = next(iter(goal.steps.nodes))
     else:
-        goal_text = resolve_user_request(ctx.loop_state) or ctx.loop_state.goal or "Execute task"
+        goal_text = resolve_execution_goal_text(ctx.loop_state)
         plan_id = allocate_plan_id()
         root_id = f"{plan_id}-01"
         root = StepNode(
@@ -129,7 +129,6 @@ async def _ground_root_with_approved_plan(ctx: LoopRuntimeContext, root_id: str)
     goal_text = (
         resolve_user_request(ctx.loop_state)
         or (node.full_description or "").strip()
-        or ctx.loop_state.goal
         or "Execute task"
     )
     node.full_description = compose_root_full_description(
@@ -182,9 +181,7 @@ class DispatchNode(LoopNode):
             if waves_exhausted:
                 return NodeResult(payload={"dispatch_route": "root_eval", "max_waves": True})
             # No CE: single-step fallback from goal text (tests / degraded).
-            goal_text = (
-                resolve_user_request(ctx.loop_state) or ctx.loop_state.goal or "Execute task"
-            )
+            goal_text = resolve_execution_goal_text(ctx.loop_state)
             plan_id = allocate_plan_id()
             step = StepAction(
                 id=f"{plan_id}-01",
@@ -304,7 +301,7 @@ class DispatchNode(LoopNode):
                         "steps": [
                             {
                                 "id": s.id,
-                                "description": (s.description or "").strip().replace("\n", " "),
+                                "description": preview_step_title(s.description),
                                 **(
                                     {"dependencies": list(s.dependencies)} if s.dependencies else {}
                                 ),

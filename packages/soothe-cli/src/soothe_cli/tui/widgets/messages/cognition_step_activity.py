@@ -26,9 +26,9 @@ from soothe_cli.display.preview_limits import (
     STEP_CARD_TOOL_ACTIVITY_PREVIEW_COUNT,
     TASK_DELEGATION_DESC_MAX_CHARS,
 )
+from soothe_cli.display.text_preview import preview_line
 from soothe_cli.display.tool_display import (
     abbreviate_tool_error_message,
-    compact_arg_text,
     display_width,
     format_step_tool_activity_command,
     format_step_tool_activity_line,
@@ -724,13 +724,7 @@ def preview_task_description(
     max_chars: int = TASK_DELEGATION_DESC_MAX_CHARS,
 ) -> str:
     """Collapse whitespace and truncate for a single-line task description preview."""
-    if isinstance(description, str):
-        text = compact_arg_text(description.strip())
-    else:
-        text = compact_arg_text(str(description or "").strip())
-    if len(text) > max_chars:
-        return text[: max_chars - 3].rstrip() + "..."
-    return text
+    return preview_line(description, max_chars=max_chars, ellipsis="...")
 
 
 def subagent_task_label(subagent_type: object, description: object = "") -> str:

@@ -12,9 +12,10 @@ from soothe.context.decomposition import DecompositionProposal, ProposedSubtask
 from soothe.context.engine import ContextEngine
 from soothe.context.models import StepNode
 from soothe.sloop.orchestrator.runtime_context import LoopPhaseScratch, LoopRuntimeContext
-from soothe.sloop.stations.decompose.dispatch import ROOT_STEP_TITLE, DispatchNode
+from soothe.sloop.stations.decompose.dispatch import DispatchNode
 from soothe.sloop.stations.decompose.reconcile_node import ReconcileNode
 from soothe.sloop.stations.decompose.root_eval import RootEvalNode
+from soothe.sloop.utils.step_title import ROOT_STEP_TITLE
 
 
 def _ctx_with_ce(ce: ContextEngine, goal_id: str, *, goal: str = "do work") -> LoopRuntimeContext:

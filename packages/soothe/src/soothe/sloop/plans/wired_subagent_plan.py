@@ -8,6 +8,7 @@ from soothe.sloop.state.schemas import (
     StepAction,
     resolve_wire_subagent,
 )
+from soothe.sloop.utils.step_title import preview_step_title
 
 # Soft expected-output contract for the wired specialist's direct answer.
 _WIRED_SUBAGENT_EXPECTED_OUTPUT = (
@@ -31,11 +32,13 @@ def build_wired_subagent_plan(
 
     Returns:
         A `PlanResult` with a single execute step whose action is the goal
-        itself and a soft direct-answer `expected_output` contract.
+        itself and a soft direct-answer `expected_output` contract. The step
+        title is a one-line preview; `full_description` keeps the verbatim goal.
     """
     resolved_wire = resolve_wire_subagent(wire_subagent=wire_subagent)
     step = StepAction(
-        description=goal,
+        description=preview_step_title(goal),
+        full_description=goal,
         expected_output=_WIRED_SUBAGENT_EXPECTED_OUTPUT,
         requires_tool_use=requires_tool_use,
         is_dag_root=True,

@@ -11,6 +11,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from soothe_cli.display.text_preview import preview_line
 from soothe_cli.runtime.state.session_stats import format_token_count
 from soothe_cli.runtime.token_usage import fetch_conversation_token_count
 
@@ -298,12 +299,7 @@ class AutopilotContext:
 
 def _truncate_step_description(value: str, *, max_len: int = 80) -> str:
     """Truncate step description to `max_len` chars with ellipsis."""
-    normalized = (value or "").strip()
-    if max_len <= 3:
-        return normalized[:max_len]
-    if len(normalized) <= max_len:
-        return normalized
-    return f"{normalized[: max_len - 3]}..."
+    return preview_line(value, max_chars=max_len, ellipsis="...")
 
 
 def _normalize_step_outcomes(

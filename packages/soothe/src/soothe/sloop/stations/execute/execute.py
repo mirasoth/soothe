@@ -39,6 +39,7 @@ from soothe.sloop.state.schemas import (
     StepExecutionRecord,
 )
 from soothe.sloop.utils.messages import LoopAIMessage, LoopHumanMessage
+from soothe.sloop.utils.step_title import ROOT_STEP_TITLE, preview_step_title
 
 logger = logging.getLogger(__name__)
 
@@ -371,7 +372,7 @@ async def _ensure_ce_step_for_resume(
 
         node = StepNode(
             id=step_id,
-            description=description[:80],
+            description=preview_step_title(description),
             full_description=description,
             status="pending",
             parent_step_id=None,
@@ -689,7 +690,7 @@ async def node_execute(ctx: LoopRuntimeContext, state_dict: dict[str, Any]) -> d
                         goal_text = state.goal or "ask_user resume"
                         root_step = StepAction(
                             id="ask_user_resume",
-                            description=goal_text[:80],
+                            description=ROOT_STEP_TITLE,
                             full_description=goal_text,
                             is_dag_root=True,
                         )
@@ -698,7 +699,7 @@ async def node_execute(ctx: LoopRuntimeContext, state_dict: dict[str, Any]) -> d
 
                             root_node = StepNode(
                                 id="ask_user_resume",
-                                description=goal_text[:80],
+                                description=ROOT_STEP_TITLE,
                                 full_description=goal_text,
                                 status="pending",
                                 parent_step_id=None,

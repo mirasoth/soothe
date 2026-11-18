@@ -29,11 +29,8 @@ from soothe_cli.display.preview_limits import (
     STEP_CARD_FILE_EDIT_PREVIEW_COUNT,
     STEP_CARD_TITLE_MAX_CHARS,
 )
-from soothe_cli.display.tool_display import (
-    compact_arg_text,
-    display_width,
-    truncate_to_width,
-)
+from soothe_cli.display.text_preview import preview_line
+from soothe_cli.display.tool_display import compact_arg_text, display_width
 from soothe_cli.runtime.presentation.duration_format import format_duration_ms
 from soothe_cli.settings import get_glyphs
 from soothe_cli.tui.widgets.clipboard import (
@@ -277,12 +274,14 @@ class CognitionStepMessage(Vertical):
         """Fit the step description to one terminal row without losing the stored text."""
         prefix = self._mode_prefix
         text = f"{prefix}{self._description}" if prefix else self._description
-        single = compact_arg_text(text)
         width = self._available_line_width()
         if width is None:
-            return truncate_to_width(single, STEP_CARD_TITLE_MAX_CHARS)
-        budget = max(1, width - _card_prefix_width() - display_width(meta))
-        return truncate_to_width(single, budget)
+            return preview_line(text, max_chars=STEP_CARD_TITLE_MAX_CHARS)
+        return preview_line(
+            text,
+            max_cols=width,
+            reserved_cols=_card_prefix_width() + display_width(meta),
+        )
 
     def _step_header_content(self) -> Content:
         orphan = self._is_orphan_subagent_card()
@@ -935,8 +934,6 @@ class CognitionStepMessage(Vertical):
         # for the same delegation (same subagent_type + description). Check for
         # existing task row with matching semantics, not just tool_call_id.
         if is_task_row and tool_name == "task":
-            from soothe_cli.display.tool_display import compact_arg_text
-
             candidate_subagent = str(args.get("subagent_type") or "").strip()
             candidate_desc = str(args.get("description") or args.get("prompt") or "").strip()
             candidate_desc_compact = compact_arg_text(candidate_desc)

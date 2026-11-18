@@ -8,7 +8,6 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from soothe_nano.core.subagent_wire import is_curated_subagent_wire_event_type
-from soothe_nano.utils.text_preview import preview_first
 from soothe_nano.wire.stream_tool_wire import STREAM_TOOL_CALL_UPDATE
 
 from soothe.config.constants import DEFAULT_MAX_ITERATIONS
@@ -42,6 +41,7 @@ from soothe.sloop.utils.messages import (
 )
 from soothe.sloop.utils.plan_action_text import resolve_plan_action_text
 from soothe.sloop.utils.routing_scope import build_routing_classification, parse_intake_scope
+from soothe.sloop.utils.step_title import preview_step_title
 from soothe.sloop.utils.token_usage_breakdown import TokenUsageAccumulator
 from soothe.utils.messages import extract_text_from_message_content
 
@@ -51,8 +51,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _AGENTIC_FINAL_STDOUT_CAP = 50_000
-# Step titles are one TUI row; a long description must not take over the screen.
-_AGENTIC_STEP_DESC_UI_MAX = 120
 
 _STREAM_CHUNK_LEN = 3
 _MSG_PAIR_LEN = 2
@@ -525,16 +523,6 @@ def _step_completed_ui_summary(event_data: dict[str, Any]) -> str:
     return summary[:100]
 
 
-def _clip_sloop_step_description(
-    description: str, *, max_len: int = _AGENTIC_STEP_DESC_UI_MAX
-) -> str:
-    """Collapse a step description into a single-line TUI preview."""
-    text = " ".join((description or "").split())
-    if len(text) <= max_len:
-        return text
-    return text[: max_len - 1].rstrip() + "…"
-
-
 class StrangeLoopMixin:
     """StrangeLoop integration mixin.
 
@@ -598,8 +586,8 @@ class StrangeLoopMixin:
         if resume_interrupted:
             logger.info("[StrangeLoop] resume_interrupted=True - recovering running checkpoint")
 
-        # Emit loop started event (Level 1)
-        display_goal = preview_first(user_input, 100)
+        # Emit loop started event
+        display_goal = preview_step_title(user_input, max_len=100)
         yield custom_event(
             StrangeLoopStartedEvent(
                 thread_id=tid,
@@ -723,7 +711,7 @@ class StrangeLoopMixin:
                     yield custom_event(
                         StrangeLoopStepStartedEvent(
                             step_id=str(event_data.get("step_id", "")),
-                            description=_clip_sloop_step_description(event_data["description"]),
+                            description=preview_step_title(event_data["description"]),
                         ).to_dict()
                     )
 
@@ -731,7 +719,7 @@ class StrangeLoopMixin:
                     yield custom_event(
                         StrangeLoopStepQueuedEvent(
                             step_id=str(event_data.get("step_id", "")),
-                            description=_clip_sloop_step_description(event_data["description"]),
+                            description=preview_step_title(event_data["description"]),
                         ).to_dict()
                     )
 
@@ -749,7 +737,7 @@ class StrangeLoopMixin:
                         )
 
                 elif event_type == "step_completed":
-                    # Level 3: Step result
+                    # Step result
                     success = bool(event_data["success"])
                     summary = _step_completed_ui_summary(event_data)
 

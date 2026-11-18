@@ -43,6 +43,7 @@ STEP_CARD_PANE_ROWS_TODO: Final[int] = 4
 TUI_FILE_CHANGE_CARDS_ENABLED: Final[bool] = False
 
 # Step card title preview when terminal width is unknown (unmounted / tests).
+# Mirrors the host-side step title limit; the two axes cannot share a module.
 STEP_CARD_TITLE_MAX_CHARS: Final[int] = 120
 
 # Single-line task-description preview on task markers and orphan SubAgent headers.

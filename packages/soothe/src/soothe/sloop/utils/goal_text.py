@@ -23,6 +23,11 @@ def resolve_planning_goal(state: LoopState) -> str:
     return resolve_user_request(state)
 
 
+def resolve_execution_goal_text(state: LoopState) -> str:
+    """Return the verbatim user submission with a stable fallback for execution."""
+    return resolve_user_request(state) or "Execute task"
+
+
 def resolve_clarification_resume_ce_goal(ce: Any, *, loop_id: str) -> Any | None:
     """Pick the in-flight ContextEngine goal to reuse on clarification resume.
 
@@ -120,6 +125,7 @@ def apply_clarification_resume_goal_text(state: LoopState, ce_goal: Any) -> str:
 __all__ = [
     "apply_clarification_resume_goal_text",
     "resolve_clarification_resume_ce_goal",
+    "resolve_execution_goal_text",
     "resolve_interrupt_resume_ce_goal",
     "resolve_planning_goal",
     "resolve_user_request",
