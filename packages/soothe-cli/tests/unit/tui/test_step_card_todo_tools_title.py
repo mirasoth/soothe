@@ -154,7 +154,7 @@ def test_write_todos_hidden_from_tools_when_todo_section_live() -> None:
     assert "Grep" in text
 
 
-def test_title_keeps_full_description_with_compact_meta() -> None:
+def test_title_preview_keeps_compact_meta_visible() -> None:
     long_desc = "Scan Frontend and Backend without truncating this brief"
     card = CognitionStepMessage("TD-03", long_desc, id="stp-title")
     card._status = "running"
@@ -172,7 +172,9 @@ def test_title_keeps_full_description_with_compact_meta() -> None:
     with patch.object(theme, "get_theme_colors", return_value=_mock_theme_colors()):
         card._refresh_header_title()
     text = _plain(mock_header.update.call_args[0][0])
-    assert long_desc in text
+    assert "Scan Frontend and Backend" in text
+    assert "…" in text
+    assert long_desc not in text
     assert "1/1" in text
     assert "↑1.2K" in text
     assert "↓340" in text

@@ -51,8 +51,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _AGENTIC_FINAL_STDOUT_CAP = 50_000
-# TUI step cards show the full brief; avoid mid-string abbr markers on long plans.
-_AGENTIC_STEP_DESC_UI_MAX = 4000
+# Step titles are one TUI row; a long description must not take over the screen.
+_AGENTIC_STEP_DESC_UI_MAX = 120
 
 _STREAM_CHUNK_LEN = 3
 _MSG_PAIR_LEN = 2
@@ -528,8 +528,8 @@ def _step_completed_ui_summary(event_data: dict[str, Any]) -> str:
 def _clip_sloop_step_description(
     description: str, *, max_len: int = _AGENTIC_STEP_DESC_UI_MAX
 ) -> str:
-    """Shorten StrangeLoop step descriptions for progress events (TUI one-line template)."""
-    text = (description or "").strip().replace("\n", " ")
+    """Collapse a step description into a single-line TUI preview."""
+    text = " ".join((description or "").split())
     if len(text) <= max_len:
         return text
     return text[: max_len - 1].rstrip() + "…"
@@ -719,7 +719,7 @@ class StrangeLoopMixin:
                     )
 
                 elif event_type == "step_started":
-                    # Level 2: Step description (clip — Reason can embed a full brief; avoids TUI duplicate wall)
+                    # Step description: one-line preview (never echo a long brief)
                     yield custom_event(
                         StrangeLoopStepStartedEvent(
                             step_id=str(event_data.get("step_id", "")),

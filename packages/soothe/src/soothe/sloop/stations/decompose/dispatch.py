@@ -25,6 +25,10 @@ from soothe.sloop.utils.goal_text import resolve_user_request
 
 logger = logging.getLogger(__name__)
 
+# Root THREADs stand for the whole submission; echoing the verbatim request as
+# their TUI title duplicates the user message and can fill the screen.
+ROOT_STEP_TITLE = "Execute user goal"
+
 
 def _forced_complexity(ctx: LoopRuntimeContext) -> str:
     """Wire-safe string of the client-forced task complexity, or empty."""
@@ -82,7 +86,7 @@ async def _ensure_root_step(ctx: LoopRuntimeContext) -> str | None:
         root_id = f"{plan_id}-01"
         root = StepNode(
             id=root_id,
-            description=goal_text,
+            description=ROOT_STEP_TITLE,
             full_description=goal_text,
             status="pending",
             parent_step_id=None,
@@ -123,8 +127,8 @@ async def _ground_root_with_approved_plan(ctx: LoopRuntimeContext, root_id: str)
         return
 
     goal_text = (
-        (node.description or "").strip()
-        or resolve_user_request(ctx.loop_state)
+        resolve_user_request(ctx.loop_state)
+        or (node.full_description or "").strip()
         or ctx.loop_state.goal
         or "Execute task"
     )
@@ -184,7 +188,7 @@ class DispatchNode(LoopNode):
             plan_id = allocate_plan_id()
             step = StepAction(
                 id=f"{plan_id}-01",
-                description=goal_text,
+                description=ROOT_STEP_TITLE,
                 full_description=goal_text,
                 is_dag_root=True,
                 task_complexity=_forced_complexity(ctx) or "simple",

@@ -22,10 +22,17 @@ from soothe_cli.display import theme
 from soothe_cli.display.card import (
     _assemble_card_header,
     _card_body_gutter,
+    _card_prefix_width,
 )
 from soothe_cli.display.markdown_theme import build_markdown
 from soothe_cli.display.preview_limits import (
     STEP_CARD_FILE_EDIT_PREVIEW_COUNT,
+    STEP_CARD_TITLE_MAX_CHARS,
+)
+from soothe_cli.display.tool_display import (
+    compact_arg_text,
+    display_width,
+    truncate_to_width,
 )
 from soothe_cli.runtime.presentation.duration_format import format_duration_ms
 from soothe_cli.settings import get_glyphs
@@ -220,7 +227,7 @@ class CognitionStepMessage(Vertical):
         return self._interaction_mode == "plan"
 
     def set_description(self, description: str) -> None:
-        """Update the step title (full plan/execute brief, no abbreviation)."""
+        """Update the step title, rendered as a single-line preview."""
         text = (description or "").strip() or "(step)"
         if text == self._description:
             return
@@ -266,15 +273,24 @@ class CognitionStepMessage(Vertical):
             format_token=format_token_count,
         )
 
+    def _step_title_body(self, meta: str) -> str:
+        """Fit the step description to one terminal row without losing the stored text."""
+        prefix = self._mode_prefix
+        text = f"{prefix}{self._description}" if prefix else self._description
+        single = compact_arg_text(text)
+        width = self._available_line_width()
+        if width is None:
+            return truncate_to_width(single, STEP_CARD_TITLE_MAX_CHARS)
+        budget = max(1, width - _card_prefix_width() - display_width(meta))
+        return truncate_to_width(single, budget)
+
     def _step_header_content(self) -> Content:
         orphan = self._is_orphan_subagent_card()
-        prefix = self._mode_prefix
+        meta = self._compact_title_meta_suffix()
         body = (
             subagent_task_label(self._subagent_type, self._description)
             if orphan
-            else f"{prefix}{self._description}"
-            if prefix
-            else self._description
+            else self._step_title_body(meta)
         )
         header = _assemble_card_header(
             self,
@@ -284,7 +300,6 @@ class CognitionStepMessage(Vertical):
             spinner_position=self._spinner_position,
             animate_running=self._status == "running",
         )
-        meta = self._compact_title_meta_suffix()
         if not meta:
             return header
         return Content.assemble(header, Content.styled(meta, theme.SECONDARY_TEXT_STYLE))
@@ -348,19 +363,18 @@ class CognitionStepMessage(Vertical):
         self._flush_deferred_state_on_mount()
 
     def on_resize(self, event: events.Resize) -> None:  # noqa: ARG002
-        """Re-truncate tool activity lines when the terminal width changes.
+        """Re-truncate the title and tool activity lines when the width changes.
 
-        Tool line content is now width-dependent, so a resize must repaint the
-        activity panel and the optional tools panel so rows fit the new width
-        instead of wrapping. Skipped when the card is off-screen (the next
-        visibility-bound surface sync will re-render it) and throttled by the
-        standard refresh guard to avoid repaint storms during drag-resize.
+        Both are width-dependent, so a resize repaints the header and the
+        activity panel to avoid wrapping. The activity repaint is skipped when
+        the card is off-screen (the next visibility-bound surface sync
+        re-renders it) and throttled by the standard refresh guard.
         """
         if not getattr(self, "is_mounted", False):
             return
+        self._refresh_header_title()
         if not _is_widget_animation_visible(self):
             return
-        # Width affects line content; force a refresh of the activity panel.
         self._sync_step_card_surface()
 
     def on_click(self, event: Click) -> None:  # noqa: ARG002

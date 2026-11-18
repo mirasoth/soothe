@@ -42,6 +42,9 @@ STEP_CARD_PANE_ROWS_TODO: Final[int] = 4
 # mount the dedicated diff/content preview cards.
 TUI_FILE_CHANGE_CARDS_ENABLED: Final[bool] = False
 
+# Step card title preview when terminal width is unknown (unmounted / tests).
+STEP_CARD_TITLE_MAX_CHARS: Final[int] = 120
+
 # Single-line task-description preview on task markers and orphan SubAgent headers.
 TASK_DELEGATION_DESC_MAX_CHARS: Final[int] = 80
 

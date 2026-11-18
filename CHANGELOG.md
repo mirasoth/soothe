@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Stop repeating long user submissions as the first step title: root steps show a short title with the full request kept for execution, and step titles stay on one truncated terminal row.
+
 ## [v1.3.3] - 2026-11-17
 
 ### Fixed

@@ -12,7 +12,7 @@ from soothe.context.decomposition import DecompositionProposal, ProposedSubtask
 from soothe.context.engine import ContextEngine
 from soothe.context.models import StepNode
 from soothe.sloop.orchestrator.runtime_context import LoopPhaseScratch, LoopRuntimeContext
-from soothe.sloop.stations.decompose.dispatch import DispatchNode
+from soothe.sloop.stations.decompose.dispatch import ROOT_STEP_TITLE, DispatchNode
 from soothe.sloop.stations.decompose.reconcile_node import ReconcileNode
 from soothe.sloop.stations.decompose.root_eval import RootEvalNode
 
@@ -75,6 +75,24 @@ async def test_dispatch_creates_root_and_claims() -> None:
 
 
 @pytest.mark.asyncio
+async def test_dispatch_root_title_does_not_echo_long_user_submission() -> None:
+    """A long submission stays in the execution context, not in the TUI title."""
+    long_goal = "Kindle PW4 越狱方案\n\n" + ("逐条分析备选路径 " * 120).strip()
+    ce = ContextEngine()
+    goal = await ce.create_goal(long_goal, loop_id="L1")
+    ctx = _ctx_with_ce(ce, goal.id, goal=long_goal)
+    await DispatchNode()(ctx, {})
+
+    step = ctx.scratch.decision.steps[0]
+    assert step.description == ROOT_STEP_TITLE
+    assert step.full_description == long_goal
+    refreshed = await ce.get_goal(goal.id)
+    assert refreshed is not None
+    assert refreshed.steps.nodes[step.id].description == ROOT_STEP_TITLE
+    assert refreshed.steps.nodes[step.id].full_description == long_goal
+
+
+@pytest.mark.asyncio
 async def test_dispatch_plan_decision_carries_task_complexity() -> None:
     ce = ContextEngine()
     goal = await ce.create_goal("review arch", loop_id="L1")
@@ -109,6 +127,7 @@ async def test_dispatch_grounds_root_with_approved_plan() -> None:
     assert "<!-- soothe:approved-plan -->" in full
     assert "APPROVED PLAN" in full
     assert "Use OAuth" in full
+    assert "migrate auth" in full
     assert "decompose_task" in full
     assert ctx.loop_state.approved_plan_markdown is None
     assert ctx.loop_state.approved_plan_path is None
