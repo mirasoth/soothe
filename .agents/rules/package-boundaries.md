@@ -2,7 +2,7 @@
 
 > Soothe is a **one-way dependency DAG**. Place code in the correct **monorepo-owned** package. **Never reverse an arrow.** Enforcement: `scripts/check_module_import_boundaries.sh` (wired into `./scripts/verify_finally.sh`).
 
-**Owned**: `soothe`, `soothe-daemon`, `soothe-cli`. **Submodules** (`client/*`): consumed as code — do **not** format/lint/test/release them here. **PyPI-only**: `soothe-nano`, `soothe-deepagents`, `soothe-client-python` (maintain/release in their own repos).
+**Owned**: `soothe`, `soothe-daemon`, `soothe-cli`. **Submodules** (`client/*`, `packages/soothe-nano`): consumed as code — do **not** format/lint/test/release them here. **PyPI-only**: `soothe-deepagents`, `soothe-client-python` (maintain/release in their own repos). `soothe-nano` is published to PyPI from its own repo and is **independent of the soothe project** — see the soothe-nano Independence rule below.
 
 > **soothe-sdk was dissolved (2026-10-13).** Contracts now live with their axis:
 > - **Agent axis (canonical)**: `soothe-nano` ≥1.4 — plugin decorator API, `core` events/registry/verbosity, `protocols` (except `workspace_sync`), `paths`, `intention`, `observability.langfuse`, `ux.stream_tool_wire`, `tools` security metadata, `utils.serde`.
@@ -39,6 +39,16 @@
 4. **The dissolved SDK is closed** — no owned package may import `soothe_sdk`; contracts live in `soothe-nano` (agent axis), `soothe` (host axis), or `soothe-client-python` (client axis).
 
 Host packages (`soothe`, `soothe-daemon`, `soothe-cli`) MAY reference internal design doc identifiers in comments.
+
+## soothe-nano Independence (MUST)
+
+`soothe-nano` is a standalone upstream library (own repo `mirasoth/soothe-nano`, published to PyPI). It sits **below** the soothe monorepo in the DAG: `soothe` / `soothe-daemon` consume it as a dependency. The dependency is strictly **one-way** — the soothe project may depend on `soothe-nano`, but `soothe-nano` MUST remain independent of the soothe project.
+
+1. **No reverse imports** — `soothe-nano` MUST NOT import `soothe`, `soothe_daemon`, `soothe_cli`, `soothe_client`, or any monorepo-owned-package module. Its first-party dependencies are separate upstream PyPI libraries (`soothe-deepagents`, and the agent-axis contracts formerly from `soothe-sdk`), never the soothe monorepo itself; everything else is third-party.
+2. **No host coupling** — do not move host concepts (StrangeLoop, Context Engine, rails, wire codec, display binder/ledger, workspace sync, identity errors, skillify, daemon/CLI runtime) into `soothe-nano`. These belong to owned packages. `soothe-nano` owns only the agent axis (CoreAgent, plugin API, in-proc skills/MCP/backends, agent-side event/protocol contracts).
+3. **No build/version coupling** — `soothe-nano` keeps its own `pyproject.toml` version, `CHANGELOG.md`, `AGENTS.md`, CI, and release workflow. It MUST NOT read the monorepo root `VERSION`, root `CHANGELOG.md`, or share release triggers. Monorepo releases pin a compatible `soothe-nano` floor; they do not bump or publish `soothe-nano`.
+4. **Submodule is read-only here** — when vendored as a submodule under `packages/soothe-nano`, treat it as consumed code: do not format, lint, test, edit, or release it from the monorepo. Make changes in the `soothe-nano` repo, release there, then bump the submodule pin / PyPI floor here. See [project-reference.md](project-reference.md) and [release-and-governance.md](release-and-governance.md).
+5. **Contracts flow downward only** — shared contracts live on the agent axis in `soothe-nano` (≥1.4) and are consumed by the host, never defined in owned packages and imported back into `soothe-nano`. The two axes couple only via the wire protocol (RFC-450), not shared Python imports.
 
 ## API Exposure (Minimum-Exposure) (MUST)
 - A parent `__init__.py` re-exports only what users are expected to import. For processors, that is exactly the operator class(es) — nothing else.

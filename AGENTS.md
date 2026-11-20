@@ -20,6 +20,7 @@
 | 6 | After Code Impl: Cleanse → Verify → Fix (MUST) | [development-process.md](.agents/rules/development-process.md) |
 | 7 | Terminology | [code-style.md](.agents/rules/code-style.md) |
 | 7b | Package Boundaries (MUST) | [package-boundaries.md](.agents/rules/package-boundaries.md) |
+| 7c | soothe-nano Independence (MUST) | [package-boundaries.md](.agents/rules/package-boundaries.md) |
 | 8 | DO NOT Cheat Tests | [development-process.md](.agents/rules/development-process.md) |
 | 9 | No Keyword Heuristics | [code-style.md](.agents/rules/code-style.md) |
 | 10 | Unified Persistence Backend (MUST) | [persistence-and-loops.md](.agents/rules/persistence-and-loops.md) |
