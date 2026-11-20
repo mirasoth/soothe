@@ -14,6 +14,10 @@ dependencies = [
 
 [tool.uv.workspace]
 members = ["packages/*", "client/python"]
+# soothe-nano is a PyPI-only first-party dependency maintained in its own repo.
+# It is vendored here as a submodule for reference/code consumption only; keep it
+# out of the uv workspace so `uv sync` resolves it from PyPI (see package-boundaries.md).
+exclude = ["packages/soothe-nano"]
 
 # cryptography 49.0 dropped macOS x86_64/universal2 wheels (arm64-only). Cap below
 # 49 so Intel Macs install a wheel instead of compiling the Rust sdist.
