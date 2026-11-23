@@ -125,6 +125,8 @@ def _resolve_storage_options(
             "account_name",
             "account_key",
             "connection_string",
+            "config_kwargs",
+            "client_kwargs",
         }
     )
 

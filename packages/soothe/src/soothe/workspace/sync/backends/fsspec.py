@@ -373,11 +373,17 @@ class FsspecSyncBackend:
         await self._to_thread(self._fs.pipe, path, data)
 
     async def delete_content_file(self, rel_path: str) -> None:
-        """Delete the content-tree object, if present (idempotent)."""
+        """Delete the content-tree object, if present (idempotent).
+
+        Uses ``rm_file`` (single-object ``DeleteObject``) rather than
+        ``rm`` (bulk ``DeleteObjects``) because some S3-compatible
+        services (e.g. Tencent COS) reject ``DeleteObjects`` without a
+        ``Content-MD5`` header that s3fs does not send.
+        """
         path = self._content_path(rel_path)
         exists = await self._to_thread(self._fs.exists, path)
         if exists:
-            await self._to_thread(self._fs.rm, path)
+            await self._to_thread(self._fs.rm_file, path)
 
     # ------------------------------------------------------------------
     # Lifecycle
