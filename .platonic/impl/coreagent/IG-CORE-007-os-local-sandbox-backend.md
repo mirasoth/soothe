@@ -615,3 +615,32 @@ All changes in the **soothe-nano** working tree (uncommitted; nano repo). Files:
 9. **Docs**: `docs/os-sandbox-backend.md` mirrors the arcbox-backend doc
    structure (contract, tier matrix, boundaries, config, limitations);
    CHANGELOG `[Unreleased]` carries the Added/Fixed/Changed entries.
+10. **Isolation-capability integration suite (2026-11-23, second pass)**:
+    `tests/integration/test_os_sandbox_isolation.py` (marker
+    `integration`, `--run-integration` gated; tier-parametrized fixture
+    probe-derived at import). Matrix: filesystem boundary (in/out writes,
+    system-tree writes, mkdir, /dev/null), network (host-listener connect
+    blocked — seatbelt/bwrap, landlock explicitly skipped as no-network-isolation),
+    env hygiene (sentinel secret, HOME/TMPDIR/cwd), process lifecycle
+    (timeout kills the whole process group incl. background child;
+    background PID host-visible and host-killable — the §5.3 identity PID
+    contract), path escapes (relative/../upload/download/symlink), bwrap
+    kernel filters (NoNewPrivs=1, Seccomp=2, `unshare(2)` denied), posture
+    per tier. Verified: macOS 26.6 Seatbelt (16 passed, 2 bwrap-only
+    skips) and anydev4 (devcloud any4, Linux 5.4 tlinux4, 96-core,
+    root-in-container) bwrap full tier — **18/18 passed**.
+11. **anydev4 root-in-container finding → new spawn strategy**: the
+    devcloud any4 host is root inside a container without `CAP_SYS_ADMIN`
+    over the initial namespace — bwrap as euid 0 skips its own userns and
+    fails namespace creation with EPERM (while `unshare --user
+    --map-root-user` works, because a userns grants caps over itself).
+    Implemented in `os_local.py`: `_bwrap_spawn_prefix()` (empirical
+    direct-then-nested round-trip detection, cached per process) +
+    `_bwrap_proc_args()` (the userns-wrapped spawn binds the host /proc
+    read-only instead of a fresh `--proc` mount — bwrap < 0.5's
+    sysrq-trigger probe fails on userns-mounted proc; visibility is
+    equivalent because the PID ns is never unshared). `_probe_bwrap` and
+    `_BwrapSession.build_argv` share the resolved form, so a passing probe
+    guarantees a working spawn. Unit tests cover the nested argv shape and
+    the detection matrix (non-root never probes; root direct-failure →
+    nested; both-failure → tier refused).
