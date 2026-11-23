@@ -15,8 +15,6 @@ permalink: /changelog/
 
 > **Source of truth:** repository root
 > [`CHANGELOG.md`](https://github.com/mirasoth/soothe/blob/main/CHANGELOG.md).
-> Per-version API surface diffs:
-> **[Versioned Changelogs](../changelogs/)**.
 
 # Changelog
 
