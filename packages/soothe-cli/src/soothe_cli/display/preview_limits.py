@@ -31,8 +31,9 @@ STEP_CARD_REASONING_LINE_MAX_CHARS: Final[int] = 120
 # Leading rule characters before a pane label (`──── tools ──── 22 · ⚠1`).
 STEP_CARD_PANE_LEAD_RULE_CHARS: Final[int] = 4
 
-# Todo rows kept inside the todo pane; overflow is summarized by an inline
-# `· +N more` footnote row inside the pane.
+# Todo rows kept inside the todo pane; overflow is summarized by a leading
+# `· +N more` row inside the pane (latest todos stay at the bottom, like the
+# tools pane).
 STEP_CARD_PANE_ROWS_TODO: Final[int] = 4
 
 # TUI file-change preview cards (the standalone write/edit/delete diff cards

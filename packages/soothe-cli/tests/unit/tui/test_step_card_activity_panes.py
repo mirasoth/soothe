@@ -83,14 +83,14 @@ def test_pane_headers_replace_section_tree() -> None:
 
 
 def test_pane_header_carries_the_row_counter() -> None:
-    """The header line doubles as the information bar (`──── tools ── 2`)."""
+    """The header line doubles as the information bar (`──── tools ── 2 tools`)."""
     text = _render([_tool(f"c{i}", "grep", {"pattern": f"p{i}"}) for i in range(2)])
     header = next(ln for ln in text.splitlines() if TOOLS_HEADER in ln)
-    assert header.rstrip().endswith("2")
+    assert header.rstrip().endswith("2 tools")
 
 
 def test_pane_header_counts_failures() -> None:
-    """Failures show as a warning badge on the tools pane header."""
+    """Failures show as a counted segment on the tools pane header."""
     text = _render(
         [
             _tool("c0", "grep", {"pattern": "jev"}),
@@ -98,8 +98,7 @@ def test_pane_header_counts_failures() -> None:
         ]
     )
     header = next(ln for ln in text.splitlines() if TOOLS_HEADER in ln)
-    assert G.warning in header
-    assert "1" in header
+    assert header.rstrip().endswith("2 tools, 1 failed")
 
 
 # ---------------------------------------------------------------------------
@@ -147,6 +146,27 @@ def test_overflow_collapse_is_first_line_of_tools_area() -> None:
     assert collapse_idx == header_idx + 1
     assert shown_rows
     assert all(i > collapse_idx for i in shown_rows)
+
+
+def test_todo_overflow_leads_the_todo_pane_like_tools() -> None:
+    """`+N more` leads the todo pane; the latest todos sit at the bottom.
+
+    Mirrors the tools pane rule: collapsed overflow is the first row after the
+    header, so the newest todo progress reads nearest the step footer.
+    """
+    todos = [{"content": f"task-{i}", "status": "pending"} for i in range(7)]
+    text = _render([], todos=todos)
+    assert "+3 more" in text
+    lines = text.splitlines()
+    header_idx = next(i for i, ln in enumerate(lines) if TODO_HEADER in ln)
+    collapse_idx = next(i for i, ln in enumerate(lines) if "+3 more" in ln)
+    shown_rows = [i for i, ln in enumerate(lines) if "task-" in ln]
+    assert collapse_idx == header_idx + 1
+    assert shown_rows
+    assert all(i > collapse_idx for i in shown_rows)
+    # The latest todos are the visible ones; earlier ones stay collapsed.
+    assert "task-6" in text
+    assert "task-2" not in text
 
 
 # ---------------------------------------------------------------------------

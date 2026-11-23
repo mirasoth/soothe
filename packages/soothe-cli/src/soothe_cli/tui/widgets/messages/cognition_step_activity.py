@@ -1016,7 +1016,8 @@ class StepActivityTree:
     Task delegation rows stay flat markers inside the tools pane; while a task
     runs, its line shows that task's subgraph tool count. When tool rows exceed
     the preview cap, a `· +N more tools` line leads the pane to collapse the
-    older calls, keeping the newest rows at the bottom. The files pane shows
+    older calls, keeping the newest rows at the bottom. The todo pane follows
+    the same rule (`· +N more` leads; the latest todos stay at the bottom). The files pane shows
     the latest file-write rows with action labels and line deltas (always
     rendered when such rows exist — no config gate). The thinking pane shows
     the latest reasoning lines in an italic muted tone.
@@ -1194,9 +1195,9 @@ class StepActivityTree:
                 for r in (*main_source, *index.task_delegations)
                 if (r.phase or "").strip().lower() in failure_phases
             )
-            counter = f"{tool_total}"
+            counter = format_tool_count_label(tool_total, singular="tool", plural="tools")
             if tool_failures:
-                counter = f"{tool_total} · {g.warning} {tool_failures}"
+                counter = f"{counter}, {tool_failures} failed"
             panes.append(
                 ActivityPane(label="tools", color=colors.accent, lines=tool_lines, counter=counter)
             )
@@ -1204,7 +1205,19 @@ class StepActivityTree:
         # --- todo pane -----------------------------------------------------
         if todo_items:
             todo_lines: list[PaneLine] = []
-            shown_todos = todo_items[:STEP_CARD_PANE_ROWS_TODO]
+            # Like the tools pane: the collapsed overflow leads the pane and
+            # the newest todos sit at the bottom, nearest the step footer.
+            shown_todos = todo_items[-STEP_CARD_PANE_ROWS_TODO:]
+            hidden_todos = len(todo_items) - len(shown_todos)
+            if hidden_todos > 0:
+                todo_lines.append(
+                    PaneLine(
+                        segs=[
+                            ("  ", theme.SECONDARY_TEXT_STYLE),
+                            (f"· +{hidden_todos} more", theme.SECONDARY_TEXT_STYLE),
+                        ]
+                    )
+                )
             for item in shown_todos:
                 content = str(item.get("content") or "").strip()
                 if not content:
@@ -1222,16 +1235,6 @@ class StepActivityTree:
                     PaneLine(
                         segs=[("  ", tone), (icon, tone), (" ", tone), (content, tone)],
                         meta=[(meta, tone)] if meta else [],
-                    )
-                )
-            hidden_todos = len(todo_items) - len(shown_todos)
-            if hidden_todos > 0:
-                todo_lines.append(
-                    PaneLine(
-                        segs=[
-                            ("  ", theme.SECONDARY_TEXT_STYLE),
-                            (f"· +{hidden_todos} more", theme.SECONDARY_TEXT_STYLE),
-                        ]
                     )
                 )
             if todo_lines:
