@@ -383,236 +383,10 @@ class ThreadPoolConfig(BaseModel):
         return max(self.min_pool_size, self.max_pool_size)
 
 
-class FirecrackerConfig(BaseModel):
-    """Firecracker microVM runner configuration.
-
-    Executes Soothe agent loops inside AWS Firecracker microVMs for strong
-    per-loop isolation. Each VM runs the same worker body as the process
-    pool, but bridges stream chunks host↔guest over virtio-vsock instead
-    of `multiprocessing.Queue`.
-
-    Linux-only: requires `AF_VSOCK`, the `firecracker` binary, and a Linux
-    host with KVM. The module is import-safe on non-Linux, but
-    `LoopRunnerFactory` raises `RuntimeError` if selected on a non-Linux
-    host. Use `thread_pool` or `process_pool` on macOS/Windows.
-
-    Args:
-        kernel_image_path: Path to the pre-built kernel image (vmlinux).
-        rootfs_image_path: Path to the pre-built rootfs image (ext4).
-        firecracker_binary_path: Path to the `firecracker` binary.
-        min_pool_size: Minimum warm microVMs at daemon startup.
-        max_pool_size: Maximum microVMs to scale up under load.
-        vsock_port_base: Base vsock port (per-VM port = base + worker_index).
-        vm_cpu_count: vCPUs per microVM.
-        vm_mem_mib: Memory per microVM (MiB).
-        idle_timeout_seconds: Idle VM timeout before graceful shutdown.
-        max_requests_per_worker: Max requests before VM respawn.
-        request_timeout_seconds: Default per-request timeout (0 = no timeout).
-        reuse_runner: Reuse one SootheRunner per VM between requests.
-        warmup_runner: Create cached SootheRunner at VM startup when reuse_runner is true.
-        warmup_core_agent: Materialize LazyCoreAgent during VM warmup when warmup_runner is true.
-        workspace_mount_mode: How the agent workspace is surfaced into the guest.
-        extra_kernel_args: Extra kernel command-line arguments appended at boot.
-    """
-
-    kernel_image_path: str = Field(
-        default="",
-        description="Path to the pre-built kernel image (vmlinux)",
-    )
-    rootfs_image_path: str = Field(
-        default="",
-        description="Path to the pre-built rootfs image (ext4)",
-    )
-    firecracker_binary_path: str = Field(
-        default="firecracker",
-        description="Path to the `firecracker` binary",
-    )
-    min_pool_size: int = Field(
-        default=1,
-        ge=1,
-        le=64,
-        description="Minimum warm microVMs at daemon startup",
-    )
-    max_pool_size: int = Field(
-        default=4,
-        ge=1,
-        le=128,
-        description="Maximum microVMs to scale up under load",
-    )
-    vsock_port_base: int = Field(
-        default=1024,
-        ge=1024,
-        le=65535,
-        description="Base vsock port (per-VM port = base + worker_index)",
-    )
-    vm_cpu_count: int = Field(
-        default=2,
-        ge=1,
-        le=32,
-        description="vCPUs per microVM",
-    )
-    vm_mem_mib: int = Field(
-        default=2048,
-        ge=256,
-        le=65536,
-        description="Memory per microVM (MiB)",
-    )
-    idle_timeout_seconds: int = Field(
-        default=300,
-        ge=60,
-        le=3600,
-        description="Idle VM timeout before graceful shutdown (seconds)",
-    )
-    max_requests_per_worker: int = Field(
-        default=100,
-        ge=1,
-        description="Max requests before VM respawn (prevents memory buildup)",
-    )
-    request_timeout_seconds: int = Field(
-        default=0,
-        ge=0,
-        le=1_209_600,
-        description="Default per-request timeout in seconds (0 = no timeout)",
-    )
-    reuse_runner: bool = Field(
-        default=True,
-        description="Reuse one SootheRunner per VM between requests",
-    )
-    warmup_runner: bool = Field(
-        default=True,
-        description="Create cached SootheRunner at VM startup when reuse_runner is true",
-    )
-    warmup_core_agent: bool = Field(
-        default=True,
-        description=("Materialize LazyCoreAgent during VM warmup when warmup_runner is true"),
-    )
-    workspace_mount_mode: str = Field(
-        default="virtiofs",
-        description=(
-            "How the agent workspace is surfaced into the guest: "
-            "'virtiofs' (local single-host) or 'sync' (workspace_sync S3 backend)"
-        ),
-    )
-    extra_kernel_args: str = Field(
-        default="",
-        description="Extra kernel command-line arguments appended at boot",
-    )
-
-    def get_effective_pool_size(self) -> int:
-        """Get effective max pool size, ensuring max >= min."""
-        return max(self.min_pool_size, self.max_pool_size)
-
-
-class BoxLiteConfig(BaseModel):
-    """BoxLite container runner configuration.
-
-    Executes Soothe agent loops inside lightweight containers via the
-    `boxlite` Python SDK for per-loop isolation. Each container runs the
-    same worker body as the process pool, but bridges stream chunks
-    host↔container over the boxlite exec stream instead of
-    `multiprocessing.Queue`.
-
-    Cross-platform (Linux, macOS, Windows); the `boxlite` SDK is imported
-    lazily so the module is import-safe everywhere. `LoopRunnerFactory`
-    validates `boxlite` importability and `container_image` presence at
-    construction time.
-
-    Args:
-        container_image: OCI image containing the Soothe worker env + entrypoint.
-        rootfs_path: Optional local OCI layout directory (overrides image if provided).
-        min_pool_size: Minimum warm containers at daemon startup.
-        max_pool_size: Maximum containers to scale up under load.
-        container_cpu_count: Number of CPU cores per container.
-        container_mem_mib: Memory limit per container in MiB.
-        idle_timeout_seconds: Idle container timeout before graceful shutdown.
-        max_requests_per_worker: Max requests before container respawn.
-        request_timeout_seconds: Default per-request timeout (0 = no timeout).
-        reuse_runner: Reuse one SootheRunner per container between requests.
-        warmup_runner: Create cached SootheRunner at container startup when reuse_runner is true.
-        warmup_core_agent: Materialize LazyCoreAgent during container warmup when warmup_runner is true.
-        workspace_mount_mode: How the agent workspace is surfaced into the container.
-    """
-
-    container_image: str = Field(
-        default="",
-        description="OCI image containing the Soothe worker env + entrypoint",
-    )
-    rootfs_path: str = Field(
-        default="",
-        description="Path to local OCI layout directory (overrides container_image if provided)",
-    )
-    min_pool_size: int = Field(
-        default=1,
-        ge=1,
-        le=64,
-        description="Minimum warm containers at daemon startup",
-    )
-    max_pool_size: int = Field(
-        default=4,
-        ge=1,
-        le=128,
-        description="Maximum containers to scale up under load",
-    )
-    container_cpu_count: int = Field(
-        default=2,
-        ge=1,
-        le=32,
-        description="Number of CPU cores per container",
-    )
-    container_mem_mib: int = Field(
-        default=2048,
-        ge=256,
-        le=65536,
-        description="Memory limit per container in MiB",
-    )
-    idle_timeout_seconds: int = Field(
-        default=300,
-        ge=60,
-        le=3600,
-        description="Idle container timeout before graceful shutdown (seconds)",
-    )
-    max_requests_per_worker: int = Field(
-        default=100,
-        ge=1,
-        description="Max requests before container respawn (prevents memory buildup)",
-    )
-    request_timeout_seconds: int = Field(
-        default=0,
-        ge=0,
-        le=1_209_600,
-        description="Default per-request timeout in seconds (0 = no timeout)",
-    )
-    reuse_runner: bool = Field(
-        default=True,
-        description="Reuse one SootheRunner per container between requests",
-    )
-    warmup_runner: bool = Field(
-        default=True,
-        description="Create cached SootheRunner at container startup when reuse_runner is true",
-    )
-    warmup_core_agent: bool = Field(
-        default=True,
-        description=(
-            "Materialize LazyCoreAgent during container warmup when warmup_runner is true"
-        ),
-    )
-    workspace_mount_mode: str = Field(
-        default="bind",
-        description=(
-            "How the agent workspace is surfaced into the container: "
-            "'bind' (local bind mount) or 'sync' (workspace_sync S3 backend)"
-        ),
-    )
-
-    def get_effective_pool_size(self) -> int:
-        """Get effective max pool size, ensuring max >= min."""
-        return max(self.min_pool_size, self.max_pool_size)
-
-
 class LoopRunnerConfig(BaseModel):
     """Unified loop runner configuration.
 
-    Groups the runner-mode selector and all five runner sub-configs into a
+    Groups the runner-mode selector and all runner sub-configs into a
     single nested block. Selection is via `runner_mode` — a single string
     field, not per-runner `enabled` booleans.
 
@@ -621,18 +395,14 @@ class LoopRunnerConfig(BaseModel):
         thread_pool: Tuning for `runner_mode='thread_pool'`.
         process_pool: Tuning for `runner_mode='process_pool'`.
         ray: Tuning for `runner_mode='ray'`.
-        firecracker: Tuning for `runner_mode='firecracker'`.
-        boxlite: Tuning for `runner_mode='boxlite'`.
     """
 
-    runner_mode: Literal["thread_pool", "process_pool", "ray", "firecracker", "boxlite"] = Field(
+    runner_mode: Literal["thread_pool", "process_pool", "ray"] = Field(
         default="thread_pool",
         description=(
             "Select the loop runner substrate: 'thread_pool' (default, "
-            "lightweight async), 'process_pool' (subprocess isolation), "
-            "'ray' (distributed Ray actors), 'firecracker' (microVM "
-            "isolation — Linux only), or 'boxlite' (container isolation "
-            "via Docker — cross-platform: Linux, macOS, Windows)."
+            "lightweight async), 'process_pool' (subprocess isolation), or "
+            "'ray' (distributed Ray actors)."
         ),
     )
     thread_pool: ThreadPoolConfig = Field(
@@ -646,14 +416,6 @@ class LoopRunnerConfig(BaseModel):
     ray: RayConfig = Field(
         default_factory=RayConfig,
         description="Ray distributed loop execution configuration (Ray actors).",
-    )
-    firecracker: FirecrackerConfig = Field(
-        default_factory=FirecrackerConfig,
-        description="Firecracker microVM runner configuration (strong per-loop isolation).",
-    )
-    boxlite: BoxLiteConfig = Field(
-        default_factory=BoxLiteConfig,
-        description="BoxLite container runner configuration (Docker-based, cross-platform isolation).",
     )
 
 
@@ -772,7 +534,6 @@ class MemoryProfilingConfig(BaseModel):
 
 __all__ = [
     "AKSKConfig",
-    "FirecrackerConfig",
     "IdentityConfig",
     "LoopGcConfig",
     "LoopRunnerConfig",

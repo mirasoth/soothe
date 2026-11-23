@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Step-card activity panes polish: the todo pane now mirrors the tools pane — a leading `· +N more` row collapses older todos and the latest todos stay at the bottom nearest the step footer (previously the overflow footnote trailed the head of the list); the tools pane header counter reads `173 tools, 3 failed` (counted words, files/todo style) instead of `173 · ⚠ 3`.
+
+### Removed
+
+- Remove the `firecracker` and `boxlite` loop runner substrates (`loop_runner.runner_mode` now accepts `thread_pool` / `process_pool` / `ray` only) and drop the `boxlite`-based `sandbox` extra; both modes required provider API keys to be shipped as literal values into the VM/container execution environment.
+
 ### Fixed
 
 - Stop repeating long user submissions as the first step title: root steps show a short title with the full request kept for execution, and step titles stay on one truncated terminal row.

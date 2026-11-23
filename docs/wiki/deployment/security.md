@@ -514,10 +514,11 @@ security:
 
 ### Sandboxed Backend Posture
 
-When the agent runs behind a sandbox boundary (microVM / container jail owning
-throwaway state), the boundary — not the command rule registry — is the
-containment layer. Operators can then turn the hard-deny tier off, instead of
-relying on the model to phrase commands that happen to dodge a rule:
+When the agent runs behind an operator-provided sandbox boundary (a dedicated
+VM or container you operate, owning throwaway state), the boundary — not the
+command rule registry — is the containment layer. Operators can then turn the
+hard-deny tier off, instead of relying on the model to phrase commands that
+happen to dodge a rule:
 
 ```yaml
 security:

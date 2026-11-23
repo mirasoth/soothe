@@ -23,7 +23,7 @@ def _config(runner_mode: str = "process_pool") -> tuple[SootheDaemonConfig, Soot
     """Create daemon and agent configs with a specific runner_mode.
 
     Args:
-        runner_mode: One of 'thread_pool', 'process_pool', 'ray', 'firecracker'.
+        runner_mode: One of 'thread_pool', 'process_pool', 'ray'.
     """
     daemon_cfg = SootheDaemonConfig(loop_runner=LoopRunnerConfig(runner_mode=runner_mode))
     agent_cfg = SootheConfig()

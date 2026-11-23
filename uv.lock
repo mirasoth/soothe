@@ -494,22 +494,6 @@ wheels = [
 ]
 
 [[package]]
-name = "boxlite"
-version = "0.10.5"
-source = { registry = "https://pypi.org/simple" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/b4/e3/6d5f9573d4288362de21c0c2df8a257f2490ae86c2ef2e2c0165a024dd03/boxlite-0.10.5-cp311-cp311-macosx_14_0_arm64.whl", hash = "sha256:8c7377ed6ca028116586b5aff5a3083b31447b24503d1c13700e1db54d878339" },
-    { url = "https://files.pythonhosted.org/packages/dc/68/fffce3cf98bdc31fa4fd43a8804dab2dc331cc508a03907a571d8947838b/boxlite-0.10.5-cp311-cp311-manylinux_2_28_aarch64.whl", hash = "sha256:9c0b7d2494d16af26e7b49b54a10bf1d160f275dc16ff5ac14e78badba59f775" },
-    { url = "https://files.pythonhosted.org/packages/58/73/11188f19a8e17a291b26c1b9e86b2b90f920de7eb171d62afb2f160e766f/boxlite-0.10.5-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:26ff7b1ba66063ed3e83e5104a3e0502260bd152af9fc672f62ec2ab94149c0b" },
-    { url = "https://files.pythonhosted.org/packages/48/01/e524815620095044e068866aeebd644effa413b021563f0c23e5a8c406cb/boxlite-0.10.5-cp312-cp312-macosx_14_0_arm64.whl", hash = "sha256:55366c33b6a8fa9308286f75398e0a9b1d4685de89baedbb19dd67edea04ccc5" },
-    { url = "https://files.pythonhosted.org/packages/84/84/f5942ce7936e6614a6b621f44ef4c6a47f28b90e305760f980b1f5f6d659/boxlite-0.10.5-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:3aaf0489c4fc7692d7bab12daa0e5cd5e4d3a92b87e5689baf2c472f28803cc3" },
-    { url = "https://files.pythonhosted.org/packages/b4/53/3b5e32777d36b72b8a3d3e3ef52432893377dc15c66a633a197e86909a65/boxlite-0.10.5-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:845ce76ce93c96437a2d19f392c21e2bfa69320a042c153b18d520fa45f3668a" },
-    { url = "https://files.pythonhosted.org/packages/67/1a/2dc4f60c8f6700a5afdfd170e4657ee981c1f113bee7a77a08320cb54d17/boxlite-0.10.5-cp313-cp313-macosx_14_0_arm64.whl", hash = "sha256:31c4dfd72846f920a722108b2abdfe723ad33f1170a659d840225014d714e607" },
-    { url = "https://files.pythonhosted.org/packages/c6/84/a22311a1a2eb3c3bd8b05f12164381f464936185fe1e3cf6c165dca212c2/boxlite-0.10.5-cp313-cp313-manylinux_2_28_aarch64.whl", hash = "sha256:d3c8eb9cbede2b1a9a1b12be9cc563bb9e3f2374e3b268dde04f8b365ee2d2ba" },
-    { url = "https://files.pythonhosted.org/packages/9c/ee/4771ad6efb4b0606ecf8b1b5d1b28649bd7f5043e0d456268a2981e2bf84/boxlite-0.10.5-cp313-cp313-manylinux_2_28_x86_64.whl", hash = "sha256:2999a357db7da51ef19a0797a169f14a26a9431d1ad50a3f302982e26ad8ace8" },
-]
-
-[[package]]
 name = "bracex"
 version = "3.1"
 source = { registry = "https://pypi.org/simple" }
@@ -4523,15 +4507,11 @@ dev = [
     { name = "soothe-cli" },
     { name = "soothe-client-python" },
 ]
-sandbox = [
-    { name = "boxlite", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or sys_platform == 'linux'" },
-]
 
 [package.metadata]
 requires-dist = [
     { name = "agent-client-protocol", marker = "extra == 'acp'", specifier = ">=0.3.0,<1.0.0" },
     { name = "aiohttp", specifier = ">=3.9.0,<4.0.0" },
-    { name = "boxlite", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'sandbox') or (sys_platform == 'linux' and extra == 'sandbox')", specifier = ">=0.10.0,<1.0.0" },
     { name = "cryptography", specifier = ">=41.0,<49" },
     { name = "dingtalk-stream", specifier = ">=0.24.0,<1.0.0" },
     { name = "discord-py", specifier = ">=2.5.2,<3.0.0" },
@@ -4565,7 +4545,7 @@ requires-dist = [
     { name = "websockets", specifier = ">=12.0,<16.0" },
     { name = "wecom-aibot-sdk-python", specifier = ">=0.1.5" },
 ]
-provides-extras = ["acp", "dev", "sandbox"]
+provides-extras = ["acp", "dev"]
 
 [[package]]
 name = "soothe-deepagents"

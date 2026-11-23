@@ -20,7 +20,7 @@
 | Coding CoreAgent, skills/MCP/backends in-proc | `soothe-nano` (PyPI) |
 | Host wire codec, display binder/ledger, ux task namespaces, workspace sync, identity errors, skillify models | `soothe` |
 | StrangeLoop, Context Engine, identity, host runner, **rails (LoopRail + Rail Exec)** | `soothe` |
-| Process lifecycle, channels, HTTP/WS server, admin IO, cron, **loop runner implementations** (thread / process / firecracker / boxlite) | `soothe-daemon` |
+| Process lifecycle, channels, HTTP/WS server, admin IO, cron, **loop runner implementations** (thread / process / ray) | `soothe-daemon` |
 | Human CLI / TUI | `soothe-cli` |
 | Language WS clients + client-side contract copies | `client/*` (submodules) |
 

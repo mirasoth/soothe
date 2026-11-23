@@ -705,7 +705,7 @@ worktree / feedback macro extract; **M4** intent expand.
 | WavePlan | `soothe/rails/wave_plan.py` |
 | Trace | `soothe/rails/trace_store.py` |
 | Worktree ops | `soothe/rails/worktree_ops.py` |
-| Submit bind | `soothe-daemon/runner/` (`submit` → resolve rail id → bind job; runner implementations: thread / process / firecracker / boxlite) |
+| Submit bind | `soothe-daemon/runner/` (`submit` → resolve rail id → bind job; runner implementations: thread / process / ray) |
 | Protocol reference | `soothe_nano` skill `looprail-creator` references |
 
 ## 15. Decision log
