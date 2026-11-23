@@ -1,6 +1,6 @@
 # coreagent RFC Index (CORE)
 
-**Last Updated**: 2026-10-21  |  **RFCs**: 10
+**Last Updated**: 2026-11-23  |  **RFCs**: 11
 
 | ID | Title | Kind | Status |
 |----|-------|------|--------|
@@ -14,3 +14,4 @@
 | [RFC-CORE-008](RFC-CORE-008-operation-security-protocol.md) | OperationSecurityProtocol: Unified Workspace and Tool Operation Security | Architecture Design | Implemented |
 | [RFC-CORE-009](RFC-CORE-009-same-file-edit-optimization.md) | Same-File Edit Concurrency and Optimization | Architecture Design | Implemented (partial) |
 | [RFC-CORE-010](RFC-CORE-010-workspace-sync-materialization.md) | Workspace Sync — Materialization and Incremental Persistence | Architecture Design | Implemented |
+| [RFC-CORE-011](RFC-CORE-011-os-local-sandbox-backend.md) | os_sandbox — Local OS-Primitive Sandbox Backend for KVM-less Hosts | Architecture Design | Draft |

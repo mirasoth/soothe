@@ -2,8 +2,8 @@
 
 This document tracks the chronological evolution of RFCs in the Soothe project.
 
-**Last Updated**: 2026-10-30
-**Total RFCs**: 97 (78 active + 19 archived)
+**Last Updated**: 2026-11-23
+**Total RFCs**: 98 (79 active + 19 archived)
 
 > Summary statistics (by status and kind) live in [rfc-index.md](rfc-index.md).
 > The RFC lifecycle (Draft → Proposed → Accepted → Implemented → Deprecated →
@@ -11,6 +11,38 @@ This document tracks the chronological evolution of RFCs in the Soothe project.
 > `rfc-index.md`.
 
 ## Recent Changes
+
+### 2026-11-23 (RFC-CORE-011 os_sandbox backend)
+
+- **RFC-CORE-011 — Added**: os_sandbox — Local OS-Primitive Sandbox
+  Backend for KVM-less Hosts (Architecture Design, Draft). Formalizes
+  the local sandbox backend selected from the
+  [agent-sandbox-no-kvm analysis](../analysis/2026-11-23-agent-sandbox-no-kvm.md):
+  - New `sandbox.backend.type = "os_sandbox"` implementing the existing
+    `BaseSandbox` contract unchanged. Platform matrix: macOS Seatbelt
+    `(deny default)` profiles; Linux two-stage bubblewrap mount-namespace +
+    launcher seccomp-bpf with mandatory `no_new_privs`; opt-in, explicitly
+    degraded Landlock tier (kernel ≥ 5.13, file-access denial only).
+  - Session-scoped sandbox instances so `run_background` (setsid),
+    `tail_background_log`, and `kill_process` stay namespace-consistent.
+  - Defense layers L1-L4: kernel isolation inside the backend, egress +
+    credential hygiene at the `CommandExecutor` seam (env allowlist, no
+    secrets in child env, default-deny egress contract), application policy
+    unchanged (RFC-CORE-008), loop plane out of scope.
+  - `sandbox_posture` (`full | subprocess_only | none`) as an explicit,
+    observable value with config validation interacting with
+    `hard_deny_severities` (RFC-LOOP-030).
+  - Two P0 consistency fixes mandated as precursors, landing in the
+    soothe-nano repo: config-driven factory path missing `socket_path`;
+    builder must not catch sandbox construction errors and silently fall
+    back to the host backend.
+  - Non-goals: ArcBox unchanged (only hardware-level tier), no loop-plane
+    isolation, no auto-wrapping of MCP servers, egress proxy implementation
+    deferred to a follow-up spec.
+  - Implementation guide: [IG-CORE-007](../impl/coreagent/IG-CORE-007-os-local-sandbox-backend.md)
+    (module structure, tier spawn pipelines, posture derivation, 10-task
+    coding plan; implementation lands in the soothe-nano repo with a host
+    floor bump).
 
 ### 2026-10-30 (RFC-LOOP-030 + risk-tiered security spec updates)
 
