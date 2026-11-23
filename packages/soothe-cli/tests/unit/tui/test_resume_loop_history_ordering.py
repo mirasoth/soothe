@@ -42,7 +42,6 @@ async def test_resume_loop_via_daemon_loads_history_before_live_consumer() -> No
     app._loop_switching = False
     app._chat_input = None
     app._pending_messages = []
-    app._queued_widgets = []
     app._tokens_approximate = False
 
     app._clear_messages = AsyncMock()
@@ -109,7 +108,6 @@ async def test_resume_loop_via_daemon_rolls_back_on_switch_failure() -> None:
     app._loop_switching = False
     app._chat_input = None
     app._pending_messages = []
-    app._queued_widgets = []
     app._tokens_approximate = False
 
     app._clear_messages = AsyncMock()
@@ -159,7 +157,6 @@ async def test_resume_loop_via_daemon_cancels_bg_reader_before_switch() -> None:
     app._loop_switching = False
     app._chat_input = None
     app._pending_messages = []
-    app._queued_widgets = []
     app._tokens_approximate = False
     app._bg_event_worker = _FakeBgWorker()
 

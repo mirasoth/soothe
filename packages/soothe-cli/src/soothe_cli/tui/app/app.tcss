@@ -165,11 +165,6 @@ Screen {
     background: $success-muted;
 }
 
-/* QueuedUserMessage keeps a border to distinguish pending messages */
-QueuedUserMessage.-ascii {
-    border: ascii $panel;
-}
-
 /* ChatTextArea: override TextArea's built-in $surface background */
 ChatTextArea {
     background: transparent;

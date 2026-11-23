@@ -1,4 +1,4 @@
-"""User message widgets."""
+"""User message widget."""
 
 from __future__ import annotations
 
@@ -15,9 +15,6 @@ from soothe_cli.settings import (
 )
 from soothe_cli.tui.input import EMAIL_PREFIX_PATTERN, FILE_MENTION_PATTERN, command_token_span
 from soothe_cli.tui.widgets.messages._helpers import _mode_color
-
-_QUEUE_TIPS_ASCII = "  ·  enter send now | ^ edit | esc cancel"
-_QUEUE_TIPS_UNICODE = "  ·  enter send now · ↑ edit · esc cancel"
 
 
 class UserMessage(Static):
@@ -106,70 +103,4 @@ class UserMessage(Static):
         if last_end < len(content):
             parts.append((content[last_end:], colors.foreground))
 
-        return Content.assemble(*parts)
-
-
-class QueuedUserMessage(Static):
-    """Widget displaying a queued (pending) user message in grey.
-
-    This is an ephemeral widget that gets removed when the message is dequeued.
-    """
-
-    ALLOW_SELECT = True
-    """Enable text selection for copy functionality."""
-
-    DEFAULT_CSS = """
-    QueuedUserMessage {
-        height: auto;
-        padding: 0 1;
-        margin: 0 0 1 0;
-        background: $surface-darken-1;
-        border: solid $panel;
-    }
-    """
-    """Muted ChatInput echo for pending messages; text uses terminal `dim` style."""
-
-    def __init__(self, content: str, **kwargs: Any) -> None:
-        """Initialize a queued user message.
-
-        Args:
-        content: The message content
-        **kwargs: Additional arguments passed to parent
-        """
-        super().__init__(**kwargs)
-        self._content = content
-        self._show_queue_tips = False
-
-    def set_show_queue_tips(self, show: bool) -> None:
-        """Toggle whether queue interaction tips are rendered."""
-        if self._show_queue_tips == show:
-            return
-        self._show_queue_tips = show
-        self.refresh(layout=False)
-
-    def on_mount(self) -> None:
-        """Add ASCII border class when in ASCII mode."""
-        if is_ascii_mode():
-            self.add_class("-ascii")
-
-    def render(self) -> Content:
-        """Render the queued user message (greyed out).
-
-        Returns:
-        Styled Content with dimmed prefix and body matching the welcome banner.
-        """
-        content = self._content
-        colors = theme.get_theme_colors(self)
-        mode = PREFIX_TO_MODE.get(content[:1]) if content else None
-        if mode:
-            glyph = MODE_DISPLAY_GLYPHS.get(mode, content[0])
-            prefix = (f"{glyph} ", "dim")
-            content = content[1:]
-        else:
-            prefix = ("> ", "dim")
-        parts: list[str | tuple[str, str]] = [prefix, (content, "dim")]
-        if self._show_queue_tips:
-            tips_text = _QUEUE_TIPS_ASCII if is_ascii_mode() else _QUEUE_TIPS_UNICODE
-            # Avoid italic: some terminal/terminfo combos map it to reverse video.
-            parts.append((tips_text, f"dim {colors.warning}"))
         return Content.assemble(*parts)

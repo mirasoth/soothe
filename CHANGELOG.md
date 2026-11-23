@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Stop repeating long user submissions as the first step title: root steps show a short title with the full request kept for execution, and step titles stay on one truncated terminal row.
+- Queued goals survive tool-approval pauses: turn cleanup keeps the local queue intact while a clarification/approval answer is pending and drains it only after the resumed goal actually completes. Queue goals always issue a real turn instead of being consumed as a clarification answer or attached to a daemon stream that never received them.
+- Unified the queued-goal UI on a single labelled, fully bordered `QueuedGoalsBar` (header with count, numbered rows); removed the competing in-transcript queued card that stayed pinned at the bottom of the message list.
 
 ## [v1.3.3] - 2026-11-17
 

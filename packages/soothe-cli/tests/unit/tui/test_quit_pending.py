@@ -85,7 +85,6 @@ def test_ctrl_c_interrupts_agent_when_input_empty() -> None:
             self._shell_worker = None
             self._daemon_session = None
             self._pending_messages = []
-            self._queued_widgets = []
             self._deferred_actions = []
             self.notify = MagicMock()
             self.set_timer = MagicMock()
@@ -146,7 +145,6 @@ def test_ctrl_c_interrupts_shell_when_input_empty() -> None:
             self._shell_running = True
             self._shell_worker = MagicMock()
             self._pending_messages = []
-            self._queued_widgets = []
             self._deferred_actions = []
             self.notify = MagicMock()
             self.set_timer = MagicMock()
@@ -294,7 +292,6 @@ def test_ctrl_c_interrupt_resets_double_press_exit_timer() -> None:
             self._shell_worker = None
             self._daemon_session = None
             self._pending_messages = []
-            self._queued_widgets = []
             self._deferred_actions = []
             self.notify = MagicMock()
             self.set_timer = MagicMock()
@@ -344,7 +341,6 @@ def test_ctrl_c_preserves_queued_goal_when_interrupting_agent() -> None:
             self._shell_worker = None
             self._daemon_session = None
             self._pending_messages = deque([QueuedMessage(text="next goal", mode="normal")])
-            self._queued_widgets = deque()
             self._deferred_actions = []
             self.notify = MagicMock()
             self.set_timer = MagicMock()
@@ -378,7 +374,6 @@ def test_ctrl_c_preserves_queue_when_interrupting_via_daemon() -> None:
             self._shell_worker = None
             self._daemon_session = MagicMock()
             self._pending_messages = deque([QueuedMessage(text="queued", mode="normal")])
-            self._queued_widgets = deque()
             self._deferred_actions = []
             self.notify = MagicMock()
             self.set_timer = MagicMock()
@@ -406,7 +401,6 @@ async def test_interrupt_daemon_turn_preserves_queue_when_requested() -> None:
             self._daemon_session = AsyncMock()
             self._agent_worker = MagicMock()
             self._pending_messages = deque([QueuedMessage(text="queued", mode="normal")])
-            self._queued_widgets = deque()
             self._deferred_actions = []
             self._set_spinner = AsyncMock()
 
@@ -428,7 +422,6 @@ async def test_interrupt_daemon_turn_cancels_worker_when_remote_cancel_fails() -
             self._daemon_session.cancel_remote_query.side_effect = RuntimeError("boom")
             self._agent_worker = MagicMock()
             self._pending_messages = deque([QueuedMessage(text="queued", mode="normal")])
-            self._queued_widgets = deque()
             self._deferred_actions = []
             self._set_spinner = AsyncMock()
 

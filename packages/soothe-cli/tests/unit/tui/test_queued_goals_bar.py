@@ -15,6 +15,8 @@ from __future__ import annotations
 from collections import deque
 from unittest.mock import MagicMock, PropertyMock, patch
 
+import pytest
+
 from soothe_cli.display import theme
 from soothe_cli.tui.app._messages_mixin import _MessagesMixin
 from soothe_cli.tui.app._types import QueuedMessage
@@ -55,7 +57,7 @@ def test_bar_shows_when_non_empty() -> None:
 
 
 def test_bar_renders_all_goals() -> None:
-    """Multiple queued goals produce multiple rows in the rendered content."""
+    """Multiple queued goals produce numbered rows under a labelled header."""
     bar = QueuedGoalsBar()
     goals = [
         QueuedMessage(text="first goal", mode="normal"),
@@ -65,9 +67,53 @@ def test_bar_renders_all_goals() -> None:
     bar.set_goals(goals)
     content = _render_bar(bar)
     plain = content.plain
+    assert "Queued goals (3)" in plain
     assert "first goal" in plain
     assert "second goal" in plain
     assert "third goal" in plain
+    assert "1. " in plain
+    assert "2. " in plain
+    assert "3. " in plain
+
+
+def test_bar_has_full_separating_border() -> None:
+    """The queue is separated from the transcript by a full border."""
+    css = QueuedGoalsBar.DEFAULT_CSS
+    assert "border: solid $accent" in css
+    assert "border: ascii $accent" in css
+    assert "border-top: solid $primary" not in css
+
+
+def test_bar_header_carries_tips_when_focused() -> None:
+    """Interaction tips belong to the header, not the last goal row."""
+    bar = QueuedGoalsBar()
+    bar.set_goals([QueuedMessage(text="goal", mode="normal")])
+    bar.set_show_tips(True)
+    plain = _render_bar(bar).plain
+    lines = plain.splitlines()
+    assert "Queued goals (1)" in lines[0]
+    assert "enter submit" in lines[0]
+    assert "enter submit" not in lines[1]
+
+
+@pytest.mark.asyncio
+async def test_bar_mounts_with_full_border_and_header() -> None:
+    """Mounting proves the full-border CSS parses and the header renders."""
+    from textual.app import App, ComposeResult
+    from textual.containers import Container
+
+    class _BarHarness(App[None]):
+        def compose(self) -> ComposeResult:
+            with Container(id="bottom-app-container"):
+                yield QueuedGoalsBar(id="queued-goals")
+
+    app = _BarHarness()
+    async with app.run_test() as pilot:
+        bar = app.query_one(QueuedGoalsBar)
+        bar.set_goals([QueuedMessage(text="goal", mode="normal")])
+        await pilot.pause()
+        assert bar.styles.display == "block"
+        assert "Queued goals (1)" in bar.render().plain
 
 
 def test_bar_selection_clamps_at_boundaries() -> None:
@@ -169,7 +215,6 @@ class _QueueStub(_MessagesMixin):
 
     def __init__(self) -> None:
         self._pending_messages: deque[QueuedMessage] = deque()
-        self._queued_widgets: deque = deque()
         self._chat_input = MagicMock()
         self._chat_input.value = ""
         self._chat_input.mode = "normal"
@@ -284,6 +329,7 @@ def test_submit_queued_goal_at_index_removes_correct_goal() -> None:
     assert len(remaining) == 2
     assert remaining[0].text == "first"
     assert remaining[1].text == "third"
+    app._process_message.assert_called_once_with("second", "normal", from_queue=True)
 
 
 def test_submit_queued_goal_at_index_blocked_when_busy() -> None:

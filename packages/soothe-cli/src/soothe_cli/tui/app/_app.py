@@ -42,10 +42,7 @@ from soothe_cli.tui.composer_mode import normalize_composer_mode
 from soothe_cli.tui.widgets.chat_input import ChatInput
 from soothe_cli.tui.widgets.loading import LoadingWidget, TipRow
 from soothe_cli.tui.widgets.message_store import MessageStore
-from soothe_cli.tui.widgets.messages import (
-    AssistantMessage,
-    QueuedUserMessage,
-)
+from soothe_cli.tui.widgets.messages import AssistantMessage
 from soothe_cli.tui.widgets.pinned_goal_bar import PinnedGoalBar
 from soothe_cli.tui.widgets.plan_quick_view_overlay import PlanQuickViewOverlay
 from soothe_cli.tui.widgets.queued_goals_bar import QueuedGoalsBar
@@ -254,6 +251,9 @@ class SootheApp(
 
         self._agent_running = False
 
+        self._turn_generation = 0
+        """Monotonic token identifying the agent worker that owns cleanup."""
+
         self._bg_event_worker: Worker[None] | None = None
         """Background daemon event consumer worker (cancelled on active turn start)."""
 
@@ -310,8 +310,6 @@ class SootheApp(
 
         self._pending_messages: deque[QueuedMessage] = deque()
         """User message queue for sequential processing."""
-
-        self._queued_widgets: deque[QueuedUserMessage] = deque()
 
         self._processing_pending = False
 

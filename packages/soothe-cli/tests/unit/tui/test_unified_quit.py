@@ -29,7 +29,6 @@ class _QuitAppStub(App, _MessagesMixin):
         self._agent_running = False
         self._agent_worker = None
         self._pending_messages = deque()
-        self._queued_widgets = deque()
         self._deferred_actions = []
         self._detaching = False
         self.run_worker = MagicMock()
@@ -53,7 +52,6 @@ class _SubmitQuitStub(_ExecutionMixin):
         self._shell_running = False
         self._connecting = False
         self._pending_messages = deque()
-        self._queued_widgets = deque()
         self._detach_or_exit = MagicMock()
         self._process_message = AsyncMock()
 

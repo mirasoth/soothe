@@ -35,7 +35,6 @@ def message_to_widget(data: MessageData) -> Widget:
         CognitionStepMessage,
         DiffMessage,
         ErrorMessage,
-        QueuedUserMessage,
         SkillMessage,
         SummarizationMessage,
         UserMessage,
@@ -43,11 +42,8 @@ def message_to_widget(data: MessageData) -> Widget:
     from soothe_cli.tui.widgets.messages.cognition_step import _DeferredStepComplete
 
     match data.type:
-        case MessageType.USER:
+        case MessageType.USER | MessageType.QUEUED_USER:
             return UserMessage(data.content, id=data.id)
-
-        case MessageType.QUEUED_USER:
-            return QueuedUserMessage(data.content, id=data.id)
 
         case MessageType.ASSISTANT:
             return AssistantMessage(data.content, id=data.id)
@@ -208,7 +204,6 @@ def message_from_widget(widget: Widget) -> MessageData:
         CognitionStepMessage,
         DiffMessage,
         ErrorMessage,
-        QueuedUserMessage,
         SkillMessage,
         SummarizationMessage,
         UserMessage,
@@ -271,13 +266,6 @@ def message_from_widget(widget: Widget) -> MessageData:
         else:
             content = "Clarification: awaiting answer"
         return MessageData(type=MessageType.APP, content=content, id=widget_id)
-
-    if isinstance(widget, QueuedUserMessage):
-        return MessageData(
-            type=MessageType.QUEUED_USER,
-            content=widget._content,
-            id=widget_id,
-        )
 
     if isinstance(widget, CognitionGoalTreeMessage):
         return MessageData(

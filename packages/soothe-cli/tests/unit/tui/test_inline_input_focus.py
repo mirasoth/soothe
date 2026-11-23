@@ -348,7 +348,6 @@ class _QuitAppStub(App, _MessagesMixin):
         self._agent_running = False
         self._agent_worker = None
         self._pending_messages = deque()
-        self._queued_widgets = deque()
         self._deferred_actions = []
         self._detaching = False
         self._chat_input: MagicMock | None = MagicMock()

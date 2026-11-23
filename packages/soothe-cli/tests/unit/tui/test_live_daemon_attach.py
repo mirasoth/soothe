@@ -52,7 +52,8 @@ def _execution_app(
     app._agent_worker = None
     app._shell_running = False
     app._pending_messages: deque[QueuedMessage] = deque()
-    app._queued_widgets: deque[Any] = deque()
+    app._has_active_qa_widget = lambda: False
+    app._turn_generation = 0
     app._mount_message = AsyncMock()
     app._send_to_agent = AsyncMock()
     app._process_next_from_queue = AsyncMock()
@@ -140,6 +141,43 @@ async def test_run_agent_task_sends_when_not_live(monkeypatch: Any) -> None:  # 
 
 
 @pytest.mark.asyncio
+async def test_run_agent_task_queue_goal_forces_send_when_live(monkeypatch: Any) -> None:  # noqa: ANN401
+    """A locally queued goal must send_turn even when daemon status lags."""
+    app = _execution_app(live=True)
+    captured: dict[str, Any] = {}
+
+    async def fake_execute(**kwargs: Any) -> SessionStats:
+        captured.update(kwargs)
+        return SessionStats()
+
+    monkeypatch.setattr("soothe_cli.tui.textual_adapter.execute_task_textual", fake_execute)
+
+    await app._run_agent_task("queued goal", from_queue=True)
+
+    assert captured["skip_daemon_send_turn"] is False
+
+
+@pytest.mark.asyncio
+async def test_run_agent_task_clarification_answer_forces_send_when_live(
+    monkeypatch: Any,  # noqa: ANN401
+) -> None:
+    """An approval answer must reach the paused graph as a real send_turn."""
+    app = _execution_app(live=True)
+    app._ui_adapter._clarification_pending = True
+    captured: dict[str, Any] = {}
+
+    async def fake_execute(**kwargs: Any) -> SessionStats:
+        captured.update(kwargs)
+        return SessionStats()
+
+    monkeypatch.setattr("soothe_cli.tui.textual_adapter.execute_task_textual", fake_execute)
+
+    await app._run_agent_task("Tool approval: Disapproved")
+
+    assert captured["skip_daemon_send_turn"] is False
+
+
+@pytest.mark.asyncio
 async def test_cleanup_attaches_when_still_live() -> None:
     app = _execution_app(live=True)
     app._attach_to_live_daemon_turn = AsyncMock()
@@ -160,20 +198,30 @@ async def test_cleanup_drains_queue_when_not_live() -> None:
 
 
 @pytest.mark.asyncio
-async def test_attach_to_live_drains_queued_normal_message() -> None:
+async def test_cleanup_with_local_queue_does_not_attach_to_live_daemon() -> None:
+    """A local queue head is not a daemon successor; it must be drained."""
     app = _execution_app(live=True)
-    app._pending_messages.append(QueuedMessage(text="follow-on goal", mode="normal"))
-    queued = SimpleNamespace(remove=AsyncMock())
-    app._queued_widgets.append(queued)
+    app._pending_messages.append(QueuedMessage(text="queued goal", mode="normal"))
+    app._attach_to_live_daemon_turn = AsyncMock()
+
+    await _ExecutionMixin._cleanup_agent_task(app)
+
+    app._attach_to_live_daemon_turn.assert_not_awaited()
+    app._process_next_from_queue.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_attach_to_live_keeps_local_queue_intact() -> None:
+    """Attach-only observes a daemon successor without consuming local goals."""
+    app = _execution_app(live=True)
+    goal = QueuedMessage(text="follow-on goal", mode="normal")
+    app._pending_messages.append(goal)
 
     await app._attach_to_live_daemon_turn()
 
-    app._mount_message.assert_awaited()
-    app._send_to_agent.assert_awaited_once_with(
-        "follow-on goal",
-        skip_daemon_send_turn=True,
-    )
-    assert not app._pending_messages
+    app._mount_message.assert_not_awaited()
+    app._send_to_agent.assert_awaited_once_with("", skip_daemon_send_turn=True)
+    assert list(app._pending_messages) == [goal]
 
 
 @pytest.mark.asyncio

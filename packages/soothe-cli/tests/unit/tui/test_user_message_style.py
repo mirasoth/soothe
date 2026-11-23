@@ -5,7 +5,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock, PropertyMock, patch
 
 from soothe_cli.display import theme
-from soothe_cli.tui.widgets.messages.user import QueuedUserMessage, UserMessage
+from soothe_cli.tui.widgets.messages.user import UserMessage
 
 
 def test_user_message_echoes_chat_input_surface_block() -> None:
@@ -24,13 +24,6 @@ def test_user_message_has_no_mode_border_rules() -> None:
     assert "UserMessage.-mode-command" not in css
     assert "border: solid $mode-bash" not in css
     assert "border: solid $mode-command" not in css
-
-
-def test_queued_user_message_is_muted_surface_card() -> None:
-    """Queued messages stay visually related but dimmer than sent user cards."""
-    css = QueuedUserMessage.DEFAULT_CSS
-    assert "background: $surface-darken-1" in css
-    assert "border: solid $panel" in css
 
 
 def _render_user_message(content: str) -> tuple[object, theme.ThemeColors]:

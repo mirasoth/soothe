@@ -25,7 +25,6 @@ class _SubmitAliasStub(_ExecutionMixin):
         self._shell_running = False
         self._connecting = False
         self._pending_messages = deque()
-        self._queued_widgets = deque()
         self._detach_or_exit = MagicMock()
         self._process_message = AsyncMock()
 

@@ -353,33 +353,6 @@ class _UIMixin:
         finally:
             self._hydrate_in_progress = False
 
-    async def _mount_before_queued(self, container: Container, widget: Widget) -> None:
-        """Mount a widget in the messages container, before any queued widgets.
-
-        Queued-message widgets must stay at the bottom of the container so
-        they remain visually anchored below the current agent response.
-        This helper inserts `widget` just before the first queued widget,
-        or appends at the end when the queue is empty.
-
-        Args:
-        container: The `#messages` container to mount into.
-        widget: The widget to mount.
-        """
-        if not container.is_attached:
-            return
-        first_queued = self._queued_widgets[0] if self._queued_widgets else None
-        if first_queued is not None and first_queued.parent is container:
-            try:
-                await container.mount(widget, before=first_queued)
-            except Exception:
-                logger.warning(
-                    "Stale queued-widget reference; appending at end",
-                    exc_info=True,
-                )
-            else:
-                return
-        await container.mount(widget)
-
     async def _set_spinner(
         self,
         status: SpinnerStatus,

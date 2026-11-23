@@ -1,8 +1,9 @@
 """Queued goals bar widget — shows pending queued goals above the chat input.
 
 A docked bar (modeled on ``PinnedGoalBar``) that renders all queued goals as
-selectable rows.  Each row shows the goal text in a muted style.  The bar is
-hidden when the queue is empty and visible when goals are pending.
+selectable, numbered rows under a labelled header.  A full border separates
+the queue from the transcript and the thinking row.  The bar is hidden when
+the queue is empty and visible when goals are pending.
 
 Interactions:
     - Enter:   submit the selected queued goal for immediate execution.
@@ -63,24 +64,24 @@ class QueuedGoalsBar(Static):
         min-height: 0;
         padding: 0 1;
         background: $surface-darken-1;
-        border-top: solid $primary;
+        border: solid $accent;
         color: $text-muted;
-        transition: background 200ms, border-top 200ms, color 200ms;
+        transition: background 200ms, border 200ms, color 200ms;
     }
 
     QueuedGoalsBar:focus {
         background: $boost;
-        border-top: double $accent;
+        border: double $accent;
         color: $text;
         text-style: bold;
     }
 
     QueuedGoalsBar.-ascii {
-        border-top: ascii $primary;
+        border: ascii $accent;
     }
 
     QueuedGoalsBar.-ascii:focus {
-        border-top: ascii $accent;
+        border: ascii $accent;
     }
 
     QueuedGoalsBar.-activated {
@@ -285,12 +286,11 @@ class QueuedGoalsBar(Static):
                 event.stop()
 
     def render(self) -> Content:
-        """Render all queued goals as selectable rows.
+        """Render a labelled, bordered panel with one selectable row per goal.
 
-        Each row is individually truncated to the available width so that a
-        long first goal doesn't hide subsequent goals.  Returns a styled
-        ``Content`` with one row per queued goal, the selected row
-        highlighted, and an optional tips suffix on the last row.
+        The header names the queue and carries the interaction tips.  Each
+        goal row is individually truncated so a long goal cannot hide the
+        later ones.
         """
         if not self._goals:
             return Content("")
@@ -298,6 +298,15 @@ class QueuedGoalsBar(Static):
         colors = theme.get_theme_colors(self)
         available_width = self._available_width()
         row_parts: list[str | tuple[str, str]] = []
+
+        header_parts: list[str | tuple[str, str]] = [
+            (f"Queued goals ({len(self._goals)})", f"bold {colors.accent}"),
+        ]
+        if self._show_tips:
+            tips_text = _QUEUE_TIPS_ASCII if is_ascii_mode() else _QUEUE_TIPS_UNICODE
+            header_parts.append((tips_text, f"dim {colors.warning}"))
+        row_parts.append(Content.assemble(*header_parts).truncate(available_width, ellipsis=True))
+        row_parts.append("\n")
 
         for i, goal in enumerate(self._goals):
             is_selected = i == self._selected_index
@@ -311,6 +320,7 @@ class QueuedGoalsBar(Static):
             prefix_glyph = ">" if is_selected else " "
             prefix_style = f"bold {colors.primary}" if is_selected else "dim"
             parts.append((f"{prefix_glyph} ", prefix_style))
+            parts.append((f"{i + 1}. ", "dim"))
 
             # Render the goal text with mode glyph and mention highlighting
             content = goal.text
@@ -353,11 +363,6 @@ class QueuedGoalsBar(Static):
             if last_end < len(content):
                 parts.append((content[last_end:], text_style))
 
-            # Tips on the last row
-            if is_last and self._show_tips:
-                tips_text = _QUEUE_TIPS_ASCII if is_ascii_mode() else _QUEUE_TIPS_UNICODE
-                parts.append((tips_text, f"dim {colors.warning}"))
-
             # Truncate this row individually, then append to the bar.
             row = Content.assemble(*parts).truncate(available_width, ellipsis=True)
             row_parts.append(row)
@@ -371,7 +376,7 @@ class QueuedGoalsBar(Static):
     def _available_width(self) -> int:
         """Return the available terminal width for the bar content.
 
-        Accounts for the padding (0 1 = 2 columns).
+        Accounts for the border and padding (2 + 2 columns).
 
         Returns:
             Column count available for text content.
@@ -381,4 +386,4 @@ class QueuedGoalsBar(Static):
             width = size.width if size.width > 0 else _MAX_WIDTH_FALLBACK
         except Exception:  # noqa: BLE001
             width = _MAX_WIDTH_FALLBACK
-        return max(width - 2, 10)
+        return max(width - 4, 10)

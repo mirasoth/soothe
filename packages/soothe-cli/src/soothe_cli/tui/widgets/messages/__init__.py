@@ -27,10 +27,7 @@ from soothe_cli.tui.widgets.messages.skill import (
     _strip_frontmatter,
 )
 from soothe_cli.tui.widgets.messages.structured_ask_user import StructuredAskUserWidget
-from soothe_cli.tui.widgets.messages.user import (
-    QueuedUserMessage,
-    UserMessage,
-)
+from soothe_cli.tui.widgets.messages.user import UserMessage
 
 __all__ = [
     # Helpers
@@ -63,5 +60,4 @@ __all__ = [
     "_strip_frontmatter",
     # User
     "UserMessage",
-    "QueuedUserMessage",
 ]

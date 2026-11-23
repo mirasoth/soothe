@@ -43,7 +43,6 @@ from soothe_cli.tui.widgets.messages import (
     AppMessage,
     AssistantMessage,
     ErrorMessage,
-    QueuedUserMessage,
     StructuredAskUserWidget,
     UserMessage,
 )
@@ -57,19 +56,26 @@ logger = logging.getLogger(__name__)
 class _ExecutionMixin:
     """Agent execution, message routing, queue, shell commands, and daemon events."""
 
-    async def _process_message(self, value: str, mode: InputMode) -> None:
+    async def _process_message(
+        self,
+        value: str,
+        mode: InputMode,
+        *,
+        from_queue: bool = False,
+    ) -> None:
         """Route a message to the appropriate handler based on mode.
 
         Args:
-        value: The message text to process.
-        mode: The input mode that determines message routing.
+            value: The message text to process.
+            mode: The input mode that determines message routing.
+            from_queue: Whether the message came from the local goal queue.
         """
         if mode == "shell":
             await self._handle_shell_command(value.removeprefix("!"))
         elif mode == "command":
             await self._handle_command(value)
         elif mode == "normal":
-            await self._handle_user_message(value)
+            await self._handle_user_message(value, from_queue=from_queue)
         else:
             logger.warning("Unrecognized input mode %r, treating as normal", mode)
             await self._handle_user_message(value)
@@ -559,39 +565,27 @@ class _ExecutionMixin:
     async def _open_url_command(self, command: str, cmd: str) -> None:
         """Open a URL in the browser and display a clickable link.
 
-        The browser opens immediately regardless of busy state. When the app is
-        busy, a queued indicator is shown and the real chat output (user echo
-        + clickable link) replaces it after the current task finishes.
+        The browser opens immediately; while another task is running the chat
+        output is deferred until that task finishes.
 
         Args:
-        command: The raw command text (displayed as user message).
-        cmd: The normalized slash command used to look up the URL.
+            command: The raw command text (displayed as user message).
+            cmd: The normalized slash command used to look up the URL.
         """
         url = _COMMAND_URLS[cmd]
         await asyncio.to_thread(webbrowser.open, url)
 
+        async def _mount_output() -> None:
+            await self._mount_message(UserMessage(command))
+            link = Content.styled(url, TStyle(dim=True, italic=True, link=url))
+            await self._mount_message(AppMessage(link))
+
         if self._agent_running or self._shell_running:
-            queued_widget = QueuedUserMessage(command)
-            self._queued_widgets.append(queued_widget)
-            await self._mount_message(queued_widget)
-
-            async def _mount_output() -> None:
-                # Remove the ephemeral queued widget, then mount real output.
-                if queued_widget in self._queued_widgets:
-                    self._queued_widgets.remove(queued_widget)
-                with suppress(Exception):
-                    await queued_widget.remove()
-                await self._mount_message(UserMessage(command))
-                link = Content.styled(url, TStyle(dim=True, italic=True, link=url))
-                await self._mount_message(AppMessage(link))
-
             # Append directly — no dedup; each URL command gets its own output.
             self._deferred_actions.append(DeferredAction(kind="chat_output", execute=_mount_output))
             return
 
-        await self._mount_message(UserMessage(command))
-        link = Content.styled(url, TStyle(dim=True, italic=True, link=url))
-        await self._mount_message(AppMessage(link))
+        await _mount_output()
 
     @staticmethod
     async def _build_loop_status_line(prefix: str, loop_id: str) -> str | Content:
@@ -671,7 +665,6 @@ class _ExecutionMixin:
             await self._mount_message(AppMessage(f"Soothe version: {cli_version}"))
         elif cmd == "/clear":
             self._pending_messages.clear()
-            self._queued_widgets.clear()
             self._refresh_queued_goal_tips()
             await self._clear_messages()
             self._reset_loop_token_usage(None)
@@ -898,16 +891,17 @@ class _ExecutionMixin:
             AppMessage("Skills require a daemon connection. Connect to a daemon first.")
         )
 
-    async def _handle_user_message(self, message: str) -> None:
+    async def _handle_user_message(self, message: str, *, from_queue: bool = False) -> None:
         """Handle a user message to send to the agent.
 
         Args:
-        message: The user's message
+            message: The user's message.
+            from_queue: Whether the message came from the local goal queue.
         """
         # Mount the user message
         await self._mount_message(UserMessage(message))
         self._update_pinned_goal(message)
-        await self._send_to_agent(message)
+        await self._send_to_agent(message, from_queue=from_queue)
 
     async def _send_to_agent(
         self,
@@ -915,6 +909,7 @@ class _ExecutionMixin:
         *,
         skip_daemon_send_turn: bool = False,
         autopilot_rail_id: str | None = None,
+        from_queue: bool = False,
     ) -> None:
         """Send a message to the agent and start execution.
 
@@ -930,6 +925,9 @@ class _ExecutionMixin:
             binds a ``LoopRailInterpreter`` for this goal via
             ``run_with_progress(autopilot_rail_id=…)``. Used by the
             ``/autopilot [rail_name] <goal>`` slash command.
+            from_queue: Whether this prompt is a locally queued goal. Queue
+            goals must always issue a real `send_turn`; a lagging daemon
+            liveness signal must not turn them into attach-only readers.
         """
         # Anchor to bottom so streaming response stays visible
         with suppress(NoMatches, ScreenStackError):
@@ -959,13 +957,15 @@ class _ExecutionMixin:
             if self._chat_input:
                 self._chat_input.set_cursor_active(active=False)
 
-            # Use run_worker to avoid blocking the main event loop
-            # This allows the UI to remain responsive during agent execution
+            generation = self._turn_generation + 1
+            self._turn_generation = generation
             self._agent_worker = self.run_worker(
                 self._run_agent_task(
                     message,
                     skip_daemon_send_turn=skip_daemon_send_turn,
                     autopilot_rail_id=autopilot_rail_id,
+                    from_queue=from_queue,
+                    turn_generation=generation,
                 ),
                 exclusive=False,
             )
@@ -1027,6 +1027,8 @@ class _ExecutionMixin:
         *,
         skip_daemon_send_turn: bool = False,
         autopilot_rail_id: str | None = None,
+        from_queue: bool = False,
+        turn_generation: int | None = None,
     ) -> None:
         """Run the agent task in a background worker.
 
@@ -1039,6 +1041,8 @@ class _ExecutionMixin:
         autopilot_rail_id: Optional builtin rail id forwarded to
         ``execute_task_textual`` → ``send_turn`` → ``loop_input`` so the
         daemon binds a ``LoopRailInterpreter`` for this goal.
+        from_queue: When `True`, never downgrade this turn to attach-only.
+        turn_generation: Token identifying the worker that owns cleanup.
         """
         # Caller ensures _ui_adapter is set (checked in _handle_user_message)
         if self._ui_adapter is None:
@@ -1062,8 +1066,13 @@ class _ExecutionMixin:
             for attempt in (1, 2):
                 try:
                     attach_only = skip_daemon_send_turn
+                    sending_answer = bool(
+                        getattr(self._ui_adapter, "_clarification_pending", False)
+                    )
                     if (
                         not attach_only
+                        and not from_queue
+                        and not sending_answer
                         and self._daemon_session is not None
                         and await self._daemon_loop_is_live()
                     ):
@@ -1159,11 +1168,28 @@ class _ExecutionMixin:
             if self._inflight_turn_stats is not None:
                 self._session_stats.merge(turn_stats)
                 self._inflight_turn_stats = None
-            if getattr(self, "_exit", False):
+            stale = turn_generation is not None and turn_generation != getattr(
+                self, "_turn_generation", turn_generation
+            )
+            if stale:
+                logger.debug("Skipping cleanup for superseded turn %s", turn_generation)
+            elif getattr(self, "_exit", False):
                 self._agent_running = False
                 self._agent_worker = None
             else:
                 await self._cleanup_agent_task()
+
+    def _queue_drain_blocked(self) -> bool:
+        """Return True while the paused loop still owes a human answer.
+
+        A clarification or tool-approval card ends the turn stream without
+        finishing the goal. Draining the queue in that window would send the
+        queued goal as a `clarification_answer` instead of a new goal.
+        """
+        if self._has_active_qa_widget():
+            return True
+        adapter = getattr(self, "_ui_adapter", None)
+        return bool(adapter is not None and getattr(adapter, "_clarification_pending", False))
 
     async def _process_next_from_queue(self) -> None:
         """Process the next message from the queue if any exist.
@@ -1171,7 +1197,12 @@ class _ExecutionMixin:
         Dequeues and processes the next pending message in FIFO order.
         Uses the `_processing_pending` flag to prevent reentrant execution.
         """
-        if self._processing_pending or not self._pending_messages or self._exit:
+        if (
+            self._processing_pending
+            or not self._pending_messages
+            or self._exit
+            or self._queue_drain_blocked()
+        ):
             return
 
         self._processing_pending = True
@@ -1179,7 +1210,7 @@ class _ExecutionMixin:
             msg = self._pending_messages.popleft()
             self._refresh_queued_goal_tips()
 
-            await self._process_message(msg.text, msg.mode)
+            await self._process_message(msg.text, msg.mode, from_queue=True)
         except Exception:
             logger.exception("Failed to process queued message")
             await self._mount_message(
@@ -1271,12 +1302,20 @@ class _ExecutionMixin:
                     )
                 )
 
-        # If the daemon already admitted a follow-on goal (serial input queue /
-        # successor turn), re-attach without sending another loop_input.
+        # A paused loop is not a completed goal: keep the queue and its bar
+        # intact until the human-answer turn actually finishes.
+        if self._queue_drain_blocked():
+            return
+
+        # Only a daemon-owned successor turn may be observed attach-only. A
+        # local queue head is unknown to the daemon and must be sent as a real
+        # turn instead of being consumed by this reader.
+        has_local_goal = bool(self._pending_messages)
         if (
             not self._exit
             and self._daemon_session is not None
             and adapter is not None
+            and (plan_approve_follow_on or not has_local_goal)
             and self._runtime_backend_ready()
             and await self._daemon_loop_is_live()
         ):
@@ -1298,22 +1337,11 @@ class _ExecutionMixin:
         await self._process_next_from_queue()
 
     async def _attach_to_live_daemon_turn(self) -> None:
-        """Attach the TUI reader to an already-running daemon turn.
+        """Attach the TUI reader to a daemon-owned successor turn.
 
-        When a local queue head exists, mount it as the user echo then attach
-        with `skip_daemon_send_turn` (prompt already on the daemon). Otherwise
-        attach with an empty prompt so activity keeps streaming.
+        The daemon already queued that goal, so this never sends another
+        `loop_input`. Locally queued goals stay in `_pending_messages` and are
+        drained after this successor turn completes.
         """
-        prompt = ""
-        if self._pending_messages:
-            msg = self._pending_messages.popleft()
-            prompt = msg.text
-            self._refresh_queued_goal_tips()
-            if msg.mode != "normal":
-                # Shell/command still need their normal handlers.
-                await self._process_message(msg.text, msg.mode)
-                return
-            if prompt.strip():
-                await self._mount_message(UserMessage(prompt))
-        logger.info("Attaching TUI to live daemon turn (skip send_turn)")
-        await self._send_to_agent(prompt, skip_daemon_send_turn=True)
+        logger.info("Attaching TUI to daemon successor turn (skip send_turn)")
+        await self._send_to_agent("", skip_daemon_send_turn=True)

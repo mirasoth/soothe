@@ -34,7 +34,6 @@ from soothe_cli.tui.widgets.messages import (
     CognitionStepMessage,
     DiffMessage,
     ErrorMessage,
-    QueuedUserMessage,
     SkillMessage,
     SummarizationMessage,
 )
@@ -575,12 +574,7 @@ class _MessagesMixin:
             widget.id = message_data.id
         self._message_store.append(message_data)
 
-        # Queued-message widgets must always stay at the bottom so they
-        # remain visually anchored below the current agent response.
-        if isinstance(widget, QueuedUserMessage):
-            await messages.mount(widget)
-        else:
-            await self._mount_before_queued(messages, widget)
+        await messages.mount(widget)
 
         # Prune old widgets if window exceeded
         await self._prune_old_messages()
@@ -735,7 +729,6 @@ class _MessagesMixin:
     def _discard_queue(self) -> None:
         """Clear pending messages, deferred actions, and queued goals bar."""
         self._pending_messages.clear()
-        self._queued_widgets.clear()
         self._refresh_queued_goal_tips()
         self._deferred_actions.clear()
 
@@ -834,7 +827,7 @@ class _MessagesMixin:
         self._refresh_queued_goal_tips()
         import asyncio
 
-        asyncio.ensure_future(self._process_message(msg.text, msg.mode))
+        asyncio.ensure_future(self._process_message(msg.text, msg.mode, from_queue=True))
         self.notify(f"Submitting: {msg.text[:60]}", timeout=2)
         return True
 
