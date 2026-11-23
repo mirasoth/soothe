@@ -4379,7 +4379,7 @@ requires-dist = [
     { name = "s3fs", marker = "extra == 'all-backends'", specifier = ">=2025.0.0" },
     { name = "s3fs", marker = "extra == 'dev'", specifier = ">=2025.0.0" },
     { name = "s3fs", marker = "extra == 's3'", specifier = ">=2025.0.0" },
-    { name = "soothe-nano", specifier = ">=2.0.10,<3.0.0" },
+    { name = "soothe-nano", specifier = ">=2.0.11,<3.0.0" },
     { name = "watchdog", specifier = ">=3.0.0,<5.0.0" },
 ]
 provides-extras = ["all-backends", "azure", "dev", "gcs", "s3"]
@@ -4566,7 +4566,7 @@ wheels = [
 
 [[package]]
 name = "soothe-nano"
-version = "2.0.10"
+version = "2.0.11"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiofiles" },
@@ -4607,9 +4607,9 @@ dependencies = [
     { name = "tiktoken" },
     { name = "wcmatch" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/b2/c7/0b6adc13d0f989f714433f9e31fbfcf74f08b4e712a5cedde73a9e68ee23/soothe_nano-2.0.10.tar.gz", hash = "sha256:8031a90fb23b9cd58e6fec89fbff963ea8ee2abd0e60af49e5c4303f542d5f6a", size = 1371784, upload-time = "2026-11-23T13:40:22.83Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/56/6a/441087dcc77c919ab1a63d51dc3f79e2a9edbed033bfa65243bbccc904e7/soothe_nano-2.0.11.tar.gz", hash = "sha256:ed0fbd0fe8e69a0b29db71f231a02b0f8fb6899449e7293658ceb465d578c21d", size = 1374354, upload-time = "2026-11-23T14:50:17.748Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/01/c9/4b71a2ef52d8bee5d9cc885a0ddf5145f38e34e63c7518ff92ea8aabd0ce/soothe_nano-2.0.10-py3-none-any.whl", hash = "sha256:3475c196c2356797e97502cf6bcb26651830650a4e7582f58d4719b16d36cc54", size = 1634400, upload-time = "2026-11-23T13:40:20.828Z" },
+    { url = "https://files.pythonhosted.org/packages/1f/2e/52c249f3b6dd8ed64e9acf5ae3ea8bab00f8259fddba77182728b6bb2193/soothe_nano-2.0.11-py3-none-any.whl", hash = "sha256:5490e10f74b269eb4cf259faffc1b75d2cfe013c97f1f306b73bf67da1254a2f", size = 1637336, upload-time = "2026-11-23T14:50:15.621Z" },
 ]
 
 [[package]]

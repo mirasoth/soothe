@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 
 - Remove the `firecracker` and `boxlite` loop runner substrates (`loop_runner.runner_mode` now accepts `thread_pool` / `process_pool` / `ray` only) and drop the `boxlite`-based `sandbox` extra; both modes required provider API keys to be shipped as literal values into the VM/container execution environment.
+- Remove the `packages/soothe-nano` git submodule and consume `soothe-nano` from PyPI only; drop the stale `tool.uv.workspace` `exclude` entry and update boundary rules to mark `soothe-nano` PyPI-only.
 
 ### Fixed
 

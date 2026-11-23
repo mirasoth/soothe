@@ -10,12 +10,11 @@ Import/placement rules: see [package-boundaries.md](package-boundaries.md). Do n
 packages/
 ├── soothe/             # OWNED — StrangeLoop, CE, runner, rails (LoopRail + Rail Exec)
 ├── soothe-daemon/      # OWNED — soothed process, cron, runner implementations
-├── soothe-cli/         # OWNED — Typer CLI + Textual TUI
-└── soothe-nano/        # SUBMODULE (read-only here) — independent upstream library, own repo/PyPI
+└── soothe-cli/         # OWNED — Typer CLI + Textual TUI
 
 # Submodules (consume only — format/lint/test/release in their own repos):
-#   client/{python,go,typescript,rust}, packages/soothe-nano
-# PyPI-only (not vendored here): soothe-deepagents, soothe-client-python
+#   client/{python,go,typescript,rust}
+# PyPI-only (not vendored here): soothe-nano, soothe-deepagents, soothe-client-python
 ```
 
 > `soothe-sdk` was dissolved (2026-10-13); contracts live with their axis — see [package-boundaries.md](package-boundaries.md). `soothe-nano` is consumed as a dependency only and MUST stay independent of the soothe project (no reverse imports, no shared build/version, no host coupling).

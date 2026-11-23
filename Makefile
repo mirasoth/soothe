@@ -349,7 +349,7 @@ clean:
 	@echo "Done"
 
 # ============================================================================
-# Publish (monorepo packages — nano submodule releases from its own repo via its own CI)
+# Publish (monorepo packages — nano publishes from its own repo via its own CI)
 # ============================================================================
 
 sdk-publish:
