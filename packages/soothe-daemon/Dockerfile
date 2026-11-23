@@ -76,7 +76,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     fi; \
     uv venv /app/.venv; \
     uv pip install --python /app/.venv/bin/python \
-        "soothe==${SOOTHE_VERSION}" \
+        "soothe[s3]==${SOOTHE_VERSION}" \
         "${dspec}" \
         ${pip_extras}; \
     if [ "${INCLUDE_BROWSER}" = "true" ]; then \
@@ -115,12 +115,15 @@ ENV PATH="/app/.venv/bin:${PATH}"
 
 # Install runtime deps: playwright browser libs (if needed) + jemalloc for memory
 # optimization + host tools reported by `soothed doctor` (rg, fd, git).
+# bubblewrap: os_sandbox full tier (nano.yml sandbox.backend os_sandbox,
+# linux_tier auto) — probed at agent build; runtimes that block user/mount
+# namespaces fall back to the declared Landlock degraded tier.
 RUN sed -i 's|http://deb.debian.org|http://mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources \
     && apt-get update \
     && if [ "${INCLUDE_BROWSER}" = "true" ] && [ -n "$(ls -A /opt/ms-playwright 2>/dev/null)" ]; then \
       /app/.venv/bin/python -m playwright install-deps; \
     fi \
-    && apt-get install -y --no-install-recommends libjemalloc2 ripgrep fd-find git \
+    && apt-get install -y --no-install-recommends libjemalloc2 ripgrep fd-find git bubblewrap \
     && rm -rf /var/lib/apt/lists/*
 
 RUN useradd --create-home --system soothe \

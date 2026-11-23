@@ -67,10 +67,14 @@ services:
     ports:
       - "127.0.0.1:18765:18765"
     volumes:
-      # Prod workdir, isolated from dev's ~/.soothe.
+      # Prod workdir, isolated from dev's ~/.soothe. Sync-backed workspaces
+      # materialize under <this mount>/data/workspaces-sync (see nano.yml
+      # workspace_sync) — same volume, nothing extra to mount.
       - ${HOME}/.soothe-prod:/var/lib/soothe
       - ./nano.yml:/var/lib/soothe/config/nano.yml:ro
       # Client workspaces (path translation via SOOTHE_WORKSPACE_HOST_ROOT).
+      # Only used by local (non-sync) loops; ignored when a loop opens an
+      # s3:// workspace.
       - ${SOOTHE_WORKSPACE_HOST_ROOT:-${HOME}}:/var/lib/soothe/workspaces
     deploy:
       resources:

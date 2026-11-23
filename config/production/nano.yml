@@ -73,12 +73,58 @@ workspace_mount:
   container_root: /var/lib/soothe/workspaces
 
 # =============================================================================
+# Workspace Sync (external S3)
+# =============================================================================
+# Disabled by default: loops sync only when a client passes an
+# `s3://bucket/prefix` workspace (or `workspace_sync_source`) to `loop_new`;
+# `storage_options` below supply the external S3 service for those requests.
+# Flip `enabled: true` to route **every** new loop through this S3 source
+# (local `client_workspace` values are then ignored).
+#
+# `${VAR}` placeholders resolve from the container environment at daemon
+# load time; unresolved placeholders stay literal and fail loudly at
+# sync-open time (per loop, not at startup). Set the vars in example.env.
+#
+# Keep `region_name` out of storage_options: s3fs (2026.9+) rejects it here.
+# For AWS-native S3 (no custom endpoint), drop `endpoint_url` and prefer
+# profile/IAM credentials instead of key/secret.
+workspace_sync:
+  enabled: false
+  source_uri: "s3://${SOOTHE_SYNC_BUCKET}/${SOOTHE_SYNC_PREFIX}/"
+  storage_options:
+    endpoint_url: "${SOOTHE_SYNC_ENDPOINT_URL}"
+    key: "${SOOTHE_SYNC_ACCESS_KEY}"
+    secret: "${SOOTHE_SYNC_SECRET_KEY}"
+    anon: false
+
+# =============================================================================
+# Sandbox (os_sandbox, on by default)
+# =============================================================================
+# The agent build creates the backend from this config (fail-loud: no host
+# fallback). `workspace_root` stays unset so the builder binds the effective
+# tool workspace per thread. On Linux, `auto` probes bubblewrap first (full
+# tier: mount-ns + seccomp, `--unshare-net`); when the container runtime
+# blocks user/mount namespaces — Docker's default seccomp does — it accepts
+# the declared Landlock degraded tier (file-access denial only, writes
+# confined to workspace + scratch, posture `subprocess_only`). On hosts
+# where neither tier can engage, construction raises instead of running
+# unsandboxed.
+sandbox:
+  enabled: true
+  backend:
+    type: os_sandbox
+    os_sandbox:
+      linux_tier: auto
+      allow_degraded: true
+      egress:
+        enabled: false
+
+# =============================================================================
 # Security Configuration
 # =============================================================================
+# Production posture: no access to paths outside the workspace. Defense in
+# depth under the sandbox — the OS boundary contains writes; this layer
+# gates the in-process filesystem tools.
 security:
-  allow_paths_outside_workspace: true
+  allow_paths_outside_workspace: false
   require_approval_for_outside_paths: false
-  allowed_paths:
-    - "**"
-  whitelist_paths_bypass: []
-  whitelist_commands_bypass: []
