@@ -98,7 +98,7 @@ async def test_click_expands_auto_collapsed_card() -> None:
 
         assert card.has_class("-collapsed")
 
-        await pilot.click("#step-expand")
+        await pilot.click("#step-cognition-header")
         await pilot.pause()
 
         assert not card.has_class("-collapsed")
@@ -301,13 +301,13 @@ async def test_click_collapses_expanded_terminal_card() -> None:
         await pilot.pause()
         assert card.has_class("-collapsed")
 
-        # First click expands.
-        await pilot.click("#step-clickcol")
+        # First title-row click expands.
+        await pilot.click("#step-cognition-header")
         await pilot.pause()
         assert not card.has_class("-collapsed")
 
-        # Second click collapses.
-        await pilot.click("#step-clickcol")
+        # Second title-row click collapses.
+        await pilot.click("#step-cognition-header")
         await pilot.pause()
         assert card.has_class("-collapsed")
         assert card._card_collapsed is True
@@ -325,12 +325,12 @@ async def test_click_collapses_expanded_failed_card() -> None:
         await pilot.pause()
         assert card.has_class("-collapsed")
 
-        # Expand.
-        await pilot.click("#step-clickfail")
+        # Expand via title-row click.
+        await pilot.click("#step-cognition-header")
         await pilot.pause()
         assert not card.has_class("-collapsed")
 
-        # Collapse via click.
-        await pilot.click("#step-clickfail")
+        # Collapse via title-row click.
+        await pilot.click("#step-cognition-header")
         await pilot.pause()
         assert card.has_class("-collapsed")

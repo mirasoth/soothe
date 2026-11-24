@@ -376,7 +376,7 @@ class CognitionStepMessage(Vertical):
         )
         self._status_widget.display = True
 
-    def _step_title_body(self, meta: str) -> str:
+    def _step_title_body(self, meta: str, *, extra_reserve: int = 0) -> str:
         """Fit the step description to one terminal row without losing the stored text."""
         prefix = self._mode_prefix
         text = f"{prefix}{self._description}" if prefix else self._description
@@ -386,18 +386,35 @@ class CognitionStepMessage(Vertical):
         return preview_line(
             text,
             max_cols=width,
-            reserved_cols=_card_prefix_width() + display_width(meta),
+            reserved_cols=_card_prefix_width() + display_width(meta) + extra_reserve,
         )
+
+    def _step_collapse_chevron(self) -> str:
+        """Title-row chevron marking the card body state: `▶` collapsed, `▼` expanded.
+
+        Empty when the card is not collapsible — the same predicate the click
+        handler uses, so the marker never advertises a toggle that does
+        nothing.
+        """
+        collapsible = self._status in ("success", "error") or bool(
+            self._has_task_activity_body() or self._execute_assistant_buffer.strip()
+        )
+        if not collapsible:
+            return ""
+        g = get_glyphs()
+        return g.expand if self._card_collapsed else g.collapse
 
     def _step_header_content(self) -> Content:
         orphan = self._is_orphan_subagent_card()
         base_meta = self._compact_title_meta_suffix()
         retry_meta = self._retry_meta_suffix()
         meta = f"{base_meta}{retry_meta}"
+        chevron = self._step_collapse_chevron()
+        chevron_reserve = display_width(f" {chevron}") if chevron else 0
         body = (
             subagent_task_label(self._subagent_type, self._description)
             if orphan
-            else self._step_title_body(meta)
+            else self._step_title_body(meta, extra_reserve=chevron_reserve)
         )
         header = _assemble_card_header(
             self,
@@ -407,8 +424,11 @@ class CognitionStepMessage(Vertical):
             spinner_position=self._spinner_position,
             animate_running=self._status == "running",
         )
+        tail = Content.styled(f" {chevron}", theme.SECONDARY_TEXT_STYLE) if chevron else None
         if not meta:
-            return header
+            if tail is None:
+                return header
+            return Content.assemble(header, tail)
         # The retry segment keeps its own tone (warning while retrying,
         # success once recovered, error when the budget is exhausted).
         segments: list[object] = [header]
@@ -416,6 +436,8 @@ class CognitionStepMessage(Vertical):
             segments.append(Content.styled(base_meta, theme.SECONDARY_TEXT_STYLE))
         if retry_meta:
             segments.append(Content.styled(retry_meta, self._retry_meta_tone()))
+        if tail is not None:
+            segments.append(tail)
         return Content.assemble(*segments)
 
     def compose(self) -> ComposeResult:
@@ -495,8 +517,27 @@ class CognitionStepMessage(Vertical):
             return
         self._sync_step_card_surface()
 
+    def _click_is_on_title_row(self, event: Click) -> bool:
+        """Whether a click should toggle collapse: only the title row counts.
+
+        The header `Static` spans the full content width; clicks that land on
+        the card container itself (the 1-column padding gutter) still count
+        when they fall within the header row's screen region. Clicks on body
+        sections (activity, detail) or the status footer never toggle.
+        """
+        header = self._header_widget
+        if header is None:
+            return False
+        if event.widget is header:
+            return True
+        return event.widget is self and header.region.contains_point(
+            (event.screen_x, event.screen_y)
+        )
+
     def on_click(self, event: Click) -> None:  # noqa: ARG002
-        """Toggle tool-row folding or card collapse."""
+        """Toggle card collapse — only clicks on the title row trigger it."""
+        if not self._click_is_on_title_row(event):
+            return
         event.stop()
         if screen_has_text_selection(self.screen):
             return
@@ -534,6 +575,9 @@ class CognitionStepMessage(Vertical):
         have content, and detail content (execute prose, clarification Q&A,
         result preview, or error text) is rendered along with the full footer.
         """
+        # The title row carries the collapse chevron — repaint it first so the
+        # marker never lags the body visibility change.
+        self._refresh_header_title()
         if self._card_collapsed:
             self.add_class("-collapsed")
             # Hide ALL body widgets via inline style.  CSS display:none on the
@@ -1430,6 +1474,7 @@ class CognitionStepMessage(Vertical):
                 w.display = False
         if getattr(self, "is_mounted", False):
             self.add_class("-collapsed")
+        self._refresh_header_title()
 
     def set_complete(
         self,

@@ -200,6 +200,34 @@ def test_panes_stack_in_one_column_at_every_width(cols: int | None) -> None:
     assert THINKING_HEADER in lines[header_lines[3]]
 
 
+def test_adjacent_panes_are_separated_by_a_blank_line() -> None:
+    """Stacked panes get one blank line between them so each window reads
+    as its own block."""
+    text = _render(
+        [
+            _tool("c0", "grep", {"pattern": "jev"}),
+            _tool("c1", "write_file", {"file_path": "a.py", "content": "x\ny"}),
+        ],
+        todos=[{"content": "verify", "status": "pending"}],
+        reasoning="draft thought",
+    )
+    lines = text.splitlines()
+    header_idx = [
+        i
+        for i, ln in enumerate(lines)
+        if TOOLS_HEADER in ln or TODO_HEADER in ln or FILES_HEADER in ln or THINKING_HEADER in ln
+    ]
+    assert len(header_idx) == 4
+    # Every pane — including the first — is preceded by a blank line.
+    assert header_idx[0] >= 1
+    assert not lines[header_idx[0] - 1].strip()
+    for before, after in zip(header_idx, header_idx[1:]):
+        # The blank separator sits immediately before the next pane header;
+        # pane body rows may occupy the lines between them.
+        assert after - before >= 2
+        assert not lines[after - 1].strip()
+
+
 def test_unknown_width_keeps_full_panes() -> None:
     """`max_cols=None` (unmounted / pure render) shows every pane stacked."""
     rows = [

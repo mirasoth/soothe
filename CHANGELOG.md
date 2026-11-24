@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Step-card activity panes always stack vertically with a blank line before each pane, spacing the first pane from the step title and separating adjacent panes at every terminal width (previously panes abutted the title row and each other).
+- The TUI step-card title row carries a collapse chevron (`▼` expanded / `▶` collapsed) for every collapsible card — the same predicate the click handler uses, so a card without a toggleable body never advertises one; the title text reserves the chevron width and the marker repaints together with the body visibility change.
+
 ## [v1.3.6] - 2026-11-24
 
 ### Added

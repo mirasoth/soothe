@@ -356,7 +356,9 @@ def test_step_shows_latest_five_main_tools() -> None:
         card.add_tool_call(f"ABC_01:s:grep:{i}", "grep", {"pattern": f"m{i}"})
     assert card._has_task_activity_body()
     text = _plain(card._step_task_activity_content())
-    assert not text.startswith("\n")
+    # The activity body opens with a blank line spacing the first pane from
+    # the step title (every pane is preceded by one).
+    assert text.startswith("\n")
     assert "Grep(m6)" in text
     assert "Grep(m2)" in text
     assert "Grep(m1)" not in text

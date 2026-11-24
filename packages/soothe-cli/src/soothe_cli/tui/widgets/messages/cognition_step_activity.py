@@ -859,7 +859,7 @@ class StepCardStatusLine:
 # Activity panes (embedded windows — flat rows, not a nested tree)
 # ---------------------------------------------------------------------------
 #
-# A step card's activity is rendered as side-by-side / stacked *panes*
+# A step card's activity is rendered as stacked *panes*
 # (`tools`, `todo`, `files`, `thinking`). Each pane is a bounded viewport:
 #
 #   ──── tools ────────────────────────────────────────────── 22 · ⚠1 ────
@@ -1027,6 +1027,7 @@ class StepActivityTree:
         ──── tools ────────────────────────────────────────────── 22 · ⚠1 ────
           ✓ Grep(jev, output_mode=files_with_matches)                    0.6s
 
+    Panes stack vertically, each preceded by a blank line.
     Rows carry no indentation hierarchy — kind comes from the row body and the
     right-aligned meta column — so the card reads as windows rather than a
     nested tree. The header rule doubles as the pane's information bar: it
@@ -1360,8 +1361,16 @@ class StepActivityTree:
             return Content("")
 
         # --- layout: one vertical column of panes --------------------------
+        # Every pane is preceded by a blank line — adjacent panes are
+        # separated and the first pane is spaced from the step title.
         width = max_cols or 100
         rows: list[list[tuple[str, str]]] = []
         for pane in panes:
+            if rows:
+                rows.append([])
             rows.extend(_render_pane(pane, width=width, g=g, colors=colors))
-        return _pane_content(rows)
+        if not rows:
+            return Content("")
+        # The leading newline renders as the blank line above the first pane
+        # (`_pane_content` only emits separators between rows).
+        return Content.assemble("\n", _pane_content(rows))

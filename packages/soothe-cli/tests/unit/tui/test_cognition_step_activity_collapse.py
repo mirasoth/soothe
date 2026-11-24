@@ -13,6 +13,7 @@ from __future__ import annotations
 import pytest
 from textual.app import App, ComposeResult
 
+from soothe_cli.settings import get_glyphs
 from soothe_cli.tui.widgets.messages import CognitionStepMessage
 
 
@@ -73,15 +74,15 @@ async def test_click_collapse_hides_activity_widget_after_expand() -> None:
         assert card.has_class("-collapsed")
         assert card._activity_widget.display is False
 
-        # Expand via click.
-        await pilot.click("#step-act2")
+        # Expand via title-row click.
+        await pilot.click("#step-cognition-header")
         await pilot.pause()
         assert not card.has_class("-collapsed")
         # Activity widget should be visible after expand.
         assert card._activity_widget.display is True
 
-        # Collapse via click — this is where the bug manifests.
-        await pilot.click("#step-act2")
+        # Collapse via title-row click — this is where the bug manifests.
+        await pilot.click("#step-cognition-header")
         await pilot.pause()
         assert card.has_class("-collapsed")
         assert card._card_collapsed is True
@@ -120,3 +121,46 @@ async def test_toggle_collapse_hides_activity_widget_with_todos() -> None:
         assert card._activity_widget.display is False, (
             "Activity widget not hidden after toggle-collapse"
         )
+
+
+@pytest.mark.asyncio
+async def test_title_chevron_tracks_collapse_state() -> None:
+    """The title row chevron marks the body state: ▶ collapsed, ▼ expanded."""
+    g = get_glyphs()
+    card = CognitionStepMessage("S-04", "Chevron step", id="step-chev")
+    async with _StepCardApp(card).run_test() as pilot:
+        card.set_running()
+        card.add_tool_call("tc-4", "bash", {"command": "ls"})
+        await pilot.pause()
+        # Expanded while running with activity body.
+        header = str(card._step_header_content())
+        assert g.collapse in header
+        assert g.expand not in header
+
+        # Terminal auto-collapse flips the marker to the collapsed chevron.
+        card.set_complete(True, 500, 1, "Done")
+        await pilot.pause()
+        assert card._card_collapsed is True
+        header = str(card._step_header_content())
+        assert g.expand in header
+        assert g.collapse not in header
+
+        # Manual expand flips it back.
+        card.toggle_collapse()
+        await pilot.pause()
+        assert card._card_collapsed is False
+        header = str(card._step_header_content())
+        assert g.collapse in header
+
+
+@pytest.mark.asyncio
+async def test_title_chevron_absent_when_not_collapsible() -> None:
+    """A card without collapsible body shows no chevron on the title row."""
+    g = get_glyphs()
+    card = CognitionStepMessage("S-05", "Plain step", id="step-chev2")
+    async with _StepCardApp(card).run_test() as pilot:
+        card.set_running()
+        await pilot.pause()
+        header = str(card._step_header_content())
+        assert g.expand not in header
+        assert g.collapse not in header
