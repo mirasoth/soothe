@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.3.5] - 2026-11-24
+
+### Changed
+
+- Require `soothe-nano>=2.0.12` so the Landlock degraded tier keeps shell tools (`run_command`/`run_python`) working with the `/dev/null` write carve-out and interpreter-prefix read allowance.
+
 ## [v1.3.4] - 2026-11-23
 
 ### Changed
