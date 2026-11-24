@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.3.6] - 2026-11-24
+
 ### Added
 
 - Automatic in-execution step retry (same-thread recovery): a failed step (model pool exhaustion, tool errors, exceptions) is retried inside the Execute phase instead of hard-failing the run. Each retry re-enters the step's prior LangGraph fork thread, so the checkpointer preserves prior tool calls and session history. Retry count is configurable via `agent.loop.step_retry_max_attempts` (default 5, 0 disables); inter-attempt pacing uses `step_retry_backoff_base_seconds` / `step_retry_backoff_max_seconds` (exponential backoff with jitter), and retries never bypass the LLM stream semaphore, so a degraded model pool is never piled onto by retry storms.
@@ -37,11 +39,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Corrupt CE ledger JSON raises `LedgerCorruptionError` from `load_ledger` (both SQLite and PostgreSQL stores) instead of silently returning an empty ledger, which suppressed `goal_interrupted` partial-work markers.
 - Per-run workspace content backends are closed on `Workspace.close()` (thread pool + fsspec client shutdown); the sync backend protocol gains an `aclose()` lifecycle method.
 
+[Compare with previous version]: https://github.com/mirasoth/soothe/compare/v1.3.5...v1.3.6
+
 ## [v1.3.5] - 2026-11-24
 
 ### Changed
 
 - Require `soothe-nano>=2.0.12` so the Landlock degraded tier keeps shell tools (`run_command`/`run_python`) working with the `/dev/null` write carve-out and interpreter-prefix read allowance.
+
+[Compare with previous version]: https://github.com/mirasoth/soothe/compare/v1.3.4...v1.3.5
 
 ## [v1.3.4] - 2026-11-23
 
