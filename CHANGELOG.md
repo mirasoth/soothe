@@ -17,6 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `agent.loop.max_step_retries` semantics generalized: it now covers the eval-boundary reset/re-dispatch path in all interaction modes (previously only read-only plan/ask modes); the new in-execution retry layer is separately bounded by `step_retry_max_attempts`. Dispatch-timeout failures keep their dedicated `dispatch_retry_max` policy and are not double-retried; clarification-paused and breaker-fatal steps are never retried.
 
+## [v1.3.5] - 2026-11-24
+
+### Changed
+
+- Require `soothe-nano>=2.0.12` so the Landlock degraded tier keeps shell tools (`run_command`/`run_python`) working with the `/dev/null` write carve-out and interpreter-prefix read allowance.
+
 ## [v1.3.4] - 2026-11-23
 
 ### Changed
