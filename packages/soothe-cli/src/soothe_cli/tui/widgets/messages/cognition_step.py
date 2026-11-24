@@ -78,6 +78,10 @@ class _DeferredStepComplete(NamedTuple):
     duration_ms: int
     tool_call_count: int
     summary: str
+    retry_attempt: int | None = None
+    recovered: bool | None = None
+    prior_tool_calls: int | None = None
+    prior_duration_ms: int | None = None
 
 
 class CognitionStepMessage(Vertical):
@@ -155,6 +159,13 @@ class CognitionStepMessage(Vertical):
         self._last_duration_ms: int = 0
         self._last_tool_call_count: int = 0
         self._last_summary: str = ""
+        # In-execution retry / recovery meta (same-thread recovery).
+        self._retry_attempt: int = 0
+        self._retry_max: int = 0
+        self._prior_tool_calls: int = 0
+        self._prior_duration_ms: int = 0
+        self._recovered: bool = False
+        self._last_retry_error: str = ""
         self._input_tokens: int = 0
         self._output_tokens: int = 0
         self._interrupt_message: str | None = None
@@ -268,7 +279,102 @@ class CognitionStepMessage(Vertical):
             input_tokens=self._input_tokens,
             output_tokens=self._output_tokens,
             format_token=format_token_count,
+            retry_attempt=self._retry_attempt if self._retry_attempt > 0 else 0,
+            retry_max=self._retry_max,
         )
+
+    def _retry_meta_suffix(self) -> str:
+        """Retry/recovery meta appended to the header across card states.
+
+        - running with retries: ` · ↻ retry 2/5` (warning tone)
+        - terminal success after retries: ` · recovered · prior 12 tools` (success tone)
+        - terminal failure after retries: ` · failed after 6 attempts` (error tone)
+        """
+        if self._retry_attempt <= 0:
+            return ""
+        prior = ""
+        if self._prior_tool_calls > 0:
+            prior = f" · prior {self._prior_tool_calls} tools"
+        if self._status == "running":
+            retry_max = self._retry_max if self._retry_max else "?"
+            return f" · ↻ retry {self._retry_attempt}/{retry_max}"
+        if self._status == "success":
+            return f" · recovered{prior}" if self._recovered or prior else ""
+        # Terminal failure after retries.
+        return f" · failed after {self._retry_attempt} attempts"
+
+    def _retry_meta_tone(self) -> str:
+        """Theme tone for the header retry meta segment."""
+        try:
+            colors = theme.get_theme_colors(self)
+        except Exception:  # noqa: BLE001  Unmounted widget (tests / no Textual app)
+            colors = theme.DARK_COLORS
+        if self._status == "running":
+            return colors.warning
+        if self._status == "success":
+            return colors.success
+        return colors.card_error
+
+    def set_retry(
+        self,
+        attempt: int,
+        max_attempts: int,
+        *,
+        prior_tool_calls: int = 0,
+        prior_duration_ms: int = 0,
+        error_preview: str = "",
+        next_backoff_ms: int = 0,
+    ) -> None:
+        """Record an in-execution retry for this step (same-thread recovery).
+
+        The card stays `running`; the header gains a warning-toned
+        `↻ retry N/M` segment and the footer shows what failed and the
+        accumulated prior-attempt stats while the executor backs off.
+        """
+        self._retry_attempt = max(self._retry_attempt, int(attempt))
+        if int(max_attempts) > 0:
+            self._retry_max = int(max_attempts)
+        self._prior_tool_calls = max(self._prior_tool_calls, int(prior_tool_calls))
+        self._prior_duration_ms = max(self._prior_duration_ms, int(prior_duration_ms))
+        if error_preview.strip():
+            self._last_retry_error = error_preview.strip()
+        self._refresh_header_title()
+        self._show_retry_status_line(next_backoff_ms)
+
+    def _show_retry_status_line(self, next_backoff_ms: int) -> None:
+        """Paint the warning-toned retry footer while backing off."""
+        if self._status_widget is None:
+            return
+        gutter = self._step_goal_tree_gutter()
+        try:
+            colors = theme.get_theme_colors(self)
+        except Exception:  # noqa: BLE001
+            colors = theme.DARK_COLORS
+        head_bits = [f"↻ retry {self._retry_attempt}/{self._retry_max or '?'}"]
+        if self._prior_tool_calls > 0 or self._prior_duration_ms > 0:
+            dur_str = format_duration_ms(self._prior_duration_ms)
+            prior_bits: list[str] = []
+            if self._prior_tool_calls > 0:
+                prior_bits.append(f"{self._prior_tool_calls} tools")
+            if self._prior_duration_ms > 0:
+                prior_bits.append(dur_str)
+            head_bits.append(f"prior {', '.join(prior_bits)}")
+        head = " · ".join(head_bits)
+        suffix = ""
+        if self._last_retry_error:
+            suffix = f" · {self._last_retry_error[:120]}"
+        if next_backoff_ms > 0:
+            suffix += f" · retrying in {max(1, next_backoff_ms // 1000)}s"
+        self._status_widget.update(
+            StepCardStatusLine.footer_retry(
+                gutter=gutter,
+                icon="↻",
+                head=head,
+                suffix=suffix,
+                colors=colors,
+            )
+        )
+        self._status_widget.display = True
 
     def _step_title_body(self, meta: str) -> str:
         """Fit the step description to one terminal row without losing the stored text."""
@@ -285,7 +391,9 @@ class CognitionStepMessage(Vertical):
 
     def _step_header_content(self) -> Content:
         orphan = self._is_orphan_subagent_card()
-        meta = self._compact_title_meta_suffix()
+        base_meta = self._compact_title_meta_suffix()
+        retry_meta = self._retry_meta_suffix()
+        meta = f"{base_meta}{retry_meta}"
         body = (
             subagent_task_label(self._subagent_type, self._description)
             if orphan
@@ -301,7 +409,14 @@ class CognitionStepMessage(Vertical):
         )
         if not meta:
             return header
-        return Content.assemble(header, Content.styled(meta, theme.SECONDARY_TEXT_STYLE))
+        # The retry segment keeps its own tone (warning while retrying,
+        # success once recovered, error when the budget is exhausted).
+        segments: list[object] = [header]
+        if base_meta:
+            segments.append(Content.styled(base_meta, theme.SECONDARY_TEXT_STYLE))
+        if retry_meta:
+            segments.append(Content.styled(retry_meta, self._retry_meta_tone()))
+        return Content.assemble(*segments)
 
     def compose(self) -> ComposeResult:
         yield Static(
@@ -333,6 +448,10 @@ class CognitionStepMessage(Vertical):
                 deferred.duration_ms,
                 deferred.tool_call_count,
                 deferred.summary,
+                retry_attempt=deferred.retry_attempt,
+                recovered=deferred.recovered,
+                prior_tool_calls=deferred.prior_tool_calls,
+                prior_duration_ms=deferred.prior_duration_ms,
             )
             return
         if self._deferred_running:
@@ -1318,10 +1437,28 @@ class CognitionStepMessage(Vertical):
         duration_ms: int,
         tool_call_count: int,
         summary: str,
+        *,
+        retry_attempt: int | None = None,
+        recovered: bool | None = None,
+        prior_tool_calls: int | None = None,
+        prior_duration_ms: int | None = None,
     ) -> None:
-        """Finalize step with duration, tool count, and summary text."""
+        """Finalize step with duration, tool count, and summary text.
+
+        Optional retry-recovery kwargs carry the prior-attempt stats so the
+        header/footer can show `recovered · prior N tools` after a same-thread
+        recovery.
+        """
         self._stop_animation()
         self._status = "success" if success else "error"
+        if retry_attempt is not None and int(retry_attempt) > 0:
+            self._retry_attempt = int(retry_attempt)
+        if recovered is not None:
+            self._recovered = bool(recovered)
+        if prior_tool_calls is not None:
+            self._prior_tool_calls = max(self._prior_tool_calls, int(prior_tool_calls))
+        if prior_duration_ms is not None:
+            self._prior_duration_ms = max(self._prior_duration_ms, int(prior_duration_ms))
         self._refresh_header_title()
         self._last_success = success
         self._last_duration_ms = duration_ms
@@ -1329,7 +1466,14 @@ class CognitionStepMessage(Vertical):
         self._last_summary = summary.strip()
         if self._status_widget is None or self._detail_widget is None:
             self._deferred_complete = _DeferredStepComplete(
-                success, duration_ms, tool_call_count, summary
+                success,
+                duration_ms,
+                tool_call_count,
+                summary,
+                retry_attempt=self._retry_attempt or None,
+                recovered=self._recovered or None,
+                prior_tool_calls=self._prior_tool_calls or None,
+                prior_duration_ms=self._prior_duration_ms or None,
             )
             return
 
@@ -1344,10 +1488,13 @@ class CognitionStepMessage(Vertical):
         self._execute_assistant_buffer = ""
 
         if success:
+            recovery_suffix = ""
+            if self._retry_attempt > 1 and self._recovered:
+                recovery_suffix = f" · recovered · prior {self._prior_tool_calls} tools"
             self._update_step_footer_status_line(
                 f"Completed ({dur_str})",
                 success=True,
-                suffix=f"{tool_part}{token_suffix}",
+                suffix=f"{tool_part}{token_suffix}{recovery_suffix}",
             )
             self._sync_step_card_surface()
             if prose and not self._suppress_execute_prose:
@@ -1360,7 +1507,10 @@ class CognitionStepMessage(Vertical):
             return
 
         err_text = summary.strip() or "Step failed"
-        self._update_step_footer_status_line(f"Failed · {dur_str}{token_suffix}", success=False)
+        failed_head = f"Failed · {dur_str}"
+        if self._retry_attempt > 1:
+            failed_head = f"Failed after {self._retry_attempt} attempts · {dur_str}"
+        self._update_step_footer_status_line(f"{failed_head}{token_suffix}", success=False)
         if prose:
             err_text = f"{err_text}\n\n{prose}"
         self._detail_widget.update(self._step_branched_error_detail(err_text))

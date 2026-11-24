@@ -24,7 +24,7 @@ from soothe.sloop.clarification.protocol import (
 from soothe.sloop.clarification.tool_approval_pipeline import approval_record
 from soothe.sloop.engine.execute.context_window_manager import ContextWindowManager
 from soothe.sloop.engine.execute.executor import Executor, StepWaveQueued, StepWaveStart
-from soothe.sloop.engine.execute.step_wave_types import StepCompletionReport
+from soothe.sloop.engine.execute.step_wave_types import StepCompletionReport, StepRetryNotice
 from soothe.sloop.orchestrator.node_base import _maybe_await
 from soothe.sloop.orchestrator.runtime_context import LoopRuntimeContext
 from soothe.sloop.relay.inbox import RelayInbox
@@ -338,6 +338,10 @@ async def _record_and_emit_step_completed(
         "tool_call_count": result.tool_call_count,
         "subgraph_tool_call_count": result.subgraph_tool_call_count,
         "total_tokens_used": state.total_tokens_used,
+        "retry_attempt": result.retry_attempt,
+        "recovered_by_retry": result.recovered_by_retry,
+        "prior_attempts_tool_calls": result.prior_attempts_tool_calls,
+        "prior_attempts_duration_ms": result.prior_attempts_duration_ms,
     }
     # Surface ask_user Q&A on the event so the TUI can render the resolved
     # question/answer pair on the step card.
@@ -421,6 +425,10 @@ async def _persist_planner_ask_step_outcome(
             subagent_task_completions=result.subagent_task_completions,
             hit_subagent_cap=result.hit_subagent_cap,
             hit_tool_budget=result.hit_tool_budget,
+            retry_attempt=result.retry_attempt,
+            recovered_by_retry=result.recovered_by_retry,
+            prior_attempts_tool_calls=result.prior_attempts_tool_calls,
+            prior_attempts_duration_ms=result.prior_attempts_duration_ms,
         )
         if result.success:
             await ctx.ce.complete_step(ctx.ce_goal_id, result.step_id, execution)
@@ -1001,6 +1009,21 @@ async def node_execute(ctx: LoopRuntimeContext, state_dict: dict[str, Any]) -> d
                     "step_id": item.step_id,
                     "summary": item.summary,
                     "iteration": item.iteration,
+                },
+            )
+        elif isinstance(item, StepRetryNotice):
+            # Live in-execution retry: the step card stays `running`; the
+            # binder patches retry meta onto the existing card.
+            await ctx.emit(
+                "step_retry",
+                {
+                    "step_id": item.step_id,
+                    "attempt": item.attempt,
+                    "max_attempts": item.max_attempts,
+                    "error_preview": item.error_preview,
+                    "prior_tool_calls": item.prior_tool_calls,
+                    "prior_duration_ms": item.prior_duration_ms,
+                    "next_backoff_ms": item.next_backoff_ms,
                 },
             )
         elif isinstance(item, StepExecutionRecord):

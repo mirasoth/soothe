@@ -79,6 +79,65 @@ def test_failed_step_becomes_error_with_durable_error_text() -> None:
     assert result.step_summary == "tool crashed"
 
 
+def test_recovered_step_carries_retry_meta_on_success() -> None:
+    card = _step_card("s1")
+    context = _context(
+        {
+            "s1": StepOutcome(
+                "completed",
+                duration_ms=40_000,
+                tool_call_count=5,
+                retry_attempt=3,
+                recovered_by_retry=True,
+                prior_attempts_tool_calls=12,
+                prior_attempts_duration_ms=27_000,
+            )
+        }
+    )
+
+    [result] = reconcile_step_cards([card], context, allow_running=True)
+
+    assert result.step_progress_phase == "success"
+    assert result.step_retry_attempt == 3
+    assert result.step_recovered is True
+    assert result.step_prior_tool_calls == 12
+    assert result.step_prior_duration_ms == 27_000
+
+
+def test_exhausted_retries_carry_attempt_count_on_error() -> None:
+    card = _step_card("s1")
+    context = _context(
+        {
+            "s1": StepOutcome(
+                "failed",
+                duration_ms=40_000,
+                tool_call_count=3,
+                error="boom",
+                retry_attempt=6,
+                prior_attempts_tool_calls=18,
+                prior_attempts_duration_ms=90_000,
+            )
+        }
+    )
+
+    [result] = reconcile_step_cards([card], context, allow_running=True)
+
+    assert result.step_progress_phase == "error"
+    assert result.step_retry_attempt == 6
+    assert result.step_recovered is None
+    assert result.step_prior_tool_calls == 18
+
+
+def test_plain_step_outcome_has_no_retry_meta() -> None:
+    card = _step_card("s1")
+    context = _context({"s1": StepOutcome("completed", duration_ms=100, tool_call_count=1)})
+
+    [result] = reconcile_step_cards([card], context, allow_running=True)
+
+    assert result.step_retry_attempt is None
+    assert result.step_recovered is None
+
+
 def test_skipped_step_becomes_interrupted() -> None:
     [result] = reconcile_step_cards(
         [_step_card("s1")], _context({"s1": StepOutcome("skipped")}), allow_running=True

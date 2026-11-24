@@ -77,6 +77,7 @@ from soothe.sloop.engine.execute.step_wave_types import (
     _DELEGATE_FINAL_PER_TASK_CAP,
     _TUPLE_LEN,
     StepCompletionReport,
+    StepRetryNotice,
     StepWaveQueued,
     StepWaveStart,
     StreamEvent,
@@ -1669,6 +1670,34 @@ class Executor:
             return None
         return asyncio.Semaphore(limit)
 
+    def _step_retry_max_attempts(self) -> int:
+        """Total attempts allowed per step (1 + configured retries; 1 = no retry)."""
+        if self._config is None:
+            return 1
+        try:
+            retries = int(self._config.agent.loop.step_retry_max_attempts)
+        except (AttributeError, TypeError, ValueError):
+            return 1
+        return max(1, min(11, 1 + max(0, retries)))
+
+    def _step_retry_backoff_delay(self, failed_attempt: int) -> float:
+        """Exponential backoff with jitter before retry attempt `failed_attempt + 1`.
+
+        Respects model concurrency implicitly: retries never bypass the LLM
+        stream semaphore (it is re-acquired inside the next execution pass), so
+        a degraded model pool is never piled onto by parallel retry storms.
+        """
+        base = 2.0
+        max_delay = 30.0
+        if self._config is not None:
+            try:
+                base = float(self._config.agent.loop.step_retry_backoff_base_seconds)
+                max_delay = float(self._config.agent.loop.step_retry_backoff_max_seconds)
+            except (AttributeError, TypeError, ValueError):
+                pass
+        delay = base * (2 ** max(0, failed_attempt - 1)) + random.uniform(0, max(base, 0.1))
+        return max(0.0, min(delay, max_delay))
+
     def _wave_size(self, remaining: int) -> int:
         """Concurrent step count for the next execute batch (`0` = unlimited).
 
@@ -1905,7 +1934,15 @@ class Executor:
         step_result = result.step_result
         if step_result is not None and not step_result.success:
             error_msg = step_result.error or "unknown error"
-            return f"Step failed: {error_msg[:200]}"
+            report = f"Step failed: {error_msg[:200]}"
+            if step_result.retry_attempt > 1:
+                report += (
+                    f" (after {step_result.retry_attempt} attempts; "
+                    f"prior attempts made "
+                    f"{step_result.prior_attempts_tool_calls} tool calls over "
+                    f"{step_result.prior_attempts_duration_ms / 1000:.1f}s)"
+                )
+            return report
         human, ai = self._build_step_report_pair_content(step, result, state)
         if not human.strip() and not ai.strip():
             return None
@@ -2118,35 +2155,102 @@ class Executor:
 
         async def _run_parallel_step(step: StepAction) -> None:
             sid = step.id
-            try:
-                # Per-step thread isolation; predecessor context flows via
-                # message injection (no checkpoint fork — see RFC-223 revised).
-                payload = await self._execute_step_collecting_events(
-                    step,
-                    logical_tid,
-                    state.workspace,
-                    routing_classification=getattr(state, "routing_classification", None),
-                    continue_loop_mode=continue_loop_mode,
-                    loop_state=state,
-                    live_event_queue=live_queue,
-                )
-                if (
-                    isinstance(payload, _ExecuteStepResult)
-                    and payload.step_result
-                    and not payload.paused_by_clarification
-                ):
-                    completion_report_tasks[sid] = asyncio.create_task(
-                        self._summarize_step_completion_report(step, payload, state)
+            max_attempts = self._step_retry_max_attempts()
+            attempt = 1
+            prior_tool_calls = 0
+            prior_duration_ms = 0
+            while True:
+                error_preview = "Step execution failed"
+                try:
+                    # Per-step thread isolation; predecessor context flows via
+                    # message injection (no checkpoint fork — see RFC-223 revised).
+                    # Retries re-enter the step's prior fork thread so the
+                    # checkpointer preserves the failed attempt's tool calls
+                    # and session history (same-thread recovery).
+                    payload = await self._execute_step_collecting_events(
+                        step,
+                        logical_tid,
+                        state.workspace,
+                        routing_classification=getattr(state, "routing_classification", None),
+                        continue_loop_mode=continue_loop_mode,
+                        loop_state=state,
+                        live_event_queue=live_queue,
+                        reuse_prior_thread=attempt > 1,
                     )
-                live_queue.put_nowait(_ParallelStepDone(sid, payload))
-            except asyncio.CancelledError:
-                raise
-            except GraphInterrupt:
-                # A pause escaping the step stream must reach the graph
-                # runtime, not become a failed step.
-                raise
-            except Exception as exc:
-                live_queue.put_nowait(_ParallelStepDone(sid, exc))
+                except asyncio.CancelledError:
+                    raise
+                except GraphInterrupt:
+                    # A pause escaping the step stream must reach the graph
+                    # runtime, not become a failed step.
+                    raise
+                except Exception as exc:
+                    if attempt >= max_attempts:
+                        live_queue.put_nowait(_ParallelStepDone(sid, exc))
+                        return
+                    error_preview = self._extract_error_message(exc, "Step execution failed")
+                else:
+                    if not isinstance(payload, _ExecuteStepResult):
+                        live_queue.put_nowait(_ParallelStepDone(sid, payload))
+                        return
+                    record = payload.step_result
+                    if (
+                        record is None
+                        or record.success
+                        or payload.paused_by_clarification
+                        or record.error_type in ("fatal", "timeout")
+                    ):
+                        # Final outcome: success, paused (resumes after the
+                        # user answers), breaker-fatal, or dispatch-timeout —
+                        # timeouts already consumed their dedicated
+                        # dispatch_retry_max retries inside the step stream, so
+                        # this layer must not double-retry them.
+                        if record is not None and attempt > 1:
+                            record.retry_attempt = attempt
+                            record.prior_attempts_tool_calls = prior_tool_calls
+                            record.prior_attempts_duration_ms = prior_duration_ms
+                            record.recovered_by_retry = record.success
+                        if record is not None and not payload.paused_by_clarification:
+                            completion_report_tasks[sid] = asyncio.create_task(
+                                self._summarize_step_completion_report(step, payload, state)
+                            )
+                        live_queue.put_nowait(_ParallelStepDone(sid, payload))
+                        return
+                    # Failed record → retryable.
+                    if attempt >= max_attempts:
+                        record.retry_attempt = attempt
+                        record.prior_attempts_tool_calls = prior_tool_calls
+                        record.prior_attempts_duration_ms = prior_duration_ms
+                        live_queue.put_nowait(_ParallelStepDone(sid, payload))
+                        return
+                    error_preview = (record.error or "Step failed").strip()[:200]
+                    prior_tool_calls += record.tool_call_count
+                    prior_duration_ms += record.duration_ms
+                # Retry path: emit a live notice, then back off before the
+                # next attempt (the LLM stream semaphore is re-acquired by the
+                # next execution pass, so retries never bypass model
+                # concurrency).
+                delay_ms = int(self._step_retry_backoff_delay(attempt) * 1000)
+                live_queue.put_nowait(
+                    StepRetryNotice(
+                        step_id=sid,
+                        attempt=attempt,
+                        max_attempts=max_attempts,
+                        error_preview=error_preview,
+                        prior_tool_calls=prior_tool_calls,
+                        prior_duration_ms=prior_duration_ms,
+                        next_backoff_ms=delay_ms,
+                    )
+                )
+                logger.warning(
+                    "Step %s failed (attempt %d/%d): %s — retrying in %dms",
+                    sid,
+                    attempt,
+                    max_attempts,
+                    error_preview,
+                    delay_ms,
+                )
+                await asyncio.sleep(delay_ms / 1000)
+                attempt += 1
 
         tasks = [asyncio.create_task(_run_parallel_step(step)) for step in steps]
 
@@ -2407,6 +2511,7 @@ class Executor:
         continue_loop_mode: bool = False,
         loop_state: LoopState | None = None,
         live_event_queue: asyncio.Queue[_ParallelLiveQueueItem] | None = None,
+        reuse_prior_thread: bool = False,
     ) -> _ExecuteStepResult:
         """Execute single step, collecting events for the parallel merge queue.
 
@@ -2447,12 +2552,23 @@ class Executor:
             fork_thread_id = thread_id  # Default to main thread
 
             if loop_state is not None and loop_state.current_decision is not None:
+                # Re-dispatch of a previously-run step (guided retry,
+                # eval-boundary reset): re-enter its prior fork thread so
+                # historical tool calls and session history carry over.
+                # First dispatches have no prior thread entry, so this is a
+                # no-op for them (Condition A linear inheritance still applies
+                # inside _select_thread_for_step).
+                reuse = reuse_prior_thread or bool(
+                    loop_state.step_thread_ids.get(step.id)
+                    and loop_state.step_dispatch_counts.get(step.id, 0) > 0
+                )
                 fork_thread_id = _select_thread_for_step(
                     step=step,
                     main_thread_id=thread_id,
                     decision=loop_state.current_decision,
                     loop_state=loop_state,
                     is_clarification_resume=self._clarification_resume_answer_payload is not None,
+                    reuse_prior_thread=reuse,
                 )
                 loop_state.step_thread_ids[step.id] = fork_thread_id
 

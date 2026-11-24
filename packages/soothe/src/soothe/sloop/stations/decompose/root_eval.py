@@ -74,16 +74,40 @@ def _try_auto_to_manual_fallback(
     return NodeResult(payload={"root_eval_route": "dispatch"})
 
 
-def _try_readonly_step_retry(
+def _try_failed_step_retry(
     ctx: LoopRuntimeContext,
     goal: Any,
 ) -> NodeResult | None:
-    """Retry failed steps in read-only modes before finalize/plan-review.
+    """Reset failed steps for re-dispatch when the retry budget remains.
+
+    Applies in all interaction modes (read-only finalize boundary and the
+    normal agent-mode failed-step boundary). Each reset re-dispatches the
+    same step id, so the executor re-enters the step's prior fork thread and
+    the historical tool calls / session history carry over (continuation
+    instead of a hard failure).
 
     Returns a dispatch NodeResult if any failed step was reset, else None.
     """
-    max_retries = ctx.strange_loop.config.agent.loop.max_step_retries
+    try:
+        max_retries = int(ctx.strange_loop.config.agent.loop.max_step_retries)
+    except (AttributeError, TypeError, ValueError):
+        # Config missing or non-numeric (mocked contexts) — keep the
+        # pre-existing fallback/finalize behavior instead of retrying.
+        return None
     if max_retries <= 0:
+        return None
+
+    # Re-dispatch consumes a DISPATCH wave; when waves are exhausted, do not
+    # spin the root_eval ↔ dispatch cycle (same rationale as the ready-steps
+    # guard below) — fall through to fallback/finalize instead.
+    exhausted, wave, max_waves = _dispatch_waves_exhausted(ctx)
+    if exhausted:
+        logger.warning(
+            "[root_eval] step retry budget remains but dispatch waves exhausted "
+            "(%d>=%d); not re-dispatching",
+            wave,
+            max_waves,
+        )
         return None
 
     failed_steps = [n for n in goal.steps.nodes.values() if n.status == "failed"]
@@ -95,7 +119,7 @@ def _try_readonly_step_retry(
         n.retry_count += 1
         retried.append(n)
         logger.info(
-            "[root_eval] read-only retry: reset %s (retry_count=%d/%d)",
+            "[root_eval] step retry: reset %s (retry_count=%d/%d)",
             n.id,
             n.retry_count,
             max_retries,
@@ -377,7 +401,7 @@ class RootEvalNode(LoopNode):
             if ctx.ce is not None and ctx.ce_goal_id:
                 goal = await _maybe_await(ctx.ce.get_goal(ctx.ce_goal_id))
                 if goal is not None:
-                    retry_result = _try_readonly_step_retry(ctx, goal)
+                    retry_result = _try_failed_step_retry(ctx, goal)
                     if retry_result is not None:
                         return retry_result
             logger.info(
@@ -390,6 +414,14 @@ class RootEvalNode(LoopNode):
             if goal is not None:
                 if any(n.status == "failed" for n in goal.steps.nodes.values()):
                     logger.warning("[root_eval] unresolved failed steps present")
+                    # Continuation: re-plan the failed goal by resetting the
+                    # failed steps and re-dispatching them on their prior fork
+                    # threads while the eval-boundary retry budget remains.
+                    # A hard failure (fallback/fatal) is the last resort after
+                    # the budget is exhausted.
+                    retry_result = _try_failed_step_retry(ctx, goal)
+                    if retry_result is not None:
+                        return retry_result
                     fallback = _try_auto_to_manual_fallback(ctx, goal)
                     if fallback is not None:
                         return fallback

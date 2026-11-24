@@ -98,6 +98,7 @@ from .catalog import (
     StrangeLoopStartedEvent,
     StrangeLoopStepCompletedEvent,
     StrangeLoopStepQueuedEvent,
+    StrangeLoopStepRetryEvent,
     StrangeLoopStepStartedEvent,
     # Type alias
     StreamChunk,
@@ -202,6 +203,7 @@ __all__ = [
     "StrangeLoopStepStartedEvent",
     "StrangeLoopStepQueuedEvent",
     "StrangeLoopStepCompletedEvent",
+    "StrangeLoopStepRetryEvent",
     "StrangeLoopContextCompactionEvent",
     "StrangeLoopBreakpointPausedEvent",
     "WiredSubagentStartedEvent",

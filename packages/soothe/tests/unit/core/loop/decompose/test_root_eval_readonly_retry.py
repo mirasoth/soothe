@@ -1,4 +1,9 @@
-"""Tests for ROOT_EVAL read-only step retry (plan/ask interaction modes)."""
+"""Tests for ROOT_EVAL failed-step retry across interaction modes.
+
+The eval-boundary reset/re-dispatch route covers read-only (plan/ask) and
+normal agent modes alike; budget (`agent.loop.max_step_retries`) is tracked
+per step via `StepNode.retry_count`.
+"""
 
 from __future__ import annotations
 
@@ -139,8 +144,8 @@ async def test_retries_disabled_falls_through_immediately() -> None:
 
 
 @pytest.mark.asyncio
-async def test_non_readonly_mode_uses_normal_eval_path() -> None:
-    """In non-read-only mode, failed steps follow the normal fatal path, not retry."""
+async def test_normal_mode_failed_step_retries_to_dispatch() -> None:
+    """In normal agent mode, failed steps re-plan/re-dispatch while budget remains."""
     ce = ContextEngine()
     goal = await ce.create_goal("do work", loop_id="L1")
     await ce.add_step(
@@ -148,6 +153,39 @@ async def test_non_readonly_mode_uses_normal_eval_path() -> None:
         StepNode(id="ROOT", description="root", status="failed"),
     )
     ctx = _ctx_with_ce(ce, goal.id, interaction_mode=None)
+    result = await RootEvalNode()(ctx, {})
+    assert result["root_eval_route"] == "dispatch"
+    refreshed = await ce.get_goal(goal.id)
+    assert refreshed is not None
+    root = refreshed.steps.nodes["ROOT"]
+    assert root.status == "pending"
+    assert root.retry_count == 1
+
+
+@pytest.mark.asyncio
+async def test_normal_mode_exhausted_retries_fall_through_to_fatal() -> None:
+    """In normal agent mode, exhausted retry budget keeps the fatal route."""
+    ce = ContextEngine()
+    goal = await ce.create_goal("do work", loop_id="L1")
+    await ce.add_step(
+        goal.id,
+        StepNode(id="ROOT", description="root", status="failed", retry_count=2),
+    )
+    ctx = _ctx_with_ce(ce, goal.id, interaction_mode=None, max_step_retries=2)
+    result = await RootEvalNode()(ctx, {})
+    assert result["root_eval_route"] == "fatal"
+
+
+@pytest.mark.asyncio
+async def test_normal_mode_retries_disabled_keeps_fatal() -> None:
+    """With max_step_retries=0, normal mode keeps the fatal route."""
+    ce = ContextEngine()
+    goal = await ce.create_goal("do work", loop_id="L1")
+    await ce.add_step(
+        goal.id,
+        StepNode(id="ROOT", description="root", status="failed"),
+    )
+    ctx = _ctx_with_ce(ce, goal.id, interaction_mode=None, max_step_retries=0)
     result = await RootEvalNode()(ctx, {})
     assert result["root_eval_route"] == "fatal"
 

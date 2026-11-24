@@ -103,6 +103,7 @@ STRANGE_LOOP_COMPLETED = "soothe.cognition.strange_loop.completed"
 STRANGE_LOOP_STEP_STARTED = "soothe.cognition.strange_loop.step.started"
 STRANGE_LOOP_STEP_QUEUED = "soothe.cognition.strange_loop.step.queued"
 STRANGE_LOOP_STEP_COMPLETED = "soothe.cognition.strange_loop.step.completed"
+STRANGE_LOOP_STEP_RETRY = "soothe.cognition.strange_loop.step.retry"
 STRANGE_LOOP_PLAN_DECISION = "soothe.cognition.strange_loop.plan.decision"
 STRANGE_LOOP_PLAN_PHASE = "soothe.cognition.strange_loop.plan.phase"
 STRANGE_LOOP_REASONED = "soothe.cognition.strange_loop.reasoned"
@@ -404,6 +405,28 @@ class StrangeLoopStepQueuedEvent(LifecycleEvent):
     description: str
 
 
+class StrangeLoopStepRetryEvent(LifecycleEvent):
+    """Live in-execution retry of a failed step (same-thread recovery).
+
+    The step card stays `running`; UIs render the retry attempt and the
+    failed attempts' accumulated stats while the executor backs off before
+    the next attempt.
+    """
+
+    type: Literal["soothe.cognition.strange_loop.step.retry"] = (
+        "soothe.cognition.strange_loop.step.retry"
+    )
+    step_id: str
+    attempt: int
+    """1-based index of the attempt that just failed."""
+
+    max_attempts: int
+    error_preview: str = ""
+    prior_tool_calls: int = 0
+    prior_duration_ms: int = 0
+    next_backoff_ms: int = 0
+
+
 class StrangeLoopStepCompletedEvent(LifecycleEvent):
     """Step result in the StrangeLoop three-level tree.
 
@@ -424,6 +447,10 @@ class StrangeLoopStepCompletedEvent(LifecycleEvent):
     clarification: dict[str, Any] | None = None
     total_tokens_used: int = 0
     token_usage: dict[str, Any] | None = None
+    retry_attempt: int = 1
+    recovered_by_retry: bool = False
+    prior_attempts_tool_calls: int = 0
+    prior_attempts_duration_ms: int = 0
 
 
 class StrangeLoopContextCompactionEvent(LifecycleEvent):
@@ -785,6 +812,13 @@ _reg(
     StrangeLoopStepCompletedEvent,
     verbosity=VerbosityTier.NORMAL,  # Show step completion at normal verbosity for progress visibility
     summary_template="{summary} ({duration_ms}ms)",
+    priority=EventPriority.HIGH,
+)
+_reg(
+    STRANGE_LOOP_STEP_RETRY,
+    StrangeLoopStepRetryEvent,
+    verbosity=VerbosityTier.NORMAL,
+    summary_template="Step retry {attempt}/{max_attempts}: {error_preview}",
     priority=EventPriority.HIGH,
 )
 _reg(

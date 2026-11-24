@@ -36,6 +36,12 @@ UPDATABLE_FIELDS: frozenset[str] = frozenset(
         "step_duration_ms",
         "step_tool_call_count",
         "step_summary",
+        # In-execution step retry / recovery meta (same-thread recovery).
+        "step_retry_attempt",
+        "step_retry_max",
+        "step_recovered",
+        "step_prior_tool_calls",
+        "step_prior_duration_ms",
         "cognition_plan_status",
         "cognition_plan_iteration",
         "cognition_plan_action",
@@ -178,6 +184,21 @@ class MessageData:
 
     step_tool_calls_json: str | None = None
     """JSON list of tool rows from ``CognitionStepMessage.snapshot_tool_rows()``."""
+
+    step_retry_attempt: int | None = None
+    """Attempt index of the latest in-execution retry seen for the step (STEP_PROGRESS only)."""
+
+    step_retry_max: int | None = None
+    """Total attempts allowed for the step (STEP_PROGRESS only)."""
+
+    step_recovered: bool | None = None
+    """True when a prior attempt failed and a later attempt succeeded (STEP_PROGRESS only)."""
+
+    step_prior_tool_calls: int | None = None
+    """Tool calls summed across failed attempts preceding the final one (STEP_PROGRESS only)."""
+
+    step_prior_duration_ms: int | None = None
+    """Duration summed across failed attempts preceding the final one (STEP_PROGRESS only)."""
 
     cognition_plan_status: str | None = None
     """Plan status: continue, replan, done (COGNITION_REASON only)."""

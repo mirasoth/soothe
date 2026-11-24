@@ -38,6 +38,10 @@ class StepOutcome:
     duration_ms: int = 0
     tool_call_count: int = 0
     error: str | None = None
+    retry_attempt: int = 1
+    recovered_by_retry: bool = False
+    prior_attempts_tool_calls: int = 0
+    prior_attempts_duration_ms: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +76,7 @@ def _terminal_fields(outcome: StepOutcome) -> dict[str, Any] | None:
             "step_duration_ms": outcome.duration_ms,
             "step_tool_call_count": outcome.tool_call_count,
             "step_summary": "",
+            **_recovery_fields(outcome),
         }
     if phase == "error":
         return {
@@ -80,6 +85,7 @@ def _terminal_fields(outcome: StepOutcome) -> dict[str, Any] | None:
             "step_duration_ms": outcome.duration_ms,
             "step_tool_call_count": outcome.tool_call_count,
             "step_summary": outcome.error or "Step failed",
+            **_recovery_fields(outcome),
         }
     if phase == "interrupted":
         return {
@@ -87,6 +93,18 @@ def _terminal_fields(outcome: StepOutcome) -> dict[str, Any] | None:
             "step_summary": _UNFINISHED_STEP_SUMMARY,
         }
     return None
+
+
+def _recovery_fields(outcome: StepOutcome) -> dict[str, Any]:
+    """Retry/recovery meta, present only when retries actually happened."""
+    fields: dict[str, Any] = {}
+    if outcome.retry_attempt > 1:
+        fields["step_retry_attempt"] = outcome.retry_attempt
+        fields["step_prior_tool_calls"] = outcome.prior_attempts_tool_calls or None
+        fields["step_prior_duration_ms"] = outcome.prior_attempts_duration_ms or None
+    if outcome.recovered_by_retry:
+        fields["step_recovered"] = True
+    return fields
 
 
 def reconcile_step_cards(
@@ -163,6 +181,14 @@ async def _load_step_outcomes(daemon: Any, loop_id: str) -> dict[str, StepOutcom
                 duration_ms=int(getattr(execution, "duration_ms", 0) or 0),
                 tool_call_count=int(getattr(execution, "tool_call_count", 0) or 0),
                 error=getattr(execution, "error", None) or None,
+                retry_attempt=int(getattr(execution, "retry_attempt", 1) or 1),
+                recovered_by_retry=bool(getattr(execution, "recovered_by_retry", False) or False),
+                prior_attempts_tool_calls=int(
+                    getattr(execution, "prior_attempts_tool_calls", 0) or 0
+                ),
+                prior_attempts_duration_ms=int(
+                    getattr(execution, "prior_attempts_duration_ms", 0) or 0
+                ),
             )
     return outcomes
 

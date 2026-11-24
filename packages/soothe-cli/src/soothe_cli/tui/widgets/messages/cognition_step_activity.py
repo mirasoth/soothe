@@ -153,15 +153,20 @@ def compact_step_title_meta(
     input_tokens: int = 0,
     output_tokens: int = 0,
     format_token: Any = None,
+    retry_attempt: int = 0,
+    retry_max: int = 0,
 ) -> str:
     """Compact middot meta for the step title.
 
-    Forms: ` · 45s · 12/1 · ↑8.1K ↓2.0K`. Description is not truncated;
-    callers append this string after the full step brief.
+    Forms: ` · 45s · 12/1 · ↑8.1K ↓2.0K` plus an in-flight retry segment
+    (` · ↻ retry 2/5`). Description is not truncated; callers append this
+    string after the full step brief.
     """
     parts: list[str] = []
     if elapsed_secs is not None:
         parts.append(format_running_elapsed_compact(float(elapsed_secs)))
+    if retry_attempt > 0:
+        parts.append(f"↻ retry {int(retry_attempt)}/{int(retry_max) if retry_max else '?'}")
     if tool_count > 0 or task_count > 0:
         parts.append(f"{max(0, int(tool_count))}/{max(0, int(task_count))}")
     if input_tokens or output_tokens:
@@ -831,6 +836,21 @@ class StepCardStatusLine:
         """Step card footer after successful or failed completion."""
         head_tone = theme.SECONDARY_TEXT_STYLE if success else colors.card_error
         parts: list[object] = [Content.styled(f"{gutter}{icon} {head}", head_tone)]
+        if suffix:
+            parts.append(Content.styled(suffix, theme.SECONDARY_TEXT_STYLE))
+        return Content.assemble(*parts)
+
+    @staticmethod
+    def footer_retry(
+        *,
+        gutter: str,
+        icon: str,
+        head: str,
+        suffix: str = "",
+        colors: Any,
+    ) -> Content:
+        """Step card footer while an in-execution retry backs off (warning tone)."""
+        parts: list[object] = [Content.styled(f"{gutter}{icon} {head}", colors.warning)]
         if suffix:
             parts.append(Content.styled(suffix, theme.SECONDARY_TEXT_STYLE))
         return Content.assemble(*parts)

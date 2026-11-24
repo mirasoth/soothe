@@ -77,6 +77,10 @@ class StepExecution(BaseModel):
     hit_subagent_cap: bool = False
     hit_tool_budget: bool = False
     hit_identical_repeat: bool = False
+    retry_attempt: int = 1
+    recovered_by_retry: bool = False
+    prior_attempts_tool_calls: int = 0
+    prior_attempts_duration_ms: int = 0
 
 
 class DeferredItem(BaseModel):
@@ -494,8 +498,6 @@ class GoalNode(BaseModel):
     send_back_count: int = 0  # Consensus send-backs
     max_send_backs: int = 3
     attempts_after_crash: int = 0  # RFC-222 H4
-    # Engine liveness recovery after retry/send_back budgets
-    engine_recovery_count: int = 0
 
     # Workspace (from Goal, RFC-222). Submit contract lives in
     # jobs/{job_id}/GOAL.md (IG-702/IG-742), not a GoalNode path field.

@@ -1055,9 +1055,45 @@ class StrangeLoopConfig(BaseModel):
 
     max_step_retries: int = Field(
         default=2,
-        description="Max retries for steps that fail with all-tool-outcomes-error in read-only modes (plan, ask). 0 disables.",
+        description=(
+            "Max eval-boundary reset/re-plan retries for failed steps at ROOT_EVAL. "
+            "Applies in read-only modes (plan, ask) and normal agent mode; each reset "
+            "re-dispatches the step on its existing core-agent thread. 0 disables."
+        ),
         ge=0,
         le=10,
+    )
+
+    step_retry_max_attempts: int = Field(
+        default=5,
+        description=(
+            "Max automatic in-execution retry attempts for a failed step within a "
+            "single dispatch (model pool exhaustion, tool errors, exceptions). Each "
+            "retry re-enters the step's existing fork thread so prior tool calls and "
+            "session history are preserved. 0 disables in-execution retry; the "
+            "eval-boundary reset path (max_step_retries) still applies afterwards."
+        ),
+        ge=0,
+        le=10,
+    )
+
+    step_retry_backoff_base_seconds: float = Field(
+        default=2.0,
+        description=(
+            "Base delay in seconds for the exponential backoff between step retry "
+            "attempts (delay = base * 2^(attempt-1) + jitter, capped by "
+            "step_retry_backoff_max_seconds). Retries wait for LLM-stream capacity "
+            "before re-attempting so a degraded model pool is not piled onto."
+        ),
+        ge=0,
+        le=300,
+    )
+
+    step_retry_backoff_max_seconds: float = Field(
+        default=30.0,
+        description="Upper bound in seconds for the step-retry backoff delay.",
+        ge=0,
+        le=600,
     )
 
     general_purpose_subagent: GeneralPurposeSubagentMode = Field(

@@ -464,6 +464,10 @@ def convert_event_to_message_data(event: dict[str, Any]) -> MessageData | None:
                 ).strip()
                 if not summary_text:
                     summary_text = "Done" if success else "Failed"
+                retry_attempt = int(event_data.get("retry_attempt") or 1)
+                recovered = bool(event_data.get("recovered_by_retry") or False)
+                prior_tool_calls = int(event_data.get("prior_attempts_tool_calls") or 0)
+                prior_duration = int(event_data.get("prior_attempts_duration_ms") or 0)
                 return MessageData(
                     type=MessageType.STEP_PROGRESS,
                     content="",
@@ -475,6 +479,32 @@ def convert_event_to_message_data(event: dict[str, Any]) -> MessageData | None:
                     step_duration_ms=int(event_data.get("duration_ms") or 0),
                     step_tool_call_count=int(event_data.get("tool_call_count") or 0),
                     step_summary=summary_text,
+                    # Recovery meta is only surfaced when retries actually happened.
+                    step_retry_attempt=retry_attempt if retry_attempt > 1 else None,
+                    step_recovered=True if recovered else None,
+                    step_prior_tool_calls=prior_tool_calls or None,
+                    step_prior_duration_ms=prior_duration or None,
+                )
+            if event_type == "soothe.cognition.strange_loop.step.retry":
+                # Live in-execution retry — the card stays `running`; the retry
+                # meta is merged onto the existing card by step_progress_id.
+                step_id = str(event_data.get("step_id") or "").strip()
+                if not step_id:
+                    return None
+                attempt = int(event_data.get("attempt") or 0)
+                if attempt <= 0:
+                    return None
+                return MessageData(
+                    type=MessageType.STEP_PROGRESS,
+                    content="",
+                    timestamp=event_timestamp,
+                    step_progress_id=step_id,
+                    step_progress_description="(step)",
+                    step_progress_phase="running",
+                    step_retry_attempt=attempt,
+                    step_retry_max=int(event_data.get("max_attempts") or 0) or None,
+                    step_prior_tool_calls=int(event_data.get("prior_tool_calls") or 0) or None,
+                    step_prior_duration_ms=int(event_data.get("prior_duration_ms") or 0) or None,
                 )
 
         # Unrecognized event type — drop it (matches live UX which silently
@@ -579,6 +609,10 @@ def merge_step_progress(prior: MessageData, later: MessageData) -> MessageData:
         if later_desc and later_desc != "(step)"
         else (prior_desc if prior_desc and prior_desc != "(step)" else later_desc or prior_desc)
     )
+    # Retry meta: the latest attempt index wins (retry events raise it;
+    # completion may keep or finalize it), and prior-attempt stats accumulate
+    # from whichever card carries them.
+    retry_attempt = later.step_retry_attempt or prior.step_retry_attempt
     return MessageData(
         type=MessageType.STEP_PROGRESS,
         content=later.content,
@@ -590,6 +624,13 @@ def merge_step_progress(prior: MessageData, later: MessageData) -> MessageData:
         step_duration_ms=later.step_duration_ms or prior.step_duration_ms,
         step_tool_call_count=later.step_tool_call_count or prior.step_tool_call_count,
         step_summary=later.step_summary or prior.step_summary,
+        step_retry_attempt=retry_attempt,
+        step_retry_max=later.step_retry_max or prior.step_retry_max,
+        step_recovered=later.step_recovered
+        if later.step_recovered is not None
+        else prior.step_recovered,
+        step_prior_tool_calls=later.step_prior_tool_calls or prior.step_prior_tool_calls,
+        step_prior_duration_ms=later.step_prior_duration_ms or prior.step_prior_duration_ms,
     )
 
 

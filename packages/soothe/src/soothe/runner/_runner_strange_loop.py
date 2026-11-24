@@ -20,6 +20,7 @@ from soothe.events import (
     StrangeLoopStartedEvent,
     StrangeLoopStepCompletedEvent,
     StrangeLoopStepQueuedEvent,
+    StrangeLoopStepRetryEvent,
     StrangeLoopStepStartedEvent,
     WiredSubagentCancelledEvent,
     WiredSubagentCompletedEvent,
@@ -736,6 +737,21 @@ class StrangeLoopMixin:
                             ).to_dict()
                         )
 
+                elif event_type == "step_retry":
+                    # Live in-execution retry (same-thread recovery): the
+                    # step card stays `running` while the executor backs off.
+                    yield custom_event(
+                        StrangeLoopStepRetryEvent(
+                            step_id=str(event_data.get("step_id", "")),
+                            attempt=int(event_data.get("attempt", 1)),
+                            max_attempts=int(event_data.get("max_attempts", 1)),
+                            error_preview=str(event_data.get("error_preview", "")),
+                            prior_tool_calls=int(event_data.get("prior_tool_calls", 0)),
+                            prior_duration_ms=int(event_data.get("prior_duration_ms", 0)),
+                            next_backoff_ms=int(event_data.get("next_backoff_ms", 0)),
+                        ).to_dict()
+                    )
+
                 elif event_type == "step_completed":
                     # Step result
                     success = bool(event_data["success"])
@@ -759,6 +775,14 @@ class StrangeLoopMixin:
                             else None,
                             total_tokens_used=total_tokens_used,
                             token_usage=token_usage_accumulator.snapshot(),
+                            retry_attempt=int(event_data.get("retry_attempt", 1)),
+                            recovered_by_retry=bool(event_data.get("recovered_by_retry", False)),
+                            prior_attempts_tool_calls=int(
+                                event_data.get("prior_attempts_tool_calls", 0)
+                            ),
+                            prior_attempts_duration_ms=int(
+                                event_data.get("prior_attempts_duration_ms", 0)
+                            ),
                         ).to_dict()
                     )
 

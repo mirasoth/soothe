@@ -62,6 +62,7 @@ def _select_thread_for_step(
     decision: AgentDecision | None = None,
     loop_state: LoopState | None = None,
     is_clarification_resume: bool = False,
+    reuse_prior_thread: bool = False,
 ) -> str:
     """Select a thread_id for a step.
 
@@ -70,6 +71,9 @@ def _select_thread_for_step(
     - **Interrupt resume** (`is_clarification_resume=True`): reuse the
       thread_id stored in `loop_state.resume_ticket.thread_id` so
       `Command(resume=...)` finds the pending interrupt.
+    - **In-execution retry** (`reuse_prior_thread=True`): re-enter the
+      step's own prior fork thread so the checkpointer preserves the failed
+      attempt's tool calls and session history (same-thread recovery).
     - **Strict linear chain**: step has exactly 1 dependency AND the parent
       has exactly 1 child (no fan-out). Reuse the parent's thread_id.
 
@@ -94,6 +98,17 @@ def _select_thread_for_step(
         prior = step_thread_ids.get(step.id)
         if prior:
             logger.info("[thread] resume: reusing prior step thread %s", prior[:24])
+            return prior
+
+    # Condition B2: in-execution retry — same-thread recovery.
+    if reuse_prior_thread:
+        prior = step_thread_ids.get(step.id)
+        if prior:
+            logger.info(
+                "[thread] retry: step %s re-enters prior thread %s",
+                step.id,
+                prior[:24],
+            )
             return prior
 
     # Condition A: strict linear chain — reuse parent's thread.

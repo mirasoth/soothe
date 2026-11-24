@@ -328,12 +328,26 @@ class _MessagesMixin:
                 phase = patch.get("step_progress_phase")
                 if phase == "running":
                     widget.set_running()
+                    if patch.get("step_retry_attempt") is not None:
+                        # In-execution retry patch: the card stays running and
+                        # gains the warning-toned retry/recovery meta.
+                        widget.set_retry(
+                            int(patch.get("step_retry_attempt") or 0),
+                            int(patch.get("step_retry_max") or 0),
+                            prior_tool_calls=int(patch.get("step_prior_tool_calls") or 0),
+                            prior_duration_ms=int(patch.get("step_prior_duration_ms") or 0),
+                            error_preview=str(patch.get("step_summary") or ""),
+                        )
                 elif phase in ("success", "error") and patch.get("step_success") is not None:
                     widget.set_complete(
                         bool(patch.get("step_success")),
                         int(patch.get("step_duration_ms") or 0),
                         int(patch.get("step_tool_call_count") or 0),
                         str(patch.get("step_summary") or ""),
+                        retry_attempt=patch.get("step_retry_attempt"),
+                        recovered=patch.get("step_recovered"),
+                        prior_tool_calls=patch.get("step_prior_tool_calls"),
+                        prior_duration_ms=patch.get("step_prior_duration_ms"),
                     )
                     # Drop from live routing registry once the card is terminal.
                     adapter = getattr(self, "_ui_adapter", None)

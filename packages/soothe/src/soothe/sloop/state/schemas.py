@@ -469,6 +469,13 @@ class StepExecutionRecord(BaseModel):
         hit_tool_budget: True when streaming stopped early due to per-step tool call cap.
         hit_identical_repeat: True when the same tool+args was invoked N consecutive
             times, tripping the degenerate-repetition circuit breaker.
+        retry_attempt: 1-based attempt index of the finalized execution (1 = first
+            attempt, no retry happened).
+        recovered_by_retry: True when a prior attempt failed and a later attempt
+            succeeded.
+        prior_attempts_tool_calls: Summed tool calls across the failed attempts that
+            preceded this record.
+        prior_attempts_duration_ms: Summed duration across those failed attempts.
     """
 
     step_id: str
@@ -485,6 +492,10 @@ class StepExecutionRecord(BaseModel):
     hit_tool_budget: bool = False
     hit_identical_repeat: bool = False
     had_recoverable_tool_errors: bool = False
+    retry_attempt: int = 1
+    recovered_by_retry: bool = False
+    prior_attempts_tool_calls: int = 0
+    prior_attempts_duration_ms: int = 0
 
     def to_evidence_string(self, *, truncate: bool = True) -> str:
         """Convert to evidence string for judgment.

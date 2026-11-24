@@ -128,12 +128,31 @@ async def test_dag_idle_not_emitted_when_tree_not_green() -> None:
 
 @pytest.mark.asyncio
 async def test_dag_idle_not_emitted_when_failed_steps_present() -> None:
-    """Failed steps route to fatal; dag_idle is not emitted."""
+    """Failed steps re-dispatch via the retry boundary while budget remains;
+    dag_idle is not emitted either way."""
     ce = ContextEngine()
     goal = await ce.create_goal("do work", loop_id="L1")
     await ce.add_step(
         goal.id,
         StepNode(id="ROOT", description="root", status="failed"),
+    )
+    rail = _RecordingRailInterpreter()
+    ctx = _ctx_with_ce(ce, goal.id, rail_interpreter=rail, interaction_mode=None)
+
+    result = await RootEvalNode()(ctx, {})
+
+    assert result["root_eval_route"] == "dispatch"
+    assert rail.events == []
+
+
+@pytest.mark.asyncio
+async def test_dag_idle_not_emitted_when_failed_steps_exhaust_retries() -> None:
+    """Failed steps with an exhausted retry budget route to fatal."""
+    ce = ContextEngine()
+    goal = await ce.create_goal("do work", loop_id="L1")
+    await ce.add_step(
+        goal.id,
+        StepNode(id="ROOT", description="root", status="failed", retry_count=2),
     )
     rail = _RecordingRailInterpreter()
     ctx = _ctx_with_ce(ce, goal.id, rail_interpreter=rail, interaction_mode=None)

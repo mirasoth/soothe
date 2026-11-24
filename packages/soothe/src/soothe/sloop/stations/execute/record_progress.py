@@ -130,6 +130,10 @@ async def node_record_iteration(ctx: LoopRuntimeContext, _state: dict[str, Any])
                     subagent_task_completions=r.subagent_task_completions,
                     hit_subagent_cap=r.hit_subagent_cap,
                     hit_tool_budget=r.hit_tool_budget,
+                    retry_attempt=r.retry_attempt,
+                    recovered_by_retry=r.recovered_by_retry,
+                    prior_attempts_tool_calls=r.prior_attempts_tool_calls,
+                    prior_attempts_duration_ms=r.prior_attempts_duration_ms,
                 )
                 if ctx.ce_goal_id and isinstance(r.outcome, dict):
                     close_data = r.outcome.get("step_close_report")

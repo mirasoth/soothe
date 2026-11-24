@@ -54,6 +54,7 @@ def _make_config(global_max_llm_calls: int) -> SootheConfig:
     cfg.agent.loop.concurrency.global_max_llm_calls = global_max_llm_calls
     cfg.agent.loop.dispatch_idle_seconds = 0  # disable watchdog in tests
     cfg.agent.loop.execute_action_retry_max = 0  # no retries
+    cfg.agent.loop.step_retry_max_attempts = 0  # no in-execution step retry
     return cfg
 
 

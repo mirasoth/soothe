@@ -148,6 +148,27 @@ class StepWaveStart:
     steps: tuple[StepAction, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class StepRetryNotice:
+    """Live in-execution retry signal for one step (display-only, no ledger write).
+
+    Emitted by the executor's per-step retry loop right before the backoff
+    sleep, so UIs can render `retry 2/5` on the still-running step card.
+    """
+
+    step_id: str
+    attempt: int
+    """1-based index of the attempt that just failed."""
+
+    max_attempts: int
+    """Total attempts allowed including the first one."""
+
+    error_preview: str = ""
+    prior_tool_calls: int = 0
+    prior_duration_ms: int = 0
+    next_backoff_ms: int = 0
+
+
 @dataclass(slots=True)
 class _ParallelStepDone:
     """Sentinel placed on the parallel live-event queue when one step finishes."""
@@ -183,7 +204,7 @@ def _first_tool_error_message(outcomes: list[dict[str, Any]]) -> str:
     return "Tool execution error"
 
 
-_ParallelLiveQueueItem = StreamEvent | _ParallelStepDone
+_ParallelLiveQueueItem = StreamEvent | _ParallelStepDone | StepRetryNotice
 
 
 def _append_parallel_stream_event(
@@ -228,6 +249,7 @@ __all__ = [
     "_TUPLE_LEN",
     "StreamEvent",
     "StepCompletionReport",
+    "StepRetryNotice",
     "StepWaveQueued",
     "StepWaveStart",
     "_append_parallel_stream_event",

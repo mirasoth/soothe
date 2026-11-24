@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Automatic in-execution step retry (same-thread recovery): a failed step (model pool exhaustion, tool errors, exceptions) is retried inside the Execute phase instead of hard-failing the run. Each retry re-enters the step's prior LangGraph fork thread, so the checkpointer preserves prior tool calls and session history. Retry count is configurable via `agent.loop.step_retry_max_attempts` (default 5, 0 disables); inter-attempt pacing uses `step_retry_backoff_base_seconds` / `step_retry_backoff_max_seconds` (exponential backoff with jitter), and retries never bypass the LLM stream semaphore, so a degraded model pool is never piled onto by retry storms.
+- Step-retry visibility end to end: a live `step_retry` event carries the attempt index, error preview, and prior-attempt stats (tool calls, duration) through the wire STEP_PROGRESS card; the TUI step-card header renders a warning-toned `↻ retry N/M` segment while retrying, `recovered · prior N tools` in success tone after recovery, and `failed after N attempts` when the budget is exhausted; daemon reconcile carries the same recovery fields into terminal card states across restarts.
+- Continuation after retry exhaustion: failed steps are re-planned and re-dispatched at the eval boundary (previously read-only modes only) — `agent.loop.max_step_retries` resets the failed step for re-dispatch on its prior fork thread in normal agent mode too, before any fallback/fatal route; the step-failure ledger report now quotes the attempt count and prior-attempt stats so the re-planned brief carries recovery context.
+
+### Changed
+
+- `agent.loop.max_step_retries` semantics generalized: it now covers the eval-boundary reset/re-dispatch path in all interaction modes (previously only read-only plan/ask modes); the new in-execution retry layer is separately bounded by `step_retry_max_attempts`. Dispatch-timeout failures keep their dedicated `dispatch_retry_max` policy and are not double-retried; clarification-paused and breaker-fatal steps are never retried.
+
 ## [v1.3.4] - 2026-11-23
 
 ### Changed

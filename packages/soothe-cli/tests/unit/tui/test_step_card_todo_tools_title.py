@@ -42,6 +42,121 @@ def test_compact_step_title_meta_counts_and_tokens() -> None:
     assert meta == " · 45s · 12/1 · ↑8.1K ↓2.0K"
 
 
+def test_compact_step_title_meta_retry_segment() -> None:
+    """In-flight retry renders as a middot segment right after elapsed time."""
+    meta = compact_step_title_meta(
+        elapsed_secs=45,
+        tool_count=12,
+        task_count=0,
+        retry_attempt=2,
+        retry_max=5,
+    )
+    assert meta == " · 45s · ↻ retry 2/5 · 12/0"
+
+
+def test_compact_step_title_meta_retry_without_max() -> None:
+    meta = compact_step_title_meta(
+        elapsed_secs=1,
+        tool_count=0,
+        task_count=0,
+        retry_attempt=3,
+        retry_max=0,
+    )
+    assert meta == " · 1s · ↻ retry 3/?"
+
+
+def test_compact_step_title_meta_retry_zero_is_hidden() -> None:
+    meta = compact_step_title_meta(elapsed_secs=45, tool_count=12, task_count=0)
+    assert meta == " · 45s · 12/0"
+
+
+def _running_step_card(step_id: str, description: str) -> CognitionStepMessage:
+    card = CognitionStepMessage(step_id, description, id=f"stp-retry-{step_id}")
+    card._status = "running"
+    return card
+
+
+def test_step_card_retry_header_meta_running() -> None:
+    card = _running_step_card("s1", "flaky step")
+    card.set_retry(2, 5, prior_tool_calls=12, prior_duration_ms=27_000)
+    content = card._step_header_content()
+    assert "↻ retry 2/5" in content.plain
+
+
+def test_step_card_retry_header_meta_recovered_terminal() -> None:
+    card = _running_step_card("s2", "flaky step")
+    card.set_retry(2, 5, prior_tool_calls=12, prior_duration_ms=27_000)
+    card.set_complete(
+        True,
+        40_000,
+        5,
+        "done",
+        retry_attempt=3,
+        recovered=True,
+        prior_tool_calls=12,
+        prior_duration_ms=27_000,
+    )
+    content = card._step_header_content()
+    assert "recovered · prior 12 tools" in content.plain
+
+
+def test_step_card_retry_header_meta_exhausted_terminal() -> None:
+    card = _running_step_card("s3", "flaky step")
+    card.set_complete(
+        False,
+        40_000,
+        3,
+        "boom",
+        retry_attempt=6,
+        recovered=False,
+        prior_tool_calls=18,
+        prior_duration_ms=90_000,
+    )
+    content = card._step_header_content()
+    assert "failed after 6 attempts" in content.plain
+
+
+def _with_status_widget(card: CognitionStepMessage) -> CognitionStepMessage:
+    """Attach mock status/detail widgets capturing update() payloads."""
+    widget = MagicMock()
+    widget.display = False
+    card._status_widget = widget
+    card._detail_widget = MagicMock()
+    return card
+
+
+def _last_update_text(card: CognitionStepMessage) -> str:
+    assert card._status_widget is not None
+    args, _ = card._status_widget.update.call_args
+    return _plain(args[0])
+
+
+def test_step_card_retry_footer_status_line() -> None:
+    card = _with_status_widget(_running_step_card("s4", "flaky step"))
+    card.set_retry(2, 5, prior_tool_calls=12, prior_duration_ms=27_000, next_backoff_ms=8000)
+    text = _last_update_text(card)
+    assert "↻ retry 2/5" in text
+    assert "12 tools" in text
+    assert "27s" in text
+
+
+def test_step_card_recovered_completed_footer() -> None:
+    card = _with_status_widget(_running_step_card("s5", "flaky step"))
+    card.set_complete(
+        True,
+        40_000,
+        5,
+        "done",
+        retry_attempt=3,
+        recovered=True,
+        prior_tool_calls=12,
+        prior_duration_ms=27_000,
+    )
+    text = _last_update_text(card)
+    assert "Completed" in text
+    assert "recovered · prior 12 tools" in text
+
+
 def test_normalize_todo_items() -> None:
     assert normalize_todo_items(
         [
