@@ -1,5 +1,5 @@
 ---
-name: diagnose-loop
+name: soothe-diagnose-loop
 description: >-
   Diagnose Soothe agent loops from ~/.soothe/logs (soothe.log, daemon.log,
   cli.log) and per-loop runner.log. Analyzes StrangeLoop plans, CoreAgent
