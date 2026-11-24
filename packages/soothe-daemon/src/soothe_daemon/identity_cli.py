@@ -67,8 +67,12 @@ def _get_identity_service() -> IdentityService:
                     enabled=True,
                     postgres_dsn=cfg.resolve_postgres_dsn_for_database("metadata"),
                 )
-    except Exception:
-        pass
+    except Exception as exc:
+        console.print(
+            "[yellow]Warning: could not resolve the agent config for the PostgreSQL "
+            f"identity backend ({exc}); falling back to the SQLite store at "
+            f"{resolve_identity_db_path()}.[/yellow]"
+        )
 
     return IdentityService(
         db_path=resolve_identity_db_path(),
@@ -100,10 +104,7 @@ def create_user(
     user: Annotated[str, typer.Option("--user", "-u", help="User identifier")],
     metadata: Annotated[str | None, typer.Option("--metadata", "-m", help="JSON metadata")] = None,
 ) -> None:
-    """Create a new user.
-
-    Commands.
-    """
+    """Create a new user."""
     _require_enabled()
 
     meta_dict = None
@@ -123,10 +124,7 @@ def create_user(
 
 @app.command("list-users")
 def list_users() -> None:
-    """List all users.
-
-    Commands.
-    """
+    """List all users."""
     _require_enabled()
 
     identity = _get_identity_service()
@@ -155,7 +153,6 @@ def delete_user(
 ) -> None:
     """Delete user and revoke all credentials.
 
-    Commands.
 
     Warning: This also revokes all AKSK pairs and tokens for the user.
     """
@@ -195,7 +192,6 @@ def create_aksk(
 ) -> None:
     """Create AKSK pair for user.
 
-    Commands.
 
     WARNING: Save the secret_key securely. It cannot be retrieved later.
     """
@@ -204,15 +200,21 @@ def create_aksk(
     identity = _get_identity_service()
     try:
         aksk = identity.create_aksk(user, expiry_days)
+        secret_key = getattr(aksk, "secret_key", None)
+        if not secret_key:
+            console.print(
+                "[red]Error: IdentityService returned an AKSKPair without a plaintext "
+                "secret_key (incompatible soothe-nano version?). No secret was printed; "
+                "the created pair is unusable until this is fixed.[/red]"
+            )
+            raise typer.Exit(1)
 
         console.print(f"[green]AKSK created for user:[/green] {user}")
         console.print(f"  aksk_id:       {aksk.aksk_id}")
         console.print(f"  access_key:    {aksk.access_key}")
         console.print("  secret_key:    [bold yellow]SK-...[/bold yellow] (shown below)")
         console.print()
-        console.print(
-            f"[bold yellow]  secret_key:    {aksk.access_key.replace('AK-', 'SK-')}[/bold yellow]"
-        )
+        console.print(f"[bold yellow]  secret_key:    {secret_key}[/bold yellow]")
         console.print()
 
         if aksk.expires_at:
@@ -234,10 +236,7 @@ def create_aksk(
 def list_aksk(
     user: Annotated[str, typer.Option("--user", "-u", help="User identifier")],
 ) -> None:
-    """List AKSK pairs for user.
-
-    Commands.
-    """
+    """List AKSK pairs for user."""
     _require_enabled()
 
     identity = _get_identity_service()
@@ -280,10 +279,7 @@ def revoke_aksk(
     aksk_id: Annotated[str, typer.Option("--aksk-id", "-a", help="AKSK ID to revoke")],
     force: Annotated[bool, typer.Option("--force", "-f", help="Skip confirmation")] = False,
 ) -> None:
-    """Revoke AKSK and all related tokens.
-
-    Commands.
-    """
+    """Revoke AKSK and all related tokens."""
     _require_enabled()
 
     if not force:
@@ -317,10 +313,7 @@ def list_tokens(
         bool, typer.Option("--active", "-a", help="Show only active tokens")
     ] = False,
 ) -> None:
-    """List tokens for user.
-
-    Commands.
-    """
+    """List tokens for user."""
     _require_enabled()
 
     identity = _get_identity_service()
@@ -365,10 +358,7 @@ def list_tokens(
 def revoke_token(
     jti: Annotated[str, typer.Option("--jti", "-j", help="JWT ID to revoke")],
 ) -> None:
-    """Revoke token by JTI.
-
-    Commands.
-    """
+    """Revoke token by JTI."""
     _require_enabled()
 
     identity = _get_identity_service()
@@ -385,10 +375,7 @@ def revoke_all_tokens(
     user: Annotated[str, typer.Option("--user", "-u", help="User identifier")],
     force: Annotated[bool, typer.Option("--force", "-f", help="Skip confirmation")] = False,
 ) -> None:
-    """Revoke all tokens for user.
-
-    Commands.
-    """
+    """Revoke all tokens for user."""
     _require_enabled()
 
     if not force:
@@ -424,7 +411,6 @@ def map_external(
 ) -> None:
     """Map external channel sender to soothe user.
 
-    Commands.
 
     Example: soothed identity map-external --channel telegram --sender-id 12345 --user alice
     """
@@ -449,10 +435,7 @@ def list_mappings(
     ] = None,
     user: Annotated[str | None, typer.Option("--user", "-u", help="Filter by user")] = None,
 ) -> None:
-    """List external identity mappings.
-
-    Commands.
-    """
+    """List external identity mappings."""
     _require_enabled()
 
     identity = _get_identity_service()
@@ -490,10 +473,7 @@ def unmap_external(
     channel: Annotated[str, typer.Option("--channel", "-c", help="Channel name")],
     sender_id: Annotated[str, typer.Option("--sender-id", "-s", help="Platform sender ID")],
 ) -> None:
-    """Remove external identity mapping.
-
-    Commands.
-    """
+    """Remove external identity mapping."""
     _require_enabled()
 
     identity = _get_identity_service()
@@ -514,10 +494,7 @@ def unmap_external(
 
 @app.command("status")
 def status() -> None:
-    """Show identity service status.
-
-    Commands.
-    """
+    """Show identity service status."""
     from soothe_daemon.config import SootheDaemonConfig, default_daemon_config_path
 
     config_path = default_daemon_config_path()

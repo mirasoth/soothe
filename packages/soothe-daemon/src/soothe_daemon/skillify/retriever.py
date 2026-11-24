@@ -11,6 +11,8 @@ from soothe.skillify.models import SkillBundle, SkillRecord, SkillSearchResult
 from soothe.utils.messages import extract_text_from_message_content
 from soothe_nano.protocols.policy import ActionRequest, PermissionSet, PolicyContext
 
+from ._lazy_embeddings import LazyEmbeddings
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -41,26 +43,6 @@ def _get_vector_search_semaphore() -> asyncio.Semaphore:
         configure_vector_search_concurrency(4)
     assert _vector_search_semaphore is not None
     return _vector_search_semaphore
-
-
-class LazyEmbeddings:
-    """Wrapper that creates fresh embedding instances per event loop."""
-
-    def __init__(self, factory: Callable[[], Embeddings]) -> None:
-        self._factory = factory
-        self._instances: dict[int, Embeddings] = {}
-
-    def _get_instance(self) -> Embeddings:
-        loop_id = id(asyncio.get_running_loop())
-        if loop_id not in self._instances:
-            self._instances[loop_id] = self._factory()
-        return self._instances[loop_id]
-
-    async def aembed_documents(self, texts: list[str]) -> list[list[float]]:
-        return await self._get_instance().aembed_documents(texts)
-
-    async def aembed_query(self, text: str) -> list[float]:
-        return await self._get_instance().aembed_query(text)
 
 
 class SkillRetriever:

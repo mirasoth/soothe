@@ -237,6 +237,45 @@ class TestAKSKManagement:
         assert not aksk.revoked
         assert aksk.created_at is not None
 
+    def test_create_aksk_returns_plaintext_secret(self, identity_service: IdentityService) -> None:
+        """create_aksk must return the plaintext secret_key exactly once."""
+        identity_service.create_user("alice")
+        aksk = identity_service.create_aksk("alice")
+        assert aksk.secret_key
+        assert aksk.secret_key.startswith("SK-")
+        assert aksk.secret_key != aksk.access_key.replace("AK-", "SK-")
+
+    def test_create_aksk_secret_not_persisted(self, identity_service: IdentityService) -> None:
+        """The store keeps only the hash; listed pairs never carry plaintext."""
+        identity_service.create_user("alice")
+        aksk = identity_service.create_aksk("alice")
+        listed = identity_service.list_aksk("alice")
+        assert len(listed) == 1
+        assert listed[0].secret_key_hash == aksk.secret_key_hash
+        assert getattr(listed[0], "secret_key", None) is None
+
+    def test_create_aksk_authenticates_with_returned_secret(
+        self, identity_service: IdentityService
+    ) -> None:
+        """Round-trip: the returned plaintext secret must authenticate."""
+        identity_service.create_user("alice")
+        aksk = identity_service.create_aksk("alice")
+        result = identity_service.authenticate(aksk.access_key, aksk.secret_key)
+        assert result is not None
+        assert result.user_id == "alice"
+        assert result.access_token
+
+    def test_create_aksk_wrong_secret_fails_to_authenticate(
+        self, identity_service: IdentityService
+    ) -> None:
+        """A wrong secret (e.g. fabricated from the access key) must not authenticate."""
+        identity_service.create_user("alice")
+        aksk = identity_service.create_aksk("alice")
+        fabricated = aksk.access_key.replace("AK-", "SK-")
+        assert identity_service.authenticate(aksk.access_key, fabricated) is None
+        assert aksk.secret_key is not None
+        assert identity_service.authenticate(aksk.access_key, aksk.secret_key[:-1] + "X") is None
+
     def test_create_aksk_nonexistent_user_raises(self, identity_service: IdentityService) -> None:
         """create_aksk on non-existent user must raise UserNotFoundError."""
         with pytest.raises(UserNotFoundError):

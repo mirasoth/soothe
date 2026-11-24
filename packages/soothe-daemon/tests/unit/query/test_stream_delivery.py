@@ -61,11 +61,11 @@ def _stream_end_scopes(tuples: list[tuple[tuple[str, ...], str, Any]]) -> list[s
     return [str(item[2].get("scope")) for item in _custom(tuples, event_type=STREAM_END)]
 
 
-def test_batch_mode_suppresses_goal_completion_until_completed() -> None:
+async def test_batch_mode_suppresses_goal_completion_until_completed() -> None:
     coalescer = StreamDeliveryCoalescer("batch")
-    assert coalescer.ingest(*_gc_chunk("a")) == []
-    assert coalescer.ingest(*_gc_chunk("b")) == []
-    done = coalescer.ingest(
+    assert await coalescer.ingest(*_gc_chunk("a")) == []
+    assert await coalescer.ingest(*_gc_chunk("b")) == []
+    done = await coalescer.ingest(
         (),
         "custom",
         {"type": STRANGE_LOOP_COMPLETED, "status": "done"},
@@ -79,11 +79,11 @@ def test_batch_mode_suppresses_goal_completion_until_completed() -> None:
     assert coalescer.turn_complete_pending
 
 
-def test_consume_turn_complete_pending_returns_and_clears() -> None:
+async def test_consume_turn_complete_pending_returns_and_clears() -> None:
     """QueryEngine uses consume_turn_complete_pending after stream end."""
     coalescer = StreamDeliveryCoalescer("batch")
-    coalescer.ingest(*_gc_chunk("tail"))
-    coalescer.ingest(
+    await coalescer.ingest(*_gc_chunk("tail"))
+    await coalescer.ingest(
         (),
         "custom",
         {"type": STRANGE_LOOP_COMPLETED, "status": "done"},
@@ -92,46 +92,46 @@ def test_consume_turn_complete_pending_returns_and_clears() -> None:
     assert coalescer.consume_turn_complete_pending() is True
     assert coalescer.turn_complete_pending is False
     assert coalescer.consume_turn_complete_pending() is False
-    assert coalescer.flush() == []
+    assert await coalescer.flush() == []
 
 
-def test_adaptive_small_goal_completion_passthrough() -> None:
+async def test_adaptive_small_goal_completion_passthrough() -> None:
     coalescer = StreamDeliveryCoalescer("adaptive")
     chunk = _gc_chunk("passthrough")
-    out = coalescer.ingest(*chunk)
+    out = await coalescer.ingest(*chunk)
     assert len(out) == 1
     assert out[0][1] == "messages"
     assert out[0][2][0]["content"] == "passthrough"
     assert out[0][2][0]["phase"] == "goal_completion"
 
 
-def test_coalesce_interval_100_faster_first_emit_than_300_baseline() -> None:
+async def test_coalesce_interval_100_faster_first_emit_than_300_baseline() -> None:
     """Phase 3: shorter coalesce interval reduces time-to-first-chunk."""
 
-    def _time_to_first_emit_ms(interval_ms: int) -> float | None:
+    async def _time_to_first_emit_ms(interval_ms: int) -> float | None:
         coalescer = StreamDeliveryCoalescer(
             "adaptive",
             coalesce_interval_ms=interval_ms,
         )
         started = time.monotonic()
-        assert coalescer.ingest(*_text_chunk("hello")) == []
+        assert await coalescer.ingest(*_text_chunk("hello")) == []
         time.sleep(0.12)
-        out = coalescer.ingest(*_text_chunk(" world"))
+        out = await coalescer.ingest(*_text_chunk(" world"))
         if out:
             return (time.monotonic() - started) * 1000.0
         return None
 
-    fast_ms = _time_to_first_emit_ms(100)
-    slow_ms = _time_to_first_emit_ms(300)
+    fast_ms = await _time_to_first_emit_ms(100)
+    slow_ms = await _time_to_first_emit_ms(300)
     assert fast_ms is not None, "100ms coalesce should emit within 120ms idle"
     assert slow_ms is None, "300ms coalesce should not emit within 120ms idle"
 
 
-def test_text_chunks_coalesce_until_last() -> None:
+async def test_text_chunks_coalesce_until_last() -> None:
     coalescer = StreamDeliveryCoalescer("adaptive", coalesce_interval_ms=10_000)
-    assert coalescer.ingest(*_text_chunk("a")) == []
-    assert coalescer.ingest(*_text_chunk("b")) == []
-    flushed = coalescer.ingest(*_text_chunk("c", last=True))
+    assert await coalescer.ingest(*_text_chunk("a")) == []
+    assert await coalescer.ingest(*_text_chunk("b")) == []
+    flushed = await coalescer.ingest(*_text_chunk("c", last=True))
     assert len(_messages(flushed)) == 1
     msg = flushed[0][2][0]
     assert msg["content"] == "abc"
@@ -140,36 +140,36 @@ def test_text_chunks_coalesce_until_last() -> None:
     assert coalescer.coalesce_flush_count == 1
 
 
-def test_tool_message_flushes_pending_text_first() -> None:
+async def test_tool_message_flushes_pending_text_first() -> None:
     coalescer = StreamDeliveryCoalescer("adaptive", coalesce_interval_ms=10_000)
-    assert coalescer.ingest(*_text_chunk("pending")) == []
-    out = coalescer.ingest(*_tool_chunk())
+    assert await coalescer.ingest(*_text_chunk("pending")) == []
+    out = await coalescer.ingest(*_tool_chunk())
     assert len(out) == 2
     assert out[0][2][0]["content"] == "pending"
     assert out[1][1] == "messages"
     assert out[1][2][0]["type"] == "tool"
 
 
-def test_updates_mode_dropped_unless_interrupt() -> None:
+async def test_updates_mode_dropped_unless_interrupt() -> None:
     coalescer = StreamDeliveryCoalescer("adaptive")
-    assert coalescer.ingest((), "updates", {"model": {"messages": []}}) == []
-    kept = coalescer.ingest((), "updates", {"__interrupt__": []})
+    assert await coalescer.ingest((), "updates", {"model": {"messages": []}}) == []
+    kept = await coalescer.ingest((), "updates", {"__interrupt__": []})
     assert kept == [((), "updates", {"__interrupt__": []})]
 
 
-def test_custom_event_flushes_text_buffer() -> None:
+async def test_custom_event_flushes_text_buffer() -> None:
     coalescer = StreamDeliveryCoalescer("adaptive", coalesce_interval_ms=10_000)
-    assert coalescer.ingest(*_text_chunk("buf")) == []
-    out = coalescer.ingest(
+    assert await coalescer.ingest(*_text_chunk("buf")) == []
+    out = await coalescer.ingest(
         (), "custom", {"type": "soothe.stream.tool_call.update", "tool_call_id": "x"}
     )
     assert len(out) == 2
     assert out[0][2][0]["content"] == "buf"
 
 
-def test_internal_custom_event_dropped_at_ingest() -> None:
+async def test_internal_custom_event_dropped_at_ingest() -> None:
     coalescer = StreamDeliveryCoalescer("adaptive")
-    out = coalescer.ingest(
+    out = await coalescer.ingest(
         (),
         "custom",
         {"type": "soothe.internal.policy.checked", "verdict": "allow"},
@@ -177,7 +177,7 @@ def test_internal_custom_event_dropped_at_ingest() -> None:
     assert out == []
 
 
-def test_tool_invocation_batches_and_strips_ai() -> None:
+async def test_tool_invocation_batches_and_strips_ai() -> None:
     coalescer = StreamDeliveryCoalescer("adaptive", tool_batch_interval_ms=10_000)
     wire = (
         {
@@ -189,15 +189,15 @@ def test_tool_invocation_batches_and_strips_ai() -> None:
         },
         {},
     )
-    out = coalescer.ingest((), "messages", wire)
+    out = await coalescer.ingest((), "messages", wire)
     batches = [item for item in out if item[1] == "custom"]
     assert len(batches) == 1
     assert batches[0][2]["type"] == "tool_call_updates_batch"
     assert batches[0][2]["count"] == 1
-    assert coalescer.flush() == []
+    assert await coalescer.flush() == []
 
 
-def test_tool_batch_flushes_immediately_without_waiting_for_tool_result() -> None:
+async def test_tool_batch_flushes_immediately_without_waiting_for_tool_result() -> None:
     """New tool invocations must reach the client before a long-running tool returns."""
     coalescer = StreamDeliveryCoalescer("adaptive", tool_batch_interval_ms=10_000)
     wire = (
@@ -210,15 +210,15 @@ def test_tool_batch_flushes_immediately_without_waiting_for_tool_result() -> Non
         },
         {},
     )
-    out = coalescer.ingest((), "messages", wire)
+    out = await coalescer.ingest((), "messages", wire)
     assert any(
         item[1] == "custom" and item[2].get("type") == "tool_call_updates_batch" for item in out
     )
     # Simulate a long tool run with no further stream chunks until the result.
-    assert coalescer.ingest(*_tool_chunk()) == [((), "messages", _tool_chunk()[2])]
+    assert await coalescer.ingest(*_tool_chunk()) == [((), "messages", _tool_chunk()[2])]
 
 
-def test_tool_batch_merges_later_displayable_args_for_same_id() -> None:
+async def test_tool_batch_merges_later_displayable_args_for_same_id() -> None:
     """Buffered updates for the same tool_call_id must upgrade in place before flush."""
     coalescer = StreamDeliveryCoalescer("adaptive", tool_batch_interval_ms=10_000)
     ns = ("execute:abc", "tools:sub")
@@ -244,7 +244,7 @@ def test_tool_batch_merges_later_displayable_args_for_same_id() -> None:
     assert batch["updates"][0]["args"] == {"path": "/.platonic/specs/RFC-450.md"}
 
 
-def test_flush_due_flushes_elapsed_tool_batch_without_new_chunks() -> None:
+async def test_flush_due_flushes_elapsed_tool_batch_without_new_chunks() -> None:
     """A due batch must flush on the idle tick, without waiting for a chunk.
 
     No chunks flow during tool execution, so ingest alone would buffer a
@@ -278,7 +278,7 @@ def test_flush_due_flushes_elapsed_tool_batch_without_new_chunks() -> None:
     assert coalescer.flush_due() == []
 
 
-def test_tool_batch_flush_logs_enqueue_latency(caplog: Any) -> None:
+async def test_tool_batch_flush_logs_enqueue_latency(caplog: Any) -> None:
     """DEBUG diagnostics: flush records milliseconds since first enqueue."""
     import logging
 
@@ -296,7 +296,7 @@ def test_tool_batch_flush_logs_enqueue_latency(caplog: Any) -> None:
     assert any("tool_call_updates_batch flush" in rec.message for rec in caplog.records)
 
 
-def test_custom_tool_update_not_suppressed_when_batch_has_placeholder() -> None:
+async def test_custom_tool_update_not_suppressed_when_batch_has_placeholder() -> None:
     coalescer = StreamDeliveryCoalescer("adaptive", tool_batch_interval_ms=10_000)
     ns = ("execute:abc", "tools:sub")
     placeholder_wire = (
@@ -313,7 +313,7 @@ def test_custom_tool_update_not_suppressed_when_batch_has_placeholder() -> None:
         },
         {},
     )
-    coalescer.ingest(ns, "messages", placeholder_wire)
+    await coalescer.ingest(ns, "messages", placeholder_wire)
 
     enriched = {
         "type": "soothe.stream.tool_call.update",
@@ -321,11 +321,11 @@ def test_custom_tool_update_not_suppressed_when_batch_has_placeholder() -> None:
         "name": "glob",
         "args": {"glob_pattern": "**/*.py"},
     }
-    out = coalescer.ingest(ns, "custom", enriched)
+    out = await coalescer.ingest(ns, "custom", enriched)
     assert any(item[1] == "custom" and item[2] == enriched for item in out)
 
 
-def test_strip_tool_metadata_for_batch() -> None:
+async def test_strip_tool_metadata_for_batch() -> None:
     coalescer = StreamDeliveryCoalescer("adaptive")
     wire = (
         {
@@ -341,14 +341,14 @@ def test_strip_tool_metadata_for_batch() -> None:
     assert "tool_call_chunks" not in body
 
 
-def test_batch_mode_flushes_goal_completion_on_completed_event() -> None:
+async def test_batch_mode_flushes_goal_completion_on_completed_event() -> None:
     """Verify goal_completion flushed when STRANGE_LOOP_COMPLETED arrives."""
     coalescer = StreamDeliveryCoalescer("batch")
     # Accumulate goal_completion chunks
-    assert coalescer.ingest(*_gc_chunk("part1")) == []
-    assert coalescer.ingest(*_gc_chunk("part2")) == []
+    assert await coalescer.ingest(*_gc_chunk("part1")) == []
+    assert await coalescer.ingest(*_gc_chunk("part2")) == []
     # STRANGE_LOOP_COMPLETED triggers flush
-    done = coalescer.ingest(
+    done = await coalescer.ingest(
         (),
         "custom",
         {"type": STRANGE_LOOP_COMPLETED, "status": "done"},
@@ -362,7 +362,7 @@ def test_batch_mode_flushes_goal_completion_on_completed_event() -> None:
     assert coalescer.turn_complete_pending
 
 
-def test_adaptive_mode_switches_to_chunked_streaming_on_threshold() -> None:
+async def test_adaptive_mode_switches_to_chunked_streaming_on_threshold() -> None:
     """After threshold, adaptive enters chunked-streaming (not pure batch).
 
     Pre-the second phase was pure batch — every post-threshold chunk
@@ -372,7 +372,7 @@ def test_adaptive_mode_switches_to_chunked_streaming_on_threshold() -> None:
     streamed bytes are NEVER re-emitted as part of a block.
     """
     coalescer = StreamDeliveryCoalescer("adaptive", adaptive_threshold_chars=10)
-    out1 = coalescer.ingest(*_gc_chunk("abc"))
+    out1 = await coalescer.ingest(*_gc_chunk("abc"))
     assert len(out1) == 1
     assert out1[0][2][0]["content"] == "abc"
     assert coalescer.goal_completion_phase == "streaming"
@@ -380,11 +380,11 @@ def test_adaptive_mode_switches_to_chunked_streaming_on_threshold() -> None:
     # Crossing the threshold transitions the coalescer into chunked-streaming;
     # under defaults (block_chars=1024) this small chunk does not yet trigger a
     # size-based block flush, so the chunk is buffered.
-    out2 = coalescer.ingest(*_gc_chunk("defghijklmn"))
+    out2 = await coalescer.ingest(*_gc_chunk("defghijklmn"))
     assert out2 == []
     assert coalescer.goal_completion_phase == "chunked_streaming"
 
-    done = coalescer.ingest(
+    done = await coalescer.ingest(
         (),
         "custom",
         {"type": STRANGE_LOOP_COMPLETED, "status": "done"},
@@ -397,7 +397,7 @@ def test_adaptive_mode_switches_to_chunked_streaming_on_threshold() -> None:
     assert _stream_end_scopes(done) == ["generation", "phase"]
 
 
-def test_adaptive_chunked_streaming_emits_size_based_blocks() -> None:
+async def test_adaptive_chunked_streaming_emits_size_based_blocks() -> None:
     """In chunked-streaming phase, size-based block flush kicks in.
 
     With ``adaptive_threshold_chars=5`` and ``adaptive_block_chars=10``:
@@ -417,15 +417,15 @@ def test_adaptive_chunked_streaming_emits_size_based_blocks() -> None:
         adaptive_block_interval_ms=2000,  # disable time-based flush for determinism
     )
 
-    streamed = coalescer.ingest(*_gc_chunk("abc"))
+    streamed = await coalescer.ingest(*_gc_chunk("abc"))
     assert len(streamed) == 1
     assert coalescer.goal_completion_phase == "streaming"
 
-    assert coalescer.ingest(*_gc_chunk("defghij")) == []
+    assert await coalescer.ingest(*_gc_chunk("defghij")) == []
     assert coalescer.goal_completion_phase == "chunked_streaming"
-    assert coalescer.ingest(*_gc_chunk("kl")) == []
+    assert await coalescer.ingest(*_gc_chunk("kl")) == []
 
-    block_out = coalescer.ingest(*_gc_chunk("mnopqr"))
+    block_out = await coalescer.ingest(*_gc_chunk("mnopqr"))
     assert len(block_out) == 1
     block_msg = block_out[0][2][0]
     assert block_msg["phase"] == "goal_completion"
@@ -434,7 +434,7 @@ def test_adaptive_chunked_streaming_emits_size_based_blocks() -> None:
     assert "chunk_position" not in block_msg or block_msg.get("chunk_position") != "last"
     assert coalescer.goal_completion_block_flush_count == 1
 
-    done = coalescer.ingest(
+    done = await coalescer.ingest(
         (),
         "custom",
         {"type": STRANGE_LOOP_COMPLETED, "status": "done"},
@@ -450,7 +450,7 @@ def test_adaptive_chunked_streaming_emits_size_based_blocks() -> None:
     assert _stream_end_scopes(done) == ["generation", "phase"]
 
 
-def test_adaptive_chunked_streaming_time_based_block_flush() -> None:
+async def test_adaptive_chunked_streaming_time_based_block_flush() -> None:
     """Time-based block flush triggers when block_interval elapses.
 
     Even when buffered chars are below ``adaptive_block_chars``, the coalescer
@@ -475,19 +475,19 @@ def test_adaptive_chunked_streaming_time_based_block_flush() -> None:
         )
 
         # Cross the threshold so we land in chunked_streaming.
-        coalescer.ingest(*_gc_chunk("abcd"))
+        await coalescer.ingest(*_gc_chunk("abcd"))
         assert coalescer.goal_completion_phase == "chunked_streaming"
 
         # Inject more buffered content; size threshold is far away.
         fake_clock[0] += 0.05  # 50ms
-        out_under = coalescer.ingest(*_gc_chunk("xy"))
+        out_under = await coalescer.ingest(*_gc_chunk("xy"))
         assert out_under == []
         assert coalescer.goal_completion_block_flush_count == 0
 
         # Advance past block_interval; next ingest should flush prior buffer
         # via the time-based block flush on the new chunk.
         fake_clock[0] += 0.25  # 250ms past last_block
-        out_after = coalescer.ingest(*_gc_chunk("z"))
+        out_after = await coalescer.ingest(*_gc_chunk("z"))
         assert len(out_after) == 1
         block_msg = out_after[0][2][0]
         assert block_msg["phase"] == "goal_completion"
@@ -497,7 +497,7 @@ def test_adaptive_chunked_streaming_time_based_block_flush() -> None:
         assert coalescer.goal_completion_block_flush_count == 1
 
         # The "z" chunk is now buffered; final flush at completed event.
-        done = coalescer.ingest(
+        done = await coalescer.ingest(
             (),
             "custom",
             {"type": STRANGE_LOOP_COMPLETED, "status": "done"},
@@ -510,7 +510,7 @@ def test_adaptive_chunked_streaming_time_based_block_flush() -> None:
         sd.time.monotonic = real_monotonic  # type: ignore[assignment]
 
 
-def test_streaming_mode_passthrough_every_goal_completion_chunk() -> None:
+async def test_streaming_mode_passthrough_every_goal_completion_chunk() -> None:
     """``streaming`` mode forwards every goal_completion chunk verbatim.
 
     No buffering, no threshold, no chunked-streaming transition. The phase
@@ -525,9 +525,9 @@ def test_streaming_mode_passthrough_every_goal_completion_chunk() -> None:
         adaptive_block_interval_ms=10_000,
     )
 
-    out1 = coalescer.ingest(*_gc_chunk("hello "))
-    out2 = coalescer.ingest(*_gc_chunk("world "))
-    out3 = coalescer.ingest(*_gc_chunk("streaming!"))
+    out1 = await coalescer.ingest(*_gc_chunk("hello "))
+    out2 = await coalescer.ingest(*_gc_chunk("world "))
+    out3 = await coalescer.ingest(*_gc_chunk("streaming!"))
     assert len(out1) == 1 and out1[0][2][0]["content"] == "hello "
     assert len(out2) == 1 and out2[0][2][0]["content"] == "world "
     assert len(out3) == 1 and out3[0][2][0]["content"] == "streaming!"
@@ -537,7 +537,7 @@ def test_streaming_mode_passthrough_every_goal_completion_chunk() -> None:
 
     # Nothing was buffered, but upstream never marks ``chunk_position=last``, so
     # completion re-stamps the tail chunk as terminal to close the client card.
-    done = coalescer.ingest(
+    done = await coalescer.ingest(
         (),
         "custom",
         {"type": STRANGE_LOOP_COMPLETED, "status": "done"},
@@ -552,7 +552,7 @@ def test_streaming_mode_passthrough_every_goal_completion_chunk() -> None:
     assert _stream_end_scopes(done) == ["generation", "phase"]
 
 
-def test_adaptive_below_threshold_still_emits_terminal() -> None:
+async def test_adaptive_below_threshold_still_emits_terminal() -> None:
     """A short synthesis never crosses the threshold but must still terminate.
 
     Upstream does not mark ``chunk_position=last`` on synthesis chunks, so without
@@ -560,11 +560,11 @@ def test_adaptive_below_threshold_still_emits_terminal() -> None:
     """
     coalescer = StreamDeliveryCoalescer("adaptive", adaptive_threshold_chars=1000)
 
-    assert len(coalescer.ingest(*_gc_chunk("Short "))) == 1
-    assert len(coalescer.ingest(*_gc_chunk("report."))) == 1
+    assert len(await coalescer.ingest(*_gc_chunk("Short "))) == 1
+    assert len(await coalescer.ingest(*_gc_chunk("report."))) == 1
     assert coalescer.goal_completion_phase == "streaming"
 
-    done = coalescer.ingest(
+    done = await coalescer.ingest(
         (),
         "custom",
         {"type": STRANGE_LOOP_COMPLETED, "status": "done"},
@@ -577,10 +577,10 @@ def test_adaptive_below_threshold_still_emits_terminal() -> None:
     assert _stream_end_scopes(done) == ["generation", "phase"]
 
     # Terminal state is consumed: a trailing flush must not re-emit it.
-    assert _messages(coalescer.flush()) == []
+    assert _messages(await coalescer.flush()) == []
 
 
-def test_terminal_frame_survives_skip_redundant_tool_message_wire() -> None:
+async def test_terminal_frame_survives_skip_redundant_tool_message_wire() -> None:
     """Empty terminal markers are control frames, not redundant tool output."""
     coalescer = StreamDeliveryCoalescer("adaptive", skip_redundant_tool_message_wire=True)
 
@@ -595,7 +595,7 @@ def test_terminal_frame_survives_skip_redundant_tool_message_wire() -> None:
     assert coalescer.should_skip_tool_message_wire({"type": "tool", "content": ""}) is True
 
 
-def test_streaming_mode_file_output_still_buffers() -> None:
+async def test_streaming_mode_file_output_still_buffers() -> None:
     """file_output_threshold overrides ``streaming`` mode to pure batch.
 
     file_output cannot stream — it needs the full text in one place to decide
@@ -606,9 +606,9 @@ def test_streaming_mode_file_output_still_buffers() -> None:
         "streaming",
         file_output_threshold_chars=10_000,  # very high → file path never taken
     )
-    assert coalescer.ingest(*_gc_chunk("alpha")) == []
-    assert coalescer.ingest(*_gc_chunk("bravo")) == []
-    done = coalescer.ingest(
+    assert await coalescer.ingest(*_gc_chunk("alpha")) == []
+    assert await coalescer.ingest(*_gc_chunk("bravo")) == []
+    done = await coalescer.ingest(
         (),
         "custom",
         {"type": STRANGE_LOOP_COMPLETED, "status": "done"},
@@ -619,7 +619,7 @@ def test_streaming_mode_file_output_still_buffers() -> None:
     assert _stream_end_scopes(done) == ["generation", "phase"]
 
 
-def test_adaptive_chunked_streaming_with_file_output_uses_pure_batch() -> None:
+async def test_adaptive_chunked_streaming_with_file_output_uses_pure_batch() -> None:
     """When file_output_threshold_chars > 0, adaptive falls back to pure batch.
 
     file_output needs the entire goal_completion text in one place to decide
@@ -632,10 +632,10 @@ def test_adaptive_chunked_streaming_with_file_output_uses_pure_batch() -> None:
         adaptive_block_chars=4,
         file_output_threshold_chars=50_000,  # never actually triggers file
     )
-    assert coalescer.ingest(*_gc_chunk("abcd")) == []
-    assert coalescer.ingest(*_gc_chunk("efgh")) == []
+    assert await coalescer.ingest(*_gc_chunk("abcd")) == []
+    assert await coalescer.ingest(*_gc_chunk("efgh")) == []
     assert coalescer.goal_completion_block_flush_count == 0
-    done = coalescer.ingest(
+    done = await coalescer.ingest(
         (),
         "custom",
         {"type": STRANGE_LOOP_COMPLETED, "status": "done"},
@@ -645,12 +645,12 @@ def test_adaptive_chunked_streaming_with_file_output_uses_pure_batch() -> None:
     assert _stream_end_scopes(done) == ["generation", "phase"]
 
 
-def test_streaming_mode_emits_stream_end_after_terminal() -> None:
+async def test_streaming_mode_emits_stream_end_after_terminal() -> None:
     """P2: terminal content is followed by soothe.stream.end scopes."""
     from soothe_nano.core.events import STREAM_END
 
     coalescer = StreamDeliveryCoalescer("streaming")
-    out = coalescer.ingest(*_gc_chunk("final", last=True))
+    out = await coalescer.ingest(*_gc_chunk("final", last=True))
     custom = [item for item in out if item[1] == "custom"]
     assert any(
         item[2].get("type") == STREAM_END and item[2].get("scope") == "generation"
@@ -661,10 +661,10 @@ def test_streaming_mode_emits_stream_end_after_terminal() -> None:
     )
 
 
-def test_streaming_mode_stamps_stream_terminal_on_last_chunk() -> None:
+async def test_streaming_mode_stamps_stream_terminal_on_last_chunk() -> None:
     """P1.2: streaming passthrough stamps stream_terminal on final chunk."""
     coalescer = StreamDeliveryCoalescer("streaming")
-    out = coalescer.ingest(*_gc_chunk("final", last=True))
+    out = await coalescer.ingest(*_gc_chunk("final", last=True))
     assert len(_messages(out)) == 1
     msg = out[0][2][0]
     assert msg.get("stream_terminal") is True
@@ -672,11 +672,11 @@ def test_streaming_mode_stamps_stream_terminal_on_last_chunk() -> None:
     assert _stream_end_scopes(out) == ["generation", "phase"]
 
 
-def test_chunk_position_last_flushes_goal_completion_without_completed_event() -> None:
+async def test_chunk_position_last_flushes_goal_completion_without_completed_event() -> None:
     """P1.1: chunk_position=last forces immediate namespace flush."""
     coalescer = StreamDeliveryCoalescer("batch")
-    assert coalescer.ingest(*_gc_chunk("a")) == []
-    out = coalescer.ingest(*_gc_chunk("b", last=True))
+    assert await coalescer.ingest(*_gc_chunk("a")) == []
+    out = await coalescer.ingest(*_gc_chunk("b", last=True))
     msgs = [item for item in out if item[1] == "messages"]
     assert len(msgs) == 1
     body = msgs[0][2][0]
@@ -685,7 +685,7 @@ def test_chunk_position_last_flushes_goal_completion_without_completed_event() -
     assert body.get("chunk_position") == "last"
 
 
-def test_partial_stream_tool_update_upgrades_buffered_row() -> None:
+async def test_partial_stream_tool_update_upgrades_buffered_row() -> None:
     """Partial frames merge into the buffered row instead of duplicating it."""
     coalescer = StreamDeliveryCoalescer("adaptive", tool_batch_interval_ms=10_000)
     ns = ()
@@ -712,7 +712,7 @@ def test_partial_stream_tool_update_upgrades_buffered_row() -> None:
     assert flushed[0][2]["updates"][0]["args"] == {"file_path": "a.txt"}
 
 
-def test_partial_merge_ignores_unbatched_ids() -> None:
+async def test_partial_merge_ignores_unbatched_ids() -> None:
     """Nothing to merge when the call id is not in the batch buffer."""
     coalescer = StreamDeliveryCoalescer("adaptive")
     partial = {
@@ -725,7 +725,7 @@ def test_partial_merge_ignores_unbatched_ids() -> None:
     assert coalescer._merge_partial_stream_tool_update((), partial) is False
 
 
-def test_partial_merge_ignores_complete_updates() -> None:
+async def test_partial_merge_ignores_complete_updates() -> None:
     """Only partial frames merge in place; complete ones follow the old path."""
     coalescer = StreamDeliveryCoalescer("adaptive", tool_batch_interval_ms=10_000)
     ns = ()

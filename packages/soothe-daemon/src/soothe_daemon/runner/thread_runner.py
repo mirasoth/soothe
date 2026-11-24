@@ -798,7 +798,7 @@ class ThreadPool:
         still waiting on the response queue (crash, forced exit, or delivery gap).
 
         Returns:
-            True if recovery ran (synthetic `done` or stale bookkeeping cleared)
+            True if recovery ran (synthetic terminal or stale bookkeeping cleared)
             and the caller should skip the generic dead-worker error path.
         """
         req_id = worker.current_request_id
@@ -826,12 +826,20 @@ class ThreadPool:
             return False
 
         worker.dead_failure_routed = True
+        # No recorded error: the thread died mid-request without emitting any
+        # terminal. Route a synthetic error (not a success `done`) so a
+        # truncated turn is never reported as complete — mirrors the process
+        # pool's dead-worker recovery.
+        err = RuntimeError(
+            "Worker thread exited unexpectedly during query execution; "
+            "check daemon logs for errors."
+        )
         try:
-            await aio_q.put(("done", None))
+            await aio_q.put(("error", err))
             await aio_q.put(("ready", None))
             logger.warning(
                 "ThreadPool: worker %s died with stale busy state; delivered recovery "
-                "done (loop_id=%s, request_id=%s)",
+                "error terminal (loop_id=%s, request_id=%s)",
                 worker.worker_id,
                 worker.current_loop_id,
                 req_id,
@@ -839,7 +847,7 @@ class ThreadPool:
         except Exception:
             worker.dead_failure_routed = False
             logger.exception(
-                "ThreadPool: failed to deliver recovery done request_id=%s",
+                "ThreadPool: failed to deliver recovery error terminal request_id=%s",
                 req_id,
             )
             return False
@@ -1125,6 +1133,16 @@ class ThreadPool:
             cond = self._worker_available
             if cond is None:
                 raise RuntimeError("ThreadPool is not started")
+
+            # Same-loop serialization: re-check inside the semaphore and mark
+            # busy before releasing it, so two concurrent submits for the same
+            # loop cannot both dispatch before either marks busy (the
+            # pre-semaphore wait above is only a slot-efficient fast path).
+            while self.is_loop_busy(request.loop_id):
+                if not self._running:
+                    raise RuntimeError("ThreadPool is shutting down")
+                async with cond:
+                    await cond.wait()
 
             worker: WorkerThreadState
             response_queue: asyncio.Queue
@@ -1437,10 +1455,12 @@ class ThreadPool:
                 worker.request_queue.put(None)
                 worker.status = WorkerThreadStatus.SHUTTING_DOWN
 
-        # Wait for graceful exit
+        # Wait for graceful exit (join runs off the event loop — up to 5s per
+        # worker would otherwise block shutdown broadcasts/heartbeats).
+        loop = asyncio.get_event_loop()
         for worker in self._workers.values():
             if worker.thread.is_alive():
-                worker.thread.join(timeout=5)
+                await loop.run_in_executor(None, lambda w=worker: w.thread.join(timeout=5))
 
         self._workers.clear()
         self._workers_by_loop_id.clear()

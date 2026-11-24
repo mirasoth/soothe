@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from typing import Any
@@ -29,6 +30,42 @@ logger = logging.getLogger(__name__)
 
 _LOOP_PROMPT_PREVIEW_MAX = 200
 _LOOP_AI_RESPONSE_PREVIEW_MAX = 160
+
+# Server-side upper bound for client-supplied `limit` values (loop_list /
+# loop_messages). Prevents a single request from paging the entire store.
+_LOOP_LIST_LIMIT_MAX = 200
+_LOOP_MESSAGES_LIMIT_MAX = 200
+
+# Cap on tracked per-client handshake states. Clients that disconnect without
+# reaching the transport-level cleanup path would otherwise leak an entry each.
+_HANDSHAKE_STATE_MAX = 1024
+
+# Config keys whose values must never leave the daemon over the wire
+# (case-insensitive substring match) plus the whole credentials mapping.
+_SECRET_KEY_MARKERS = ("api_key", "secret", "password", "token")
+_MASKED_VALUE = "***"
+
+
+def _redact_secret_values(value: Any) -> Any:
+    """Recursively mask secret-bearing values in a dumped config tree.
+
+    Keys whose name contains ``api_key``, ``secret``, ``password``, or
+    ``token`` (case-insensitive) are replaced with ``***``; the whole
+    ``storage_options`` mapping (workspace-sync credentials) is masked too.
+    """
+    if isinstance(value, dict):
+        redacted: dict[str, Any] = {}
+        for key, val in value.items():
+            key_str = str(key)
+            lowered = key_str.lower()
+            if lowered == "storage_options" or any(m in lowered for m in _SECRET_KEY_MARKERS):
+                redacted[key_str] = _MASKED_VALUE
+            else:
+                redacted[key_str] = _redact_secret_values(val)
+        return redacted
+    if isinstance(value, list):
+        return [_redact_secret_values(item) for item in value]
+    return value
 
 
 def _peek_loop_prompt(loop_id: str) -> str | None:
@@ -428,15 +465,21 @@ class MessageRouter:
         if msg_type in ("request", "subscribe", "unsubscribe") and envelope_id is not None:
             flat["request_id"] = envelope_id
             flat["id"] = envelope_id
-        flat.update(params)
+        # Merge params without letting them override the dispatch
+        # discriminators (`type`/`proto`) or correlation ids — params are
+        # operation fields, never envelope-control fields.
+        flat.update(
+            {k: v for k, v in params.items() if k not in ("type", "proto", "request_id", "id")}
+        )
         return flat
 
     async def _dispatch_batch(self, client_id: Any, batch: list[Any]) -> None:
         """Process a batch request array.
 
-        Each item is dispatched independently. Responses are collected for items
-        with an `id` field (notifications produce no response). Empty or invalid
-        arrays return a single `-32600 INVALID_REQUEST` error.
+        Each item is dispatched independently. Every failed item produces
+        exactly one dict error envelope sent directly to the client; successful
+        items are answered by their own handlers. Empty or invalid arrays
+        return a single `-32600 INVALID_REQUEST` error.
 
         Args:
             client_id: Client connection identifier.
@@ -463,16 +506,16 @@ class MessageRouter:
             await d._send_client_message(client_id, err)
             return
 
-        responses: list[dict[str, Any]] = []
-
         for item in batch:
             # Skip non-dict items
             if not isinstance(item, dict):
-                err = build_error_response(
-                    ErrorCode.INVALID_REQUEST,
-                    "Batch item must be a valid message object",
+                await d._send_client_message(
+                    client_id,
+                    build_error_response(
+                        ErrorCode.INVALID_REQUEST,
+                        "Batch item must be a valid message object",
+                    ),
                 )
-                responses.append(err)
                 continue
 
             # Process item via single-message dispatch logic
@@ -482,38 +525,44 @@ class MessageRouter:
             # Handshake enforcement
             if item_type not in _HANDSHAKE_EXEMPT_TYPES:
                 if not self._is_handshake_complete(client_id):
-                    err = build_error_response(
-                        ErrorCode.INVALID_REQUEST,
-                        "Handshake must complete before sending messages",
-                        request_id=item.get("id"),
-                        data={"type": item_type},
+                    await d._send_client_message(
+                        client_id,
+                        build_error_response(
+                            ErrorCode.INVALID_REQUEST,
+                            "Handshake must complete before sending messages",
+                            request_id=item.get("id"),
+                            data={"type": item_type},
+                        ),
                     )
-                    responses.append(err)
                     continue
 
             # Validation (on the raw envelope, before unwrapping)
             errors = validate_message(item)
             if errors:
-                err = build_error_response(
-                    ErrorCode.INVALID_PARAMS,
-                    "Invalid params",
-                    request_id=item.get("id"),
-                    data={"errors": errors},
+                await d._send_client_message(
+                    client_id,
+                    build_error_response(
+                        ErrorCode.INVALID_PARAMS,
+                        "Invalid params",
+                        request_id=item.get("id"),
+                        data={"errors": errors},
+                    ),
                 )
-                responses.append(err)
                 continue
 
             # Envelope unwrapping
             if item_type in _ENVELOPE_TYPES:
                 unwrapped = self._unwrap_envelope(item_type, item)
                 if unwrapped is None:
-                    err = build_error_response(
-                        ErrorCode.INVALID_REQUEST,
-                        f"Invalid envelope: missing 'method' for type={item_type}",
-                        request_id=item.get("id"),
-                        data={"type": item_type},
+                    await d._send_client_message(
+                        client_id,
+                        build_error_response(
+                            ErrorCode.INVALID_REQUEST,
+                            f"Invalid envelope: missing 'method' for type={item_type}",
+                            request_id=item.get("id"),
+                            data={"type": item_type},
+                        ),
                     )
-                    responses.append(err)
                     continue
                 item = unwrapped
                 item_type = item.get("type", "")
@@ -523,49 +572,34 @@ class MessageRouter:
 
             # Registry dispatch
             if handler_name is None:
-                err = build_error_response(
-                    ErrorCode.METHOD_NOT_FOUND,
-                    f"Method not found: {item_type}",
-                    request_id=item.get("request_id") or item.get("id"),
-                    data={"method": item_type},
+                await d._send_client_message(
+                    client_id,
+                    build_error_response(
+                        ErrorCode.METHOD_NOT_FOUND,
+                        f"Method not found: {item_type}",
+                        request_id=item.get("request_id") or item.get("id"),
+                        data={"method": item_type},
+                    ),
                 )
-                responses.append(err)
                 continue
 
-            # Invoke handler
+            # Invoke handler; handlers send their own responses via
+            # _send_response, so only handler-raised protocol errors need an
+            # error envelope here (exactly one dict envelope per failed item).
             handler = getattr(self, handler_name)
             request_id = item.get("request_id") or item.get("id")
             try:
                 await handler(client_id, item)
-                # Handler sends its own response via _send_response
-                # For batch, we don't collect responses here since handlers
-                # send directly to client. The batch array return is for
-                # synchronous batch semantics only (not currently used).
-                # Notifications have no id and produce no response entry.
-                if request_id is not None:
-                    # Handler already sent response; nothing to collect
-                    pass
             except RpcProtocolError as exc:
-                err = build_error_response(
-                    exc.code,
-                    exc.message,
-                    request_id=request_id,
-                    data=exc.data if exc.data else None,
+                await d._send_client_message(
+                    client_id,
+                    build_error_response(
+                        exc.code,
+                        exc.message,
+                        request_id=request_id,
+                        data=exc.data if exc.data else None,
+                    ),
                 )
-                if request_id is not None:
-                    responses.append(err)
-                # Send error directly for items with id
-                await d._send_client_message(client_id, err)
-
-        # Batch response: only sent if there were items with id that produced
-        # responses. Since handlers send responses directly, we don't send a
-        # batch array here unless all items failed validation before dispatch.
-        # Per RFC-450 §5.6, the caller may not expect a batch response if
-        # handlers sent individual responses.
-        if responses:
-            # Items that failed validation before handler dispatch
-            # These need to be sent as a batch since handler didn't send them
-            await d._send_client_message(client_id, responses)
 
     async def dispatch(self, client_id: Any, msg: dict[str, Any] | list[Any]) -> None:
         """Handle a single client message or batch via the `HANDLER_REGISTRY` dispatch table.
@@ -725,6 +759,14 @@ class MessageRouter:
         """Check whether the protocol-1 handshake has completed for this client."""
         return self._handshake_key(client_id) in self._handshake_state
 
+    def forget_client(self, client_id: Any) -> None:
+        """Drop per-client router state when the client disconnects.
+
+        Args:
+            client_id: Client identifier or connection object.
+        """
+        self._handshake_state.pop(self._handshake_key(client_id), None)
+
     def _mark_handshake_complete(
         self, client_id: Any, proto_version: str, capabilities: list[str]
     ) -> None:
@@ -736,6 +778,11 @@ class MessageRouter:
             capabilities: Negotiated capabilities (intersection).
         """
         key = self._handshake_key(client_id)
+        # FIFO cap so disconnected clients that never hit the cleanup path
+        # cannot grow this dict without bound.
+        if len(self._handshake_state) >= _HANDSHAKE_STATE_MAX and key not in self._handshake_state:
+            oldest = next(iter(self._handshake_state))
+            self._handshake_state.pop(oldest, None)
         self._handshake_state[key] = (proto_version, capabilities)
         # Also track in the WebSocket channel's client info (if any) so the
         # transport layer can enforce handshake ordering on subsequent messages.
@@ -978,6 +1025,74 @@ class MessageRouter:
         req["client_id"] = client_id
         await d._loop_input_dispatcher.enqueue(active_loop, req)
 
+    async def _mark_session_authenticated(self, client_id: Any, *, user_id: str | None) -> None:
+        """Flag the client's session as authenticated after a successful auth RPC.
+
+        Args:
+            client_id: Client identifier.
+            user_id: Identity user id carried by the auth response, if any.
+        """
+        d = self._daemon
+        session_manager = getattr(d, "_session_manager", None)
+        if session_manager is None:
+            return
+        try:
+            session = await session_manager.get_session(client_id)  # type: ignore[arg-type]
+        except Exception:  # noqa: BLE001 — auth bookkeeping must never break dispatch
+            logger.debug(
+                "[MsgRouter] Failed to resolve session for auth marking (client=%s)",
+                client_id,
+                exc_info=True,
+            )
+            return
+        if session is not None:
+            session.authenticated = True
+            if user_id:
+                session.auth_user_id = str(user_id)
+
+    async def _require_admin_auth(self, client_id: Any) -> bool:
+        """Return True when the client may call admin/destructive RPCs.
+
+        Identity-disabled deployments are trusted-local (behavior unchanged).
+        With the identity service enabled, the client's session must have
+        completed a successful `auth` RPC. Sends an `AUTH_REQUIRED` error
+        envelope and returns False otherwise.
+
+        Args:
+            client_id: Client connection identifier.
+
+        Returns:
+            True when the RPC may proceed.
+        """
+        d = self._daemon
+        if getattr(d, "_identity_service", None) is None:
+            return True
+        session_manager = getattr(d, "_session_manager", None)
+        session = None
+        if session_manager is not None:
+            try:
+                session = await session_manager.get_session(client_id)  # type: ignore[arg-type]
+            except Exception:  # noqa: BLE001 — fail closed below
+                logger.debug(
+                    "[MsgRouter] Session lookup failed during authz gate (client=%s)",
+                    client_id,
+                    exc_info=True,
+                )
+        if session is not None and getattr(session, "authenticated", False):
+            return True
+        await d._send_client_message(
+            client_id,
+            build_error_response(
+                ErrorCode.AUTH_REQUIRED,
+                "Authentication required for this operation",
+            ),
+        )
+        logger.warning(
+            "[MsgRouter] Rejected unauthenticated admin RPC from client=%s",
+            client_id,
+        )
+        return False
+
     async def _handle_auth(self, client_id: Any, msg: dict[str, Any]) -> None:
         """Handle `auth` WebSocket message.
 
@@ -1009,6 +1124,8 @@ class MessageRouter:
         response = auth_handler.handle_auth(access_key, secret_key)
         result = dict(response)
         result.pop("type", None)
+        if result.get("success"):
+            await self._mark_session_authenticated(client_id, user_id=result.get("user_id"))
         await self._send_response(client_id, request_id, result)
 
     async def _handle_auth_refresh(self, client_id: Any, msg: dict[str, Any]) -> None:
@@ -1040,20 +1157,44 @@ class MessageRouter:
         response = auth_handler.handle_refresh(refresh_token)
         result = dict(response)
         result.pop("type", None)
+        if result.get("success"):
+            await self._mark_session_authenticated(client_id, user_id=None)
         await self._send_response(client_id, request_id, result)
 
     async def _handle_skills_list(self, client_id: str, msg: dict[str, Any]) -> None:
         """Return wire-safe skill metadata for the daemon's agent config."""
-        import asyncio
-
         d = self._daemon
         from soothe_nano.skills.catalog import SkillCatalog
 
+        if not await self._require_admin_auth(client_id):
+            return
+
         # Prefer explicit workspace param (RPC sidecar has no loop subscription),
-        # then fall back to client's subscribed loop workspace, then cwd.
+        # then fall back to client's subscribed loop workspace, then cwd. The
+        # explicit param goes through the same `validate_client_workspace` gate
+        # as `loop_new` — it must never be an arbitrary host path probe.
         workspace: str | None = msg.get("params", {}).get("workspace") or msg.get("workspace")
         if not (isinstance(workspace, str) and workspace.strip()):
             workspace = None
+        else:
+            from soothe.workspace import validate_client_workspace
+
+            try:
+                resolved = validate_client_workspace(workspace.strip())
+            except ValueError as exc:
+                logger.warning(
+                    "[skills_list] Rejecting invalid client workspace %r: %s", workspace, exc
+                )
+                await d._send_client_message(
+                    client_id,
+                    build_error_response(
+                        ErrorCode.WORKSPACE_RESOLUTION_FAILED,
+                        f"invalid workspace: {exc}",
+                        request_id=msg.get("request_id"),
+                    ),
+                )
+                return
+            workspace = str(resolved) if resolved.exists() else None
         loop_id = None if workspace else await self._client_subscribed_loop_id(client_id)
         if loop_id:
             current_thread_id = getattr(d, "_current_thread_id", None)
@@ -1112,6 +1253,7 @@ class MessageRouter:
             return
 
         servers: list[dict[str, Any]] = []
+        error: str | None = None
         try:
             for name, conn in registry.connection_status().items():
                 tools: list[dict[str, str]] = []
@@ -1127,14 +1269,14 @@ class MessageRouter:
                         "tools": tools,
                     }
                 )
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:  # noqa: BLE001 — status is best-effort
+            logger.warning("[mcp_status] Server status collection failed", exc_info=True)
+            error = f"MCP server status collection failed: {exc}"
 
-        await self._send_response(
-            client_id,
-            msg.get("request_id"),
-            {"servers": servers},
-        )
+        result: dict[str, Any] = {"servers": servers}
+        if error is not None:
+            result["error"] = error
+        await self._send_response(client_id, msg.get("request_id"), result)
 
     async def _handle_invoke_skill(self, client_id: str, msg: dict[str, Any]) -> None:
         """Resolve a skill on the daemon host, ack the client, then queue the composed turn."""
@@ -1305,6 +1447,9 @@ class MessageRouter:
         d = self._daemon
         request_id = msg.get("request_id")
 
+        if not await self._require_admin_auth(client_id):
+            return
+
         # Send acknowledgment
         await self._send_response(
             client_id,
@@ -1330,8 +1475,13 @@ class MessageRouter:
         request_id = msg.get("request_id")
         section = msg.get("section", "all")
 
-        # Get config section (wire-safe serialization)
-        config_dict = d._config.model_dump()
+        if not await self._require_admin_auth(client_id):
+            return
+
+        # Get config section (wire-safe serialization). Secret-bearing values
+        # (provider api_keys, storage_options credentials) are masked before
+        # the dump ever leaves the daemon.
+        config_dict = _redact_secret_values(d._config.model_dump())
 
         if section == "all":
             section_data = config_dict
@@ -1352,6 +1502,9 @@ class MessageRouter:
         """
         d = self._daemon
         request_id = msg.get("request_id")
+
+        if not await self._require_admin_auth(client_id):
+            return
 
         # Check if config reload is enabled
         if not getattr(d, "_config_reload_enabled", False):
@@ -1416,7 +1569,10 @@ class MessageRouter:
         d = self._daemon
         request_id = msg.get("request_id")
         filter_data = msg.get("filter") or {}
-        limit = msg.get("limit", 20)
+        try:
+            limit = max(1, min(int(msg.get("limit", 20)), _LOOP_LIST_LIMIT_MAX))
+        except (TypeError, ValueError):
+            limit = 20
 
         status_filter = filter_data.get("status") if isinstance(filter_data, dict) else None
         # Default to hiding empty loops so the picker stops showing bootstrap-only rows.
@@ -1457,10 +1613,12 @@ class MessageRouter:
                 "duration_ms": int(row.get("total_duration_ms") or 0),
                 "client_workspace": row.get("client_workspace"),
             }
-            prompt = _peek_loop_prompt(loop_id)
+            # Display.db reads run in a thread so a slow store never blocks
+            # the dispatch loop while a list response is being assembled.
+            prompt = await asyncio.to_thread(_peek_loop_prompt, loop_id)
             if prompt:
                 entry["prompt"] = prompt
-            latest_ai_response = _peek_latest_assistant_response(loop_id)
+            latest_ai_response = await asyncio.to_thread(_peek_latest_assistant_response, loop_id)
             if latest_ai_response:
                 entry["latest_ai_response"] = latest_ai_response
             entry["topic"] = _resolve_loop_topic(
@@ -1546,6 +1704,9 @@ class MessageRouter:
         d = self._daemon
         request_id = msg.get("request_id")
         loop_id = msg.get("loop_id")
+
+        if not await self._require_admin_auth(client_id):
+            return
 
         if not loop_id:
             await d._send_client_message(
@@ -2238,6 +2399,7 @@ class MessageRouter:
             lim = int(limit) if isinstance(limit, (int, str)) else 100
         except (TypeError, ValueError):
             lim = 100
+        lim = max(1, min(lim, _LOOP_MESSAGES_LIMIT_MAX))
         try:
             off = int(offset) if isinstance(offset, (int, str)) else 0
         except (TypeError, ValueError):

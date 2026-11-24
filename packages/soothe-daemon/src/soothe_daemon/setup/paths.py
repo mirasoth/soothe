@@ -35,7 +35,10 @@ def monorepo_template_path(name: str) -> Path | None:
     """Return monorepo `config/templates/<name>` (symlink to packaged template) if present."""
     if name not in TEMPLATE_NAMES:
         return None
-    candidate = _monorepo_config_dir() / "templates" / name
+    config_dir = _monorepo_config_dir()
+    if config_dir is None:
+        return None
+    candidate = config_dir / "templates" / name
     return candidate if candidate.is_file() else None
 
 
@@ -80,11 +83,15 @@ def read_template_text(name: str) -> str:
     )
 
 
-def _monorepo_config_dir() -> Path:
-    """Best-effort path to the repo `config/` directory."""
+def _monorepo_config_dir() -> Path | None:
+    """Best-effort path to the repo `config/` directory (None when unavailable)."""
     here = Path(__file__).resolve()
     for parent in here.parents:
         candidate = parent / "config"
         if (candidate / "templates" / "nano.yml").is_file():
             return candidate
-    return here.parents[5] / "config"
+    # Magic-depth fallback only makes sense when the package sits at least
+    # six levels below the repo root; shallower installs have no such path.
+    if len(here.parents) > 5:
+        return here.parents[5] / "config"
+    return None

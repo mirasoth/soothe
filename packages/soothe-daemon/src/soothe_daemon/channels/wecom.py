@@ -118,8 +118,10 @@ class WecomChannel(Channel):
         self._processed_message_ids: OrderedDict[str, None] = OrderedDict()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._generate_req_id = None
-        # Store frame headers for each chat to enable replies
-        self._chat_frames: dict[str, Any] = {}
+        # Store frame headers for each chat to enable replies (FIFO-capped,
+        # mirroring _processed_message_ids, so it cannot grow unbounded).
+        self._chat_frames: OrderedDict[str, Any] = OrderedDict()
+        self._MAX_CHAT_FRAMES = 1000
 
     async def start(self) -> None:
         """Start the WeCom bot with WebSocket long connection."""
@@ -369,6 +371,8 @@ class WecomChannel(Channel):
 
             # Store frame for this chat to enable replies
             self._chat_frames[chat_id] = frame
+            while len(self._chat_frames) > self._MAX_CHAT_FRAMES:
+                self._chat_frames.popitem(last=False)
 
             # Forward to channel manager
             await self._handle_message(

@@ -44,14 +44,27 @@ class WebSocketChannel(Channel):
         session_manager: Any | None = None,
         cron_service: Any | None = None,
         memory_profiler: Any | None = None,
+        identity_enabled: bool = False,
     ) -> None:
-        """Initialize WebSocket channel."""
+        """Initialize WebSocket channel.
+
+        Args:
+            config: WebSocket channel configuration.
+            manager: ChannelManager for inbound routing.
+            unified_app: Optional parent FastAPI app to register the WS route on.
+            session_manager: Optional ClientSessionManager instance.
+            cron_service: Optional cron service for ``cron_*`` commands.
+            memory_profiler: Optional memory profiler for ``memory_*`` commands.
+            identity_enabled: When True, command dispatch requires the client's
+                session to be authenticated (see ``_handle_command_message``).
+        """
         super().__init__(config, manager)
         self._ws_config = config
         self._unified_parent_app = unified_app
         self._session_manager = session_manager
         self._cron_service = cron_service
         self._memory_profiler = memory_profiler
+        self._identity_enabled = identity_enabled
         self._app: FastAPI | None = None
         self._server: uvicorn.Server | None = None
         self._serve_task: asyncio.Task[None] | None = None
@@ -253,9 +266,14 @@ class WebSocketChannel(Channel):
         """
         text = encode_websocket_text(message)
 
+        # Snapshot once: handlers may connect/disconnect (mutating self._clients)
+        # while the send tasks are awaited, so results must zip against the
+        # same list the tasks were created from.
+        clients = list(self._clients)
+
         send_tasks = [
             asyncio.create_task(self._send_with_timeout(client, text, timeout=1.0))
-            for client in self._clients
+            for client in clients
         ]
 
         if not send_tasks:
@@ -264,7 +282,7 @@ class WebSocketChannel(Channel):
         results = await asyncio.gather(*send_tasks, return_exceptions=True)
 
         clients_to_remove = []
-        for client, result in zip(self._clients.keys(), results):
+        for client, result in zip(clients, results):
             if isinstance(result, Exception):
                 clients_to_remove.append(client)
 
@@ -653,6 +671,33 @@ class WebSocketChannel(Channel):
         command = msg_dict.get("command", "")
         request_id = msg_dict.get("request_id", "")
         payload = msg_dict.get("payload", {})
+
+        # Authorization gate (identity-enabled deployments): command dispatch
+        # (cron_*/memory_*) requires an authenticated session. When identity is
+        # disabled (trusted-local deployments) behavior is unchanged.
+        if self._identity_enabled:
+            session = (
+                await self._session_manager.get_session(client_id)
+                if self._session_manager
+                else None
+            )
+            if session is None or not getattr(session, "authenticated", False):
+                logger.warning(
+                    "[WS] Command %s rejected for client %s: session not authenticated",
+                    command,
+                    client_id,
+                )
+                await websocket.send_text(
+                    encode_websocket_text(
+                        {
+                            "type": "command_response",
+                            "request_id": request_id,
+                            "result": None,
+                            "error": "AUTH_REQUIRED",
+                        }
+                    )
+                )
+                return
 
         try:
             result = await self._dispatch_command(command, payload)

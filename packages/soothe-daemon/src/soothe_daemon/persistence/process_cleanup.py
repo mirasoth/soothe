@@ -14,7 +14,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 _SPAWN_MARKERS = ("multiprocessing.spawn", "spawn_main")
-_SOOTHE_MARKERS = ("soothe", "soothe_daemon", "Soothe", "soothe_daemon")
+_SOOTHE_MARKERS = ("soothe_daemon", "Soothe")
 # Paths that mark a process as a worktree/background spawn of a soothe job.
 _WORKTREE_PATH_MARKERS = (".soothe/worktrees/", ".soothe/background/bg-")
 
@@ -47,16 +47,26 @@ def _parent_alive(pid: int) -> bool:
 
 
 def _looks_like_soothe_spawn(cmdline: str, soothe_root: Path | None) -> bool:
+    """Classify a spawn process as a soothe worker using positive evidence only.
+
+    A process is considered a soothe spawn worker only when its command line
+    carries explicit soothe evidence: the configured soothe project root, the
+    interpreter that launched this daemon/CLI (`multiprocessing` spawn children
+    always reuse `sys.executable`, so pool_runner workers match), or a soothe
+    module/brand marker (`soothe_daemon`, `Soothe`). The bare `spawn_main`
+    fallback is deliberately absent — every spawn-based Python app uses it, and
+    matching on it alone killed unrelated host process groups.
+    """
     if not any(marker in cmdline for marker in _SPAWN_MARKERS):
         return False
     if "multiprocessing" not in cmdline:
         return False
     if soothe_root is not None and str(soothe_root) in cmdline:
         return True
-    if any(marker in cmdline for marker in _SOOTHE_MARKERS):
+    executable = sys.executable or ""
+    if executable and executable in cmdline:
         return True
-    # process_pool children often show only spawn_main in ps(1) output
-    return "spawn_main" in cmdline
+    return any(marker in cmdline for marker in _SOOTHE_MARKERS)
 
 
 def _looks_like_orphaned_worktree_spawn(cmdline: str) -> bool:

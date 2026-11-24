@@ -41,6 +41,9 @@ ARG SOOTHE_VERSION=0.5.8
 ARG SOOTHE_DAEMON_VERSION=
 # Include browser subagent dependencies (playwright/chromium). Default: false.
 ARG INCLUDE_BROWSER=false
+# Pinned uv installer release (reproducible builds; astral.sh serves the
+# installer per version at https://astral.sh/uv/<version>/install.sh).
+ARG UV_VERSION=0.13.9
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -55,8 +58,9 @@ RUN sed -i 's|http://deb.debian.org|http://mirrors.aliyun.com|g' /etc/apt/source
 
 WORKDIR /app
 
-# Install uv directly via curl (avoids ghcr.io access for networks with restrictions)
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
+# Install uv directly via curl from a pinned release
+# (avoids ghcr.io access for networks with restrictions)
+RUN curl -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" | sh \
     && mv /root/.local/bin/uv /usr/local/bin/uv
 
 # Ensure playwright browsers directory exists (empty if INCLUDE_BROWSER=false)
@@ -95,12 +99,12 @@ ARG INCLUDE_BROWSER=false
 
 LABEL org.opencontainers.image.title="Soothe Daemon" \
     org.opencontainers.image.description="Soothe agent orchestration daemon (PyPI soothe-daemon + bundled deps)" \
-    org.opencontainers.image.source="https://github.com/OpenSoothe/soothe" \
+    org.opencontainers.image.source="https://github.com/mirasoth/soothe" \
     org.opencontainers.image.version="${SOOTHE_VERSION}"
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    UV_COMPILEBYTECODE=1 \
+    UV_COMPILE_BYTECODE=1 \
     SOOTHE_HOME=/var/lib/soothe \
     PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
     SOOTHE_DAEMON_TRANSPORTS__WEBSOCKET__HOST=0.0.0.0 \

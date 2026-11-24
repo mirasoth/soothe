@@ -75,7 +75,7 @@ class QQConfig:
     enabled: bool = False
     app_id: str = ""
     secret: str = ""
-    allow_from: list[str] = []
+    allow_from: list[str] | None = None
     msg_format: Literal["plain", "markdown"] = "plain"
     ack_message: str = "Processing..."
 
@@ -90,6 +90,8 @@ class QQConfig:
         for key, value in kwargs.items():
             if hasattr(self, key):
                 setattr(self, key, value)
+        if self.allow_from is None:
+            self.allow_from = []
 
     def get(self, key: str, default: Any = None) -> Any:
         return getattr(self, key, default)

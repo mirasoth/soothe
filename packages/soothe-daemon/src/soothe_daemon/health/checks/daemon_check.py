@@ -3,10 +3,37 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 from soothe_daemon.config import SootheDaemonConfig
 from soothe_daemon.health.formatters import aggregate_status
 from soothe_daemon.health.models import CategoryResult, CheckResult, CheckStatus
+
+
+def _read_pid_file(pf: Path) -> int | None:
+    """Return the PID recorded in *pf*, or None when unreadable/invalid."""
+    try:
+        return int(pf.read_text().strip())
+    except (ValueError, OSError):
+        return None
+
+
+def _pid_alive(pid: int) -> bool:
+    """Return True when the process *pid* exists.
+
+    `PermissionError` means the process is alive but unsignalable (e.g. a
+    daemon running under another user or container) and counts as alive,
+    consistent with `_check_process_alive`.
+    """
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
 
 
 def _check_pid_file(*, websocket_ok: bool = False) -> CheckResult:
@@ -26,7 +53,7 @@ def _check_pid_file(*, websocket_ok: bool = False) -> CheckResult:
             name="pid_file",
             status=CheckStatus.INFO,
             message=f"PID file not found at {pf} (daemon not running)",
-            details={"path": str(pf)},
+            details={"offline": True, "path": str(pf)},
         )
 
     try:
@@ -103,7 +130,7 @@ def _check_websocket_connectivity(config: SootheDaemonConfig | None) -> CheckRes
         name="websocket_connectivity",
         status=CheckStatus.INFO,
         message="WebSocket not accepting connections (daemon not running)",
-        details={"host": ws_host, "port": ws_port},
+        details={"offline": True, "host": ws_host, "port": ws_port},
     )
 
 
@@ -246,26 +273,16 @@ def _check_stale_locks(config: SootheDaemonConfig | None) -> CheckResult | None:
     pf = pid_path()
     issues: list[str] = []
 
-    if pf.exists():
-        try:
-            pid_str = pf.read_text().strip()
-            pid = int(pid_str)
-            os.kill(pid, 0)
-        except (ValueError, ProcessLookupError, OSError):
-            issues.append(f"Stale PID file at {pf}")
-
-    if pf.exists():
-        try:
-            pid_str = pf.read_text().strip()
-            pid = int(pid_str)
-            os.kill(pid, 0)
-
-            ws_host = config.transports.websocket.host if config else "127.0.0.1"
-            ws_port = config.transports.websocket.port if config else 8765
-            if not SootheDaemon._is_port_live(ws_host, ws_port):
-                issues.append(f"Zombie daemon (PID {pid} alive but WebSocket port {ws_port} dead)")
-        except (ValueError, ProcessLookupError, OSError):
-            pass
+    pid = _read_pid_file(pf) if pf.exists() else None
+    if pid is None:
+        issues.append(f"Stale PID file at {pf}")
+    elif not _pid_alive(pid):
+        issues.append(f"Stale PID file at {pf}")
+    else:
+        ws_host = config.transports.websocket.host if config else "127.0.0.1"
+        ws_port = config.transports.websocket.port if config else 8765
+        if not SootheDaemon._is_port_live(ws_host, ws_port):
+            issues.append(f"Zombie daemon (PID {pid} alive but WebSocket port {ws_port} dead)")
 
     if not issues:
         return None

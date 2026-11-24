@@ -64,6 +64,14 @@ class CronJobStore:
             "CREATE INDEX IF NOT EXISTS idx_cron_jobs_next_run "
             "ON cron_jobs(next_run) WHERE status = 'pending'"
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS cron_meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
+            """
+        )
 
     async def create(self, job: CronJob) -> CronJob:
         """Insert new job, return with timestamps set."""
@@ -132,6 +140,36 @@ class CronJobStore:
             return [self._row_to_job(row) for row in rows]
 
         return await self._runtime.run_read(_read)
+
+    async def list_running(self) -> list[CronJob]:
+        """List all jobs currently marked running."""
+
+        def _read(conn: sqlite3.Connection) -> list[CronJob]:
+            rows = conn.execute(
+                "SELECT * FROM cron_jobs WHERE status = 'running' ORDER BY next_run",
+            ).fetchall()
+            return [self._row_to_job(row) for row in rows]
+
+        return await self._runtime.run_read(_read)
+
+    async def get_meta(self, key: str) -> str | None:
+        """Return the stored value for a service metadata key, or None."""
+
+        def _read(conn: sqlite3.Connection) -> str | None:
+            row = conn.execute("SELECT value FROM cron_meta WHERE key = ?", (key,)).fetchone()
+            return row[0] if row else None
+
+        return await self._runtime.run_read(_read)
+
+    async def set_meta(self, key: str, value: str) -> None:
+        """Upsert a service metadata key (e.g. the schedule timezone snapshot)."""
+        await self._runtime.run_write(lambda conn: self._set_meta_sync(conn, key, value))
+
+    def _set_meta_sync(self, conn: sqlite3.Connection, key: str, value: str) -> None:
+        conn.execute(
+            "INSERT OR REPLACE INTO cron_meta (key, value) VALUES (?, ?)",
+            (key, value),
+        )
 
     def _list_pending_sync(self, conn: sqlite3.Connection) -> list[sqlite3.Row]:
         return conn.execute(

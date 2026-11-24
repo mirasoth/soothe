@@ -36,7 +36,10 @@ class ThreadStateRegistry:
     """Registry of per-checkpoint state keyed by LangGraph `thread_id`.
 
     **Loop-first routing** uses `loop_id` on the wire; use `get_thread_loop` to
-    resolve checkpoint → loop.
+    resolve checkpoint → loop. All `_by_thread`/`_thread_loop` accessors are
+    guarded by the shared `threading.Lock` so mutating and read paths are
+    consistent whether they run on the event loop, in worker threads, or in
+    `asyncio.to_thread` callbacks.
     """
 
     def __init__(self) -> None:
@@ -47,7 +50,8 @@ class ThreadStateRegistry:
 
     def get(self, thread_id: str) -> ThreadState | None:
         """Return state for *thread_id* if registered."""
-        return self._by_thread.get(thread_id)
+        with self._lock:
+            return self._by_thread.get(thread_id)
 
     def ensure(self, thread_id: str, *, is_draft: bool = False) -> ThreadState:
         """Get or create `ThreadState` for *thread_id*.
@@ -71,19 +75,22 @@ class ThreadStateRegistry:
 
     def remove(self, thread_id: str) -> None:
         """Drop state for a thread (e.g. after archive/delete)."""
-        self._by_thread.pop(thread_id, None)
-        self._thread_loop.pop(thread_id, None)
+        with self._lock:
+            self._by_thread.pop(thread_id, None)
+            self._thread_loop.pop(thread_id, None)
 
     def set_thread_loop(self, thread_id: str, loop_id: str | None) -> None:
         """Associate a durability thread with an StrangeLoop id."""
-        if loop_id and str(loop_id).strip():
-            self._thread_loop[thread_id] = str(loop_id).strip()
-        else:
-            self._thread_loop.pop(thread_id, None)
+        with self._lock:
+            if loop_id and str(loop_id).strip():
+                self._thread_loop[thread_id] = str(loop_id).strip()
+            else:
+                self._thread_loop.pop(thread_id, None)
 
     def get_thread_loop(self, thread_id: str) -> str | None:
         """Return StrangeLoop id bound to *thread_id*, if any."""
-        return self._thread_loop.get(thread_id)
+        with self._lock:
+            return self._thread_loop.get(thread_id)
 
     def bind_loop(self, thread_id: str, loop_id: str) -> None:
         """Bind thread to loop (create or update mapping).
@@ -95,7 +102,8 @@ class ThreadStateRegistry:
             loop_id: Loop identifier to bind.
         """
         if loop_id and str(loop_id).strip():
-            self._thread_loop[thread_id] = str(loop_id).strip()
+            with self._lock:
+                self._thread_loop[thread_id] = str(loop_id).strip()
 
     def unbind_loop(self, thread_id: str, loop_id: str) -> None:
         """Remove thread → loop binding.
@@ -110,9 +118,10 @@ class ThreadStateRegistry:
             Only removes binding if it matches the provided loop_id.
             Does not remove thread state or other associations.
         """
-        current_binding = self._thread_loop.get(thread_id)
-        if current_binding == loop_id:
-            self._thread_loop.pop(thread_id, None)
+        with self._lock:
+            current_binding = self._thread_loop.get(thread_id)
+            if current_binding == loop_id:
+                self._thread_loop.pop(thread_id, None)
 
     def set_workspace(self, thread_id: str, workspace: Path) -> None:
         """Attach resolved workspace path to a thread."""
@@ -126,7 +135,8 @@ class ThreadStateRegistry:
 
     def all_thread_ids(self) -> list[str]:
         """List all registered thread IDs."""
-        return list(self._by_thread.keys())
+        with self._lock:
+            return list(self._by_thread.keys())
 
     def cleanup_loop(self, loop_id: str) -> list[str]:
         """Remove all threads associated with *loop_id* (loop deletion).
@@ -134,14 +144,15 @@ class ThreadStateRegistry:
         Returns:
             List of thread_ids that were removed.
         """
-        removed: list[str] = []
-        for tid, lid in list(self._thread_loop.items()):
-            if lid == loop_id:
-                removed.append(tid)
-        for tid in removed:
-            self._by_thread.pop(tid, None)
-            self._thread_loop.pop(tid, None)
-        return removed
+        with self._lock:
+            removed: list[str] = []
+            for tid, lid in list(self._thread_loop.items()):
+                if lid == loop_id:
+                    removed.append(tid)
+            for tid in removed:
+                self._by_thread.pop(tid, None)
+                self._thread_loop.pop(tid, None)
+            return removed
 
     # -----------------------------------------------------------------------
     # Identity Context (RFC-307)

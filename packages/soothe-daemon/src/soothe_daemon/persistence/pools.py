@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from soothe.config import SootheConfig
 
-    from soothe_daemon.config.models import DaemonConfig
+    from soothe_daemon.config import SootheDaemonConfig
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +24,7 @@ def uses_postgresql_persistence(config: SootheConfig) -> bool:
 
 async def preopen_shared_postgres_pools(
     config: SootheConfig,
-    daemon_config: DaemonConfig,
+    daemon_config: SootheDaemonConfig,
 ) -> None:
     """Pre-open shared PostgreSQL pools via PostgresPoolRegistry (thread_pool mode)."""
     if not uses_postgresql_persistence(config):
@@ -79,7 +79,12 @@ async def release_idle_shared_postgres_pools() -> None:
 
 
 async def close_shared_postgres_pools() -> None:
-    """Close shared PostgreSQL pools at daemon shutdown."""
+    """Close shared PostgreSQL pools at daemon shutdown.
+
+    Tolerates missing optional soothe modules (ImportError on import only);
+    failures raised by the close calls themselves are logged at warning with
+    tracebacks instead of being masked, and every close is attempted.
+    """
     try:
         from soothe.persistence.loop_writer import LoopPersistenceWriter
         from soothe.persistence.postgres_pool_registry import PostgresPoolRegistry
@@ -89,36 +94,52 @@ async def close_shared_postgres_pools() -> None:
             SharedPostgreSQLPool,
             close_shared_sqlite_backend_instance,
         )
+    except ImportError:
+        logger.warning(
+            "Optional soothe persistence modules unavailable; skipping shared pool close"
+        )
+        return
 
+    try:
+        await LoopPersistenceWriter.close_shared_instance()
+        logger.info("Shared loop persistence writer closed")
+    except Exception:
+        logger.warning("Failed to close shared loop persistence writer", exc_info=True)
+
+    try:
+        from soothe.persistence.sqlite_loop_flush import SqliteLoopFlushCoordinator
+    except ImportError:
+        logger.debug("SqliteLoopFlushCoordinator unavailable; skipping its close")
+    else:
         try:
-            await LoopPersistenceWriter.close_shared_instance()
-            logger.info("Shared loop persistence writer closed")
-        except ImportError:
-            pass
-
-        try:
-            from soothe.persistence.sqlite_loop_flush import SqliteLoopFlushCoordinator
-
             await SqliteLoopFlushCoordinator.close_shared_instance()
             logger.info("SQLite loop flush coordinator closed")
-        except ImportError:
-            pass
+        except Exception:
+            logger.warning("Failed to close SQLite loop flush coordinator", exc_info=True)
 
-        await SharedPostgreSQLPool.close_shared_instance()
-        await SharedCheckpointerPool.close_shared_instance()
-        await SharedMetadataPool.close_shared_instance()
+    for closer, name in (
+        (SharedPostgreSQLPool.close_shared_instance, "SharedPostgreSQLPool"),
+        (SharedCheckpointerPool.close_shared_instance, "SharedCheckpointerPool"),
+        (SharedMetadataPool.close_shared_instance, "SharedMetadataPool"),
+    ):
+        try:
+            await closer()
+        except Exception:
+            logger.warning("Failed to close %s", name, exc_info=True)
 
+    try:
         registry = PostgresPoolRegistry.try_get_instance()
         if registry is not None:
             await registry.close_all()
             logger.info("PostgresPoolRegistry closed")
+    except Exception:
+        logger.warning("Failed to close PostgresPoolRegistry", exc_info=True)
 
+    try:
         await close_shared_sqlite_backend_instance()
         logger.info("Shared persistence pools closed")
-    except ImportError:
-        pass
     except Exception:
-        logger.debug("Failed to close shared persistence pools", exc_info=True)
+        logger.warning("Failed to close shared sqlite backend instance", exc_info=True)
 
 
 async def periodic_postgres_pool_maintenance(

@@ -34,8 +34,8 @@ Run `soothed setup` (or `soothed setup --yes`) to create these from packaged tem
 
 ## Dependencies
 
-- `soothe>=0.9.4` — In-process agent core (pulls soothe-nano)
-- `soothe-nano>=1.4.2` — agent-side contracts via soothe (wire/events/display host copies live in soothe)
+- `soothe>=1.0.0,<2.0.0` — In-process agent core (pulls `soothe-nano` transitively)
+- `soothe-nano` — agent-side contracts via soothe (transitive dependency; not re-pinned by soothe-daemon — wire/events/display host copies live in soothe)
 
 Do **not** depend on `soothe-client-python` at runtime; use `soothe.wire`
 (or `soothe_daemon.admin_rpc` for `soothed` admin commands). Tests may install

@@ -336,11 +336,11 @@ class TestSubscriptionParams:
             {
                 "loop_id": "abc",
                 "stream_delivery": "batch",
-                "wire_tier": "compact",
+                "wire_tier": "progress",
             }
         )
         assert p.stream_delivery == "batch"
-        assert p.wire_tier == "compact"
+        assert p.wire_tier == "progress"
 
     def test_subscribe_defaults(self) -> None:
         p = SubscribeParams.model_validate({"loop_id": "abc"})

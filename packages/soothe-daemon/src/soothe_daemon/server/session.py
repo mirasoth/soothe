@@ -215,6 +215,9 @@ class ClientSession:
         detach_requested: Whether client explicitly requested detach
         config: Optional SootheConfig for effective streaming config
         loop_subscription_ids: Maps loop_id → subscription correlation id for `next` envelopes
+        authenticated: Whether the client completed a successful `auth` RPC
+        (AKSK identity). Only meaningful when the daemon has an identity service.
+        auth_user_id: Identity user id returned by the successful `auth` RPC.
     """
 
     client_id: str
@@ -233,6 +236,9 @@ class ClientSession:
     stream_delivery: StreamDeliveryMode = "adaptive"  # §3.2: per-client preference
     # Subscription correlation ids for protocol-1 `next` envelopes (RFC-450).
     loop_subscription_ids: dict[str, str] = field(default_factory=dict)  # loop_id → subscription_id
+    # RPC authorization state (set by the router's `auth`/`auth_refresh` handlers).
+    authenticated: bool = False
+    auth_user_id: str | None = None
 
 
 class ClientSessionManager:
@@ -366,6 +372,9 @@ class ClientSessionManager:
             if prev != loop_id:
                 await self._event_bus.unsubscribe(loop_event_topic(prev), session.event_queue)
                 session.subscriptions.discard(prev)
+                # Drop the replaced loop's subscription id so stale correlation
+                # ids cannot be attached to future `next` envelopes.
+                session.loop_subscription_ids.pop(prev, None)
 
         topic = loop_event_topic(loop_id)
         await self._event_bus.subscribe(topic, session.event_queue)
@@ -373,6 +382,8 @@ class ClientSessionManager:
         # Store subscription_id for correlating `next` envelopes.
         if subscription_id is not None:
             session.loop_subscription_ids[loop_id] = subscription_id
+        else:
+            session.loop_subscription_ids.pop(loop_id, None)
 
         # Unsubscribe from global for strict loop isolation
         # Loop-scoped clients should only receive events from their subscribed loop
@@ -557,10 +568,18 @@ class ClientSessionManager:
             return self._client_loop_ownership.get(client_id)
 
     def _clear_client_delivery_state(self, client_id: str, session: ClientSession) -> None:
-        """Drop delivery-ack counters for one disconnected client."""
-        for loop_id in list(session.subscriptions):
-            self._delivery_sent_seq.pop((loop_id, client_id), None)
-            self._delivery_ack_seq.pop((loop_id, client_id), None)
+        """Drop delivery-ack counters and subscription bookkeeping for one disconnected client.
+
+        Scans by client_id rather than only the still-subscribed loops: a
+        client that cycled loop subscriptions leaves stale ``(loop_id,
+        client_id)`` delivery counters behind otherwise.
+        """
+        for key in [k for k in self._delivery_sent_seq if k[1] == client_id]:
+            self._delivery_sent_seq.pop(key, None)
+        for key in [k for k in self._delivery_ack_seq if k[1] == client_id]:
+            self._delivery_ack_seq.pop(key, None)
+        session.subscriptions.clear()
+        session.loop_subscription_ids.clear()
 
     def note_delivery_sent(self, loop_id: str, client_id: str, *, units: int = 1) -> int:
         """Increment outbound delivery sequence for a loop/client pair."""

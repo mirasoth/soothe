@@ -109,7 +109,10 @@ class LoopInputDispatcher:
 
         Silently drops the message if shutdown has already been initiated so that
         concurrent callers cannot create new orphan workers after the snapshot in
-        `shutdown()` has been taken.
+        `shutdown()` has been taken. The queue reference is also re-checked
+        after the (unlocked) put: if `cleanup_loop`/`shutdown` ran while the
+        message was being queued, the message is dropped with a warning
+        instead of silently vanishing into an orphaned queue.
         """
         async with self._lock:
             if self._shutting_down:
@@ -126,6 +129,14 @@ class LoopInputDispatcher:
                 self._workers[loop_id] = asyncio.create_task(self._worker(loop_id, q))
             queue = self._queues[loop_id]
         await queue.put(message)
+        async with self._lock:
+            if self._queues.get(loop_id) is not queue:
+                logger.warning(
+                    "LoopInputDispatcher cleaned up while enqueueing loop %s; "
+                    "dropping orphaned message",
+                    loop_id,
+                )
+                return
 
     async def shutdown(self) -> None:
         """Cancel all loop workers (daemon stop)."""

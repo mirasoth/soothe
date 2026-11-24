@@ -18,19 +18,15 @@ def normalize_cron_description(description: str) -> str:
 
 
 def cron_descriptions_equivalent(left: str, right: str) -> bool:
-    """Return True when two task descriptions refer to the same scheduled work."""
+    """Return True when two task descriptions are identical after normalization.
+
+    Comparison is an exact whitespace/case-normalized equality match per
+    `.agents/rules/code-style.md` rule 9 (no substring or word-overlap
+    heuristics). Users can still submit a reworded variant by rescheduling.
+    """
     a = normalize_cron_description(left)
     b = normalize_cron_description(right)
-    if not a or not b:
-        return False
-    if a == b or a in b or b in a:
-        return True
-    words_a = set(a.split())
-    words_b = set(b.split())
-    if not words_a or not words_b:
-        return False
-    overlap = len(words_a & words_b) / min(len(words_a), len(words_b))
-    return overlap >= 0.85
+    return bool(a) and bool(b) and a == b
 
 
 class ScheduleKind(StrEnum):

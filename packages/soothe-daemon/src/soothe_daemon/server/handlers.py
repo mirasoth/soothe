@@ -258,3 +258,11 @@ class DaemonHandlersMixin:
                         turn_generation=turn_generation,
                     )
                 )
+        finally:
+            # The early `running` broadcast armed `_loops_turn_starting` for
+            # this turn; every path that returns before `run_query` (bind
+            # issues, unsupported message type, missing content, handler
+            # errors) must drop it or a later idle `/cancel` arms
+            # `_pending_cancels` against the *next* real turn.
+            if self._query_engine is not None:
+                self._query_engine.clear_loop_turn_starting(loop_id)

@@ -29,6 +29,10 @@ CREATE TABLE IF NOT EXISTS cron_jobs (
 );
 CREATE INDEX IF NOT EXISTS idx_cron_jobs_user_status ON cron_jobs(user_id, status);
 CREATE INDEX IF NOT EXISTS idx_cron_jobs_next_run ON cron_jobs(next_run) WHERE status = 'pending';
+CREATE TABLE IF NOT EXISTS cron_meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 """
 
 
@@ -161,6 +165,50 @@ class PostgresCronJobStore:
                     "SELECT * FROM cron_jobs WHERE status = 'pending' ORDER BY next_run",
                 )
                 return list(cur.fetchall())
+
+    async def list_running(self) -> list[CronJob]:
+        """List all jobs currently marked running."""
+        pool = await self._ensure_pool()
+        rows = await asyncio.to_thread(self._list_running_sync, pool)
+        return [self._row_to_job(row) for row in rows]
+
+    def _list_running_sync(self, pool: Any) -> list[dict[str, Any]]:
+        with pool.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT * FROM cron_jobs WHERE status = 'running' ORDER BY next_run",
+                )
+                return list(cur.fetchall())
+
+    async def get_meta(self, key: str) -> str | None:
+        """Return the stored value for a service metadata key, or None."""
+        pool = await self._ensure_pool()
+        return await asyncio.to_thread(self._get_meta_sync, pool, key)
+
+    def _get_meta_sync(self, pool: Any, key: str) -> str | None:
+        with pool.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT value FROM cron_meta WHERE key = %s", (key,))
+                row = cur.fetchone()
+                return row["value"] if row else None
+
+    async def set_meta(self, key: str, value: str) -> None:
+        """Upsert a service metadata key (e.g. the schedule timezone snapshot)."""
+        async with self._writer_lock:
+            pool = await self._ensure_pool()
+            await asyncio.to_thread(self._set_meta_sync, pool, key, value)
+
+    def _set_meta_sync(self, pool: Any, key: str, value: str) -> None:
+        with pool.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO cron_meta (key, value) VALUES (%s, %s)
+                    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+                    """,
+                    (key, value),
+                )
+            conn.commit()
 
     async def find_active_duplicate(
         self,

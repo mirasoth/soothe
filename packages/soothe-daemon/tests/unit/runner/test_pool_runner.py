@@ -207,9 +207,6 @@ class TestProcessPool:
         assert ProcessPool._shared_pool is None
 
     @pytest.mark.asyncio
-    @pytest.mark.skip(
-        reason="Bridge task timing race: mock worker response_queue not routed properly"
-    )
     async def test_submit_yields_chunks_from_worker(self) -> None:
         """submit() dispatches to worker and yields chunks."""
         daemon_config, agent_config = _make_config()
@@ -287,9 +284,6 @@ class TestProcessPool:
         await ProcessPool.close_shared_instance()
 
     @pytest.mark.asyncio
-    @pytest.mark.skip(
-        reason="Bridge task timing race: mock worker response_queue not routed properly"
-    )
     async def test_submit_waits_when_pool_saturated(self) -> None:
         """At max_pool_size with all workers busy, submit waits until a worker idles."""
         daemon_config, agent_config = _make_config()
@@ -363,6 +357,7 @@ class TestProcessPool:
             await asyncio.wait_for(dispatched.wait(), timeout=2.0)
 
             result_q1.put(("done", req_id16, None))
+            result_q1.put(("ready", req_id16, None))
             chunks = await asyncio.wait_for(task, timeout=2.0)
 
         assert chunks == []
@@ -669,6 +664,7 @@ class TestProcessPool:
         pool = ProcessPool.__new__(ProcessPool)
         pool._workers_by_loop_id = {"loop-1": worker.worker_id}
         pool._pending_responses = {"req-1": asyncio.Queue()}
+        pool._stream_drop_counts = {}
         pool._metrics_requests_total = 0
         pool._metrics_latencies = []
 

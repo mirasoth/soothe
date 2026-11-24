@@ -134,7 +134,7 @@ class SootheDaemon(DaemonHandlersMixin):
         self._vision_preflight_semaphore: asyncio.Semaphore | None = (
             asyncio.Semaphore(_vmax) if _vmax > 0 else None
         )
-        self._dispatch_tasks: dict[str, asyncio.Task] = {}  # client_id -> Task
+        self._dispatch_tasks: dict[str, set[asyncio.Task]] = {}  # client_id -> in-flight tasks
         self._thread_logger: ThreadLogger | None = None
         self._pid_lock_fd: int | None = None
         # Channel manager for multi-channel support (RFC-620)
@@ -1418,13 +1418,13 @@ class SootheDaemon(DaemonHandlersMixin):
         if not self._runner:
             return
 
-        from datetime import datetime, timedelta
+        from datetime import UTC, datetime, timedelta
 
         from soothe_nano.protocols.durability import ThreadFilter
 
         # Get timeout from config (in hours)
         timeout_hours = self._config.agent.protocols.durability.thread_inactivity_timeout_hours
-        timeout_threshold = datetime.now(tz=None) - timedelta(hours=timeout_hours)
+        timeout_threshold = datetime.now(UTC) - timedelta(hours=timeout_hours)
 
         # Get all active threads
         active_threads = await self._runner.list_durability_threads(ThreadFilter(status="active"))
@@ -1438,17 +1438,15 @@ class SootheDaemon(DaemonHandlersMixin):
             ):
                 continue
 
-            # Check if thread has been inactive
-            # Use updated_at (make naive for comparison if needed)
+            # Check if thread has been inactive; normalize both sides to UTC
+            # so aware-UTC `updated_at` never mixes with naive local time.
             updated_at = thread.updated_at
-            if updated_at.tzinfo is not None:
-                # Convert to naive datetime for comparison
-                updated_at = updated_at.replace(tzinfo=None)
-                threshold_with_tz = timeout_threshold.replace(tzinfo=None)
+            if updated_at.tzinfo is None:
+                updated_at = updated_at.replace(tzinfo=UTC)
             else:
-                threshold_with_tz = timeout_threshold
+                updated_at = updated_at.astimezone(UTC)
 
-            if updated_at < threshold_with_tz:
+            if updated_at < timeout_threshold:
                 try:
                     thread_manager = self._runner.thread_context_manager()
                     await thread_manager.suspend_thread(thread.thread_id)
@@ -1771,12 +1769,14 @@ class SootheDaemon(DaemonHandlersMixin):
             client_id: Unique client identifier
             msg: Message dict from a transport client.
         """
-        # Create a task with semaphore control and tracking
+        # Create a task with semaphore control and tracking. A per-client SET
+        # (not a slot) so an earlier task completing cannot delete a
+        # successor's entry from the registry.
         task = asyncio.create_task(self._dispatch_with_semaphore(client_id, msg))
-        # Track task per client for cleanup on disconnect
-        self._dispatch_tasks[client_id] = task
+        tasks = self._dispatch_tasks.setdefault(client_id, set())
+        tasks.add(task)
         # Auto-cleanup when task completes
-        task.add_done_callback(lambda t: self._dispatch_tasks.pop(client_id, None))
+        task.add_done_callback(lambda t: self._dispatch_tasks.get(client_id, set()).discard(t))
 
     async def _dispatch_with_semaphore(self, client_id: str, msg: dict[str, Any]) -> None:
         """Dispatch message with semaphore control and proper cleanup.
@@ -1822,14 +1822,18 @@ class SootheDaemon(DaemonHandlersMixin):
         """
         # Set client_id context for full ID in daemon.log
         set_client_id(client_id)
-        if client_id in self._dispatch_tasks:
-            task = self._dispatch_tasks[client_id]
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass  # Expected cancellation
-            logger.debug("Cancelled dispatch task for client %s", client_id)
+        # Drop the router's per-client state (handshake, auth negotiation) so
+        # disconnected clients do not leak entries there.
+        router_forget = getattr(self._message_router, "forget_client", None)
+        if callable(router_forget):
+            router_forget(client_id)
+        tasks = self._dispatch_tasks.pop(client_id, set())
+        if tasks:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            logger.debug("Cancelled dispatch task(s) for client %s", client_id)
 
     # -- static helpers -----------------------------------------------------
 

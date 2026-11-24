@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 import uuid
@@ -420,7 +421,7 @@ class StreamDeliveryCoalescer:
             text = str(content or "").strip()
         return not text
 
-    def ingest(
+    async def ingest(
         self,
         namespace: tuple[str, ...] | list[str],
         mode: str,
@@ -444,7 +445,7 @@ class StreamDeliveryCoalescer:
             and data.get("type") == STRANGE_LOOP_COMPLETED
         ):
             out = self._flush_all_text_buffers(final=True)
-            out.extend(self._flush_goal_completion(final=True))
+            out.extend(await self._flush_goal_completion(final=True))
             out = self._append_stream_end_for_terminals(out)
             out.append((ns, mode, data))
             self._turn_complete_pending = True
@@ -483,20 +484,20 @@ class StreamDeliveryCoalescer:
             out.extend(self._flush_tool_batch(ns, force=True))
             if not self.should_skip_tool_message_wire(msg):
                 out.append((ns, mode, data))
-            return out_prefix + self._finish_messages_ingest(ns, msg, out)
+            return out_prefix + await self._finish_messages_ingest(ns, msg, out)
 
         phase = assistant_output_phase(msg)
         if phase == "goal_completion":
             out = self._flush_text_buffer(ns, final=False)
             out.extend(self._ingest_goal_completion(ns, msg, metadata))
-            return out_prefix + self._finish_messages_ingest(ns, msg, out)
+            return out_prefix + await self._finish_messages_ingest(ns, msg, out)
 
         if not self._message_coalesce_enabled:
             wire = (ns, mode, data)
             if _chunk_position_last(msg):
                 stamped = prepare_stream_data_for_wire((msg, metadata))
                 wire = (ns, mode, stamped)
-            return out_prefix + self._finish_messages_ingest(ns, msg, [wire])
+            return out_prefix + await self._finish_messages_ingest(ns, msg, [wire])
 
         if _wire_has_tool_invocation(_msg_to_wire_dict(msg) or {}):
             out = self._flush_text_buffer(ns, final=False)
@@ -520,9 +521,9 @@ class StreamDeliveryCoalescer:
                         has_phase = bool(flat.get("phase"))
                         if text or has_phase or _wire_body_has_usage(flat):
                             out.append((ns, mode, wire_data))
-                    return out_prefix + self._finish_messages_ingest(ns, msg, out)
+                    return out_prefix + await self._finish_messages_ingest(ns, msg, out)
             out.append((ns, mode, data))
-            return out_prefix + self._finish_messages_ingest(ns, msg, out)
+            return out_prefix + await self._finish_messages_ingest(ns, msg, out)
 
         if _plain_text_ai_message(msg):
             out: list[tuple[tuple[str, ...], str, Any]] = []
@@ -565,13 +566,13 @@ class StreamDeliveryCoalescer:
                 out.extend(self._flush_text_buffer(ns, final=True))
             elif interval_due:
                 out.extend(self._flush_text_buffer(ns, final=False))
-            return out_prefix + self._finish_messages_ingest(ns, msg, out)
+            return out_prefix + await self._finish_messages_ingest(ns, msg, out)
 
         out = self._flush_text_buffer(ns, final=False)
         out.append((ns, mode, data))
-        return out_prefix + self._finish_messages_ingest(ns, msg, out)
+        return out_prefix + await self._finish_messages_ingest(ns, msg, out)
 
-    def _finish_messages_ingest(
+    async def _finish_messages_ingest(
         self,
         namespace: tuple[str, ...],
         msg: Any,
@@ -584,7 +585,7 @@ class StreamDeliveryCoalescer:
         if namespace in self._text_buffers:
             tail.extend(self._flush_text_buffer(namespace, final=True))
         if self._gc is not None and self._gc.parts:
-            tail.extend(self._flush_goal_completion(final=True))
+            tail.extend(await self._flush_goal_completion(final=True))
         merged = out + tail if tail else out
         return self._append_stream_end_for_terminals(merged)
 
@@ -617,11 +618,11 @@ class StreamDeliveryCoalescer:
             out.extend(self._maybe_flush_tool_batch(ns, now, force=False))
         return out
 
-    def flush(self) -> list[tuple[tuple[str, ...], str, Any]]:
+    async def flush(self) -> list[tuple[tuple[str, ...], str, Any]]:
         """Flush any buffered text and goal-completion at stream end."""
         out = self._flush_all_text_buffers(final=True)
         out.extend(self._flush_all_tool_batches(force=True))
-        out.extend(self._flush_goal_completion(final=True))
+        out.extend(await self._flush_goal_completion(final=True))
         return out
 
     def flush_due(self) -> list[tuple[tuple[str, ...], str, Any]]:
@@ -1029,7 +1030,9 @@ class StreamDeliveryCoalescer:
             return ""
         return "".join(self._gc.parts)
 
-    def _flush_goal_completion(self, *, final: bool) -> list[tuple[tuple[str, ...], str, Any]]:
+    async def _flush_goal_completion(
+        self, *, final: bool
+    ) -> list[tuple[tuple[str, ...], str, Any]]:
         """Flush remaining buffered goal_completion text.
 
         Called at stream end (`flush`) and on `strange_loop.completed`. The
@@ -1047,13 +1050,15 @@ class StreamDeliveryCoalescer:
         text = self._joined_gc_text()
 
         if self._file_output_threshold_chars > 0 and len(text) >= self._file_output_threshold_chars:
-            return self._emit_file_output_message(text)
+            return await self._emit_file_output_message(text)
 
         return self._emit_goal_completion_block(time.monotonic(), final=final)
 
-    def _emit_file_output_message(self, text: str) -> list[tuple[tuple[str, ...], str, Any]]:
+    async def _emit_file_output_message(self, text: str) -> list[tuple[tuple[str, ...], str, Any]]:
         """Write large goal_completion to file and emit summary message."""
-        file_path = self._write_goal_completion_to_file(text)
+        # Blocking mkdir/write runs in a thread so a large synthesis never
+        # stalls the event loop at turn end.
+        file_path = await asyncio.to_thread(self._write_goal_completion_to_file, text)
         preview = (
             text[: self._file_output_preview_chars] if self._file_output_preview_chars > 0 else ""
         )

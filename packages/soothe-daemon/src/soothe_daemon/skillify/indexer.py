@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 from soothe.skillify.models import SkillRecord
 from soothe_nano.protocols.vector_store import VectorStoreProtocol
 
+from ._lazy_embeddings import LazyEmbeddings
 from .events import (
     SkillifyIndexFailedEvent,
     SkillifyIndexStartedEvent,
@@ -24,26 +25,6 @@ if TYPE_CHECKING:
     from langchain_core.embeddings import Embeddings
 
 logger = logging.getLogger(__name__)
-
-
-class LazyEmbeddings:
-    """Wrapper that creates fresh embedding instances per event loop."""
-
-    def __init__(self, factory: Callable[[], Embeddings]) -> None:
-        self._factory = factory
-        self._instances: dict[int, Embeddings] = {}
-
-    def _get_instance(self) -> Embeddings:
-        loop_id = id(asyncio.get_running_loop())
-        if loop_id not in self._instances:
-            self._instances[loop_id] = self._factory()
-        return self._instances[loop_id]
-
-    async def aembed_documents(self, texts: list[str]) -> list[list[float]]:
-        return await self._get_instance().aembed_documents(texts)
-
-    async def aembed_query(self, text: str) -> list[float]:
-        return await self._get_instance().aembed_query(text)
 
 
 class SkillIndexer:
@@ -143,16 +124,28 @@ class SkillIndexer:
             self._hash_cache.pop(deleted_id, None)
             stats["deleted"] += 1
 
+        upserted_ids: set[str] = set()
         if to_embed:
-            await self._embed_and_upsert(to_embed)
+            upserted_ids = await self._embed_and_upsert(to_embed)
 
+        # Cache hashes only for records that were actually upserted, so a
+        # failed embed/upsert is retried on the next pass instead of being
+        # silently skipped forever.
         for record in current_records:
-            self._hash_cache[record.id] = record.content_hash
+            if record.id in upserted_ids:
+                self._hash_cache[record.id] = record.content_hash
 
         self._total_indexed = len(current_ids)
         return stats
 
-    async def _embed_and_upsert(self, records: list[SkillRecord]) -> None:
+    async def _embed_and_upsert(self, records: list[SkillRecord]) -> set[str]:
+        """Embed and upsert *records*; return the set of upserted record ids.
+
+        Every failure path (embedding error, empty vectors, dimension
+        mismatch, upsert failure) returns an empty set so those records are
+        retried on the next pass.
+        """
+        upserted_ids: set[str] = set()
         texts = [self._embedding_text(record) for record in records]
         sanitized_texts: list[str] = []
         for index, text in enumerate(texts):
@@ -164,7 +157,7 @@ class SkillIndexer:
 
         if not sanitized_texts:
             logger.error("No valid texts for embedding")
-            return
+            return upserted_ids
 
         try:
             vectors = await self._embeddings.aembed_documents(sanitized_texts)
@@ -174,11 +167,11 @@ class SkillIndexer:
                 len(records),
                 sanitized_texts[0] if sanitized_texts else "N/A",
             )
-            return
+            return upserted_ids
 
         if not vectors:
             logger.error("Embedding model returned no vectors for %d skills", len(records))
-            return
+            return upserted_ids
 
         actual_dims = len(vectors[0])
         if actual_dims != self._embedding_dims:
@@ -188,7 +181,7 @@ class SkillIndexer:
                 actual_dims,
                 self._embedding_dims,
             )
-            return
+            return upserted_ids
 
         payloads: list[dict[str, Any]] = []
         ids: list[str] = []
@@ -209,6 +202,9 @@ class SkillIndexer:
             await self._vector_store.insert(vectors=vectors, payloads=payloads, ids=ids)
         except Exception:
             logger.exception("Vector store upsert failed for %d skills", len(records))
+            return upserted_ids
+        upserted_ids.update(ids)
+        return upserted_ids
 
     @staticmethod
     def _embedding_text(record: SkillRecord) -> str:

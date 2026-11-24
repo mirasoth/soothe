@@ -12,6 +12,12 @@ from soothe.sloop.checkpoints.directory_manager import (
 
 logger = logging.getLogger(__name__)
 
+# Upper bound for the known-loop enumeration. `list_loops` has no offset/cursor
+# pagination, so a result of exactly this many rows means the store may hold
+# more loops than we enumerated — the known-id set is then potentially
+# truncated and deletion must not run.
+_ENUMERATION_CAP = 10000
+
 
 async def reconcile_orphan_loop_directories(
     persistence_manager: Any,
@@ -19,6 +25,11 @@ async def reconcile_orphan_loop_directories(
     limit: int = 200,
 ) -> int:
     """Delete `data/loops/{loop_id}/` trees with no matching DB row.
+
+    The known-id set is enumerated up to `_ENUMERATION_CAP` rows; when the
+    store returns that many rows the set may be truncated, so deletion is
+    skipped entirely and a warning is logged — loops we could not enumerate
+    must never have their directories deleted.
 
     Args:
         persistence_manager: Daemon persistence manager with `list_loops`.
@@ -36,7 +47,7 @@ async def reconcile_orphan_loop_directories(
         return 0
 
     try:
-        rows = await list_loops(limit=10000)
+        rows = await list_loops(limit=_ENUMERATION_CAP)
     except Exception:
         logger.warning("Failed to list loops for orphan reconcile", exc_info=True)
         return 0
@@ -46,6 +57,14 @@ async def reconcile_orphan_loop_directories(
         for row in rows
         if isinstance(row, dict) and str(row.get("loop_id") or "").strip()
     }
+
+    if len(rows) >= _ENUMERATION_CAP:
+        logger.warning(
+            "Loop enumeration hit the %d-row cap; known-id set may be truncated — "
+            "skipping orphan directory deletion this tick",
+            _ENUMERATION_CAP,
+        )
+        return 0
 
     removed = 0
     for child in sorted(loops_dir.iterdir()):

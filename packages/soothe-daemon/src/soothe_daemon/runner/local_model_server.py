@@ -21,7 +21,10 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from typing import TYPE_CHECKING
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+from soothe.config import SOOTHE_HOME
 
 if TYPE_CHECKING:
     from soothe_daemon.config.models import LocalModelConfig
@@ -72,6 +75,11 @@ class LocalModelServer:
     def launch(self) -> str:
         """Start the model server and wait for it to become healthy.
 
+        Child stdout/stderr are redirected to a log file under
+        ``$SOOTHE_HOME/logs`` so output stays inspectable without a reader
+        process; an undrained pipe would let a chatty server (vLLM logs
+        heavily) deadlock at startup once the OS pipe buffer fills.
+
         Returns:
             The ``api_base`` URL (e.g. ``http://127.0.0.1:8765/v1``).
 
@@ -90,10 +98,11 @@ class LocalModelServer:
             " ".join(cmd),
         )
 
+        log_handle = self._open_log_file()
         try:
             self._process = subprocess.Popen(  # noqa: S603
                 cmd,
-                stdout=subprocess.PIPE,
+                stdout=log_handle,
                 stderr=subprocess.STDOUT,
                 env=self._build_env(),
             )
@@ -105,6 +114,10 @@ class LocalModelServer:
                 f"is installed."
             )
             raise LocalModelStartupError(msg) from exc
+        finally:
+            # The child inherits its own descriptor; only our copy must close.
+            if log_handle is not None and log_handle is not subprocess.DEVNULL:
+                log_handle.close()
 
         # Register cleanup safety net.
         atexit.register(self.shutdown)
@@ -160,6 +173,26 @@ class LocalModelServer:
     # ------------------------------------------------------------------
     # Internal: command building
     # ------------------------------------------------------------------
+
+    def _open_log_file(self) -> Any:
+        """Open the child's log file under ``$SOOTHE_HOME/logs``.
+
+        Falls back to ``subprocess.DEVNULL`` when the log directory is not
+        writable — output must never be left on an undrained pipe.
+        """
+        try:
+            log_path = (
+                Path(SOOTHE_HOME)
+                / "logs"
+                / f"local_model_server_{self._config.backend}_{self._port}.log"
+            )
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            return log_path.open("ab")
+        except OSError:
+            logger.warning(
+                "LocalModelServer: could not open log file; child output goes to DEVNULL"
+            )
+            return subprocess.DEVNULL
 
     def _build_command(self) -> list[str]:
         """Build the CLI command for the configured backend."""

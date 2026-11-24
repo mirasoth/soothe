@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import tempfile
 from pathlib import Path
 
 _ENV_ASSIGN_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
@@ -99,10 +100,25 @@ def upsert_dotenv_value(env_path: Path, key: str, value: str) -> None:
     text = "\n".join(new_lines)
     if not text.endswith("\n"):
         text += "\n"
-    # Atomic-ish: write then replace
-    tmp = env_path.with_name(f"{env_path.name}.tmp")
-    tmp.write_text(text, encoding="utf-8")
-    tmp.replace(env_path)
+    # Atomic write via a unique temp file + replace; the final file is 0600
+    # because it holds raw provider API keys.
+    tmp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            dir=env_path.parent,
+            prefix=f"{env_path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as tmp:
+            tmp.write(text.encode("utf-8"))
+            tmp_path = Path(tmp.name)
+        os.chmod(tmp_path, 0o600)
+        os.replace(tmp_path, env_path)
+        tmp_path = None
+    finally:
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
+    os.chmod(env_path, 0o600)
 
 
 def _escape_dotenv_value(value: str) -> str:

@@ -116,7 +116,7 @@ class WeixinConfig:
     """Personal WeChat channel configuration (Pydantic-like for soothe)."""
 
     enabled: bool = False
-    allow_from: list[str] = []
+    allow_from: list[str] | None = None
     base_url: str = "https://ilinkai.weixin.qq.com"
     cdn_base_url: str = "https://novac2c.cdn.weixin.qq.com/c2c"
     route_tag: str | int | None = None
@@ -125,6 +125,9 @@ class WeixinConfig:
     poll_timeout: int = DEFAULT_LONG_POLL_TIMEOUT_S  # seconds for long-poll
 
     def __init__(self, **kwargs: Any) -> None:
+        # Instance-level list: a class-level ``= []`` default is shared across
+        # every instance of this class.
+        self.allow_from = list(kwargs.pop("allow_from", None) or [])
         for key, value in kwargs.items():
             if hasattr(self, key):
                 setattr(self, key, value)
@@ -179,7 +182,6 @@ class WeixinChannel(Channel):
         self._processed_ids: OrderedDict[str, None] = OrderedDict()
         self._state_dir: Path | None = None
         self._token: str = ""
-        self._poll_task: asyncio.Task | None = None
         self._next_poll_timeout_s: int = DEFAULT_LONG_POLL_TIMEOUT_S
         self._session_pause_until: float = 0.0
         self._typing_tasks: dict[str, asyncio.Task] = {}
@@ -508,6 +510,11 @@ class WeixinChannel(Channel):
                     "[Weixin] login failed. Run 'soothe channels login weixin' to authenticate."
                 )
                 self._running = False
+                # Close the client created above; unlike login(), the poll
+                # loop never runs on this path, so nothing else releases it.
+                if self._client:
+                    await self._client.aclose()
+                    self._client = None
                 return
 
         logger.info("[Weixin] channel starting with long-poll...")
@@ -534,8 +541,6 @@ class WeixinChannel(Channel):
     async def stop(self) -> None:
         self._running = False
         self._pending_tool_hints.clear()
-        if self._poll_task and not self._poll_task.done():
-            self._poll_task.cancel()
         for chat_id in list(self._typing_tasks):
             await self._stop_typing(chat_id, clear_remote=False)
         if self._client:
@@ -910,7 +915,7 @@ class WeixinChannel(Channel):
                 filename = f"{media_type}_{ts}_{h}{ext}"
             safe_name = os.path.basename(filename)
             file_path = media_dir / safe_name
-            file_path.write_bytes(data)
+            await asyncio.to_thread(file_path.write_bytes, data)
             return str(file_path)
 
         except Exception:
@@ -1067,15 +1072,17 @@ class WeixinChannel(Channel):
     async def _typing_keepalive_loop(
         self, user_id: str, typing_ticket: str, stop_event: asyncio.Event
     ) -> None:
-        try:
-            while not stop_event.is_set():
-                await asyncio.sleep(TYPING_KEEPALIVE_INTERVAL_S)
-                if stop_event.is_set():
-                    break
-                with suppress(Exception):
-                    await self._send_typing(user_id, typing_ticket, TYPING_STATUS_TYPING)
-        finally:
-            pass
+        """Send typing-status keepalives until ``stop_event`` is set.
+
+        Single implementation shared by the send path and the inbound
+        ``_start_typing`` indicator.
+        """
+        while not stop_event.is_set():
+            await asyncio.sleep(TYPING_KEEPALIVE_INTERVAL_S)
+            if stop_event.is_set():
+                break
+            with suppress(Exception):
+                await self._send_typing(user_id, typing_ticket, TYPING_STATUS_TYPING)
 
     async def send(self, chat_id: str, message: ChannelMessage) -> None:
         """Send a message through WeChat.
@@ -1244,19 +1251,7 @@ class WeixinChannel(Channel):
             return
 
         stop_event = asyncio.Event()
-
-        async def keepalive() -> None:
-            try:
-                while not stop_event.is_set():
-                    await asyncio.sleep(TYPING_KEEPALIVE_INTERVAL_S)
-                    if stop_event.is_set():
-                        break
-                    with suppress(Exception):
-                        await self._send_typing(chat_id, ticket, TYPING_STATUS_TYPING)
-            finally:
-                pass
-
-        task = asyncio.create_task(keepalive())
+        task = asyncio.create_task(self._typing_keepalive_loop(chat_id, ticket, stop_event))
         task._typing_stop_event = stop_event  # type: ignore[attr-defined]
         self._typing_tasks[chat_id] = task
 

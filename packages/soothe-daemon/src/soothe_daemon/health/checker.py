@@ -304,15 +304,16 @@ class HealthChecker:
 
 
 def _upgrade_offline_daemon_to_error(result: CategoryResult) -> CategoryResult:
-    """When `--require-running`, treat offline daemon INFO checks as ERROR."""
+    """When `--require-running`, treat offline daemon INFO checks as ERROR.
+
+    Offline checks are identified by the structured `details["offline"]`
+    flag set by the daemon check itself (no message-string matching).
+    """
     from soothe_daemon.health.models import CheckResult
 
     upgraded: list[CheckResult] = []
     for check in result.checks:
-        if check.status == CheckStatus.INFO and any(
-            token in check.message.lower()
-            for token in ("not running", "not found", "not accepting")
-        ):
+        if check.status == CheckStatus.INFO and check.details.get("offline") is True:
             upgraded.append(
                 CheckResult(
                     name=check.name,

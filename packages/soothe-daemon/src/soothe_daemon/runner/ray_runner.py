@@ -256,6 +256,21 @@ class RayLoopRunner:
             _mark_loop_idle(self._loop_id)
             if sem is not None:
                 sem.release()
+            # The actor is per-turn; kill it on every exit path (normal
+            # completion, timeout, cancellation, GeneratorExit) so its
+            # num_cpus/num_gpus/object-store reservations are reclaimed.
+            # Setting `_actor = None` first also guards against a double kill
+            # from a racing cancel()/force_kill().
+            actor, self._actor = self._actor, None
+            if actor is not None:
+                try:
+                    ray.kill(actor)
+                except Exception:  # noqa: BLE001
+                    logger.debug(
+                        "RayLoopRunner: failed to kill actor on stream exit loop=%s",
+                        self._loop_id[:16],
+                        exc_info=True,
+                    )
             # Notify any waiting dispatchable turns.
             cond = await _get_dispatch_condition()
             async with cond:

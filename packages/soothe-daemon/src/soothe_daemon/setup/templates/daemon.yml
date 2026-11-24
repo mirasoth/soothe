@@ -76,7 +76,7 @@ event_size_stats_enabled: true
 event_size_stats_interval_seconds: 60
 event_size_stats_idle_pause_seconds: 120
 
-# Memory profiling (tracemalloc; RPC: /memory mode=daemon|gc|snapshot|objects|compare)
+# Memory profiling (tracemalloc; queried via the admin `memory_stats` WebSocket method — see `soothed memory --mode`)
 memory_profiling:
   enabled: false
   trace_depth: 25

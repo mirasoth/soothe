@@ -10,7 +10,31 @@ from soothe_daemon.cron.models import (
     ExtractionResult,
     JobStatus,
     ScheduleKind,
+    cron_descriptions_equivalent,
 )
+
+
+class TestCronDescriptionsEquivalent:
+    """Duplicate detection is an exact normalized match (no word heuristics)."""
+
+    def test_exact_match_after_normalization(self) -> None:
+        assert cron_descriptions_equivalent(
+            "Polish packages folder to cleanse dead code",
+            "polish  packages folder   to cleanse dead code",
+        )
+
+    def test_reworded_variant_is_not_equivalent(self) -> None:
+        """A substring/extended variant must not be treated as the same work."""
+        assert not cron_descriptions_equivalent("check email", "check email and calendar")
+        assert not cron_descriptions_equivalent(
+            "polish packages folder to cleanse dead code",
+            "polish packages folder to cleanse dead code package by package",
+        )
+
+    def test_empty_descriptions_are_not_equivalent(self) -> None:
+        assert not cron_descriptions_equivalent("", "check deploy")
+        assert not cron_descriptions_equivalent("   ", "check deploy")
+        assert not cron_descriptions_equivalent("", "")
 
 
 class TestDefaultCronUserId:

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import logging
+import re
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -20,6 +22,14 @@ logger = logging.getLogger(__name__)
 
 # Retry delays for message sending (exponential backoff: 1s, 2s, 4s)
 _SEND_RETRY_DELAYS = (1, 2, 4)
+
+# Loop ids derived from untrusted channel identifiers become filesystem
+# directory names and routing keys; only a safe charset is accepted.
+_LOOP_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_:.@-]{0,200}$")
+
+# Per-conversation delta buffer cap for non-streaming channels. A stream that
+# never ends would otherwise grow the buffer without bound.
+_STREAM_BUFFER_MAX_ITEMS = 500
 
 
 class ChannelManager:
@@ -60,8 +70,7 @@ class ChannelManager:
         # Streaming state
         self._stream_buffers: dict[
             tuple[str, str], list[Any]
-        ] = {}  # (channel, chat_id) → delta list
-        self._stream_coalesce_lock = asyncio.Lock()
+        ] = {}  # (channel, chat_id) → delta list (capped, FIFO eviction)
 
         # Outbound dispatch
         self._outbound_task: asyncio.Task[None] | None = None
@@ -102,11 +111,15 @@ class ChannelManager:
         content: str,
         media: list[str] | None = None,
         metadata: dict[str, Any] | None = None,
-    ) -> str:
+    ) -> str | None:
         """Handle inbound message from a channel.
 
         Called by Channel._handle_message(). Creates or retrieves loop_id,
         publishes ChannelMessageReceived to EventBus.
+
+        The loop routing key is ``metadata["session_key"]`` when the channel
+        supplies one (e.g. Feishu group/topic sessions), otherwise ``chat_id``.
+        It is consumed from the metadata before publishing.
 
         Args:
             channel: Channel name (e.g., "websocket", "telegram").
@@ -114,13 +127,28 @@ class ChannelManager:
             sender_id: User identifier on the platform.
             content: Message text.
             media: Optional attachments.
-            metadata: Optional channel-specific metadata.
+            metadata: Optional channel-specific metadata; may carry
+                ``session_key`` as the loop routing key.
 
         Returns:
-            loop_id for this conversation.
+            loop_id for this conversation, or None when the routing key or
+            derived loop_id is invalid.
         """
+        metadata = dict(metadata) if metadata else {}
+        session_key = metadata.pop("session_key", None)
+        routing_key = (
+            session_key if isinstance(session_key, str) and session_key.strip() else chat_id
+        )
+
         # Create or retrieve loop_id
-        loop_id = self._get_or_create_loop_id(channel, chat_id)
+        loop_id = self._get_or_create_loop_id(channel, routing_key)
+        if loop_id is None:
+            logger.warning(
+                "Rejected inbound message from %s: invalid routing key (chat_id=%r)",
+                channel,
+                chat_id,
+            )
+            return None
 
         # Create ChannelMessageReceived event
         from soothe_daemon.channels.events import ChannelMessageReceived
@@ -131,7 +159,7 @@ class ChannelManager:
             sender_id=sender_id,
             content=content,
             media=media or [],
-            metadata=metadata or {},
+            metadata=metadata,
         )
 
         # Publish to loop topic
@@ -147,7 +175,7 @@ class ChannelManager:
 
         return loop_id
 
-    def ensure_loop_id(self, channel: str, chat_id: str) -> str:
+    def ensure_loop_id(self, channel: str, chat_id: str) -> str | None:
         """Get existing or create new loop_id for (channel, chat_id) WITHOUT publishing.
 
         This is the public counterpart of ``_get_or_create_loop_id``.  It allows
@@ -161,7 +189,7 @@ class ChannelManager:
             chat_id: Conversation identifier.
 
         Returns:
-            loop_id for this conversation.
+            loop_id for this conversation, or None when the identifier is invalid.
         """
         return self._get_or_create_loop_id(channel, chat_id)
 
@@ -178,8 +206,12 @@ class ChannelManager:
         left untouched.
 
         Returns:
-            True when a new registration was written, False when it already existed.
+            True when a new registration was written, False when it already
+            existed or the loop_id failed charset validation.
         """
+        if not _LOOP_ID_PATTERN.match(loop_id or ""):
+            logger.warning("Rejected loop registration for invalid loop_id %r", loop_id)
+            return False
         if self._persistence_manager is None:
             msg = "ChannelManager.ensure_loop_registered requires persistence_manager"
             raise RuntimeError(msg)
@@ -297,15 +329,18 @@ class ChannelManager:
 
             return Path(resolve_daemon_workspace())
 
-    def _get_or_create_loop_id(self, channel: str, chat_id: str) -> str:
+    def _get_or_create_loop_id(self, channel: str, chat_id: str) -> str | None:
         """Get existing loop_id or create new one for (channel, chat_id).
 
         Args:
             channel: Channel name.
-            chat_id: Conversation identifier.
+            chat_id: Conversation identifier (or a channel-supplied session
+                key used as the routing key).
 
         Returns:
-            loop_id for this conversation.
+            loop_id for this conversation, or None when the derived loop_id
+            fails charset validation (untrusted identifiers become filesystem
+            directories and must never escape the loops root).
         """
         key = (channel, chat_id)
 
@@ -319,6 +354,14 @@ class ChannelManager:
         else:
             # External channels: "{channel}:{chat_id}"
             loop_id = f"{channel}:{chat_id}"
+
+        if not _LOOP_ID_PATTERN.match(loop_id):
+            logger.warning(
+                "Rejected invalid conversation identifier for channel=%s (derived loop_id "
+                "failed charset validation)",
+                channel,
+            )
+            return None
 
         # Store mapping
         self._channel_to_loop[key] = loop_id
@@ -378,6 +421,7 @@ class ChannelManager:
                 session_manager=self._session_manager,
                 cron_service=self._cron_service,
                 memory_profiler=self._memory_profiler,
+                **self._identity_kwargs(WebSocketChannel),
             )
             self._channels["websocket"] = ws_channel
             logger.debug("Configured WebSocket channel")
@@ -395,6 +439,7 @@ class ChannelManager:
                 self._config.channels.acp,
                 manager=self,
                 unified_app=self._unified_app if self._acp_ws_enabled else None,
+                **self._identity_kwargs(ACPChannel),
             )
             self._channels["acp"] = acp_channel
             logger.debug(
@@ -406,6 +451,30 @@ class ChannelManager:
             channel.send_progress = getattr(self._config.channels, "send_progress", True)
             channel.send_tool_hints = getattr(self._config.channels, "send_tool_hints", False)
             channel.show_reasoning = getattr(self._config.channels, "show_reasoning", True)
+
+    def _identity_kwargs(self, channel_cls: type) -> dict[str, Any]:
+        """Build the ``identity_enabled`` constructor kwarg for a channel class.
+
+        True when the daemon config enables the identity service (the same
+        gate the daemon uses to create its identity service). The kwarg is
+        only passed when the channel's constructor accepts it (the parameter
+        or a ``**kwargs`` catch-all), so channels that have not adopted the
+        auth contract yet keep constructing unchanged.
+        """
+        if not bool(
+            getattr(getattr(self._config, "identity", None), "enabled", False),
+        ):
+            return {}
+        try:
+            params = inspect.signature(channel_cls).parameters
+        except (TypeError, ValueError):  # builtins / C extensions
+            return {}
+        accepts = "identity_enabled" in params or any(
+            p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()
+        )
+        if not accepts:
+            return {}
+        return {"identity_enabled": True}
 
     async def _start_unified_listener(self) -> None:
         """Bind one uvicorn server for the FastAPI WebSocket app.
@@ -845,9 +914,18 @@ class ChannelManager:
             message: Delta to buffer.
         """
         key = (channel_name, chat_id)
-        if key not in self._stream_buffers:
-            self._stream_buffers[key] = []
-        self._stream_buffers[key].append(message)
+        buffer = self._stream_buffers.setdefault(key, [])
+        if len(buffer) >= _STREAM_BUFFER_MAX_ITEMS:
+            # FIFO eviction: keep the newest deltas (stream tail matters) and
+            # bound memory when a stream never ends.
+            del buffer[: len(buffer) - _STREAM_BUFFER_MAX_ITEMS + 1]
+            logger.warning(
+                "Stream buffer for %s:%s exceeded %d deltas; dropping oldest",
+                channel_name,
+                chat_id,
+                _STREAM_BUFFER_MAX_ITEMS,
+            )
+        buffer.append(message)
 
     async def _flush_stream_buffer(
         self,

@@ -12,8 +12,6 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from soothe.wire.protocol import encode
-
 logger = logging.getLogger(__name__)
 
 # Upper bounds (bytes, exclusive) for histogram bins; overflow is the last bucket.
@@ -39,6 +37,32 @@ def _bin_label_for_index(idx: int) -> str:
     if upper < 1024 * 1024:
         return f"<{upper // 1024}KiB"
     return f"<{upper // (1024 * 1024)}MiB"
+
+
+def _estimate_event_size(value: Any) -> int:
+    """Estimate the encoded size of an event without serializing it.
+
+    String/bytes content dominates real payloads and is counted exactly;
+    scalars and container overhead use compact approximations. O(structure)
+    with no allocation-heavy encoding.
+    """
+    if value is None:
+        return 4
+    if isinstance(value, bool):
+        return 4
+    if isinstance(value, int):
+        return len(str(value)) or 1
+    if isinstance(value, float):
+        return 8
+    if isinstance(value, str):
+        return len(value) + 2
+    if isinstance(value, (bytes, bytearray)):
+        return len(value)
+    if isinstance(value, dict):
+        return 2 + sum(_estimate_event_size(k) + _estimate_event_size(v) for k, v in value.items())
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return 2 + sum(_estimate_event_size(v) for v in value)
+    return len(str(value))
 
 
 class _StreamingWindow:
@@ -125,16 +149,16 @@ class EventSizeDistributionCollector:
         self._last_event_mono = 0.0
 
     def record_event_dict(self, event: dict[str, Any]) -> None:
-        """Record one published event using the same encoding as the IPC wire format."""
-        try:
-            raw = encode(event).rstrip(b"\n")
-            size = len(raw)
-        except Exception:
-            logger.debug("event_size_stats: failed to measure event size", exc_info=True)
-            return
+        """Record one published event's estimated wire size.
+
+        Sizes are estimated structurally (string content counted exactly,
+        container overhead approximated) instead of re-encoding every event —
+        the hot publish path must not serialize each frame twice. Estimates
+        track the true wire sizes closely enough for the fixed-bin histogram.
+        """
         with self._lock:
             self._last_event_mono = time.monotonic()
-            self._window.observe(size)
+            self._window.observe(_estimate_event_size(event))
 
     def emit_log_if_active(
         self,

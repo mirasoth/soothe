@@ -43,6 +43,7 @@ class ErrorCode(IntEnum):
     NO_SESSION = -32102
     AUTH_FAILED = -32103
     AUTH_EXPIRED = -32104
+    AUTH_REQUIRED = -32105
 
     # Resource not found (-32200 to -32299)
     LOOP_NOT_FOUND = -32200
@@ -94,6 +95,7 @@ _SEVERITY: dict[ErrorCode, str] = {
     ErrorCode.NO_SESSION: "error",
     ErrorCode.AUTH_FAILED: "error",
     ErrorCode.AUTH_EXPIRED: "error",
+    ErrorCode.AUTH_REQUIRED: "error",
     ErrorCode.LOOP_NOT_FOUND: "error",
     ErrorCode.JOB_NOT_FOUND: "error",
     ErrorCode.GOAL_NOT_FOUND: "error",

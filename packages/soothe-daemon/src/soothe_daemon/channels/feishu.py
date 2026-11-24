@@ -240,7 +240,7 @@ class FeishuConfig:
     app_secret: str = ""
     encrypt_key: str = ""
     verification_token: str = ""
-    allow_from: list[str] = []
+    allow_from: list[str] | None = None
     react_emoji: str = "THUMBSUP"
     done_emoji: str | None = None  # Emoji to show when task is completed (e.g., "DONE", "OK")
     tool_hint_prefix: str = "\U0001f527"  # Prefix for inline tool hints (default: 🔧)
@@ -251,6 +251,9 @@ class FeishuConfig:
     topic_isolation: bool = True  # If True, each topic in group chat gets its own session
 
     def __init__(self, **kwargs: Any) -> None:
+        # Instance-level list: a class-level ``= []`` default is shared across
+        # every instance of this class.
+        self.allow_from = list(kwargs.pop("allow_from", None) or [])
         for key, value in kwargs.items():
             if hasattr(self, key):
                 setattr(self, key, value)
@@ -437,12 +440,31 @@ class FeishuChannel(Channel):
     async def stop(self) -> None:
         """Stop the Feishu bot.
 
-        Note: lark.ws.Client does not expose stop method, simply exiting the program
-        will close the client.
+        The lark.ws.Client SDK (v2_main) exposes no stop/close API, so the
+        WebSocket connection cannot be torn down from here. What this method
+        does control is the reconnect loop in ``run_ws``: it exits once
+        ``_running`` is cleared, and the underlying socket is released when
+        the daemon process exits.
 
         Reference: https://github.com/larksuite/oapi-sdk-python/blob/v2_main/lark_oapi/ws/client.py#L86
         """
         self._running = False
+        # Best-effort: if a newer SDK ever exposes a stop/close, use it.
+        ws_client = self._ws_client
+        for method_name in ("stop", "close"):
+            closer = getattr(ws_client, method_name, None) if ws_client is not None else None
+            if callable(closer):
+                try:
+                    closer()
+                    logger.debug("[Feishu] closed lark WS client via %s()", method_name)
+                except Exception as exc:
+                    logger.debug("[Feishu] lark WS client %s() failed: %s", method_name, exc)
+                break
+        else:
+            logger.debug(
+                "[Feishu] lark ws.Client exposes no stop/close; the reconnect loop has "
+                "exited and the socket closes on process exit"
+            )
         logger.info("[Feishu] bot stopped")
 
     def _fetch_bot_open_id(self) -> str | None:
@@ -1129,7 +1151,7 @@ class FeishuChannel(Channel):
         if data and filename:
             filename = self._safe_media_filename(filename, fallback_filename)
             file_path = media_dir / filename
-            file_path.write_bytes(data)
+            await asyncio.to_thread(file_path.write_bytes, data)
             path_str = str(file_path)
             logger.debug("[Feishu] Downloaded %s to %s", msg_type, path_str)
             return path_str, f"[{msg_type}: {path_str}]"
@@ -1565,9 +1587,13 @@ class FeishuChannel(Channel):
                 if buf and buf.card_id:
                     # Delegate to send_delta so tool hints get the same
                     # throttling (and card creation) as regular text deltas.
+                    # Metadata must ride along: the stream key is derived from
+                    # message_id during streaming, and dropping it would miss
+                    # the active buffer and create a duplicate card.
                     await self.send_delta(
                         chat_id,
                         "\n\n" + self._format_tool_hint_delta(hint) + "\n\n",
+                        message.metadata,
                     )
                     return
                 # No active streaming card — send as a regular interactive card
@@ -1854,20 +1880,26 @@ class FeishuChannel(Channel):
 
             # Forward to channel manager
             reply_to = chat_id if chat_type == "group" else sender_id
+            metadata = {
+                "message_id": message_id,
+                "chat_type": chat_type,
+                "msg_type": msg_type,
+                "parent_id": parent_id,
+                "root_id": root_id,
+                "thread_id": thread_id,
+            }
+            # The group/topic session key travels in metadata so
+            # ChannelManager.handle_inbound can route the conversation to its
+            # own loop. `_handle_message` accepts no session_key parameter, so
+            # passing it as a kwarg raised TypeError on every inbound message.
+            if session_key:
+                metadata["session_key"] = session_key
             await self._handle_message(
                 sender_id=sender_id,
                 chat_id=reply_to,
                 content=content,
                 media=media_paths,
-                metadata={
-                    "message_id": message_id,
-                    "chat_type": chat_type,
-                    "msg_type": msg_type,
-                    "parent_id": parent_id,
-                    "root_id": root_id,
-                    "thread_id": thread_id,
-                },
-                session_key=session_key,
+                metadata=metadata,
             )
 
         except Exception:

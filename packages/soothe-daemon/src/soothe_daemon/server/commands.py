@@ -20,6 +20,7 @@ async def _handle_command_request(self, msg: dict[str, Any]) -> None:
     command = msg.get("command")
     lid = str(msg.get("loop_id") or "").strip()
     params = msg.get("params", {})
+    client_id = msg.get("client_id")
 
     if not lid:
         await self._send_command_response(
@@ -27,6 +28,7 @@ async def _handle_command_request(self, msg: dict[str, Any]) -> None:
             error="command_request requires loop_id",
             request_id=request_id,
             loop_id=None,
+            client_id=client_id,
         )
         return
 
@@ -46,6 +48,7 @@ async def _handle_command_request(self, msg: dict[str, Any]) -> None:
                 error=f"Could not resolve execution context for loop: {exc}",
                 request_id=request_id,
                 loop_id=lid,
+                client_id=client_id,
             )
             return
 
@@ -78,12 +81,17 @@ async def _handle_command_request(self, msg: dict[str, Any]) -> None:
                 error=f"Unknown command: {command!r}",
                 request_id=request_id,
                 loop_id=loop_id,
+                client_id=client_id,
             )
             return
 
         result = await handler(resolved_checkpoint, params, loop_id=loop_id)
         await self._send_command_response(
-            command, data=result, request_id=request_id, loop_id=loop_id
+            command,
+            data=result,
+            request_id=request_id,
+            loop_id=loop_id,
+            client_id=client_id,
         )
 
     except Exception as exc:
@@ -93,6 +101,7 @@ async def _handle_command_request(self, msg: dict[str, Any]) -> None:
             error=str(exc),
             request_id=request_id,
             loop_id=loop_id,
+            client_id=client_id,
         )
 
 
@@ -104,14 +113,22 @@ async def _send_command_response(
     *,
     request_id: str | None = None,
     loop_id: str | None = None,
+    client_id: Any = None,
 ) -> None:
     """Send structured command response.
+
+    Responses are addressed to the requesting client when known — command
+    results may carry conversation content that must not leak to other
+    clients on the `global` topic. When the requester is unknown (legacy
+    queued command without `client_id`), the frame falls back to the
+    daemon-wide broadcast so the response is not silently lost.
 
     Args:
         command: Command name
         data: Response data (if successful)
         error: Error message (if failed)
         request_id: Echo client correlation id when present (WebSocket `request_response`).
+        client_id: Requesting client id; addressed delivery when present.
     """
     response: dict[str, Any] = {
         "type": "command_response",
@@ -127,6 +144,9 @@ async def _send_command_response(
     if loop_id:
         response["loop_id"] = loop_id
 
+    if client_id:
+        await self._send_client_message(client_id, response)
+        return
     await self._broadcast(response)
 
 
@@ -444,7 +464,11 @@ async def _cmd_plan(
 async def _cmd_thread(
     self, checkpoint_thread_id: str | None, params: dict, *, loop_id: str | None = None
 ) -> dict[str, Any]:
-    """Durability / checkpoint operations (params use checkpoint ids, not `loop_id`)."""
+    """Durability / checkpoint operations (params use checkpoint ids, not `loop_id`).
+
+    Thread archiving is not implemented yet — raises instead of faking a
+    confirmed success on a durability-critical path.
+    """
     action = params.get("action")
     target_checkpoint_id = params.get("id")
 
@@ -452,26 +476,29 @@ async def _cmd_thread(
         if not target_checkpoint_id:
             raise ValueError("Checkpoint id required for archive (params.id)")
 
-        # TODO: Implement thread archiving in runner
-        # await self._runner.archive_thread(target_checkpoint_id)
+        raise ValueError(
+            f"not_implemented: thread archiving is not implemented "
+            f"(checkpoint {target_checkpoint_id!r} was not archived)"
+        )
 
-        return {"archived": True, "checkpoint_thread_id": target_checkpoint_id}
-    else:
-        raise ValueError(f"Unknown thread action: {action}")
+    raise ValueError(f"Unknown thread action: {action}")
 
 
 async def _cmd_resume(
     self, checkpoint_thread_id: str | None, params: dict, *, loop_id: str | None = None
 ) -> dict[str, Any]:
-    """Resume target loop (`params.loop_id`)."""
+    """Resume target loop (`params.loop_id`).
+
+    Thread resuming is not implemented yet — raises instead of faking a
+    confirmed success.
+    """
     target_loop = params.get("loop_id")
     if not target_loop:
         raise ValueError("loop_id required for resume")
 
-    # TODO: Implement thread resuming
-    # Similar to resume_thread WebSocket message handling
-
-    return {"resumed": True, "loop_id": target_loop}
+    raise ValueError(
+        f"not_implemented: loop resuming is not implemented (loop {target_loop!r} was not resumed)"
+    )
 
 
 # Cron command handlers (RFC-229)

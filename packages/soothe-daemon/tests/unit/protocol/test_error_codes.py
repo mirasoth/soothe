@@ -1,7 +1,7 @@
 """Unit tests for the numeric error code registry (RFC-450, phase 2).
 
 Covers:
-- All 37 ErrorCode members have the correct numeric values per RFC-450
+- All 38 ErrorCode members have the correct numeric values per RFC-450
 - ErrorCode is an IntEnum (ints, comparable, JSON-friendly)
 - Reserved range boundaries are respected
 - RpcProtocolError carries code/message/data/severity and serializes via to_dict
@@ -54,6 +54,7 @@ EXPECTED_VALUES: dict[str, int] = {
     "NO_SESSION": -32102,
     "AUTH_FAILED": -32103,
     "AUTH_EXPIRED": -32104,
+    "AUTH_REQUIRED": -32105,
     # Resource not found
     "LOOP_NOT_FOUND": -32200,
     "JOB_NOT_FOUND": -32201,
@@ -85,7 +86,7 @@ EXPECTED_VALUES: dict[str, int] = {
 
 def test_error_code_count() -> None:
     """Registry contains exactly the expected number of codes."""
-    assert len(ErrorCode) == len(EXPECTED_VALUES) == 37
+    assert len(ErrorCode) == len(EXPECTED_VALUES) == 38
 
 
 @pytest.mark.parametrize("name, value", sorted(EXPECTED_VALUES.items(), key=lambda kv: kv[1]))

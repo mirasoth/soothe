@@ -124,18 +124,8 @@ async def purge_loop_execution_data(daemon: Any, loop_id: str, metadata: dict[st
 
 async def purge_loop_fully(daemon: Any, loop_id: str, metadata: dict[str, Any] | None) -> None:
     """Full loop deletion (same persistence teardown as `loop_delete` RPC)."""
-    try:
-        await daemon._query_engine.cancel_loop(loop_id)
-    except Exception:
-        logger.warning("Failed to cancel running queries for loop %s", loop_id, exc_info=True)
+    await _cancel_and_detach_loop(daemon, loop_id)
 
-    for cid in list(daemon._session_manager._sessions.keys()):
-        await daemon._session_manager.unsubscribe_loop(cid, loop_id)
-
-    await daemon._loop_input_dispatcher.cleanup_loop(loop_id)
-    budget = getattr(daemon, "_loop_broadcast_budget", None)
-    if budget is not None:
-        budget.drop_loop(loop_id)
     # Release in-memory card ledger; display rows are purged via persistence manager.
     card_manager = getattr(daemon, "_card_manager", None)
     if card_manager is not None:
@@ -143,7 +133,6 @@ async def purge_loop_fully(daemon: Any, loop_id: str, metadata: dict[str, Any] |
             await card_manager.stop_for_loop(loop_id)
         except Exception:
             logger.warning("Failed to release card ledger for loop %s", loop_id, exc_info=True)
-    daemon._thread_registry.cleanup_loop(loop_id)
 
     thread_ids = await _collect_loop_thread_ids(daemon, loop_id)
     await _delete_loop_threads(daemon, thread_ids)

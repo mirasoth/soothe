@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import time
 import unicodedata
@@ -213,22 +214,13 @@ class _StreamBuf:
     stream_id: str | None = None
 
 
-@dataclass
-class _QueuedTelegramUpdate:
-    """Telegram update staged for ordered processing."""
-
-    kind: Literal["command", "message"]
-    update: Update
-    context: Any
-
-
 class TelegramConfig:
     """Telegram channel configuration (Pydantic-like for soothe)."""
 
     enabled: bool = False
     token: str = ""
     mode: Literal["polling", "webhook"] = "polling"
-    allow_from: list[str] = []
+    allow_from: list[str] | None = None
     proxy: str | None = None
     reply_to_message: bool = False
     react_emoji: str = "👀"
@@ -249,6 +241,8 @@ class TelegramConfig:
         for key, value in kwargs.items():
             if hasattr(self, key):
                 setattr(self, key, value)
+        if self.allow_from is None:
+            self.allow_from = []
 
 
 class TelegramChannel(Channel):
@@ -301,13 +295,10 @@ class TelegramChannel(Channel):
             self.config = config
         self._app: Application | None = None
         self._typing_tasks: dict[str, asyncio.Task] = {}
-        self._media_group_buffers: dict[str, dict] = {}
         self._media_group_tasks: dict[str, asyncio.Task] = {}
         self._bot_user_id: int | None = None
         self._bot_username: str | None = None
         self._stream_bufs: dict[str, _StreamBuf] = {}
-        self._inbound_buffers: dict[str, list[_QueuedTelegramUpdate]] = {}
-        self._inbound_workers: dict[str, asyncio.Task] = {}
 
     async def start(self) -> None:
         """Start the Telegram bot."""
@@ -417,12 +408,6 @@ class TelegramChannel(Channel):
         for task in self._media_group_tasks.values():
             task.cancel()
         self._media_group_tasks.clear()
-        self._media_group_buffers.clear()
-
-        for task in self._inbound_workers.values():
-            task.cancel()
-        self._inbound_workers.clear()
-        self._inbound_buffers.clear()
 
         if self._app:
             logger.info("[Telegram] Stopping bot...")
@@ -893,8 +878,10 @@ class TelegramChannel(Channel):
             import tempfile
 
             ext = self._get_extension(media_type, getattr(media_file, "mime_type", None))
+            data = await file.download_to_drive()
             fd, path = tempfile.mkstemp(suffix=ext, prefix="telegram_")
-            Path(path).write_bytes(await file.download_to_drive())
+            with os.fdopen(fd, "wb") as f:
+                f.write(data)
             return [path], [f"[{media_type}: {path}]"]
         except Exception as e:
             logger.warning("[Telegram] Failed to download media: %s", e)

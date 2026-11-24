@@ -104,7 +104,7 @@ class LoopListParams(ParamsBase):
     """Params for method=loop_list, type=request."""
 
     status: str | None = None
-    limit: int | None = None
+    limit: int | None = Field(default=None, ge=1, le=200)
     filter: dict[str, Any] | None = Field(
         default=None,
         description="Optional filters: status, exclude_empty, workspace.",
@@ -148,7 +148,7 @@ class LoopMessagesParams(ParamsBase):
     """Params for method=loop_messages, type=request."""
 
     loop_id: str = Field(..., min_length=1)
-    limit: int = Field(default=100, ge=1)
+    limit: int = Field(default=100, ge=1, le=200)
     offset: int = Field(default=0, ge=0)
 
 
@@ -377,7 +377,7 @@ class SubscribeParams(ParamsBase):
 
     loop_id: str = Field(..., min_length=1)
     stream_delivery: Literal["batch", "adaptive", "streaming"] = "adaptive"
-    wire_tier: Literal["full", "compact"] = "full"
+    wire_tier: Literal["full", "progress"] = "full"
 
 
 class ConnectionInitParams(_SdkConnectionInitParams):

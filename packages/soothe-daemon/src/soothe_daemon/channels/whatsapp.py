@@ -31,13 +31,15 @@ class WhatsAppConfig:
     enabled: bool = False
     bridge_url: str = "ws://localhost:3001"
     bridge_token: str = ""
-    allow_from: list[str] = []
+    allow_from: list[str] | None = None
     group_policy: Literal["open", "mention"] = "open"
 
     def __init__(self, **kwargs: Any) -> None:
         for key, value in kwargs.items():
             if hasattr(self, key):
                 setattr(self, key, value)
+        if self.allow_from is None:
+            self.allow_from = []
 
 
 def _bridge_token_path() -> Path:

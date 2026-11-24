@@ -64,11 +64,11 @@ def _normalize_wire_trace(
     return trace
 
 
-def test_minimal_turn_wire_trace_matches_golden() -> None:
+async def test_minimal_turn_wire_trace_matches_golden() -> None:
     """Terminal content → stream.end scopes → strange_loop.completed (coalescer)."""
     coalescer = StreamDeliveryCoalescer("batch")
-    coalescer.ingest(*_gc_chunk("synthesis tail"))
-    tuples = coalescer.ingest(
+    await coalescer.ingest(*_gc_chunk("synthesis tail"))
+    tuples = await coalescer.ingest(
         (),
         "custom",
         {"type": STRANGE_LOOP_COMPLETED, "status": "done"},

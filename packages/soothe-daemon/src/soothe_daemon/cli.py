@@ -69,10 +69,9 @@ def _get_ws_address() -> tuple[str, int]:
 def _is_port_live(host: str, port: int) -> bool:
     """Fast socket probe to check if port is accepting connections."""
     try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(0.1)  # 100ms is sufficient for local check
-        s.connect((host, port))
-        s.close()
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(0.1)  # 100ms is sufficient for local check
+            s.connect((host, port))
         return True
     except (ConnectionRefusedError, OSError, TimeoutError):
         return False
@@ -677,14 +676,7 @@ def _status_meets_or_exceeds(status: str, threshold: str) -> bool:
     """Return True when status severity is at or above the threshold."""
     from soothe_daemon.health.models import CheckStatus
 
-    severity = {
-        CheckStatus.OK: 0,
-        CheckStatus.INFO: 1,
-        CheckStatus.SKIPPED: 2,
-        CheckStatus.WARNING: 3,
-        CheckStatus.ERROR: 4,
-    }
-    return severity[status] >= severity[threshold]
+    return CheckStatus(status).severity >= CheckStatus(threshold).severity
 
 
 def run_acp() -> None:

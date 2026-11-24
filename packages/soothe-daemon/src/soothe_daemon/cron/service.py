@@ -24,6 +24,7 @@ from soothe_daemon.cron.models import (
     CronJob,
     DuplicateCronJobError,
     JobStatus,
+    ScheduleKind,
 )
 from soothe_daemon.cron.schedule import ScheduleSpec, schedule_timezone_label
 from soothe_daemon.cron.store_factory import create_cron_job_store
@@ -32,6 +33,10 @@ if TYPE_CHECKING:
     from soothe.config.settings import SootheConfig
 
 logger = logging.getLogger(__name__)
+
+# Store meta key recording the schedule timezone the pending next_run values
+# were last computed with (timezone-conditional reconcile snapshot).
+_TIMEZONE_META_KEY = "schedule_timezone"
 
 
 class CronService:
@@ -89,10 +94,33 @@ class CronService:
         )
 
     async def _reconcile_pending_schedules(self) -> None:
-        """Recompute next_run for pending jobs after timezone config changes."""
+        """Recompute next_run for pending jobs after a timezone config change.
+
+        The reconcile only runs when the configured schedule timezone differs
+        from the snapshot recorded in the store meta table at the previous
+        start — restarts under an unchanged timezone leave next_run untouched.
+        Delay-kind jobs are skipped entirely: their next_run is relative to
+        now (`next_after` returns now + delta), so re-anchoring would push
+        every pending delay job further out on each restart.
+        """
+        configured_tz = schedule_timezone_label(self._cron_config.timezone)
+        try:
+            stored_tz = await self._store.get_meta(_TIMEZONE_META_KEY)
+        except Exception:
+            logger.warning(
+                "Cron schedule timezone snapshot read failed; skipping reconcile",
+                exc_info=True,
+            )
+            return
+
+        if stored_tz is not None and stored_tz == configured_tz:
+            return
+
         now = datetime.now(tz=UTC)
         pending = await self._store.list_pending()
         for job in pending:
+            if job.schedule_kind == ScheduleKind.DELAY:
+                continue
             spec = self._schedule_spec(job.schedule_kind.value, job.schedule_value)
             next_run = spec.next_after(now)
             if next_run is None:
@@ -103,8 +131,61 @@ class CronService:
                     "Cron job next_run reconciled: id=%s next_run=%s timezone=%s",
                     job.id,
                     next_run.isoformat(),
-                    schedule_timezone_label(self._cron_config.timezone),
+                    configured_tz,
                 )
+
+        try:
+            await self._store.set_meta(_TIMEZONE_META_KEY, configured_tz)
+        except Exception:
+            logger.warning("Cron schedule timezone snapshot write failed", exc_info=True)
+
+    async def _sweep_stale_running_jobs(self, started_at: datetime) -> int:
+        """Re-pending jobs stranded in RUNNING by a previous daemon run.
+
+        A daemon crash/restart between the PENDING→RUNNING transition and
+        goal completion otherwise leaves a recurring job stuck in `running`
+        forever (`get_due_jobs` only selects pending jobs). Called from
+        `start()` before the tick task is created, so no in-process dispatch
+        can race the sweep; while the service is running, the tick loop is
+        the single writer that moves jobs PENDING→RUNNING, preserving the
+        double-dispatch protection.
+
+        Args:
+            started_at: Instant this daemon started; running rows written
+            before it (i.e. by a previous process) are swept.
+
+        Returns:
+            Number of jobs re-pended.
+        """
+        running = await self._store.list_running()
+        swept = 0
+        now = datetime.now(tz=UTC)
+        for job in running:
+            updated_at = job.updated_at
+            if updated_at is not None:
+                if updated_at.tzinfo is None:
+                    updated_at = updated_at.replace(tzinfo=UTC)
+                if updated_at >= started_at:
+                    continue
+            spec = self._schedule_spec(job.schedule_kind.value, job.schedule_value)
+            next_run = spec.next_after(now)
+            if next_run is None:
+                await self._store.update_status(job.id, JobStatus.FAILED)
+                logger.warning(
+                    "Cron job stranded in running has no valid next run; marked failed: id=%s",
+                    job.id,
+                )
+                continue
+            await self._store.update_next_run(job.id, next_run, job.run_count)
+            swept += 1
+            logger.info(
+                "Cron job stranded in running re-pended after restart: id=%s next_run=%s",
+                job.id,
+                next_run.isoformat(),
+            )
+        if swept:
+            logger.info("Swept %d stale running cron job(s) on start", swept)
+        return swept
 
     async def seed_builtin_jobs(self) -> int:
         """Seed built-in recurring maintenance jobs into the store.
@@ -157,16 +238,24 @@ class CronService:
         return created
 
     async def start(self) -> None:
-        """Start the cron service monitoring loop."""
+        """Start the cron service monitoring loop.
+
+        Recovery passes (schedule reconcile, stale-RUNNING sweep, builtin
+        seeding) complete before the tick task is created, so a job stranded
+        in `running` by a previous run cannot double-dispatch against an
+        in-process PENDING→RUNNING transition.
+        """
         if self._running:
             logger.warning("CronService already running")
             return
 
+        started_at = datetime.now(tz=UTC)
         self._running = True
-        self._tick_task = asyncio.create_task(self._tick_loop())
 
         await self._reconcile_pending_schedules()
+        await self._sweep_stale_running_jobs(started_at)
         await self.seed_builtin_jobs()
+        self._tick_task = asyncio.create_task(self._tick_loop())
 
         logger.info(
             "CronService started with poll_interval=%ds timezone=%s",

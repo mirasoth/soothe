@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -28,6 +29,7 @@ from soothe_daemon.channels.acp import (
     _ToolProjection,
 )
 from soothe_daemon.channels.base import Channel
+from soothe_daemon.channels.message import ChannelMessage
 from soothe_daemon.config.models import ACPConfig
 from soothe_daemon.events.constants import OUTPUT_TEXT_DELTA
 
@@ -2497,3 +2499,318 @@ class TestClarificationTurnText:
 
     def test_no_answers_yields_no_text(self):
         assert _clarification_turn_text([], "plan_mode_review") == ""
+
+
+class TestSessionLoadResubscription:
+    """session/load must restore the EventBus subscription after session/close.
+
+    `session/close` deliberately keeps the session in the map while
+    unsubscribing, so a load that only subscribed for *unknown* sessions left
+    a resumed session permanently deaf.
+    """
+
+    def _make_manager(self) -> MagicMock:
+        manager = make_manager(loop_id="acp:resub")
+        manager._event_bus.unsubscribe = AsyncMock()
+        return manager
+
+    @pytest.mark.asyncio
+    async def test_session_close_then_load_resubscribes(self):
+        channel = ACPChannel(ACPConfig(enabled=True), self._make_manager())
+        state = channel._get_state()
+        try:
+            session_id = (await channel._handle_session_new({}))["sessionId"]
+            loop_id = state.session_map[session_id]
+            assert loop_id in state.event_queues
+
+            await channel._handle_session_close({"sessionId": session_id})
+            assert loop_id not in state.event_queues
+
+            result = await channel._handle_session_load({"sessionId": session_id})
+
+            assert "modes" in result
+            assert loop_id in state.event_queues
+            assert channel._manager._event_bus.subscribe.await_count >= 2
+            # The session was already known, so no resume turn is published.
+            channel._manager.handle_inbound.assert_not_called()
+        finally:
+            for task in state.consumer_tasks.values():
+                task.cancel()
+
+
+class TestSessionProjectionEviction:
+    """Per-loop projection state must be evicted with its session."""
+
+    @pytest.mark.asyncio
+    async def test_session_close_evicts_plan_and_tool_state(self):
+        manager = make_manager(loop_id="acp:evict-close")
+        manager._event_bus.unsubscribe = AsyncMock()
+        channel = ACPChannel(ACPConfig(enabled=True), manager)
+        state = channel._get_state()
+        try:
+            session_id = (await channel._handle_session_new({}))["sessionId"]
+            loop_id = state.session_map[session_id]
+            channel._plan_state(_STDIO_SENTINEL, loop_id)
+            channel._tool_projection(_STDIO_SENTINEL, loop_id)
+
+            await channel._handle_session_close({"sessionId": session_id})
+
+            assert loop_id not in state.plan_states
+            assert loop_id not in state.tool_projections
+        finally:
+            for task in state.consumer_tasks.values():
+                task.cancel()
+
+    @pytest.mark.asyncio
+    async def test_session_delete_evicts_plan_and_tool_state(self):
+        manager = make_manager(loop_id="acp:evict-del")
+        manager._event_bus.unsubscribe = AsyncMock()
+        channel = ACPChannel(ACPConfig(enabled=True), manager)
+        state = channel._get_state()
+        try:
+            session_id = (await channel._handle_session_new({}))["sessionId"]
+            loop_id = state.session_map[session_id]
+            channel._plan_state(_STDIO_SENTINEL, loop_id)
+            channel._tool_projection(_STDIO_SENTINEL, loop_id)
+
+            await channel._handle_session_delete({"sessionId": session_id})
+
+            assert session_id not in state.session_map
+            assert loop_id not in state.plan_states
+            assert loop_id not in state.tool_projections
+        finally:
+            for task in state.consumer_tasks.values():
+                task.cancel()
+
+
+class TestPermissionBridgeInterruptId:
+    """A permission bridge without an addressable interrupt must not invent one.
+
+    The old fallback substituted `str(uuid.uuid4())` into the resume payload,
+    which matched nothing on the resume side: the approval never resumed and
+    the turn stalled until the permission timeout.
+    """
+
+    def _make_channel(self) -> tuple[ACPChannel, str, str]:
+        manager = MagicMock()
+        manager.handle_inbound = AsyncMock(return_value="acp:int-id")
+        manager._event_bus = MagicMock()
+        manager._event_bus.subscribe = AsyncMock()
+        manager._event_bus.publish = AsyncMock()
+
+        channel = ACPChannel(ACPConfig(enabled=True), manager)
+        session_id = "sess-int-id"
+        loop_id = "acp:int-id"
+        channel._get_state().session_map[session_id] = loop_id
+        return channel, session_id, loop_id
+
+    @pytest.mark.asyncio
+    async def test_missing_interrupt_id_skips_the_bridge(self):
+        channel, session_id, loop_id = self._make_channel()
+        event = {
+            "type": "event",
+            "loop_id": loop_id,
+            "data": {
+                "__interrupt__": {
+                    "action_requests": [
+                        {"tool_call_id": "tc-9", "tool_name": "write_file", "args": {}}
+                    ]
+                }
+            },
+        }
+
+        written: list[dict] = []
+
+        async def _capture_write(msg):
+            written.append(msg)
+
+        with patch.object(channel, "_write_jsonrpc", _capture_write):
+            await channel._bridge_permission_request(session_id, loop_id, event)
+
+        # No permission request is sent and no unaddressable resume is
+        # published — failing loudly beats stalling the turn.
+        assert written == []
+        channel._manager._event_bus.publish.assert_not_called()
+
+
+class TestManagerDrivenDelivery:
+    """Outbound delivery must route to the connection owning the loop.
+
+    ChannelManager dispatches outbound from its own task context where the
+    `_current_connection` context var is unset; the old ambient lookup resolved
+    (and auto-created) a phantom stdio connection, dropping the frame in
+    WebSocket mode.
+    """
+
+    def _message(self, loop_id: str) -> ChannelMessage:
+        return ChannelMessage(channel="acp", chat_id=loop_id, content="hello")
+
+    @pytest.mark.asyncio
+    async def test_send_routes_to_the_owning_connection(self):
+        channel = ACPChannel(ACPConfig(enabled=True), MagicMock())
+        channel._get_state("ws-conn").session_map["sess-out"] = "acp:out"
+
+        writes: list[dict] = []
+
+        async def _capture_write(msg):
+            writes.append(msg)
+
+        with patch.object(channel, "_write_jsonrpc", _capture_write):
+            await channel.send("acp:out", self._message("acp:out"))
+
+        assert writes[0]["params"]["sessionId"] == "sess-out"
+        assert writes[0]["params"]["update"]["content"]["text"] == "hello"
+
+    @pytest.mark.asyncio
+    async def test_send_delta_routes_to_the_owning_connection(self):
+        channel = ACPChannel(ACPConfig(enabled=True), MagicMock())
+        channel._get_state("ws-conn").session_map["sess-out"] = "acp:out"
+
+        writes: list[dict] = []
+
+        async def _capture_write(msg):
+            writes.append(msg)
+
+        with patch.object(channel, "_write_jsonrpc", _capture_write):
+            await channel.send_delta("acp:out", "chunk")
+
+        assert writes[0]["params"]["update"]["content"]["text"] == "chunk"
+
+    @pytest.mark.asyncio
+    async def test_send_to_unknown_loop_does_not_write(self):
+        channel = ACPChannel(ACPConfig(enabled=True), MagicMock())
+
+        writes: list[dict] = []
+
+        async def _capture_write(msg):
+            writes.append(msg)
+
+        with patch.object(channel, "_write_jsonrpc", _capture_write):
+            await channel.send("acp:missing", self._message("acp:missing"))
+
+        assert writes == []
+
+
+class _FakeWebSocket:
+    """Minimal duck-typed WebSocket for upgrade-authorization tests."""
+
+    def __init__(self, token: str | None = None, header_token: str | None = None) -> None:
+        self.query_params = {"token": token} if token else {}
+        self.headers = {"x-soothe-token": header_token} if header_token else {}
+        self.closed_with: dict | None = None
+
+    async def close(self, code: int = 1000, reason: str = "") -> None:
+        self.closed_with = {"code": code, "reason": reason}
+
+
+class TestWebSocketUpgradeAuth:
+    """The ACP WS route is fail-closed when identity is enabled.
+
+    Identity-disabled deployments keep accepting unauthenticated upgrades
+    (trusted-local boundary); identity-enabled deployments require a valid
+    identity JWT via `?token=` or `x-soothe-token`.
+    """
+
+    def _channel(self, **kwargs: object) -> tuple[ACPChannel, MagicMock]:
+        service = MagicMock()
+        service._validate_token_async = AsyncMock(return_value=SimpleNamespace(user_id="u1"))
+        manager = MagicMock()
+        manager._identity_service = None
+        manager._config = SimpleNamespace(identity=SimpleNamespace(enabled=True))
+        channel = ACPChannel(ACPConfig(enabled=True), manager, identity_service=service, **kwargs)
+        return channel, service
+
+    @pytest.mark.asyncio
+    async def test_valid_query_token_is_accepted(self):
+        channel, service = self._channel()
+
+        ws = _FakeWebSocket(token="jwt-1")
+
+        assert await channel._authorize_ws_upgrade(ws) is True
+        service._validate_token_async.assert_awaited_once_with("jwt-1")
+
+    @pytest.mark.asyncio
+    async def test_valid_header_token_is_accepted(self):
+        channel, service = self._channel()
+
+        ws = _FakeWebSocket(header_token="jwt-2")
+
+        assert await channel._authorize_ws_upgrade(ws) is True
+        service._validate_token_async.assert_awaited_once_with("jwt-2")
+
+    @pytest.mark.asyncio
+    async def test_missing_token_is_rejected(self):
+        channel, service = self._channel()
+
+        ws = _FakeWebSocket()
+
+        assert await channel._authorize_ws_upgrade(ws) is False
+        service._validate_token_async.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_invalid_token_is_rejected(self):
+        channel, service = self._channel()
+        service._validate_token_async = AsyncMock(return_value=None)
+
+        ws = _FakeWebSocket(token="bad")
+
+        assert await channel._authorize_ws_upgrade(ws) is False
+
+    @pytest.mark.asyncio
+    async def test_identity_disabled_keeps_accepting(self):
+        service = MagicMock()
+        service._validate_token_async = AsyncMock()
+        manager = MagicMock()
+        manager._identity_service = None
+        manager._config = SimpleNamespace(identity=SimpleNamespace(enabled=False))
+        channel = ACPChannel(ACPConfig(enabled=True), manager, identity_service=service)
+
+        ws = _FakeWebSocket()
+
+        assert await channel._authorize_ws_upgrade(ws) is True
+        service._validate_token_async.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_enabled_without_a_reachable_service_fails_closed(self):
+        manager = MagicMock()
+        manager._identity_service = None
+        manager._config = SimpleNamespace(identity=SimpleNamespace(enabled=True))
+        channel = ACPChannel(ACPConfig(enabled=True), manager)
+
+        ws = _FakeWebSocket(token="jwt-3")
+
+        assert await channel._authorize_ws_upgrade(ws) is False
+
+    @pytest.mark.asyncio
+    async def test_explicit_identity_enabled_flag_overrides_the_manager(self):
+        service = MagicMock()
+        service._validate_token_async = AsyncMock(return_value=SimpleNamespace(user_id="u1"))
+        manager = MagicMock()
+        manager._identity_service = None
+        manager._config = SimpleNamespace(identity=SimpleNamespace(enabled=False))
+        channel = ACPChannel(
+            ACPConfig(enabled=True),
+            manager,
+            identity_service=service,
+            identity_enabled=True,
+        )
+
+        assert await channel._authorize_ws_upgrade(_FakeWebSocket(token="jwt-4")) is True
+        assert await channel._authorize_ws_upgrade(_FakeWebSocket()) is False
+
+    @pytest.mark.asyncio
+    async def test_explicit_identity_disabled_flag_overrides_the_manager(self):
+        service = MagicMock()
+        service._validate_token_async = AsyncMock()
+        manager = MagicMock()
+        manager._identity_service = None
+        manager._config = SimpleNamespace(identity=SimpleNamespace(enabled=True))
+        channel = ACPChannel(
+            ACPConfig(enabled=True),
+            manager,
+            identity_service=service,
+            identity_enabled=False,
+        )
+
+        assert await channel._authorize_ws_upgrade(_FakeWebSocket()) is True
+        service._validate_token_async.assert_not_awaited()

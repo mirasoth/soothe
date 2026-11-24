@@ -40,11 +40,11 @@ class ExtractionSchema(BaseModel):
         default=None,
         description="Optional limit: 'until YYYY-MM-DD' or 'for N days/weeks'",
     )
-    confidence: float = Field(
-        default=0.0,
+    confidence: float | None = Field(
+        default=None,
         ge=0.0,
         le=1.0,
-        description="Extraction confidence 0.0-1.0",
+        description="Extraction confidence 0.0-1.0; None means the provider omitted the field",
     )
 
 
@@ -243,6 +243,11 @@ class CronExtractionService:
     ) -> ExtractionResult:
         """Convert ExtractionSchema to ExtractionResult.
 
+        Providers that omit ``confidence`` (schema sentinel ``None``) get an
+        inferred confidence for complete payloads; an explicitly reported low
+        confidence is preserved so the ``confidence_threshold`` gate in
+        ``extract()`` applies to it.
+
         Args:
             schema: Pydantic schema from LLM.
             raw_input: Original input for debugging.
@@ -260,15 +265,19 @@ class CronExtractionService:
             kind = ScheduleKind.AT
 
         confidence = schema.confidence
-        if (
-            confidence < 0.5
-            and schema.task_description.strip()
-            and schema.schedule_kind
-            and schema.schedule_value.strip()
-        ):
-            # Many providers omit ``confidence`` in structured JSON (defaults to 0.0).
-            # Treat complete schedule payloads as high confidence.
-            confidence = 0.9
+        if confidence is None:
+            if (
+                schema.task_description.strip()
+                and schema.schedule_kind
+                and schema.schedule_value.strip()
+            ):
+                # Many providers omit ``confidence`` in structured JSON.
+                # Treat complete schedule payloads as high confidence; an
+                # explicitly reported low confidence is kept verbatim and is
+                # gated by ``confidence_threshold`` in ``extract()``.
+                confidence = 0.9
+            else:
+                confidence = 0.0
 
         return ExtractionResult(
             description=schema.task_description,

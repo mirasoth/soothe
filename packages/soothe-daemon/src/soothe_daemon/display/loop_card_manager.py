@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from soothe.display import card_binder
 from soothe.display.card_ledger import (
     align_cards_preserving_ids,
@@ -64,7 +64,7 @@ def reset_card_ingest_overflow_metrics() -> None:
     _card_ingest_overflow_total.clear()
 
 
-# Optimization 4: Dedicated executor for card binding (isolated from to_thread pool)
+# Dedicated executor for card binding (isolated from the general to_thread pool)
 _card_bind_executor: ThreadPoolExecutor | None = None
 _card_bind_max_workers = 4
 
@@ -94,7 +94,7 @@ class _BindingBuffers:
     log_events: list[dict[str, Any]] = field(default_factory=list)
 
 
-_CARD_BIND_QUEUE_MAXSIZE = 500  # §2.3: bounded per-loop ingest backlog
+_CARD_BIND_QUEUE_MAXSIZE = 500  # bounded per-loop ingest backlog
 
 
 @dataclass
@@ -182,6 +182,7 @@ class LoopCardManager:
         self._buffers.pop(loop_id, None)
         self._flush_schedulers.pop(loop_id, None)
         self._stream_degraded_sent.discard(loop_id)
+        _card_ingest_overflow_total.pop(loop_id, None)
 
     async def _shutdown_ingest_worker(self, loop_id: str) -> None:
         async with self._ingest_lock:
@@ -244,8 +245,8 @@ class LoopCardManager:
         """
         if mode == "updates":
             return
-        queue = await self._ensure_ingest_queue(loop_id)
-        worker = self._ingest_workers[loop_id]
+        worker = await self._ensure_ingest_worker(loop_id)
+        queue = worker.queue
         item = (namespace, mode, data)
         try:
             queue.put_nowait(item)
@@ -268,11 +269,17 @@ class LoopCardManager:
                     name=f"soothe-card-pressure-{loop_id[:16]}",
                 )
 
-    async def _ensure_ingest_queue(self, loop_id: str) -> asyncio.Queue:
+    async def _ensure_ingest_worker(self, loop_id: str) -> _LoopIngestWorker:
+        """Return the per-loop ingest worker, creating it when missing.
+
+        The queue and its worker are returned as one unit so a concurrent
+        ``stop_for_loop`` popping the entry can never leave the caller
+        indexing a missing worker (no create-then-index TOCTOU).
+        """
         async with self._ingest_lock:
             worker_state = self._ingest_workers.get(loop_id)
             if worker_state is not None:
-                return worker_state.queue
+                return worker_state
             queue: asyncio.Queue[tuple[tuple[str, ...], str, Any] | None] = asyncio.Queue(
                 maxsize=self._ingest_queue_maxsize
             )
@@ -281,12 +288,13 @@ class LoopCardManager:
                 self._ingest_worker(loop_id, queue, overflow),
                 name=f"soothe-card-ingest-{loop_id[:16]}",
             )
-            self._ingest_workers[loop_id] = _LoopIngestWorker(
+            worker_state = _LoopIngestWorker(
                 queue=queue,
                 task=task,
                 overflow=overflow,
             )
-            return queue
+            self._ingest_workers[loop_id] = worker_state
+            return worker_state
 
     @staticmethod
     async def _next_ingest_item(
@@ -452,12 +460,16 @@ class LoopCardManager:
     async def _flush_buffers_to_ledger(self, loop_id: str, state: _BindingBuffers) -> None:
         """Flush buffers to ledger using dedicated card-bind executor.
 
-        Optimization 4: Uses isolated ThreadPoolExecutor instead of
-        asyncio.to_thread to prevent contention with general thread pool.
+        Uses an isolated ThreadPoolExecutor instead of asyncio.to_thread to
+        prevent contention with the general thread pool.
 
-        / : append create/update mutations when possible;
-        fall back to `replace_with` only when cards disappear from the
-        projection. Broadcasts live `soothe.card.*` frames after a successful apply.
+        Projects only the buffered (un-projected) message tail and appends
+        create/update mutations when possible; falls back to `replace_with`
+        only when cards disappear from the projection. After a successful
+        flush the projected messages are compacted so the buffer (and the
+        per-flush bind cost) stays bounded; stable card keys make a re-bind
+        of retained messages idempotent in `align_cards_preserving_ids`.
+        Broadcasts live `soothe.card.*` frames after a successful apply.
         """
         executor = _get_card_bind_executor()
         loop = asyncio.get_running_loop()
@@ -485,6 +497,7 @@ class LoopCardManager:
                 # Re-read assigned seqs from ledger snapshot for wire frames.
                 wire_mutations = ledger.to_mutations_snapshot()
                 await self._broadcast_card_mutations(loop_id, wire_mutations)
+            self._compact_projected(state)
             return
 
         mutations = diff_card_snapshots(
@@ -493,9 +506,39 @@ class LoopCardManager:
             start_seq=ledger.next_seq(),
         )
         if not mutations:
+            self._compact_projected(state)
             return
         await ledger.append_many(mutations)
         await self._broadcast_card_mutations(loop_id, mutations)
+        self._compact_projected(state)
+
+    @staticmethod
+    def _compact_projected(state: _BindingBuffers) -> None:
+        """Drop messages already folded into the ledger projection.
+
+        Retains any tail that still awaits a tool result so the next bind can
+        match `ToolMessage` rows to their `AIMessage` (tool results are matched
+        within a single conversion pass). Log events stay buffered: cognition
+        cards are rebuilt from the full event list each flush and dedupe via
+        their stable keys.
+        """
+        open_calls: dict[str, int] = {}  # call_id → index of the opening AIMessage
+        for idx, msg in enumerate(state.messages):
+            if isinstance(msg, AIMessage):
+                for call in getattr(msg, "tool_calls", None) or []:
+                    call_id = (
+                        call.get("id") if isinstance(call, dict) else getattr(call, "id", None)
+                    )
+                    if call_id and call_id not in open_calls:
+                        open_calls[call_id] = idx
+            elif isinstance(msg, ToolMessage):
+                tool_call_id = getattr(msg, "tool_call_id", None)
+                if isinstance(tool_call_id, str):
+                    open_calls.pop(tool_call_id, None)
+        if open_calls:
+            del state.messages[: min(open_calls.values())]
+        else:
+            state.messages.clear()
 
     async def _broadcast_card_mutations(
         self,
@@ -637,9 +680,8 @@ class LoopCardManager:
         from soothe_daemon.display.display_store import get_display_card_store
 
         store = get_display_card_store()
-        goals = [
-            GoalDisplaySnapshot.from_wire_dict(raw) for raw in store.list_goal_snapshots(loop_id)
-        ]
+        raw_goals = await asyncio.to_thread(store.list_goal_snapshots, loop_id)
+        goals = [GoalDisplaySnapshot.from_wire_dict(raw) for raw in raw_goals]
         ledger = await self.ensure_for_loop(loop_id)
         live_cards = fold_display_cards(ledger.snapshot())
         live_goal_index: int | None = None

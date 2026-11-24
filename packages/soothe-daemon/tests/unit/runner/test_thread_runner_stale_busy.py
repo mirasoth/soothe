@@ -42,8 +42,13 @@ def _dead_idle_scaled_worker(*, worker_id: str = "thread-worker-9") -> WorkerThr
 
 
 @pytest.mark.asyncio
-async def test_recover_stale_busy_worker_delivers_done_without_last_error() -> None:
-    """Clean worker exit with stale busy state should unblock submit with done."""
+async def test_recover_stale_busy_worker_routes_error_without_last_error() -> None:
+    """A thread that dies mid-request without a recorded error is a failed turn.
+
+    The consumer must never see a truncated turn as complete: the recovery
+    routes a synthetic error terminal (not a success ``done``), mirroring the
+    process pool's dead-worker handling.
+    """
     worker = _dead_busy_worker()
     pool = ThreadPool.__new__(ThreadPool)
     pool._pending_responses = {}
@@ -64,8 +69,9 @@ async def test_recover_stale_busy_worker_delivers_done_without_last_error() -> N
         await pool._handle_dead_worker(worker)
 
     msg_type, payload = await asyncio.wait_for(response_queue.get(), timeout=1.0)
-    assert msg_type == "done"
-    assert payload is None
+    assert msg_type == "error"
+    assert isinstance(payload, RuntimeError)
+    assert "exited unexpectedly" in str(payload)
     ready_type, ready_payload = await asyncio.wait_for(response_queue.get(), timeout=1.0)
     assert ready_type == "ready"
     assert ready_payload is None

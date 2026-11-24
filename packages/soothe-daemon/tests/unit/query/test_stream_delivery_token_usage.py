@@ -43,12 +43,12 @@ def test_merge_usage_metadata_accumulates_cache_details() -> None:
     assert merged["input_token_details"] == {"cache_read": 7, "cache_creation": 1}
 
 
-def test_text_chunks_sum_usage_instead_of_last_wins() -> None:
+async def test_text_chunks_sum_usage_instead_of_last_wins() -> None:
     c = StreamDeliveryCoalescer("streaming")
-    first = c.ingest(
+    first = await c.ingest(
         *_ai_chunk("Hello ", {"input_tokens": 10, "output_tokens": 0, "total_tokens": 10})
     )
-    second = c.ingest(
+    second = await c.ingest(
         *_ai_chunk(
             "world",
             {"input_tokens": 0, "output_tokens": 5, "total_tokens": 5},
@@ -62,9 +62,9 @@ def test_text_chunks_sum_usage_instead_of_last_wins() -> None:
     ), usages
 
 
-def test_usage_only_chunk_passes_through_instantly() -> None:
+async def test_usage_only_chunk_passes_through_instantly() -> None:
     c = StreamDeliveryCoalescer("streaming")
-    out = c.ingest(
+    out = await c.ingest(
         *_ai_chunk(
             "",
             {
@@ -80,7 +80,7 @@ def test_usage_only_chunk_passes_through_instantly() -> None:
     assert usages[0]["input_token_details"]["cache_read"] == 6
 
 
-def test_tool_invocation_frame_with_usage_is_not_dropped() -> None:
+async def test_tool_invocation_frame_with_usage_is_not_dropped() -> None:
     body = {
         "type": "AIMessageChunk",
         "content": "",
@@ -89,5 +89,5 @@ def test_tool_invocation_frame_with_usage_is_not_dropped() -> None:
         "usage_metadata": {"input_tokens": 12, "output_tokens": 3, "total_tokens": 15},
     }
     c = StreamDeliveryCoalescer("streaming")
-    out = c.ingest((), "messages", (body, {}))
+    out = await c.ingest((), "messages", (body, {}))
     assert _usage_frames(out), out

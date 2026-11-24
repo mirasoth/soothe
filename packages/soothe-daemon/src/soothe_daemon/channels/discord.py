@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import logging
+import os
 import time
 from contextlib import suppress
 from dataclasses import dataclass
@@ -54,8 +55,8 @@ class DiscordConfig:
 
     enabled: bool = False
     token: str = ""
-    allow_from: list[str] = []
-    allow_channels: list[str] = []  # Allowed channel IDs (empty = all)
+    allow_from: list[str] | None = None
+    allow_channels: list[str] | None = None  # Allowed channel IDs (empty = all)
     intents: int = 37377
     group_policy: Literal["mention", "open"] = "mention"
     read_receipt_emoji: str = "👀"
@@ -70,6 +71,10 @@ class DiscordConfig:
         for key, value in kwargs.items():
             if hasattr(self, key):
                 setattr(self, key, value)
+        if self.allow_from is None:
+            self.allow_from = []
+        if self.allow_channels is None:
+            self.allow_channels = []
 
 
 if DISCORD_AVAILABLE:
@@ -638,9 +643,11 @@ class DiscordChannel(Channel):
                 markers.append(f"[attachment: {filename} - too large]")
                 continue
             try:
+                data = await attachment.read()
                 safe_name = safe_filename(filename)
                 fd, file_path = tempfile.mkstemp(suffix=f"_{safe_name}", prefix="discord_")
-                Path(file_path).write_bytes(await attachment.read())
+                with os.fdopen(fd, "wb") as f:
+                    f.write(data)
                 media_paths.append(file_path)
                 markers.append(f"[attachment: {Path(file_path).name}]")
             except Exception as e:

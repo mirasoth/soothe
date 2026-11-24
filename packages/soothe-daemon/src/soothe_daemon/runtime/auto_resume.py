@@ -84,8 +84,13 @@ def classify_incomplete_loop(
 ) -> AutoResumeClassification:
     """Classify one incomplete loop for cancel / skip / resume.
 
-    Cancel-by-age wins over resume. Autopilot worker loops are always skipped.
-    Clarification-parked loops honor `clarifications_policy`.
+    Precedence (highest first): empty id → autopilot-owned → active runner →
+    clarification-parked → cancel-by-age → skip-by-resume-age → checkpoint
+    resumability → resume. Clarification-parked loops precede the age gates:
+    with the `skip` policy they are SKIP; with the `reannounce` policy they
+    resume (never auto-cancelled) — a loop awaiting user input is
+    intentionally parked, per `.agents/rules/persistence-and-loops.md`
+    rule 3. Autopilot worker loops are always skipped.
     """
     lid = str(loop_id or "").strip()
     if not lid:
@@ -102,6 +107,19 @@ def classify_incomplete_loop(
     if active_runner:
         return AutoResumeClassification(lid, AutoResumeDecision.SKIP, "active_runner")
 
+    # Clarification-parked loops are decided before the cancel-by-age gate.
+    if clarification_pending:
+        if clarifications_policy == "skip":
+            return AutoResumeClassification(lid, AutoResumeDecision.SKIP, "clarification_pending")
+        if checkpoint_supports_valid_resume(checkpoint):
+            prompt = (resume_topic or "").strip() or _DEFAULT_RESUME_PROMPT
+            return AutoResumeClassification(
+                lid,
+                AutoResumeDecision.RESUME,
+                "clarification_reannounce",
+                resume_prompt=prompt,
+            )
+
     now_utc = now or datetime.now(UTC)
     updated_at = _parse_updated_at(updated_at_raw)
     age = _age_hours(updated_at, now=now_utc)
@@ -115,14 +133,10 @@ def classify_incomplete_loop(
     if not checkpoint_supports_valid_resume(checkpoint):
         return AutoResumeClassification(lid, AutoResumeDecision.SKIP, "checkpoint_not_resumable")
 
-    if clarification_pending and clarifications_policy == "skip":
-        return AutoResumeClassification(lid, AutoResumeDecision.SKIP, "clarification_pending")
-
     prompt = (resume_topic or "").strip() or _DEFAULT_RESUME_PROMPT
-    reason = "eligible"
-    if clarification_pending and clarifications_policy == "reannounce":
-        reason = "clarification_reannounce"
-    return AutoResumeClassification(lid, AutoResumeDecision.RESUME, reason, resume_prompt=prompt)
+    return AutoResumeClassification(
+        lid, AutoResumeDecision.RESUME, "eligible", resume_prompt=prompt
+    )
 
 
 async def peek_strange_loop_checkpoint(daemon: Any, loop_id: str) -> Any | None:

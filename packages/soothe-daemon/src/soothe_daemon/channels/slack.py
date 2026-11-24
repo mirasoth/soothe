@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import tempfile
-from pathlib import Path
 from typing import Any
 
 import httpx
@@ -34,12 +34,14 @@ class SlackDMConfig:
 
     enabled: bool = True
     policy: str = "open"
-    allow_from: list[str] = []
+    allow_from: list[str] | None = None
 
     def __init__(self, **kwargs: Any) -> None:
         for key, value in kwargs.items():
             if hasattr(self, key):
                 setattr(self, key, value)
+        if self.allow_from is None:
+            self.allow_from = []
 
 
 class SlackConfig:
@@ -54,15 +56,19 @@ class SlackConfig:
     done_emoji: str = "white_check_mark"
     include_thread_context: bool = True
     thread_context_limit: int = 20
-    allow_from: list[str] = []
+    allow_from: list[str] | None = None
     group_policy: str = "mention"
-    group_allow_from: list[str] = []
+    group_allow_from: list[str] | None = None
     dm: SlackDMConfig = None  # type: ignore[assignment]
 
     def __init__(self, **kwargs: Any) -> None:
         for key, value in kwargs.items():
             if hasattr(self, key):
                 setattr(self, key, value)
+        if self.allow_from is None:
+            self.allow_from = []
+        if self.group_allow_from is None:
+            self.group_allow_from = []
         if self.dm is None:
             self.dm = SlackDMConfig()
 
@@ -77,7 +83,9 @@ class SlackChannel(Channel):
     display_name = "Slack"
     supports_inbound = True
     supports_outbound = True
-    supports_streaming = True
+    # send_delta is a no-op (see send_delta below): real Slack streaming needs
+    # message editing, which is not implemented yet.
+    supports_streaming = False
 
     _SLACK_ID_RE = re.compile(r"^[CDGUW][A-Z0-9]{2,}$")
     _SLACK_CHANNEL_REF_RE = re.compile(r"^<#([A-Z0-9]+)(?:\|[^>]+)?>$")
@@ -229,7 +237,11 @@ class SlackChannel(Channel):
     async def send_delta(
         self, chat_id: str, delta: str, metadata: dict[str, Any] | None = None
     ) -> None:
-        """Stream incremental text via Slack message updates."""
+        """Stream incremental text via Slack message updates.
+
+        Not implemented: Slack has no true streaming API, and message editing
+        is not wired up yet, so deltas are dropped (see supports_streaming).
+        """
         # Slack doesn't support true streaming, so we skip this
         # Real implementation would require message editing
         pass
@@ -458,7 +470,6 @@ class SlackChannel(Channel):
             return None, f"[{marker_type}: {name} - unavailable]"
 
         filename = safe_filename(f"{file_id}_{name}")
-        fd, path = tempfile.mkstemp(suffix=filename, prefix="slack_")
         try:
             async with httpx.AsyncClient(
                 timeout=SLACK_DOWNLOAD_TIMEOUT, follow_redirects=True
@@ -470,7 +481,9 @@ class SlackChannel(Channel):
                 response.raise_for_status()
             if self._looks_like_html_download(response):
                 raise ValueError("Slack returned HTML")
-            Path(path).write_bytes(response.content)
+            fd, path = tempfile.mkstemp(suffix=filename, prefix="slack_")
+            with os.fdopen(fd, "wb") as f:
+                f.write(response.content)
             return path, marker
         except Exception as e:
             logger.warning("[Slack] Failed to download file %s: %s", file_id, e)

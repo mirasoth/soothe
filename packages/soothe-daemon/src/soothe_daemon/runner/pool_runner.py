@@ -91,6 +91,28 @@ class WorkerStatus(StrEnum):
 
 _TERMINAL_RESPONSE_TYPES = frozenset({"done", "error", "timeout", "cancelled"})
 
+# Bound on how long `_finish_request_after_terminal` waits for the worker's
+# `ready` signal before recycling the worker (mirrors the thread pool).
+_WORKER_READY_TIMEOUT_SECONDS = 45.0
+
+
+def _degraded_notice_chunk(dropped: int) -> tuple[tuple[str, ...], str, dict[str, Any]]:
+    """Build a `stream_degraded` custom chunk signaling truncated stream output.
+
+    Yielded after chunk drops so consumers know the `done` that follows a
+    lossy stream is not a complete turn.
+    """
+    return (
+        (),
+        "custom",
+        {
+            "type": "stream_degraded",
+            "reason": "worker_response_queue_full",
+            "dropped_count": int(dropped),
+            "recoverable": False,
+        },
+    )
+
 
 @dataclass
 class WorkerProcess:
@@ -148,6 +170,7 @@ class ProcessPoolMetrics:
     worker_uptimes: dict[str, float] = field(default_factory=dict)
     #: Coroutines waiting for an idle worker while the pool is at capacity.
     dispatch_waiters_waiting: int = 0
+    ready_timeout_recoveries: int = 0
 
 
 # Upper bounds (exclusive) for dispatch handoff latency (ms), overflow = last bucket.
@@ -504,6 +527,8 @@ def _pool_worker_body(
                 async def _stream() -> None:
                     from soothe_nano.utils.runtime import stream_turn_overrides
 
+                    dropped_chunks = 0
+
                     with stream_turn_overrides(
                         model=req.model,
                         model_params=req.model_params or None,
@@ -542,11 +567,32 @@ def _pool_worker_body(
                                     ("chunk", request_id, chunk), block=True, timeout=0.5
                                 )
                             except Exception:
+                                dropped_chunks += 1
                                 logger.warning(
-                                    "Worker %s: response queue full, dropping chunk loop=%s",
+                                    "Worker %s: response queue full, dropping chunk loop=%s "
+                                    "(dropped total=%d)",
                                     worker_id,
                                     req.loop_id,
+                                    dropped_chunks,
                                 )
+
+                    if dropped_chunks:
+                        # Never let the consumer see a lossy stream as a complete
+                        # turn: surface a truncation notice before `done`.
+                        try:
+                            response_queue.put(
+                                ("chunk", request_id, _degraded_notice_chunk(dropped_chunks)),
+                                block=True,
+                                timeout=5.0,
+                            )
+                        except Exception:
+                            logger.error(
+                                "Worker %s: failed to deliver stream truncation notice "
+                                "loop=%s request_id=%s",
+                                worker_id,
+                                req.loop_id,
+                                request_id,
+                            )
 
                     response_queue.put(("done", request_id, None))
 
@@ -794,6 +840,11 @@ class ProcessPool:
         self._metrics_latencies: list[float] = []
         # Track pending responses by request_id
         self._pending_responses: dict[str, asyncio.Queue] = {}
+        # Chunk drops per request (parent-side queue full); surfaced as a
+        # stream_degraded notice before the terminal frame.
+        self._stream_drop_counts: dict[str, int] = {}
+        self._worker_ready_timeout_seconds = _WORKER_READY_TIMEOUT_SECONDS
+        self._metrics_ready_timeout_recoveries = 0
         self._health_task: asyncio.Task | None = None
         self._bridge_tasks: dict[str, asyncio.Task[None]] = {}
         # Client disconnect: finish routing worker stream until done/error
@@ -864,6 +915,12 @@ class ProcessPool:
             self._dispatch_stats = PoolDispatchWaitStatsCollector()
         spawn_config = _spawn_safe_config(self._config)
 
+        # Bridges gate on `self._running`; the flag must be set BEFORE spawning
+        # workers and waiting for warmups (both yield the loop), or every
+        # pre-warmed worker's response bridge exits at its first check and
+        # pre-warmed workers can never route a stream.
+        self._running = True
+
         # Pre-warm only min_pool_size workers at startup
         warmup_events: list[Any] = []
         for i in range(self._min_pool_size):
@@ -874,7 +931,6 @@ class ProcessPool:
 
         await self._wait_for_worker_warmups(warmup_events)
 
-        self._running = True
         self._health_task = asyncio.create_task(self._worker_health_watchdog())
         if self._dispatch_stats is not None:
             self._dispatch_stats_task = asyncio.create_task(self._periodic_dispatch_stats())
@@ -1067,9 +1123,14 @@ class ProcessPool:
                         timeout=0.5,
                     )
                 except TimeoutError:
+                    self._stream_drop_counts[request_id] = (
+                        self._stream_drop_counts.get(request_id, 0) + 1
+                    )
                     logger.warning(
-                        "ProcessPool: asyncio response queue full, dropping chunk request_id=%s",
+                        "ProcessPool: asyncio response queue full, dropping chunk request_id=%s "
+                        "(dropped total=%d)",
                         request_id,
+                        self._stream_drop_counts[request_id],
                     )
             else:
                 await response_queue.put((msg_type, payload))
@@ -1155,6 +1216,7 @@ class ProcessPool:
             await self._mark_worker_idle_and_notify(worker)
             self._workers_by_loop_id.pop(loop_id, None)
             self._pending_responses.pop(request_id, None)
+            self._stream_drop_counts.pop(request_id, None)
 
     async def _route_failure_for_dead_busy_worker(self, worker: WorkerProcess) -> None:
         """If a worker process died while handling a request, unblock the waiter with an error.
@@ -1190,6 +1252,7 @@ class ProcessPool:
         try:
             await aio_q.put(("error", err))
             await aio_q.put(("ready", None))
+            self._stream_drop_counts.pop(req_id, None)
         except Exception:
             worker.dead_failure_routed = False
             logger.exception(
@@ -1238,7 +1301,7 @@ class ProcessPool:
             logger.exception("ProcessPool: failed to respawn dead worker %s", worker.worker_id)
 
     async def _worker_health_watchdog(self) -> None:
-        """Stuck/dead worker detection and idle stale-queue drain (no chunk relay;)."""
+        """Stuck/dead worker detection and idle stale-queue drain (no chunk relay)."""
         loop = asyncio.get_event_loop()
 
         while self._running:
@@ -1403,16 +1466,48 @@ class ProcessPool:
         """Release worker only after cleanup completes (`ready` signal)."""
         worker.status = WorkerStatus.CLEANING_UP
         if not ready_already_received:
-            await self._await_worker_ready(response_queue)
+            try:
+                await asyncio.wait_for(
+                    self._await_worker_ready(response_queue),
+                    timeout=self._worker_ready_timeout_seconds,
+                )
+            except TimeoutError:
+                self._metrics_ready_timeout_recoveries += 1
+                logger.error(
+                    "ProcessPool: timed out waiting for worker ready; recycling worker "
+                    "(loop_id=%s request_id=%s worker=%s timeout=%.1fs)",
+                    loop_id,
+                    request_id,
+                    worker.worker_id,
+                    self._worker_ready_timeout_seconds,
+                )
+                self._record_request_completion(
+                    start_time=start_time, loop_id=loop_id, request_id=request_id
+                )
+                await self.force_kill_worker(worker.worker_id, timeout=1.0)
+                return
         await self._mark_worker_idle_and_notify(worker)
+        self._record_request_completion(
+            start_time=start_time, loop_id=loop_id, request_id=request_id
+        )
+        worker.requests_completed += 1
+
+    def _record_request_completion(
+        self,
+        *,
+        start_time: datetime,
+        loop_id: str,
+        request_id: str,
+    ) -> None:
+        """Clear request bookkeeping and append request latency metrics."""
         self._workers_by_loop_id.pop(loop_id, None)
         self._pending_responses.pop(request_id, None)
+        self._stream_drop_counts.pop(request_id, None)
         self._metrics_requests_total += 1
         latency_ms = (datetime.now() - start_time).total_seconds() * 1000
         self._metrics_latencies.append(latency_ms)
         if len(self._metrics_latencies) > 100:
             self._metrics_latencies = self._metrics_latencies[-100:]
-        worker.requests_completed += 1
 
     async def _try_acquire_idle_worker(self) -> WorkerProcess | None:
         """Return an idle live worker, scale up, or respawn a dead slot; else None."""
@@ -1467,6 +1562,16 @@ class ProcessPool:
             if cond is None:
                 raise RuntimeError("Worker pool is not started")
 
+            # Same-loop serialization: re-check inside the semaphore and mark
+            # busy before releasing it, so two concurrent submits for the same
+            # loop cannot both dispatch before either marks busy (the
+            # pre-semaphore wait above is only a slot-efficient fast path).
+            while self.is_loop_busy(request.loop_id):
+                if not self._running:
+                    raise RuntimeError("Worker pool is shutting down")
+                async with cond:
+                    await cond.wait()
+
             worker: WorkerProcess
             response_queue: asyncio.Queue
             handoff_retries = 0
@@ -1501,6 +1606,7 @@ class ProcessPool:
                 # Worker exited after we observed it idle (common race: subprocess idle
                 # timeout vs dispatch). Recover without surfacing a client RuntimeError.
                 self._pending_responses.pop(request_id, None)
+                self._stream_drop_counts.pop(request_id, None)
                 self._workers_by_loop_id.pop(request.loop_id, None)
                 worker.mark_idle()
                 handoff_retries += 1
@@ -1538,6 +1644,18 @@ class ProcessPool:
 
                 if msg_type in _TERMINAL_RESPONSE_TYPES:
                     stream_complete = True
+                    dropped = self._stream_drop_counts.pop(request_id, 0)
+                    if dropped:
+                        # Chunks were lost under backpressure; tell the consumer
+                        # before the terminal frame so `done` is not mistaken for
+                        # a complete turn.
+                        logger.warning(
+                            "ProcessPool: request %s ended with %d dropped chunk(s); "
+                            "marking stream degraded",
+                            request_id,
+                            dropped,
+                        )
+                        yield _degraded_notice_chunk(dropped)
                     if msg_type == "error":
                         error_payload = (
                             payload
@@ -1619,6 +1737,7 @@ class ProcessPool:
             loop_id = worker.current_loop_id or ""
             self._workers_by_loop_id.pop(loop_id, None)
             self._pending_responses.pop(worker.current_request_id or "", None)
+            self._stream_drop_counts.pop(worker.current_request_id or "", None)
             return
 
         logger.warning(
@@ -1683,6 +1802,7 @@ class ProcessPool:
         loop_id = worker.current_loop_id or ""
         self._workers_by_loop_id.pop(loop_id, None)
         self._pending_responses.pop(worker.current_request_id or "", None)
+        self._stream_drop_counts.pop(worker.current_request_id or "", None)
 
         logger.info("Worker %s force terminated", worker_id)
 
@@ -1809,6 +1929,7 @@ class ProcessPool:
         self._workers.clear()
         self._workers_by_loop_id.clear()
         self._pending_responses.clear()
+        self._stream_drop_counts.clear()
         logger.info("ProcessPool: shutdown complete")
 
     def get_metrics(self) -> ProcessPoolMetrics:
@@ -1836,6 +1957,7 @@ class ProcessPool:
             avg_request_latency_ms=avg_latency,
             worker_uptimes=uptimes,
             dispatch_waiters_waiting=self._waiting_for_worker_slot,
+            ready_timeout_recoveries=self._metrics_ready_timeout_recoveries,
         )
 
 

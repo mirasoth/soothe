@@ -1092,7 +1092,10 @@ class _SessionState:
         current_mode: Active interaction-mode id (see `_ACP_MODE_ORDER`). Read
             when a turn is submitted, so the mode actually reaches the runner.
         config_options: Config option values set via session/set_config_option.
-        documents: Open documents keyed by URI (uri → text/version dict).
+        documents: Open documents keyed by URI (uri → metadata dict with
+            languageId, version, and content length). Text bodies are not
+            retained: nothing consumed them, and keeping them was unbounded
+            memory per session.
         focused_uri: Set of URIs currently focused in the editor.
     """
 
@@ -1266,6 +1269,8 @@ class ACPChannel(Channel):
         manager: ChannelManager,
         *,
         unified_app: FastAPI | None = None,
+        identity_enabled: bool | None = None,
+        identity_service: Any | None = None,
     ) -> None:
         """Initialize ACP channel.
 
@@ -1276,10 +1281,23 @@ class ACPChannel(Channel):
                 and `config.transport == "websocket"`, the ACP WebSocket
                 route is registered on this app instead of launching a
                 standalone server.
+            identity_enabled: Whether the WebSocket upgrade is fail-closed
+                authenticated. Defaults to the manager's identity config;
+                pass explicitly when the daemon wiring is not reachable.
+            identity_service: Daemon IdentityService used to verify upgrade
+                tokens. Also resolved defensively from the manager.
         """
         super().__init__(config, manager)
         self._acp_config = config
         self._unified_parent_app = unified_app
+
+        # WS upgrade auth. When identity is enabled the ACP WebSocket route is
+        # fail-closed: the upgrade must carry a valid identity JWT via the
+        # `?token=` query parameter or the `x-soothe-token` header (verified
+        # with the daemon's identity service). Identity-disabled deployments
+        # keep accepting unauthenticated upgrades (trusted-local boundary).
+        self._identity_enabled = identity_enabled
+        self._identity_service = identity_service
 
         # Per-connection state keyed by connection identifier.
         # In stdio mode the single connection uses `_STDIO_SENTINEL`.
@@ -1377,6 +1395,89 @@ class ACPChannel(Channel):
                 self._acp_config.agent_name,
             )
 
+    def _resolve_identity_service(self) -> Any | None:
+        """Resolve the daemon identity service for WS upgrade verification.
+
+        Prefers the constructor-injected service; falls back defensively to
+        an identity service the manager may expose.
+
+        Returns:
+            The IdentityService, or None when the daemon has none.
+        """
+        if self._identity_service is not None:
+            return self._identity_service
+        return getattr(self._manager, "_identity_service", None)
+
+    def _identity_gate_enabled(self) -> bool:
+        """Whether WS upgrades must present a valid identity token.
+
+        Resolution order: the explicit constructor flag, then the manager's
+        daemon identity config (authoritative for identity-disabled
+        deployments), then the presence of a reachable identity service.
+        """
+        if self._identity_enabled is not None:
+            return self._identity_enabled
+        identity_cfg = getattr(getattr(self._manager, "_config", None), "identity", None)
+        enabled = getattr(identity_cfg, "enabled", None)
+        if isinstance(enabled, bool):
+            return enabled
+        return self._resolve_identity_service() is not None
+
+    async def _verify_identity_token(self, token: str) -> bool:
+        """Verify an identity JWT with the daemon's identity service.
+
+        Args:
+            token: The bearer JWT presented on the upgrade request.
+
+        Returns:
+            True when the token is valid and not revoked.
+        """
+        service = self._resolve_identity_service()
+        if service is None:
+            return False
+        validate_async = getattr(service, "_validate_token_async", None)
+        if callable(validate_async):
+            # IdentityService drives its public validate_token with
+            # run_until_complete, which requires an event loop the calling
+            # thread owns; the async implementation is the loop-safe path.
+            claims = await validate_async(token)
+        else:
+
+            def _validate() -> Any:
+                loop = asyncio.new_event_loop()
+                try:
+                    return loop.run_until_complete(service.validate_token(token))
+                finally:
+                    loop.close()
+
+            claims = await asyncio.to_thread(_validate)
+        return claims is not None
+
+    async def _authorize_ws_upgrade(self, websocket: WebSocket) -> bool:
+        """Authenticate a WebSocket upgrade when identity is enabled.
+
+        Fail-closed: the upgrade must carry a valid identity JWT via the
+        ``token`` query parameter or the ``x-soothe-token`` header. When
+        identity is disabled, upgrades are accepted unconditionally
+        (trusted-local boundary, matching the RPC surface).
+
+        Args:
+            websocket: The WebSocket performing the upgrade.
+
+        Returns:
+            True when the connection may proceed.
+        """
+        if not self._identity_gate_enabled():
+            return True
+        token = websocket.query_params.get("token") or websocket.headers.get("x-soothe-token")
+        if token and await self._verify_identity_token(str(token)):
+            return True
+        logger.warning(
+            "[ACP] WebSocket upgrade rejected: %s identity token",
+            "invalid" if token else "missing",
+        )
+        return False
+
     async def stop(self) -> None:
         """Stop the ACP channel — cancel all tasks and clean up.
 
@@ -1449,6 +1550,14 @@ class ACPChannel(Channel):
         state.consumer_tasks.clear()
         state.session_map.clear()
 
+        # Evict per-session/per-loop projection state. The session map is
+        # gone, so these would otherwise accumulate for the daemon's lifetime
+        # on long-lived connections that cycle sessions.
+        state.session_states.clear()
+        state.plan_states.clear()
+        state.tool_projections.clear()
+        state.nes_sessions.clear()
+
         # Release anything still waiting on a turn, so a `session/prompt` cannot
         # outlive the connection that asked for it.
         for waiters in state.pending_turns.values():
@@ -1463,6 +1572,31 @@ class ACPChannel(Channel):
                 fut.cancel()
         state.pending_permissions.clear()
 
+    def _resolve_delivery_target(self, loop_id: str) -> tuple[str | None, Any]:
+        """Resolve (session_id, connection key) for manager-driven outbound delivery.
+
+        ChannelManager dispatches outbound from its own task context where the
+        `_current_connection` context var is unset, so the ambient stdio
+        sentinel would resolve (and `_get_state` auto-create) a phantom stdio
+        connection and drop manager-delivered output in WebSocket mode.
+        Resolving the owning connection from the session maps instead keeps
+        stdio delivery on its sentinel (no duplicated delivery) and routes
+        manager-driven frames to the WebSocket client that owns the loop.
+
+        Returns:
+            (session_id, conn_key). session_id is None when no connection owns
+            the loop; conn_key is then the ambient context value for the
+            caller to report against.
+        """
+        conn_key = self._find_connection_for_loop(loop_id)
+        if conn_key is None:
+            return None, _current_connection.get()
+        state = self._connections[conn_key]
+        for session_id, lid in state.session_map.items():
+            if lid == loop_id:
+                return session_id, conn_key
+        return None, _current_connection.get()
+
     async def send(self, chat_id: str, message: ChannelMessage) -> None:
         """Deliver outbound message as ACP `session/update` notification.
 
@@ -1470,13 +1604,17 @@ class ACPChannel(Channel):
             chat_id: ACP session_id (maps to loop_id via the session map).
             message: ChannelMessage to deliver.
         """
-        session_id = self._loop_to_session(chat_id)
+        session_id, conn_key = self._resolve_delivery_target(chat_id)
         if session_id is None:
             logger.warning("[ACP] No session for loop_id %s", chat_id)
             return
 
-        block = _make_text_block(message.content)
-        await self._send_session_update(session_id, [block])
+        token = _current_connection.set(conn_key)
+        try:
+            block = _make_text_block(message.content)
+            await self._send_session_update(session_id, [block])
+        finally:
+            _current_connection.reset(token)
 
     async def send_delta(
         self,
@@ -1491,12 +1629,16 @@ class ACPChannel(Channel):
             delta: Text chunk to stream.
             metadata: Stream metadata (_stream_id, _stream_end, etc.).
         """
-        session_id = self._loop_to_session(chat_id)
+        session_id, conn_key = self._resolve_delivery_target(chat_id)
         if session_id is None:
             return
 
-        block = _make_text_block(delta)
-        await self._send_session_update(session_id, [block], metadata=metadata)
+        token = _current_connection.set(conn_key)
+        try:
+            block = _make_text_block(delta)
+            await self._send_session_update(session_id, [block], metadata=metadata)
+        finally:
+            _current_connection.reset(token)
 
     async def send_reasoning_delta(
         self,
@@ -1586,6 +1728,11 @@ class ACPChannel(Channel):
         Args:
             websocket: The connected WebSocket instance.
         """
+        if not await self._authorize_ws_upgrade(websocket):
+            # Reject before accept(): the ASGI server completes the handshake
+            # as an HTTP rejection instead of leaving an open socket.
+            await websocket.close(code=1008, reason="authentication required")
+            return
         await websocket.accept()
         # Ensure a _ConnectionState exists for this connection.
         conn_state = self._get_state(websocket)
@@ -2039,9 +2186,13 @@ class ACPChannel(Channel):
         """Handle `session/load` — resume an existing session.
 
         Re-subscribes to the loop's EventBus topic so output events are
-        translated to ACP `session/update` notifications. If the session
-        is not in the current connection's map (e.g. loaded from a prior
-        daemon run), a new loop is created.
+        translated to ACP `session/update` notifications — whenever the loop
+        has no active subscription, not only when the session is unknown.
+        `session/close` deliberately keeps the session in the map while
+        unsubscribing, so a session loaded after a close must re-subscribe
+        here to receive updates again. If the session is not in the current
+        connection's map (e.g. loaded from a prior daemon run), a new loop
+        is created.
 
         Args:
             params: ACP session/load params with `sessionId` and `cwd`.
@@ -2076,6 +2227,11 @@ class ACPChannel(Channel):
                 content="",
                 metadata={"resume": True, "cwd": cwd},
             )
+        elif loop_id not in state.event_queues:
+            # Known session without an active subscription — this is the
+            # session/close path, which kept the entry but unsubscribed.
+            # Restore the subscription so the resumed session gets updates.
+            await self._subscribe_loop_events(loop_id)
 
         # Persist the client cwd as the loop workspace, exactly as session/new
         # does. A loop that was never registered is otherwise created by the
@@ -2159,6 +2315,11 @@ class ACPChannel(Channel):
                     topic = loop_event_topic(loop_id)
                     with contextlib.suppress(Exception):
                         await event_bus.unsubscribe(topic, queue)
+
+            # Evict per-loop projection state so long-lived connections
+            # cycling sessions do not accumulate it.
+            state.plan_states.pop(loop_id, None)
+            state.tool_projections.pop(loop_id, None)
 
         logger.info("[ACP] session/delete: session=%s", session_id)
         return {}
@@ -2314,6 +2475,11 @@ class ACPChannel(Channel):
                     topic = loop_event_topic(loop_id)
                     with contextlib.suppress(Exception):
                         await event_bus.unsubscribe(topic, queue)
+
+            # Evict per-loop projection state. The session stays resumable,
+            # but a resumed turn starts with a fresh plan/tool projection.
+            state.plan_states.pop(loop_id, None)
+            state.tool_projections.pop(loop_id, None)
 
         logger.info("[ACP] session/close: session=%s", session_id)
         return {}
@@ -2681,8 +2847,9 @@ class ACPChannel(Channel):
     async def _handle_document_did_open(self, params: dict[str, Any]) -> dict[str, Any]:
         """Handle `document/didOpen` — document opened in editor.
 
-        Tracks the document state (URI, language, version, text) for
-        context-aware workspace tool calls.
+        Tracks the document state (URI, language, version, content length)
+        for context-aware workspace tool calls. Text bodies are not stored —
+        nothing consumed them.
 
         Args:
             params: ACP document/didOpen params with `sessionId`, `uri`,
@@ -2699,10 +2866,12 @@ class ACPChannel(Channel):
         state = self._get_state(_current_connection.get())
         ss = state.session_states.get(session_id)
         if ss is not None:
+            # Metadata only: nothing consumed the stored document texts, so
+            # retaining them was write-only, unbounded memory per session.
             ss.documents[uri] = {
                 "languageId": language_id,
                 "version": version,
-                "text": text,
+                "length": len(text),
             }
         logger.info(
             "[ACP] document/didOpen: session=%s, uri=%s, lang=%s",
@@ -2738,7 +2907,7 @@ class ACPChannel(Channel):
             if content_changes and isinstance(content_changes, list):
                 first = content_changes[0]
                 if isinstance(first, dict) and "text" in first:
-                    doc["text"] = first["text"]
+                    doc["length"] = len(first["text"])
         logger.info(
             "[ACP] document/didChange: session=%s, uri=%s, version=%s", session_id, uri, version
         )
@@ -2977,10 +3146,20 @@ class ACPChannel(Channel):
             return
 
         # Get the interrupt_id for resume routing
-        interrupt_id = interrupt_data.get("interrupt_id", "")
+        interrupt_id = interrupt_data.get("interrupt_id", "") or event.get("interrupt_id", "")
         if not interrupt_id:
-            # Try to get it from the event metadata
-            interrupt_id = event.get("interrupt_id", str(uuid.uuid4()))
+            # A resume payload keyed by an invented id would match nothing on
+            # the resume side: the tool approval would silently never resume
+            # and the turn would die at the permission timeout. Fail loudly
+            # instead of substituting a random uuid.
+            logger.warning(
+                "[ACP] Tool-approval interrupt for session=%s, loop=%s carries no "
+                "interrupt_id; skipping permission bridge (the approval cannot be "
+                "routed)",
+                session_id,
+                loop_id,
+            )
+            return
 
         # Build ACP permission options
         options = [

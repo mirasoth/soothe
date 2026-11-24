@@ -6,6 +6,7 @@ import asyncio
 import logging
 import threading
 import time
+from itertools import islice
 from typing import TYPE_CHECKING, Any
 
 from soothe.events import EventPriority
@@ -26,9 +27,27 @@ _HIGH_DROP_LOG_LAST: dict[str, float] = {}
 _NO_SUBSCRIBER_LOG_LAST: dict[str, float] = {}
 _DROP_LOG_INTERVAL_SEC = 5.0
 
-# Phase 0: Drop counters for observability (thread-safe for concurrent publishers)
+# Drop counters for observability (thread-safe for concurrent publishers)
 _drop_counters: dict[str, int] = {}  # key: f"{priority}|{topic}"
 _drop_counters_lock = threading.Lock()
+
+# Bound for the topic-keyed bookkeeping dicts above: topics come and go with
+# loop lifecycle, so caps keep them from growing for the process lifetime.
+_MAX_TOPIC_KEYS = 4096
+
+# Cap on how long a CRITICAL/protected/HIGH put may block on a full
+# subscriber queue before the event is dropped and the subscriber logged as
+# stale (a dead consumer must not block publishers forever).
+_BLOCKING_PUT_TIMEOUT_SEC = 5.0
+
+
+def _cap_topic_dict(mapping: dict[str, Any], max_entries: int) -> None:
+    """Evict oldest-inserted entries when `mapping` exceeds `max_entries`."""
+    overflow = len(mapping) - max_entries
+    if overflow <= 0:
+        return
+    for key in list(islice(mapping.keys(), overflow)):
+        mapping.pop(key, None)
 
 
 def _increment_drop_counter(priority: str, topic: str) -> int:
@@ -36,7 +55,17 @@ def _increment_drop_counter(priority: str, topic: str) -> int:
     key = f"{priority}|{topic}"
     with _drop_counters_lock:
         _drop_counters[key] = _drop_counters.get(key, 0) + 1
+        _cap_topic_dict(_drop_counters, _MAX_TOPIC_KEYS)
         return _drop_counters[key]
+
+
+def _prune_topic_counters(topic: str) -> None:
+    """Drop per-topic log/counter keys once the topic has no subscribers left."""
+    for mapping in (_NORMAL_DROP_LOG_LAST, _HIGH_DROP_LOG_LAST, _NO_SUBSCRIBER_LOG_LAST):
+        mapping.pop(topic, None)
+    with _drop_counters_lock:
+        for key in [k for k in _drop_counters if k.endswith(f"|{topic}")]:
+            del _drop_counters[key]
 
 
 def _effective_queue_max(queue: asyncio.Queue[Any]) -> int:
@@ -58,6 +87,7 @@ def _throttle_log(
     prev = last_map.get(topic, 0.0)
     if now - prev >= interval:
         last_map[topic] = now
+        _cap_topic_dict(last_map, _MAX_TOPIC_KEYS)
         return True
     return False
 
@@ -137,15 +167,15 @@ def _is_user_visible_for_backpressure(
 
 
 class EventBus:
-    """Async pub/sub event bus with lock-free publishing (Phase 2).
+    """Async pub/sub event bus with lock-free publishing.
 
-    Phase 2 improvements:
+    Concurrency model:
     - Lock-free publish (no asyncio.Lock in hot path)
     - Write lock only for subscribe/unsubscribe (writer operations)
     - Direct dict read (atomic in Python)
     - Multiple concurrent publishers (no contention)
 
-    Added cleanup_orphaned_topics to remove topics with no subscribers.
+    `cleanup_orphaned_topics` removes topics with no subscribers.
 
     The event bus implements topic-based routing where publishers emit
     events to specific topics and subscribers receive events for topics
@@ -171,14 +201,14 @@ class EventBus:
         *,
         event_size_stats: EventSizeDistributionCollector | None = None,
     ) -> None:
-        """Initialize the event bus with lock-free publish (Phase 2).
+        """Initialize the event bus with lock-free publish.
 
         Args:
             event_size_stats: Optional collector for streaming wire-size stats.
         """
         # Regular dict (atomic read, no lock needed)
         self._subscribers: dict[str, set[asyncio.Queue[dict[str, Any]]]] = {}
-        # Write lock only for subscribe/unsubscribe (Phase 2)
+        # Write lock only for subscribe/unsubscribe (writer operations)
         self._write_lock = asyncio.Lock()
         self._event_size_stats = event_size_stats
         # Track orphaned topics for cleanup
@@ -190,9 +220,9 @@ class EventBus:
         event: dict[str, Any],
         event_meta: EventMeta | None = None,
     ) -> None:
-        """Publish event to all subscribers with lock-free hot path (Phase 2).
+        """Publish event to all subscribers with a lock-free hot path.
 
-        Phase 2 improvement: No lock acquisition for publish (reader operation).
+        No lock acquisition for publish (reader operation):
         - Direct dict read (atomic in Python)
         - Multiple concurrent publishers
         - No contention in hot path
@@ -211,7 +241,7 @@ class EventBus:
         if self._event_size_stats is not None:
             self._event_size_stats.record_event_dict(event)
 
-        # NO LOCK! Direct dict read (atomic in Python) - Phase 2
+        # NO LOCK! Direct dict read (atomic in Python)
         queues = self._subscribers.get(topic, set()).copy()
 
         # Early return if no subscribers (no lock needed)
@@ -308,7 +338,27 @@ class EventBus:
                         topic,
                         priority.name,
                     )
-                await queue.put((event, event_meta))
+                try:
+                    # Bounded wait: a dead-but-subscribed consumer must not pin
+                    # every future publisher to this topic forever.
+                    await asyncio.wait_for(
+                        queue.put((event, event_meta)),
+                        timeout=_BLOCKING_PUT_TIMEOUT_SEC,
+                    )
+                except TimeoutError:
+                    _increment_drop_counter(priority.name, topic)
+                    if _throttle_log(
+                        _HIGH_DROP_LOG_LAST,
+                        topic,
+                        interval=_DROP_LOG_INTERVAL_SEC,
+                    ):
+                        logger.warning(
+                            "Subscriber queue for topic %s stayed full for %.0fs; "
+                            "dropping %s priority event (subscriber appears stale)",
+                            topic,
+                            _BLOCKING_PUT_TIMEOUT_SEC,
+                            priority.name,
+                        )
             elif priority == EventPriority.NORMAL:
                 if _throttle_log(
                     _NORMAL_DROP_LOG_LAST,
@@ -324,13 +374,13 @@ class EventBus:
             # LOW priority: rare here (handled above); drop silently
 
     async def subscribe(self, topic: str, queue: asyncio.Queue[dict[str, Any]]) -> None:
-        """Subscribe queue to receive events for topic with write lock (Phase 2).
+        """Subscribe queue to receive events for topic with write lock.
 
         Args:
             topic: Topic identifier to subscribe to
             queue: AsyncIO queue to receive events
         """
-        # Write lock for subscribe (writer operation) - Phase 2
+        # Write lock for subscribe (writer operation)
         async with self._write_lock:
             if topic not in self._subscribers:
                 self._subscribers[topic] = set()
@@ -339,28 +389,29 @@ class EventBus:
         logger.debug("Subscribed queue to topic %s", topic)
 
     async def unsubscribe(self, topic: str, queue: asyncio.Queue[dict[str, Any]]) -> None:
-        """Unsubscribe queue from topic with write lock (Phase 2).
+        """Unsubscribe queue from topic with write lock.
 
         Args:
             topic: Topic identifier to unsubscribe from
             queue: Queue to remove from subscribers
         """
-        # Write lock for unsubscribe (writer operation) - Phase 2
+        # Write lock for unsubscribe (writer operation)
         async with self._write_lock:
             if topic in self._subscribers:
                 self._subscribers[topic].discard(queue)
                 if not self._subscribers[topic]:
                     del self._subscribers[topic]
+                    _prune_topic_counters(topic)
 
         logger.debug("Unsubscribed queue from topic %s", topic)
 
     async def unsubscribe_all(self, queue: asyncio.Queue[dict[str, Any]]) -> None:
-        """Unsubscribe queue from all topics with write lock (Phase 2).
+        """Unsubscribe queue from all topics with write lock.
 
         Args:
             queue: Queue to remove from all subscribers
         """
-        # Write lock for unsubscribe_all (writer operation) - Phase 2
+        # Write lock for unsubscribe_all (writer operation)
         async with self._write_lock:
             topics_to_remove = []
             for topic in self._subscribers:
@@ -370,6 +421,7 @@ class EventBus:
 
             for topic in topics_to_remove:
                 del self._subscribers[topic]
+                _prune_topic_counters(topic)
 
         logger.debug("Unsubscribed queue from all topics")
 
@@ -387,6 +439,7 @@ class EventBus:
             for topic in orphaned:
                 del self._subscribers[topic]
                 self._topics_with_no_subscribers_log.discard(topic)
+                _prune_topic_counters(topic)
             if orphaned:
                 logger.info("Cleaned up %d orphaned event bus topics", len(orphaned))
             return len(orphaned)

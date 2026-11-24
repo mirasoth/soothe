@@ -18,6 +18,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Cap on tracked rate-limit keys (FIFO eviction of the oldest on overflow).
+_MAX_RATE_TRACKED_KEYS = 512
+
 
 class EmailNotifySink:
     """Outbound-only SMTP delivery for job lifecycle alerts."""
@@ -56,12 +59,23 @@ class EmailNotifySink:
         return addrs
 
     def _rate_limited(self, key: str) -> bool:
-        now = time.monotonic()
+        """Return True when *key* was successfully sent to within the window.
+
+        Successful sends are recorded via `_record_sent`, so a failed
+        delivery never consumes the rate-limit window.
+        """
         last = self._last_sent_at.get(key)
-        if last is not None and (now - last) < self._min_interval_seconds:
-            return True
-        self._last_sent_at[key] = now
-        return False
+        if last is None:
+            return False
+        return (time.monotonic() - last) < self._min_interval_seconds
+
+    def _record_sent(self, key: str) -> None:
+        """Record a successful send time for *key* and bound the dict (FIFO)."""
+        self._last_sent_at.pop(key, None)
+        self._last_sent_at[key] = time.monotonic()
+        while len(self._last_sent_at) > _MAX_RATE_TRACKED_KEYS:
+            oldest = next(iter(self._last_sent_at))
+            self._last_sent_at.pop(oldest)
 
     def _smtp_send(self, msg: EmailMessage) -> None:
         timeout = float(self._config.connect_timeout_seconds)
@@ -117,6 +131,7 @@ class EmailNotifySink:
                 try:
                     await asyncio.to_thread(self._smtp_send, msg)
                     delivered.append(to_addr)
+                    self._record_sent(rate_key)
                     last_exc = None
                     break
                 except Exception as exc:

@@ -94,8 +94,11 @@ class LoopCardLedger:
         if not self._loaded:
             await self.ensure_loaded()
         async with self._lock:
-            self._inner.apply(mutation)
+            # Persist before applying so a store failure can never leave the
+            # in-memory ledger ahead of disk (memory would otherwise never
+            # reload, diverging until restart).
             await asyncio.to_thread(self._store.append_mutations, self._loop_id, [mutation])
+            self._inner.apply(mutation)
 
     async def append_many(self, mutations: Iterable[CardMutation]) -> None:
         items = list(mutations)
@@ -104,9 +107,10 @@ class LoopCardLedger:
         if not self._loaded:
             await self.ensure_loaded()
         async with self._lock:
+            # Persist before applying: memory must never run ahead of disk.
+            await asyncio.to_thread(self._store.append_mutations, self._loop_id, items)
             for mutation in items:
                 self._inner.apply(mutation)
-            await asyncio.to_thread(self._store.append_mutations, self._loop_id, items)
 
     async def replace_with(self, mutations: Iterable[CardMutation]) -> None:
         items = list(mutations)

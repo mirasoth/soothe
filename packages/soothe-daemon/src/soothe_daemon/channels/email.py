@@ -53,14 +53,19 @@ class EmailConfig:
     mark_seen: bool = True
     max_body_chars: int = 12000
     subject_prefix: str = "Re: "
-    allow_from: list[str] = []
+    allow_from: list[str] | None = None
 
-    # Email authentication verification (anti-spoofing)
+    # Email authentication verification (anti-spoofing).
+    # Only Authentication-Results headers whose authserv-id token matches the
+    # receiver's own identity (from_address domain, SMTP/IMAP host, or the
+    # receiving MTA named in the message's topmost Received header) are
+    # honored; sender-forged A-R headers are ignored and count as absent, so
+    # a forged A-R can never satisfy these checks.
     verify_dkim: bool = True
     verify_spf: bool = True
 
     # Attachment handling
-    allowed_attachment_types: list[str] = []
+    allowed_attachment_types: list[str] | None = None
     max_attachment_size: int = 2_000_000
     max_attachments_per_email: int = 5
 
@@ -68,6 +73,10 @@ class EmailConfig:
         for key, value in kwargs.items():
             if hasattr(self, key):
                 setattr(self, key, value)
+        if self.allow_from is None:
+            self.allow_from = []
+        if self.allowed_attachment_types is None:
+            self.allowed_attachment_types = []
 
 
 class EmailChannel(Channel):
@@ -128,6 +137,7 @@ class EmailChannel(Channel):
         else:
             self.config = config
         self._self_addresses = self._collect_self_addresses()
+        self._trusted_authserv_ids = self._collect_trusted_authserv_ids()
         self._last_subject_by_chat: dict[str, str] = {}
         self._last_message_id_by_chat: dict[str, str] = {}
         self._processed_uids: set[str] = set()
@@ -373,8 +383,13 @@ class EmailChannel(Channel):
                         client.store(imap_id, "+FLAGS", "\\Seen")
                     continue
 
-                # Anti-spoofing: verify Authentication-Results
-                spf_pass, dkim_pass = self._check_authentication_results(parsed)
+                # Anti-spoofing: verify Authentication-Results. Only headers
+                # carrying this receiver's own authserv-id (configured identity
+                # or the receiving MTA from the topmost Received header) are
+                # honored; forged headers are ignored and count as absent.
+                spf_pass, dkim_pass = self._check_authentication_results(
+                    parsed, self._message_trusted_authserv_ids(parsed)
+                )
                 if self.config.verify_spf and not spf_pass:
                     logger.warning(
                         "[Email] From %s rejected: SPF verification failed",
@@ -581,9 +596,24 @@ class EmailChannel(Channel):
             return cls._html_to_text(payload).strip()
         return payload.strip()
 
-    @staticmethod
-    def _check_authentication_results(parsed_msg: Any) -> tuple[bool, bool]:
+    @classmethod
+    def _check_authentication_results(
+        cls,
+        parsed_msg: Any,
+        trusted_authserv_ids: set[str],
+    ) -> tuple[bool, bool]:
         """Parse Authentication-Results headers for SPF and DKIM verdicts.
+
+        Only headers whose authserv-id token matches one of
+        ``trusted_authserv_ids`` (this receiver's own MTA identity, or a
+        subdomain of it) are honored. Any other header — including one injected
+        by the sender — is ignored entirely, so a forged A-R claim counts the
+        same as a missing header and can never grant a pass.
+
+        Args:
+            parsed_msg: Parsed email message.
+            trusted_authserv_ids: Authserv-id tokens trusted as the receiver's
+                own identity (derived from the channel configuration).
 
         Returns:
             A tuple of (spf_pass, dkim_pass) booleans.
@@ -591,12 +621,82 @@ class EmailChannel(Channel):
         spf_pass = False
         dkim_pass = False
         for ar_header in parsed_msg.get_all("Authentication-Results") or []:
-            ar_lower = ar_header.lower()
-            if re.search(r"\bspf\s*=\s*pass\b", ar_lower):
+            authserv_id, _, verdicts = str(ar_header).partition(";")
+            authserv_id = authserv_id.strip().lower()
+            if not authserv_id or not cls._authserv_id_trusted(authserv_id, trusted_authserv_ids):
+                continue
+            verdicts_lower = verdicts.lower()
+            if re.search(r"\bspf\s*=\s*pass\b", verdicts_lower):
                 spf_pass = True
-            if re.search(r"\bdkim\s*=\s*pass\b", ar_lower):
+            if re.search(r"\bdkim\s*=\s*pass\b", verdicts_lower):
                 dkim_pass = True
         return spf_pass, dkim_pass
+
+    @staticmethod
+    def _authserv_id_trusted(authserv_id: str, trusted_authserv_ids: set[str]) -> bool:
+        """Return True when the A-R authserv-id belongs to this receiver.
+
+        Matches an exact trusted token or a subdomain of one (e.g.
+        ``mx.example.com`` for trusted ``example.com``).
+        """
+        return any(
+            authserv_id == token or authserv_id.endswith("." + token)
+            for token in trusted_authserv_ids
+        )
+
+    def _collect_trusted_authserv_ids(self) -> set[str]:
+        """Return authserv-id tokens trusted as this receiver's own MTA identity.
+
+        Derived from the configured from_address domain and the SMTP/IMAP
+        hosts. Extended per message by ``_message_trusted_authserv_ids`` with
+        the receiving MTA identity found in the topmost Received header.
+        """
+        trusted: set[str] = set()
+        for candidate in (
+            self.config.from_address,
+            self.config.smtp_host,
+            self.config.imap_host,
+        ):
+            domain = self._domain_of(candidate)
+            if domain:
+                trusted.add(domain)
+        return trusted
+
+    @staticmethod
+    def _received_mta_hosts(parsed_msg: Any) -> set[str]:
+        """Return ``by <host>`` tokens from the topmost Received header.
+
+        Only the topmost header is consulted: it is the one appended by the
+        final (receiving) MTA, so it names the infrastructure that actually
+        delivered this message into the mailbox. Sender-injected Received
+        headers always sit below it and are deliberately ignored.
+        """
+        received = parsed_msg.get_all("Received") or []
+        if not received:
+            return set()
+        top = str(received[0])
+        return {
+            m.group(1).lower().rstrip(".")
+            for m in re.finditer(r"\bby\s+([A-Za-z0-9._-]+)", top, flags=re.IGNORECASE)
+        }
+
+    def _message_trusted_authserv_ids(self, parsed_msg: Any) -> set[str]:
+        """Return authserv-ids trusted for one inbound message.
+
+        Union of the configured identity and the receiving MTA identity taken
+        from the message's topmost Received header.
+        """
+        return self._trusted_authserv_ids | self._received_mta_hosts(parsed_msg)
+
+    @staticmethod
+    def _domain_of(value: str) -> str:
+        """Extract a bare domain from an email address or host name."""
+        raw = (value or "").strip().lower().rstrip(".")
+        if not raw:
+            return ""
+        if "@" in raw:
+            raw = raw.rsplit("@", 1)[1]
+        return raw if raw and "." in raw else ""
 
     @classmethod
     def _extract_attachments(

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import os
+import tempfile
 from pathlib import Path
 
 
 def atomic_write_text(path: Path, content: str, *, encoding: str = "utf-8") -> None:
-    """Write *content* to *path* via a temp file + replace.
+    """Write *content* to *path* via a unique temp file + `os.replace`.
 
     Args:
         path: Destination file path.
@@ -15,10 +17,18 @@ def atomic_write_text(path: Path, content: str, *, encoding: str = "utf-8") -> N
     """
     path = path.expanduser()
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f"{path.name}.tmp")
+    tmp_path: Path | None = None
     try:
-        tmp.write_text(content, encoding=encoding)
-        tmp.replace(path)
+        with tempfile.NamedTemporaryFile(
+            dir=path.parent,
+            prefix=f"{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as tmp:
+            tmp.write(content.encode(encoding))
+            tmp_path = Path(tmp.name)
+        os.replace(tmp_path, path)
+        tmp_path = None
     finally:
-        if tmp.exists():
-            tmp.unlink(missing_ok=True)
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)

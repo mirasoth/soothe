@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+from types import SimpleNamespace
+
 from soothe_daemon.channels.websocket import WebSocketChannel
 
 
@@ -200,3 +203,129 @@ class TestWebSocketChannelCORS:
 
         assert channel._validate_cors("http://example.com") is False
         assert channel._validate_cors("https://evil.com") is False
+
+
+class FakeSessionManager:
+    """Session manager double returning a fixed session (or None)."""
+
+    def __init__(self, session=None):
+        self._session = session
+        self.get_session_calls: list[str] = []
+
+    async def get_session(self, client_id):
+        self.get_session_calls.append(client_id)
+        return self._session
+
+
+class FakeCronService:
+    """Cron service double for command dispatch."""
+
+    async def list_jobs(self, user_id, status=None):
+        return []
+
+
+class FakeWebSocket:
+    """WebSocket double that records sent wire frames."""
+
+    def __init__(self, fail_sends: bool = False):
+        self.sent: list[dict] = []
+        self._fail_sends = fail_sends
+
+    async def send_text(self, text: str) -> None:
+        if self._fail_sends:
+            raise RuntimeError("send failed")
+        self.sent.append(json.loads(text))
+
+
+class TestCommandAuthGate:
+    """Command dispatch honors the identity_enabled auth gate."""
+
+    def _channel(self, identity_enabled: bool, session) -> WebSocketChannel:
+        config = MockWebSocketConfig()
+        manager = MockManager()
+        session_manager = FakeSessionManager(session)
+        return WebSocketChannel(
+            config,
+            manager,
+            session_manager=session_manager,
+            cron_service=FakeCronService(),
+            identity_enabled=identity_enabled,
+        )
+
+    async def test_identity_enabled_unauthenticated_session_rejected(self):
+        session = SimpleNamespace(authenticated=False)
+        channel = self._channel(identity_enabled=True, session=session)
+        websocket = FakeWebSocket()
+
+        await channel._handle_command_message(
+            websocket,
+            {"type": "command", "command": "cron_list_jobs", "request_id": "r1", "payload": {}},
+            "client-1",
+        )
+
+        assert len(websocket.sent) == 1
+        response = websocket.sent[0]
+        assert response["type"] == "command_response"
+        assert response["request_id"] == "r1"
+        assert response["error"] == "AUTH_REQUIRED"
+        assert response["result"] is None
+
+    async def test_identity_enabled_missing_session_rejected(self):
+        channel = self._channel(identity_enabled=True, session=None)
+        websocket = FakeWebSocket()
+
+        await channel._handle_command_message(
+            websocket,
+            {"type": "command", "command": "cron_list_jobs", "request_id": "r2", "payload": {}},
+            "client-1",
+        )
+
+        assert websocket.sent[0]["error"] == "AUTH_REQUIRED"
+
+    async def test_identity_enabled_authenticated_session_dispatches(self):
+        session = SimpleNamespace(authenticated=True)
+        channel = self._channel(identity_enabled=True, session=session)
+        websocket = FakeWebSocket()
+
+        await channel._handle_command_message(
+            websocket,
+            {"type": "command", "command": "cron_list_jobs", "request_id": "r3", "payload": {}},
+            "client-1",
+        )
+
+        response = websocket.sent[0]
+        assert response["error"] is None
+        assert response["result"] == {"jobs": [], "source": "cron_service"}
+
+    async def test_identity_disabled_dispatches_without_session(self):
+        channel = self._channel(identity_enabled=False, session=None)
+        websocket = FakeWebSocket()
+
+        await channel._handle_command_message(
+            websocket,
+            {"type": "command", "command": "cron_list_jobs", "request_id": "r4", "payload": {}},
+            "client-1",
+        )
+
+        response = websocket.sent[0]
+        assert response["error"] is None
+        assert response["result"] == {"jobs": [], "source": "cron_service"}
+
+
+class TestBroadcast:
+    """broadcast zips send results against a single client snapshot."""
+
+    async def test_failed_clients_removed_and_healthy_kept(self):
+        config = MockWebSocketConfig()
+        channel = WebSocketChannel(config, MockManager())
+
+        healthy = FakeWebSocket()
+        broken = FakeWebSocket(fail_sends=True)
+        channel._clients[healthy] = {"client_id": "healthy"}
+        channel._clients[broken] = {"client_id": "broken"}
+
+        await channel.broadcast({"type": "ping"})
+
+        assert healthy.sent == [{"type": "ping"}]
+        assert broken not in channel._clients
+        assert healthy in channel._clients

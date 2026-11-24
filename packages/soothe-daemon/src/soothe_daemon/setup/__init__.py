@@ -1,7 +1,4 @@
-"""Interactive `soothed setup` — scaffold configs and configure LLM provider.
-
-See .platonic/impl/-soothed-setup.md.
-"""
+"""Interactive `soothed setup` — scaffold configs and configure LLM provider."""
 
 from soothe_daemon.setup.cmd import run_setup
 

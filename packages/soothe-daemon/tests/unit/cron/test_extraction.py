@@ -134,6 +134,37 @@ class TestSchemaConfidenceInference:
         assert result.confidence == 0.9
         assert result.is_valid(0.5)
 
+    def test_schema_to_result_keeps_reported_low_confidence(self) -> None:
+        """An explicitly reported low confidence is preserved, not bumped.
+
+        Honest low-confidence payloads stay gated by ``confidence_threshold``.
+        """
+        service = CronExtractionService(config=MagicMock())
+        schema = ExtractionSchema(
+            task_description="send status report",
+            schedule_kind="cron",
+            schedule_value="0 9 * * *",
+            confidence=0.3,
+        )
+        result = service._schema_to_result(schema, "every day at 9am send status report")
+
+        assert result.confidence == 0.3
+        assert not result.is_valid(0.5)
+
+    def test_schema_to_result_explicit_zero_confidence_is_reported(self) -> None:
+        """Explicit 0.0 is treated as reported, not as an omitted field."""
+        service = CronExtractionService(config=MagicMock())
+        schema = ExtractionSchema(
+            task_description="send status report",
+            schedule_kind="cron",
+            schedule_value="0 9 * * *",
+            confidence=0.0,
+        )
+        result = service._schema_to_result(schema, "every day at 9am send status report")
+
+        assert result.confidence == 0.0
+        assert not result.is_valid(0.5)
+
 
 class TestExtractionError:
     """Tests for ExtractionError."""

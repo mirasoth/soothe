@@ -47,6 +47,17 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T")
 
 
+class CreatedAKSKPair(AKSKPair):
+    """AKSKPair carrying the one-time plaintext secret_key (in-memory only).
+
+    Only `create_aksk` returns this subclass; the plaintext secret is never
+    persisted (the store keeps only `secret_key_hash`) and never appears in
+    serialized rows — `list_aksk` rebuilds plain `AKSKPair` instances.
+    """
+
+    secret_key: str | None = None
+
+
 class IdentityService(IdentityProtocol):
     """IdentityProtocol implementation with SQLite or PostgreSQL storage.
 
@@ -354,7 +365,11 @@ class IdentityService(IdentityProtocol):
     # -----------------------------------------------------------------------
 
     def create_aksk(self, user_id: str, expiry_days: int | None = None) -> AKSKPair:
-        """Create AKSK pair for user."""
+        """Create AKSK pair for user.
+
+        The returned pair carries the plaintext `secret_key` exactly once
+        (in-memory only); the store persists only `secret_key_hash`.
+        """
         return asyncio.get_event_loop().run_until_complete(
             self._create_aksk_async(user_id, expiry_days)
         )
@@ -383,13 +398,14 @@ class IdentityService(IdentityProtocol):
         if expiry_days is not None:
             expires_at = now + timedelta(days=expiry_days)
 
-        aksk = AKSKPair(
+        aksk = CreatedAKSKPair(
             aksk_id=aksk_id,
             user_id=user_id,
             access_key=access_key,
             secret_key_hash=secret_key_hash,
             created_at=now,
             expires_at=expires_at,
+            secret_key=secret_key,
         )
 
         await self._writer_to_thread(

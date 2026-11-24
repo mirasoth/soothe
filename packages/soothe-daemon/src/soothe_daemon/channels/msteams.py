@@ -59,6 +59,24 @@ MSTEAMS_REF_TOUCH_INTERVAL_S = 300
 # D8's decommission criterion ("loaded once post-upgrade, verify via audit").
 MSTEAMS_REF_META_MIGRATION_KEY = "__migration__"
 MSTEAMS_REF_META_MIGRATION_SCHEMA = "msteams_refs_v1"
+# Upper bound for webhook POST bodies, enforced before any parsing/validation
+# so a large Content-Length cannot force unbounded memory allocation.
+MSTEAMS_MAX_BODY_BYTES = 1024 * 1024
+
+
+def _read_post_body(rfile: Any, content_length: int) -> bytes | None:
+    """Read a webhook POST body, bounded by MSTEAMS_MAX_BODY_BYTES.
+
+    Args:
+        rfile: Input stream providing ``read(n)``.
+        content_length: Declared Content-Length value.
+
+    Returns:
+        The raw body bytes, or None when the declared length exceeds the cap.
+    """
+    if content_length > MSTEAMS_MAX_BODY_BYTES:
+        return None
+    return rfile.read(content_length) if content_length > 0 else b"{}"
 
 
 class MSTeamsConfig:
@@ -207,7 +225,16 @@ class MSTeamsChannel(Channel):
 
                 try:
                     length = int(self.headers.get("Content-Length", "0"))
-                    raw = self.rfile.read(length) if length > 0 else b"{}"
+                    raw = _read_post_body(self.rfile, length)
+                    if raw is None:
+                        logger.warning(
+                            "Request body too large: %s bytes (limit %d)",
+                            length,
+                            MSTEAMS_MAX_BODY_BYTES,
+                        )
+                        self.send_response(413)
+                        self.end_headers()
+                        return
                     payload = json.loads(raw.decode("utf-8"))
                 except Exception as e:
                     logger.warning("Invalid request body: %s", e)

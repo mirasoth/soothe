@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import gc
+import heapq
 import logging
 import os
 import tracemalloc
@@ -163,26 +164,30 @@ class MemoryProfiler:
         if snapshot is None:
             snapshot = tracemalloc.take_snapshot()
 
-        # Use traceback grouping to see full allocation chain
+        # Use traceback grouping to see full allocation chain. Select the
+        # top-K groups by size first (heap keeps only K candidates) and
+        # materialize full traceback lists only for those K.
         stats = snapshot.statistics("traceback")
+        limit = max(1, self._config.top_allocations_limit)
+        top_stats = heapq.nlargest(
+            limit,
+            (stat for stat in stats if stat.size >= min_size_kb * 1024),
+            key=lambda stat: stat.size,
+        )
 
         large_allocs = []
-        for stat in stats:
+        for stat in top_stats:
             size_kb = stat.size / 1024
-            if size_kb >= min_size_kb:
-                tb_lines = [f"{t.filename}:{t.lineno}" for t in stat.traceback]
-                large_allocs.append(
-                    {
-                        "size_kb": round(size_kb, 2),
-                        "count": stat.count,
-                        "traceback": tb_lines,
-                        "avg_size_kb": round(size_kb / max(stat.count, 1), 2),
-                    }
-                )
-
-        # Sort by size descending
-        large_allocs.sort(key=lambda x: x["size_kb"], reverse=True)
-        return large_allocs[: self._config.top_allocations_limit]
+            tb_lines = [f"{t.filename}:{t.lineno}" for t in stat.traceback]
+            large_allocs.append(
+                {
+                    "size_kb": round(size_kb, 2),
+                    "count": stat.count,
+                    "traceback": tb_lines,
+                    "avg_size_kb": round(size_kb / max(stat.count, 1), 2),
+                }
+            )
+        return large_allocs
 
     def get_queue_metrics(self) -> dict[str, Any]:
         """Get queue depths from thread pool for backpressure debugging.
@@ -207,11 +212,10 @@ class MemoryProfiler:
             "pending_responses_count": len(pool._pending_responses),
             "workers_by_loop_count": len(pool._workers_by_loop_id),
             "workers": {},
-            "config": {
-                "response_queue_maxsize": 100,  # hardcoded bound
-            },
+            "config": {},
         }
 
+        response_queue_maxsize: int | None = None
         for worker_id, worker in pool._workers.items():
             worker_metrics = {
                 "status": worker.status.value,
@@ -226,8 +230,13 @@ class MemoryProfiler:
                 worker_metrics["response_queue_qsize"] = worker.response_queue.qsize()
             except Exception:
                 worker_metrics["response_queue_qsize"] = "error"
+            if response_queue_maxsize is None:
+                response_queue_maxsize = worker.response_queue.maxsize
 
             metrics["workers"][worker_id] = worker_metrics
+
+        if response_queue_maxsize is not None:
+            metrics["config"]["response_queue_maxsize"] = response_queue_maxsize
 
         # Summary stats
         queue_sizes = [

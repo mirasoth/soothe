@@ -17,17 +17,16 @@ from soothe_daemon.channels.message import ChannelMessage
 from soothe_daemon.channels.platform_helpers import safe_filename
 
 try:
+    import aiohttp
     import nh3
     from mistune import create_markdown
     from nio import (
         AsyncClient,
         AsyncClientConfig,
-        DownloadError,
         InviteEvent,
         JoinError,
         LoginResponse,
         MatrixRoom,
-        MemoryDownloadResponse,
         RoomEncryptedMedia,
         RoomMessage,
         RoomMessageMedia,
@@ -38,6 +37,7 @@ try:
         SyncError,
         UploadError,
     )
+    from nio.api import Api
     from nio.crypto.attachments import decrypt_attachment
     from nio.exceptions import EncryptionError
 except ImportError as e:
@@ -904,27 +904,50 @@ class MatrixChannel(Channel):
         event_prefix = (event_id[:24] or "evt").strip("_")
         return self._media_dir() / f"{event_prefix}_{stem}{suffix}"
 
-    async def _download_media_bytes(self, mxc_url: str) -> bytes | None:
-        """Download media from Matrix server."""
-        if not self.client:
+    async def _download_media_bytes_capped(self, mxc_url: str, limit_bytes: int) -> bytes | None:
+        """Stream-download media from the Matrix content repository with a byte cap.
+
+        Reads the response in chunks and aborts as soon as the accumulated size
+        would exceed ``limit_bytes``, so an event without a declared
+        ``info.size`` cannot buffer an unbounded body in memory.
+
+        Args:
+            mxc_url: ``mxc://`` URI of the media.
+            limit_bytes: Maximum number of bytes to buffer.
+
+        Returns:
+            The media bytes, or None on failure or when the cap is exceeded.
+        """
+        if not self.client or not self.client.client_session:
             return None
-        response = await self.client.download(mxc=mxc_url)
-        if isinstance(response, DownloadError):
-            logger.warning("download failed for %s: %s", mxc_url, response)
+        url = Api.mxc_to_http(
+            mxc_url, self.config.homeserver, access_token=self.client.access_token or None
+        )
+        if not url:
+            logger.warning("invalid mxc URI: %s", mxc_url)
             return None
-        body = getattr(response, "body", None)
-        if isinstance(body, (bytes, bytearray)):
-            return bytes(body)
-        if isinstance(response, MemoryDownloadResponse):
-            return bytes(response.body)
-        if isinstance(body, (str, Path)):
-            path = Path(body)
-            if path.is_file():
-                try:
-                    return path.read_bytes()
-                except OSError:
+        chunks: list[bytes] = []
+        total = 0
+        try:
+            async with self.client.client_session.get(url) as resp:
+                if resp.status >= 400:
+                    logger.warning("download failed for %s: HTTP %s", mxc_url, resp.status)
                     return None
-        return None
+                async for chunk in resp.content.iter_chunked(64 * 1024):
+                    total += len(chunk)
+                    if total > limit_bytes:
+                        logger.warning(
+                            "download exceeded cap for %s (> %s bytes)", mxc_url, limit_bytes
+                        )
+                        return None
+                    chunks.append(chunk)
+        except TimeoutError:
+            logger.warning("download timed out for %s", mxc_url)
+            return None
+        except aiohttp.ClientError as exc:
+            logger.warning("download failed for %s: %s", mxc_url, exc)
+            return None
+        return b"".join(chunks)
 
     def _decrypt_media_bytes(self, event: MatrixMediaEvent, ciphertext: bytes) -> bytes | None:
         """Decrypt encrypted media bytes."""
@@ -962,7 +985,10 @@ class MatrixChannel(Channel):
         if declared is not None and declared > limit_bytes:
             return None, _ATTACH_TOO_LARGE.format(filename)
 
-        downloaded = await self._download_media_bytes(mxc_url)
+        # The download aborts once the byte cap is exceeded, so `downloaded`
+        # (and the decrypted result, which is never larger) is always within
+        # limit_bytes without a post-hoc size check.
+        downloaded = await self._download_media_bytes_capped(mxc_url, limit_bytes)
         if downloaded is None:
             return None, fail
 
@@ -971,9 +997,6 @@ class MatrixChannel(Channel):
         if encrypted:
             if (data := self._decrypt_media_bytes(event, downloaded)) is None:
                 return None, fail
-
-        if len(data) > limit_bytes:
-            return None, _ATTACH_TOO_LARGE.format(filename)
 
         path = self._build_attachment_path(event, atype, filename, mime)
         try:

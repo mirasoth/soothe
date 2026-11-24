@@ -105,6 +105,51 @@ def test_skip_clarification_when_policy_skip() -> None:
     assert result.reason == "clarification_pending"
 
 
+def test_clarification_parked_loop_is_not_cancelled_by_age() -> None:
+    """A clarification-parked loop past cancel_max_age is SKIP, never CANCEL.
+
+    persistence-and-loops.md rule 3: never demote a loop with a pending
+    clarification — the clarification check must precede the cancel-by-age
+    gate.
+    """
+    now = datetime.now(UTC)
+    old = (now - timedelta(hours=48)).isoformat()
+    result = classify_incomplete_loop(
+        loop_id="019f-clar-old",
+        updated_at_raw=old,
+        checkpoint=_cp(),
+        active_runner=False,
+        clarification_pending=True,
+        clarifications_policy="skip",
+        auto_cancel=True,
+        cancel_max_age_hours=24.0,
+        resume_max_age_hours=72.0,
+        now=now,
+    )
+    assert result.decision == AutoResumeDecision.SKIP
+    assert result.reason == "clarification_pending"
+
+
+def test_clarification_reannounce_wins_over_cancel_by_age() -> None:
+    """Reannounce policy resumes a parked loop even past cancel_max_age."""
+    now = datetime.now(UTC)
+    old = (now - timedelta(hours=48)).isoformat()
+    result = classify_incomplete_loop(
+        loop_id="019f-clar-old2",
+        updated_at_raw=old,
+        checkpoint=_cp(),
+        active_runner=False,
+        clarification_pending=True,
+        clarifications_policy="reannounce",
+        auto_cancel=True,
+        cancel_max_age_hours=24.0,
+        resume_max_age_hours=72.0,
+        now=now,
+    )
+    assert result.decision == AutoResumeDecision.RESUME
+    assert result.reason == "clarification_reannounce"
+
+
 def test_reannounce_clarification() -> None:
     result = classify_incomplete_loop(
         loop_id="019f-clar2",

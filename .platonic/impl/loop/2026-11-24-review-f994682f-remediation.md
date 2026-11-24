@@ -51,8 +51,8 @@ each fix follows the suggestion recorded in the report's Section 4.
     sidecar against the live process before signaling — a missing or
     mismatched sidecar refuses the kill (marker kept for inspection).
     With a soothe-nano that predates sidecar support, validation degrades
-    to filename + protected-set checks with a one-time warning; the
-    `soothe-nano` floor is bumped together with that release.
+    to filename + protected-set checks with a one-time warning. The
+    `soothe-nano` floor is `>=2.0.13` (released 2026-11-24).
 11. **Langfuse** — runtime import moved to an `observability` extra;
     missing install warns once instead of debug-level silence.
 12. **Ledger corruption** — `LedgerCorruptionError` (new

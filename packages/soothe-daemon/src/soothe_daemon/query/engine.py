@@ -33,6 +33,11 @@ logger = logging.getLogger(__name__)
 
 _STREAM_CHUNK_LENGTH = 3
 _MSG_PAIR_LENGTH = 2
+# Bounded re-polls after a failed LOOP_BUSY admit: readiness wait and
+# admission are not atomic, so two queued turns can both observe the clear
+# and one loses. Retry lets the loser defer until the winner's teardown
+# finishes instead of rejecting outright.
+_ADMISSION_RETRY_MAX = 10
 # cap in-query assistant text accumulation (~100KB)
 _MAX_FULL_RESPONSE_CHARS = 100_000
 # Idle-tick period for flushing due tool_call_updates_batch buffers: no
@@ -129,6 +134,10 @@ class AsyncCancelOrchestrator:
 
         runner_entry = self._query_engine._active_runners.get(loop_id)
         runner = runner_entry.runner if runner_entry is not None else None
+        # Snapshot the cancelled turn's generation so the post-force-kill
+        # admission release can be ownership-checked: a successor turn
+        # admitted during the retry loop owns the reservation now.
+        cancelled_generation = runner_entry.turn_generation if runner_entry is not None else None
         worker_id = await self._get_worker_id_for_loop(loop_id)
 
         # Collect asyncio tasks to cancel
@@ -198,7 +207,13 @@ class AsyncCancelOrchestrator:
 
         # Cleanup bookkeeping (runner unregister is turn-scoped in stream finally).
         self._query_engine._clear_loop_cancel_armed_state(loop_id)
-        await self._query_engine._release_query_admission(loop_id)
+        # Same `_owns_turn` protocol as `_run_stream`'s finally: only release
+        # the per-loop admission when the cancelled turn is still the active
+        # one — a superseded turn must not drop a successor's reservation.
+        if cancelled_generation is None or self._query_engine._owns_turn(
+            loop_id, cancelled_generation
+        ):
+            await self._query_engine._release_query_admission(loop_id)
 
     async def _get_execution_pool(self) -> Any | None:
         """Return the shared thread/process execution pool."""
@@ -338,6 +353,17 @@ class QueryEngine:
         lid = str(loop_id or "").strip()
         if lid:
             self._loops_turn_starting.add(lid)
+
+    def clear_loop_turn_starting(self, loop_id: str) -> None:
+        """Drop the pre-`run_query` turn-starting marker for `loop_id`.
+
+        Called by the loop worker on every path that returns before
+        `run_query` marks the turn — the marker must not outlive the turn
+        that armed it.
+        """
+        lid = str(loop_id or "").strip()
+        if lid:
+            self._loops_turn_starting.discard(lid)
 
     def is_cancel_in_progress(self, loop_id: str) -> bool:
         """Return whether a background cancel task is still running for `loop_id`."""
@@ -1025,6 +1051,19 @@ class QueryEngine:
             effective_loop_id=effective_loop_id,
             thread_id=thread_id,
         )
+        # Readiness wait and admission are not atomic: two queued turns can
+        # both observe the busy sets clearing, and the loser would otherwise
+        # be rejected LOOP_BUSY instead of deferring. Re-poll readiness and
+        # retry a bounded number of times so the loser waits out the winner's
+        # teardown window.
+        retry = 0
+        while admission is QueryAdmission.LOOP_BUSY and retry < _ADMISSION_RETRY_MAX:
+            retry += 1
+            await self.await_loop_ready_for_turn(effective_loop_id or "")
+            admission, turn_generation = await self._admit_query(
+                effective_loop_id=effective_loop_id,
+                thread_id=thread_id,
+            )
         if admission is not QueryAdmission.ADMITTED:
             logger.warning(
                 "Query admission rejected (%s) loop=%s checkpoint=%s",
@@ -1417,7 +1456,7 @@ class QueryEngine:
                                 and data.get("follow_on_exec")
                             ):
                                 follow_on_exec = data["follow_on_exec"]
-                            outputs = list(coalescer.ingest(ns_tuple, mode, data))
+                            outputs = await coalescer.ingest(ns_tuple, mode, data)
                             if outputs:
                                 await self._broadcast_coalescer_outputs(
                                     effective_loop_id,
@@ -1425,7 +1464,7 @@ class QueryEngine:
                                     coalescer=coalescer,
                                 )
 
-                    flush_outputs = list(coalescer.flush())
+                    flush_outputs = await coalescer.flush()
                     if effective_loop_id and flush_outputs:
                         await self._broadcast_coalescer_outputs(
                             effective_loop_id,
@@ -1497,9 +1536,14 @@ class QueryEngine:
 
                 FrameworkFilesystem.clear_current_workspace()
 
-                # Cancel the running query
-                if d._current_query_task:
-                    d._current_query_task.cancel()
+                # Cancel the running query. Cancel THIS turn's enclosing
+                # `_run_stream` task — the shared `d._current_query_task`
+                # slot may already hold a successor turn (see the
+                # `_process_stream` hazard comment). Same delivery semantics:
+                # the CancelledError lands at the next suspension of this task.
+                enclosing_task = asyncio.current_task()
+                if enclosing_task is not None:
+                    enclosing_task.cancel()
 
                 if effective_loop_id:
                     await self._broadcast_loop_message(
@@ -1895,9 +1939,15 @@ class QueryEngine:
         finally:
             direct_task = asyncio.current_task()
             await self._unregister_query_task(thread_id, direct_task)
-            self._loops_finalizing.add(effective_loop_id)
+            # Ownership gate (same protocol as `_run_stream`'s finally): a
+            # superseded turn must not drop a successor's per-loop admission
+            # reservation or finalizing marker.
+            owns_turn = self._owns_turn(effective_loop_id, turn_generation)
+            if owns_turn:
+                self._loops_finalizing.add(effective_loop_id)
             try:
-                await self._release_query_admission(effective_loop_id)
+                if owns_turn:
+                    await self._release_query_admission(effective_loop_id)
                 try:
                     thread_logger.flush()
                 except Exception:
@@ -1913,9 +1963,10 @@ class QueryEngine:
                         turn_generation=turn_generation,
                     )
             finally:
-                self._loops_finalizing.discard(effective_loop_id)
-                self._broadcast_turn_generation.pop(effective_loop_id, None)
-            if client_id:
+                if owns_turn:
+                    self._loops_finalizing.discard(effective_loop_id)
+                    self._broadcast_turn_generation.pop(effective_loop_id, None)
+            if client_id and self._owns_turn(effective_loop_id, turn_generation):
                 await d._session_manager.release_loop_ownership(client_id)
             async with d._query_state_lock:
                 if d._current_query_task is direct_task:
