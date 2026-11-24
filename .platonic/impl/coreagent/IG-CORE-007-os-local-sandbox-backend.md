@@ -262,22 +262,29 @@ Per-exec spawn:
 # cwd semantics via Popen(cwd=workspace_root) (BackendShellExecutor contract)
 ```
 
-Shell is `/bin/sh` — zsh refuses to start under `(deny default)`. Profile (cached per session; same allow set for every exec; subpaths are `Path.resolve()`-ed real paths because `/tmp` firmlinks resolve to `/private/tmp` and unresolved subpath literals never match):
+Shell is `/bin/sh` — zsh refuses to start under `(deny default)`. Profile (cached per session; same allow set for every exec; subpaths are `Path.resolve()`-ed real paths because firmlinks resolve `/tmp`→`/private/tmp`, `/var`→`/private/var` and seatbelt matches the resolved form — unresolved subpath literals never match):
 
 ```lisp
 (version 1)
 (deny default)
-(allow file-read*)           ; v1 trade-off: broad read (narrow read aborts dyld, §6.2 note)
 (allow process-exec)
 (allow process-fork)
+(allow file-read-metadata (literal "/") ... (literal "/etc") ... ; firmlink/volume roots
+                              ... workspace/scratch ancestors ...) ; git lstats the cwd chain
+(allow file-read-data (literal "/"))                            ; getcwd walks .. (names only)
+(allow file-read* (subpath "/usr") ... (subpath "/System") ...  ; bwrap-parity tree set
+                           (subpath "<resolved workspace>") (subpath "<resolved scratch>"))
+(allow file-read-data (literal "/dev/urandom") (literal "/dev/random") (literal "/dev/null"))
 (allow file-write*
-  (subpath "<resolved workspace>") (subpath "<scratch-dir>"))
+  (subpath "<resolved workspace>") (subpath "<resolved scratch>"))
 (allow file-write-data (literal "/dev/null"))
 ```
 
 Network and signals fall to the root `(deny default)`.
 
-**v1 read-side trade-off (implementation finding, macOS 26.x)**: narrow subpath read allowances abort process startup — dyld resolves library paths through firmlinks that only match under unrestricted reads (SIGABRT 134 at exec). Every candidate narrowing was bisected (subpath reads, exec restrictions, zsh) and only broad read survives. The load-bearing v1 boundary is write/network/signal reach; read-side restriction is a documented follow-up (RFC §8). `sandbox-exec` deprecation posture is an Open Question in the RFC — the profile builder is isolated in `_SeatbeltSession.build_profile()` so a future replacement is one class swap.
+**v2 read-side (parity with the bwrap bind list)**: reads are confined to `/usr`, `/bin`, `/sbin`, `/System`, `/Library`, `/opt`, `/private/etc`, `/private/var/select`, the workspace/scratch, and the entropy devices. Other users' data under `/Users`, `/private/var/db`, `/Applications`, and host `/private/tmp` are denied. Verified working under the narrowed set: sh, git (full init/commit/log), homebrew and CommandLineTools python, TMPDIR scratch writes.
+
+**v1 read-side trade-off (superseded)**: the original bisect blamed narrow subpath reads for the SIGABRT 134 at exec ("dyld resolves library paths through firmlinks that only match under unrestricted reads"). The v2 matrix bisect corrected the root cause: the abort was the missing `file-read-data (literal "/")` (getcwd readdirs the root) and the `/private/var/select/sh` read (shell selection), plus resolved-path matching for firmlinked subpaths. `sandbox-exec` deprecation posture remains an Open Question in the RFC — the profile builder is isolated in `_SeatbeltSession._build_profile()` so a future replacement is one class swap.
 
 ### 6.3 Linux bwrap + seccomp tier (full)
 
@@ -294,7 +301,7 @@ Two-stage spawn mirroring Codex's `codex-linux-sandbox`:
   "--bind", ws, ws,                      # identity bind (§2.2)
   "--bind", scratch, scratch,            # identity bind of the session scratch
   # + interpreter-dir ro-binds when /usr/bin/python3 is absent
-  "--die-with-parent", "--new-session",
+  "--die-with-parent",
   "--unshare-net",                       # loopback-only netns (egress default-deny)
   interp, "-c", _LAUNCHER_SECCOMP, bpf_hex, seccomp_nr, "--", "/bin/sh", "-c", command]
 ```
@@ -304,7 +311,7 @@ Notes:
 - **No `--unshare-pid`** — background PIDs must stay host-visible (§2.2).
 - Env is applied uniformly by the parent via `Popen(env=allowlist)` on every tier (bwrap inherits the parent env, i.e. exactly the allowlist) — `--clearenv`/`--setenv` were dropped from the design: one mechanism, three tiers, and `_build_child_env()` stays the single source.
 - The scratch dir is an identity `--bind` (not tmpfs) so upload/download path resolution and `TMPDIR` semantics agree across tiers.
-- `--die-with-parent` ties sandboxed processes to the agent process lifetime; `--new-session` detaches them from the host controlling terminal.
+- `--die-with-parent` ties sandboxed processes to the agent process lifetime. **No `--new-session`** (implementation revision): `start_new_session=True` on the Popen already detaches the tree from the host controlling terminal, and the inner `setsid` moved sandboxed children into their own session — timeout/close `killpg` on the tracked group could not reach background children after the outer command exited (caught by the close-kill integration test on a root-in-container host).
 - The in-namespace interpreter prefers `/usr/bin/python3` (covered by the `/usr` bind); the running interpreter's directory is bound read-only as fallback.
 
 `_LAUNCHER_SECCOMP` (embedded `python3 -c` script, passed via argv):
@@ -525,7 +532,7 @@ Fake `Popen` recorder for argv/env assertions (the spawn functions take an injec
 - [x] `ruff check` / `ruff format` green on all changed files (nano's CI/Makefile gates; nano runs no mypy target — the 3 mypy strict-mode findings on touched files predate this IG and sit outside its diff hunks)
 - [x] Unit tests pass on macOS (darwin: 2165 passed, 44 skipped — Linux-only integration gates skip); Linux CI (bwrap + landlock-on-5.13) to run on push
 - [x] No test observes host execution under a configured `os_sandbox` (no-fallback test asserts build abort)
-- [x] All RFC requirements covered (Appendix A), with two recorded deviations (§12: Seatbelt v1 broad read; seccomp deny-list)
+- [x] All RFC requirements covered (Appendix A), with one recorded deviation (§12: seccomp deny-list; the Seatbelt v1 broad-read deviation was closed by the v2 narrow-read parity pass — §12 items 13-14)
 
 ---
 
@@ -644,3 +651,57 @@ All changes in the **soothe-nano** working tree (uncommitted; nano repo). Files:
     guarantees a working spawn. Unit tests cover the nested argv shape and
     the detection matrix (non-root never probes; root direct-failure →
     nested; both-failure → tier refused).
+12. **P0 — bounded `execute` capture (2026-11-23, third pass)**:
+    `OsLocalSandbox.execute` no longer uses unbounded `communicate()`.
+    stdout/stderr are drained by daemon reader threads via
+    `_read_bounded()` (binary chunks, per-stream cap
+    `_EXECUTE_CAPTURE_CAP_BYTES` = 16 MiB — strictly above the 10 MiB
+    guest-side capture-offload window in `BaseSandbox` so offloaded reads
+    are never clipped; unit test asserts the ordering). When a cap is hit
+    the reader itself calls `_kill_pgid` (an unbounded writer can neither
+    exhaust memory nor stall the timeout), the response appends a
+    truncation note, and the timeout keeps the `exit_code=124` contract
+    (kill → drain → note). The reader thread design avoids the
+    communicate()-on-killed-drain race: EOF arrives once the group is dead
+    because every writer shares the tracked process group.
+13. **P1 — macOS/Linux read-isolation parity (2026-11-23, third pass)**:
+    the Seatbelt profile drops the broad `(allow file-read*)`. The narrow
+    read set (`_SEATBELT_READ_TREES`) mirrors the bwrap bind list:
+    `/usr /bin /sbin /System /Library /opt /private/etc
+    /private/var/select` + workspace/scratch + entropy devices; `/opt`
+    stands in for the Linux `/usr/local` bind (homebrew). A matrix bisect
+    (`/tmp/seatbelt-matrix.sh`) corrected the v1 SIGABRT diagnosis — the
+    abort was the missing root-dir readdir (getcwd walks `..`) and the
+    `/private/var/select/sh` shell-selection read, NOT dyld firmlink
+    resolution. Two hard-won macOS facts are encoded: (a) seatbelt checks
+    firmlink-redirected paths (`/var`, `/tmp`) in their **resolved** form
+    (`/private/var`, `/private/tmp`) — workspace/scratch subpaths and
+    ancestor literals are `Path.resolve()`-d before embedding, unresolved
+    literals never match; (b) interpreters under `$HOME` (pyenv/venv) and
+    `/usr/bin/python3` (xcrun shim → `/Applications`) are unreadable — the
+    test helpers use `/opt/homebrew/bin/python3` or
+    `/Library/Developer/CommandLineTools/usr/bin/python3`, and git needs
+    `file-read-metadata` on every workspace ancestor (it lstats the cwd
+    chain). Verified on macOS 26.6: sh, git init/commit/log, CLT+brew
+    python, TMPDIR scratch writes, home-file read denied (EPERM),
+    `/private/var/db` and `/Applications` denied.
+14. **P2 — crash-orphan process-group cleanup + `--new-session` removal
+    (2026-11-23, third pass)**: every `execute` registers its pgid
+    (`start_new_session`) in an instance + module registry;
+    `_reap_pgid()` keeps groups with surviving background members
+    tracked, `close()` and an atexit handler kill them (before scratch
+    removal). bwrap's `--new-session` was **removed**: the inner `setsid`
+    moved sandboxed children out of the tracked group, so (a) `close()`
+    could not reach background children after the outer command exited
+    (caught by the new close-kill integration test on anydev4 — 14813
+    survived), and (b) the P0 reader `join()` stalled until bwrap's
+    die-with-parent chain caught up (~300 s suite time); without it the
+    anydev4 suite dropped from 308 s to 7 s. `start_new_session=True` on
+    the Popen already detaches the tree from the host terminal session,
+    so no isolation was lost. Residual gap documented (RFC §8): hard
+    SIGKILL of the host interpreter bypasses close/atexit — only bwrap
+    carries kernel-level `--die-with-parent`. Suite status after this
+    pass: macOS 19 passed/2 bwrap-only skips; anydev4 21/21 (bwrap +
+    landlock); unit suites green with `FakePopen` reworked to the
+    wait/pipes contract (sentinel pids beyond pid_max so fake tracking can
+    never kill a real group).
