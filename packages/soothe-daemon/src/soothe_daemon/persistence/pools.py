@@ -37,7 +37,10 @@ async def preopen_shared_postgres_pools(
     from soothe.persistence.postgres_pool_registry import PostgresPoolRegistry
     from soothe.persistence.shared_metadata_pool import SharedMetadataPool
     from soothe.runner.resolver.shared_checkpointer_pool import SharedCheckpointerPool
-    from soothe.sloop.checkpoints.shared_pool import SharedPostgreSQLPool
+    from soothe.sloop.checkpoints.shared_pool import (
+        SharedPostgreSQLPool,
+        bind_shared_pool_main_loop,
+    )
 
     registry = PostgresPoolRegistry.get_instance(config)
     await registry.open_all()
@@ -50,6 +53,9 @@ async def preopen_shared_postgres_pools(
     SharedMetadataPool._register_pool(metadata_pool)
 
     LoopPersistenceWriter.bind_main_loop(asyncio.get_running_loop())
+    # Pin the singleton-pool critical sections to the daemon main loop so
+    # per-worker loops cannot acquire `_pool_lock` cross-loop.
+    bind_shared_pool_main_loop(asyncio.get_running_loop())
     await LoopPersistenceWriter.get_shared_instance(config)
 
     logger.info("PostgresPoolRegistry pre-open complete")

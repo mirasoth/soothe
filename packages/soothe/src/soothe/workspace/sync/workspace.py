@@ -27,7 +27,7 @@ from soothe.workspace.sync.workspace_sync import (
 
 if TYPE_CHECKING:
     from soothe.workspace.state.protocol import WorkspaceStateStore
-    from soothe.workspace.sync.workspace_sync import WorkspaceSyncBackend
+    from soothe.workspace.sync.workspace_sync import CheckpointPayload, WorkspaceSyncBackend
 
 logger = logging.getLogger(__name__)
 
@@ -301,6 +301,9 @@ class Workspace:
             2. Flush debouncer (force final checkpoint).
             3. Wait for uploader to drain.
             4. Close state store.
+            5. Close the per-run content backend (its thread pool / fsspec
+               client). The primary `backend` is shared across workspaces
+               (owned by the manager / caller) and is NOT closed here.
         """
         self._closing = True
 
@@ -315,6 +318,12 @@ class Workspace:
         if self._state_store is not None:
             await self._state_store.close()
 
+        if self._content_backend is not None:
+            # Duck-typed call: test fakes implement the sync surface only.
+            aclose = getattr(self._content_backend, "aclose", None)
+            if callable(aclose):
+                await aclose()
+
         logger.info("Workspace closed for run %s", self.run_id)
 
     async def cleanup(self) -> None:
@@ -327,11 +336,13 @@ class Workspace:
             shutil.rmtree(self.root, ignore_errors=True)
         logger.info("Workspace cleaned up for run %s", self.run_id)
 
-    async def recover(self) -> Manifest | None:
-        """Recover workspace state from the latest checkpoint.
+    async def recover(self) -> CheckpointPayload | None:
+        """Recover workspace state from the latest replayable checkpoint.
 
         Returns:
-            The recovered manifest, or `None` if no checkpoints exist.
+            The recovered checkpoint payload (``incomplete=True`` when delta
+            replay stopped early — the dirty state is then partial), or
+            `None` if no checkpoints exist.
         """
         if self._checkpoint_mgr is None:
             return None

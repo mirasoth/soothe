@@ -241,6 +241,15 @@ class CheckpointPayload(BaseModel):
             "delta applies to.  ``None`` for snapshots."
         ),
     )
+    incomplete: bool = Field(
+        default=False,
+        description=(
+            "Recovery flag: ``True`` when replay stopped early (a missing "
+            "or unreadable delta).  Dirty state is then partial — counters "
+            "and ``checkpoint_id`` describe the last APPLIED checkpoint, "
+            "not the newest one stored remotely."
+        ),
+    )
 
     def is_snapshot(self) -> bool:
         """Return ``True`` if this payload is a full snapshot.
@@ -448,3 +457,15 @@ class WorkspaceSyncBackend(Protocol):
         if data is None:
             raise KeyError(f"Checkpoint {checkpoint_id!r} not found")
         yield data
+
+    # -- lifecycle ----------------------------------------------------------
+
+    async def aclose(self) -> None:
+        """Release backend resources (threads, connections).
+
+        Called when the owning workspace closes. Backends without owned
+        resources are no-ops; backends handed out per run by a factory
+        MUST free their resources here, and factories that return shared
+        backends MUST make this a no-op.
+        """
+        ...

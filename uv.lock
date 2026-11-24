@@ -4320,6 +4320,7 @@ dependencies = [
     { name = "pydantic-settings" },
     { name = "pyjwt" },
     { name = "pyyaml" },
+    { name = "s3fs" },
     { name = "soothe-nano" },
     { name = "watchdog" },
 ]
@@ -4328,7 +4329,6 @@ dependencies = [
 all-backends = [
     { name = "adlfs" },
     { name = "gcsfs" },
-    { name = "s3fs" },
 ]
 azure = [
     { name = "adlfs" },
@@ -4340,13 +4340,12 @@ dev = [
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
     { name = "ruff" },
-    { name = "s3fs" },
 ]
 gcs = [
     { name = "gcsfs" },
 ]
-s3 = [
-    { name = "s3fs" },
+observability = [
+    { name = "langfuse" },
 ]
 
 [package.metadata]
@@ -4362,6 +4361,7 @@ requires-dist = [
     { name = "langchain-core", specifier = ">=1.6.0,<2.0.0" },
     { name = "langchain-typesafe", extras = ["experimental"], specifier = ">=0.0.1a3" },
     { name = "langfuse", marker = "extra == 'dev'", specifier = ">=3.0.0,<4.0.0" },
+    { name = "langfuse", marker = "extra == 'observability'", specifier = ">=3.0.0,<4.0.0" },
     { name = "langgraph", specifier = ">=1.2.14,<2.0.0" },
     { name = "langgraph-checkpoint", specifier = ">=4.2.0,<5.0.0" },
     { name = "langgraph-checkpoint-postgres", specifier = ">=3.1.2,<4.0.0" },
@@ -4376,13 +4376,11 @@ requires-dist = [
     { name = "pytest-cov", marker = "extra == 'dev'" },
     { name = "pyyaml", specifier = ">=6.0.0,<7.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.12.0" },
-    { name = "s3fs", marker = "extra == 'all-backends'", specifier = ">=2025.0.0" },
-    { name = "s3fs", marker = "extra == 'dev'", specifier = ">=2025.0.0" },
-    { name = "s3fs", marker = "extra == 's3'", specifier = ">=2025.0.0" },
+    { name = "s3fs", specifier = ">=2025.0.0" },
     { name = "soothe-nano", specifier = ">=2.0.12,<3.0.0" },
     { name = "watchdog", specifier = ">=3.0.0,<5.0.0" },
 ]
-provides-extras = ["all-backends", "azure", "dev", "gcs", "s3"]
+provides-extras = ["all-backends", "azure", "dev", "gcs", "observability"]
 
 [[package]]
 name = "soothe-cli"

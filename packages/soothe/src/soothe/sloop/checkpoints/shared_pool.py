@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from psycopg_pool import AsyncConnectionPool
 
@@ -22,9 +22,48 @@ from soothe.sloop.checkpoints.sqlite_backend import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from soothe.config import SootheConfig
 
 logger = logging.getLogger(__name__)
+
+T_Pool = TypeVar("T_Pool")
+
+# Owner loop for the singleton-pool critical sections. `get_shared_instance`
+# / `close_shared_instance` / `reset_shared_instance` / `bind_registry_pool`
+# are reachable from the daemon main loop and from per-worker loops; a plain
+# `asyncio.Lock` is not safe across loops (binding errors when contended, no
+# mutual exclusion when uncontended), so these classmethods marshal their
+# bodies onto one bound owner loop — the same pattern
+# `persistence/sqlite_loop_flush.py` uses.
+_pool_bound_loop: asyncio.AbstractEventLoop | None = None
+_pool_bind_lock = threading.Lock()
+
+
+def bind_shared_pool_main_loop(loop: asyncio.AbstractEventLoop) -> None:
+    """Pin singleton pool operations to `loop` (daemon main loop)."""
+    global _pool_bound_loop
+    with _pool_bind_lock:
+        _pool_bound_loop = loop
+        logger.debug("SharedPostgreSQLPool singleton bound to event loop %s", loop)
+
+
+async def _run_on_pool_loop(coro_factory: Callable[[], Awaitable[T_Pool]]) -> T_Pool:
+    """Run `coro_factory` on the bound owner loop; await from any caller loop."""
+    global _pool_bound_loop
+    running = asyncio.get_running_loop()
+    bound = _pool_bound_loop
+    if bound is None or bound.is_closed():
+        with _pool_bind_lock:
+            if _pool_bound_loop is None or _pool_bound_loop.is_closed():
+                _pool_bound_loop = running
+        bound = running
+    if bound is running:
+        return await coro_factory()
+    future = asyncio.run_coroutine_threadsafe(coro_factory(), bound)
+    return await asyncio.wrap_future(future)
+
 
 # SQLite singleton (ref-counted; closed when last manager releases)
 _shared_sqlite_backend: SQLitePersistenceBackend | None = None
@@ -216,17 +255,7 @@ class SharedPostgreSQLPool:
         pool: AsyncConnectionPool,
     ) -> SharedPostgreSQLPool:
         """Wrap the registry checkpoints pool for StrangeLoop consumers."""
-        global _shared_pool
-
-        async with _pool_lock:
-            if _shared_pool is None:
-                dsn = config.resolve_postgres_dsn_for_database("checkpoints")
-                wrapper = cls(dsn, pool_size=0, pool_timing=None)
-                wrapper._pool = pool
-                wrapper._initialized = True
-                wrapper._registry_backed = True
-                _shared_pool = wrapper
-            return _shared_pool
+        return await _run_on_pool_loop(lambda: _bind_registry_pool_locked(config, pool))
 
     @classmethod
     async def get_shared_instance(cls, config: SootheConfig) -> SharedPostgreSQLPool | None:
@@ -246,35 +275,11 @@ class SharedPostgreSQLPool:
         if config.persistence.default_backend != "postgresql":
             return None
 
-        async with _pool_lock:
-            if _shared_pool is not None:
-                return _shared_pool
-
-            try:
-                registry = PostgresPoolRegistry.get_instance(config)
-                reg_pool = registry.try_get_pool("checkpoints")
-                if reg_pool is not None:
-                    return await cls.bind_registry_pool(config, reg_pool)
-            except RuntimeError:
-                pass
-
-            from soothe_nano.persistence.postgres_provisioning import (
-                PostgresProvisioning,
-            )
-
-            await PostgresProvisioning.ensure_databases_async(config)
-            dsn = config.resolve_postgres_dsn_for_database("checkpoints")
-            pool_size = PostgresPoolRegistry.resolve_checkpoints_pool_size(config)
-            timing = PostgresPoolLifecycle.timing_from_config(config, max_size=pool_size)
-            _shared_pool = SharedPostgreSQLPool(
-                dsn,
-                pool_size=pool_size,
-                pool_timing=timing,
-            )
-            await _shared_pool.open()
-            logger.info("Created singleton shared PostgreSQL pool (size=%d)", pool_size)
-
+        # Unlocked fast path — the hot CE read path hits this every read.
+        if _shared_pool is not None:
             return _shared_pool
+
+        return await _run_on_pool_loop(lambda: _get_shared_instance_locked(config))
 
     @classmethod
     async def release_idle_shared(cls) -> None:
@@ -285,12 +290,16 @@ class SharedPostgreSQLPool:
     @classmethod
     async def close_shared_instance(cls) -> None:
         """Close the singleton shared pool (daemon shutdown)."""
-        global _shared_pool
 
-        async with _pool_lock:
-            if _shared_pool is not None:
-                await _shared_pool.close()
-                _shared_pool = None
+        async def _close_locked() -> None:
+            global _shared_pool
+
+            async with _pool_lock:
+                if _shared_pool is not None:
+                    await _shared_pool.close()
+                    _shared_pool = None
+
+        await _run_on_pool_loop(_close_locked)
 
     @classmethod
     async def reset_shared_instance(cls) -> None:
@@ -299,10 +308,72 @@ class SharedPostgreSQLPool:
         Called by PostgreSQLPersistenceBackend when recoverable
         connection errors occur (e.g., AdminShutdown during DB restart).
         """
-        async with _pool_lock:
-            if _shared_pool is not None:
-                await _shared_pool.reset_pool()
-                logger.info("Reset singleton shared PostgreSQL pool for recovery")
+
+        async def _reset_locked() -> None:
+            async with _pool_lock:
+                if _shared_pool is not None:
+                    await _shared_pool.reset_pool()
+                    logger.info("Reset singleton shared PostgreSQL pool for recovery")
+
+        await _run_on_pool_loop(_reset_locked)
+
+
+async def _bind_registry_pool_locked(
+    config: SootheConfig,
+    pool: AsyncConnectionPool,
+) -> SharedPostgreSQLPool:
+    """Registry-bind the singleton WITHOUT acquiring `_pool_lock`.
+
+    The caller must already hold `_pool_lock` (this is the body of
+    `SharedPostgreSQLPool.bind_registry_pool` minus its lock, so
+    `_get_shared_instance_locked` can reuse it without re-entering the
+    non-reentrant lock).
+    """
+    global _shared_pool
+
+    if _shared_pool is None:
+        dsn = config.resolve_postgres_dsn_for_database("checkpoints")
+        wrapper = SharedPostgreSQLPool(dsn, pool_size=0, pool_timing=None)
+        wrapper._pool = pool  # noqa: SLF001 — singleton wiring by design
+        wrapper._initialized = True  # noqa: SLF001
+        wrapper._registry_backed = True  # noqa: SLF001
+        _shared_pool = wrapper
+    return _shared_pool
+
+
+async def _get_shared_instance_locked(config: SootheConfig) -> SharedPostgreSQLPool | None:
+    """`get_shared_instance` body, executed on the bound owner loop."""
+    global _shared_pool
+
+    async with _pool_lock:
+        if _shared_pool is not None:
+            return _shared_pool
+
+        try:
+            registry = PostgresPoolRegistry.get_instance(config)
+            reg_pool = registry.try_get_pool("checkpoints")
+            if reg_pool is not None:
+                return await _bind_registry_pool_locked(config, reg_pool)
+        except RuntimeError:
+            pass
+
+        from soothe_nano.persistence.postgres_provisioning import (
+            PostgresProvisioning,
+        )
+
+        await PostgresProvisioning.ensure_databases_async(config)
+        dsn = config.resolve_postgres_dsn_for_database("checkpoints")
+        pool_size = PostgresPoolRegistry.resolve_checkpoints_pool_size(config)
+        timing = PostgresPoolLifecycle.timing_from_config(config, max_size=pool_size)
+        _shared_pool = SharedPostgreSQLPool(
+            dsn,
+            pool_size=pool_size,
+            pool_timing=timing,
+        )
+        await _shared_pool.open()
+        logger.info("Created singleton shared PostgreSQL pool (size=%d)", pool_size)
+
+        return _shared_pool
 
 
 def acquire_shared_sqlite_backend_sync() -> SQLitePersistenceBackend:
@@ -374,6 +445,7 @@ async def close_shared_sqlite_backend_instance() -> None:
 __all__ = [
     "SharedPostgreSQLPool",
     "acquire_shared_sqlite_backend_sync",
+    "bind_shared_pool_main_loop",
     "close_shared_sqlite_backend_instance",
     "release_shared_sqlite_backend",
 ]

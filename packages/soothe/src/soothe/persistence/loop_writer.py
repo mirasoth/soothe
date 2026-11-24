@@ -115,19 +115,22 @@ class LoopPersistenceWriter:
         if _writer_singleton is not None:
             return _writer_singleton
 
+        if shared_pool is None:
+            from soothe.sloop.checkpoints.shared_pool import (
+                SharedPostgreSQLPool,
+            )
+
+            # Resolve the pool BEFORE entering the init lock: awaiting DB I/O
+            # while holding a thread-affine `threading.Lock` deadlocks when two
+            # coroutines on the same loop race here — the second one blocks the
+            # only thread able to resume the first.
+            shared_pool = await SharedPostgreSQLPool.get_shared_instance(config)
+        if shared_pool is None:
+            return None
+
         with _writer_init_lock:
             if _writer_singleton is not None:
                 return _writer_singleton
-
-            if shared_pool is None:
-                from soothe.sloop.checkpoints.shared_pool import (
-                    SharedPostgreSQLPool,
-                )
-
-                shared_pool = await SharedPostgreSQLPool.get_shared_instance(config)
-            if shared_pool is None:
-                return None
-
             checkpoint_cfg = config.agent.loop.concurrency.checkpoint
             _writer_singleton = cls(
                 shared_pool=shared_pool,
@@ -135,6 +138,9 @@ class LoopPersistenceWriter:
                 close_timeout_seconds=checkpoint_cfg.close_timeout_seconds,
                 durable_flush_timeout=checkpoint_cfg.durable_flush_timeout,
             )
+        # A racing loser's instance is discarded before any worker or I/O
+        # resource is created (`__init__` only builds asyncio primitives), so
+        # dropping it here leaks nothing.
 
         await _writer_singleton._run_on_main(_writer_singleton._ensure_worker)
         return _writer_singleton
@@ -148,7 +154,17 @@ class LoopPersistenceWriter:
             _writer_singleton = None
         if inst is None:
             return
-        await inst._run_on_main(inst.shutdown)
+        try:
+            await inst._run_on_main(inst.shutdown)
+        finally:
+            # Clear the bound loop AFTER the marshalled shutdown so
+            # `_run_on_main` above still finds the daemon loop; a re-created
+            # writer then rebinds to a live loop instead of scheduling onto
+            # the closed shutdown loop (which would raise and leak the
+            # coroutine). Skipped when a new singleton already appeared.
+            with _writer_init_lock:
+                if _writer_singleton is None:
+                    cls._bound_loop = None
 
     async def _run_on_main(
         self,
@@ -157,7 +173,7 @@ class LoopPersistenceWriter:
         """Run `coro_factory` on the bound writer loop; await from any caller loop."""
         running = asyncio.get_running_loop()
         bound = type(self)._bound_loop
-        if bound is None:
+        if bound is None or bound.is_closed():
             type(self)._bound_loop = running
             bound = running
         if bound is running:
@@ -226,7 +242,8 @@ class LoopPersistenceWriter:
         )
 
     async def shutdown(self) -> None:
-        """Cancel the flush worker task and await its cleanup."""
+        """Drain pending checkpoints, then cancel the flush worker task."""
+        await self._drain_pending()
         if self._worker_task is not None:
             self._worker_task.cancel()
             try:
@@ -234,6 +251,37 @@ class LoopPersistenceWriter:
             except asyncio.CancelledError:
                 pass
             self._worker_task = None
+
+    async def _drain_pending(self) -> None:
+        """Best-effort final flush of coalesced checkpoints at shutdown.
+
+        Durable entries flush inline at enqueue time; this covers ordinary
+        index-only writes coalesced in `_pending` so a shutdown does not
+        silently drop up to one flush interval of loop state. Loops that
+        fail to flush within the close timeout are logged and dropped.
+        Mirrors the drain semantics of `_pause_for_pool_reset_impl`.
+        """
+        self._paused = True
+        try:
+            try:
+                async with asyncio.timeout(self._close_timeout_seconds):
+                    while self._inflight > 0:
+                        await self._inflight_done.wait()
+                    with self._pending_guard:
+                        loop_ids = [lid for lid in self._pending if lid not in self._released_loops]
+                    for loop_id in loop_ids:
+                        await self._flush_loop(loop_id, force_full=False)
+            except TimeoutError:
+                with self._pending_guard:
+                    lost = sorted(self._pending.keys())
+                if lost:
+                    logger.warning(
+                        "Persist writer shutdown timed out; dropping pending "
+                        "checkpoints for loops: %s",
+                        ", ".join(lost),
+                    )
+        finally:
+            self._paused = False
 
     async def enqueue_checkpoint(
         self,
@@ -244,7 +292,11 @@ class LoopPersistenceWriter:
         write_mode: PersistWriteMode = PersistWriteMode.INDEX_ONLY,
     ) -> None:
         """Enqueue or coalesce a checkpoint write (bound writer loop only)."""
-        if loop_id in self._released_loops and not durable:
+        if durable:
+            # A durable boundary write re-attaches the loop: release marks are
+            # per-run, so a resumed run's writes must not stay filtered.
+            self._released_loops.discard(loop_id)
+        elif loop_id in self._released_loops:
             return
 
         with self._pending_guard:

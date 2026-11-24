@@ -39,6 +39,7 @@ dependencies = [
     "psycopg[binary,pool]>=3.2.0,<4.0.0",
     "watchdog>=3.0.0,<5.0.0",
     "fsspec>=2025.0.0",
+    "s3fs>=2025.0.0",
     "langchain-typesafe[experimental]>=0.0.1a3",
 ]
 
@@ -50,12 +51,13 @@ dev = [
     "ruff>=0.12.0",
     "mypy>=1.0.0",
     "langfuse>=3.0.0,<4.0.0",
-    "s3fs>=2025.0.0",
 ]
-s3 = ["s3fs>=2025.0.0"]
+# Runtime tracing surface: `utils/observability/langfuse` imports langfuse on
+# its hot path. Install `soothe[observability]` to enable tracing.
+observability = ["langfuse>=3.0.0,<4.0.0"]
 gcs = ["gcsfs>=2025.0.0"]
 azure = ["adlfs>=2025.0.0"]
-all-backends = ["s3fs>=2025.0.0", "gcsfs>=2025.0.0", "adlfs>=2025.0.0"]
+all-backends = ["gcsfs>=2025.0.0", "adlfs>=2025.0.0"]
 
 [project.urls]
 Homepage = "https://github.com/mirasoth/soothe"

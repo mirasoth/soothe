@@ -7,6 +7,7 @@ import logging
 import re
 import secrets
 import uuid
+from contextvars import ContextVar
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
 
@@ -44,6 +45,14 @@ def _coerce_goal_progress(value: Any) -> str:
 
 GoalProgress = Annotated[GoalProgressLiteral, BeforeValidator(_coerce_goal_progress)]
 """Descriptive progress level; invalid wire values coerce to `none`."""
+
+# Property kwargs captured by LoopState's before-validator, consumed by
+# `LoopState.__init__` right after Pydantic construction. ContextVar (not a
+# class attribute) so failed constructions and concurrent threads cannot leak
+# captured kwargs into unrelated instances.
+_captured_property_kwargs: ContextVar[dict[str, Any]] = ContextVar(
+    "loop_state_captured_property_kwargs", default={}
+)
 
 
 class EvidenceEntry(BaseModel):
@@ -680,9 +689,6 @@ class LoopState(BaseModel):
     # for loop_messages, step_results, and completed_step_ids.
     _ce: Any | None = PrivateAttr(default=None)
     _ce_goal_id: str | None = PrivateAttr(default=None)
-    # Temporary storage for property kwargs captured by the before-validator.
-    # Not thread-safe but LoopState is not shared across threads.
-    _pending_kwargs: dict[str, Any] = PrivateAttr(default_factory=dict)
     # Memoization for CE-backed loop_messages rebuild (RFC-214 performance):
     # caches the rebuilt list keyed on the ledger's revision counter so
     # repeated accesses between mutations return O(1) instead of O(n).
@@ -707,9 +713,13 @@ class LoopState(BaseModel):
                 for k in ("loop_messages", "step_results", "completed_step_ids")
                 if k in data
             }
-            # Stash on the class for post-init assignment; safe because
-            # LoopState construction is single-threaded per instance.
-            cls._pending_kwargs_store = captured  # type: ignore[attr-defined]
+            # Stash in a ContextVar (not on the class): a class-level store
+            # leaks captured kwargs from a FAILED construction into the next
+            # valid instance built in the same context, and is shared across
+            # concurrently constructing threads. A ContextVar is scoped per
+            # thread/task and always reset here — validation runs exactly once
+            # per construction, immediately before `__init__` consumes it.
+            _captured_property_kwargs.set(captured)
         return data
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
@@ -718,16 +728,20 @@ class LoopState(BaseModel):
     def __init__(self, **kwargs: Any) -> None:
         """Initialize the loop state and apply captured property kwargs to caches."""
         super().__init__(**kwargs)
-        # Apply any captured property kwargs to the private caches
-        pending = getattr(self.__class__, "_pending_kwargs_store", {})
-        if pending:
-            if "loop_messages" in pending:
-                self._loop_messages_cache = pending["loop_messages"]
-            if "step_results" in pending:
-                self._step_results_cache = pending["step_results"]
-            if "completed_step_ids" in pending:
-                self._completed_step_ids_cache = pending["completed_step_ids"]
-            self.__class__._pending_kwargs_store = {}
+        # Apply any captured property kwargs to the private caches. The
+        # `finally` reset keeps a failed `super().__init__` (validation error)
+        # from bleeding the captured kwargs into the next construction.
+        try:
+            pending = _captured_property_kwargs.get()
+            if pending:
+                if "loop_messages" in pending:
+                    self._loop_messages_cache = pending["loop_messages"]
+                if "step_results" in pending:
+                    self._step_results_cache = pending["step_results"]
+                if "completed_step_ids" in pending:
+                    self._completed_step_ids_cache = pending["completed_step_ids"]
+        finally:
+            _captured_property_kwargs.set({})
 
     started_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     total_duration_ms: int = 0

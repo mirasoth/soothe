@@ -265,11 +265,17 @@ class CheckpointManager:
         return checkpoint_id
 
     async def recover(self) -> CheckpointPayload | None:
-        """Recover the latest checkpoint state.
+        """Recover workspace state from the latest replayable checkpoint.
 
         1. List checkpoints, find the latest SNAPSHOT.
         2. Deserialize and replay subsequent DELTAs.
-        3. Return the final checkpoint payload.
+        3. Return the final APPLIED checkpoint payload.
+
+        A missing or unreadable delta stops replay early. The manager state
+        and the returned payload then describe the last checkpoint that WAS
+        applied — never the newest stored one — and the payload carries
+        ``incomplete=True`` so callers can treat the dirty state as partial
+        instead of silently continuing from a state that never existed.
 
         Returns:
             The recovered checkpoint payload, or `None` if no
@@ -293,7 +299,7 @@ class CheckpointManager:
                 snapshot_idx = len(checkpoints) - 1 - i
                 break
 
-        if snapshot_data is None:
+        if snapshot_data is None or snapshot_id is None:
             logger.warning("No snapshot found for run %s; cannot recover", self._run_id)
             return None
 
@@ -303,28 +309,42 @@ class CheckpointManager:
         manifest = snapshot_payload.manifest_snapshot
         dirty_files = list(snapshot_payload.dirty_files)
 
+        applied_delta_ids: list[str] = []
+        incomplete = False
         for ckpt_id in checkpoints[snapshot_idx + 1 :]:
             data = await self._backend.get_checkpoint(ckpt_id)
             if data is None:
-                logger.warning("Missing delta %s during recovery; stopping", ckpt_id)
+                incomplete = True
+                logger.error(
+                    "Missing delta %s during recovery of run %s; replay stopped "
+                    "at the last applied checkpoint (recovered state is partial)",
+                    ckpt_id,
+                    self._run_id,
+                )
                 break
             delta = CheckpointPayload.model_validate_json(data)
+            applied_delta_ids.append(ckpt_id)
             dirty_paths = {e.path for e in delta.dirty_files}
             dirty_files = [e for e in dirty_files if e.path not in dirty_paths]
             dirty_files.extend(delta.dirty_files)
 
+        last_applied_id = applied_delta_ids[-1] if applied_delta_ids else snapshot_id
         if manifest is not None:
+            # Counters track APPLIED checkpoints only: numbering the next
+            # checkpoint as if recovery completed would let later uploads
+            # treat stale local state as current.
             self._manifest = manifest
-            self._checkpoint_seq = len(checkpoints)
-            self._last_checkpoint_id = checkpoints[-1]
+            self._checkpoint_seq = snapshot_idx + 1 + len(applied_delta_ids)
+            self._last_checkpoint_id = last_applied_id
             self._last_snapshot_id = snapshot_id
-            self._delta_count = len(checkpoints) - snapshot_idx - 1
+            self._delta_count = len(applied_delta_ids)
 
         return CheckpointPayload(
-            checkpoint_id=checkpoints[-1],
+            checkpoint_id=last_applied_id,
             kind=CheckpointType.SNAPSHOT,
             manifest_version=manifest.version if manifest else 0,
             dirty_files=dirty_files,
             manifest_snapshot=manifest,
             parent_checkpoint_id=None,
+            incomplete=incomplete,
         )

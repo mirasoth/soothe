@@ -6,6 +6,7 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
+from soothe.context.errors import LedgerCorruptionError
 from soothe.context.models import GoalStepDAG, GoalStepDAGSnapshot
 
 if TYPE_CHECKING:
@@ -110,7 +111,13 @@ class PgsqlContextPersistence:
             raise
 
     async def load_ledger(self) -> list[dict[str, Any]]:
-        """Load ledger messages from PostgreSQL, or `[]` on error."""
+        """Load ledger messages from PostgreSQL.
+
+        Raises:
+            LedgerCorruptionError: When the stored row exists but its JSON
+                cannot be parsed (sticky corruption must not read as
+                "empty ledger"). Database unavailability still returns `[]`.
+        """
         try:
             pool = await self._shared_pool()
             async with pool.connection() as conn:
@@ -130,8 +137,12 @@ class PgsqlContextPersistence:
                 return data
             return json.loads(data) if isinstance(data, str) else list(data)
         except Exception:
-            logger.warning("[CE] Failed to parse ledger JSON", exc_info=True)
-            return []
+            logger.error(
+                "[CE] Corrupt ledger JSON for loop %s — failing loudly instead "
+                "of returning an empty ledger",
+                self._loop_id,
+            )
+            raise LedgerCorruptionError(self._loop_id) from None
 
     async def clear(self) -> None:
         """Delete all DAG and ledger rows for this loop_id."""

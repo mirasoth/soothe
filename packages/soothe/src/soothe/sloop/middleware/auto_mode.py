@@ -16,7 +16,6 @@ calls.
 from __future__ import annotations
 
 import logging
-import re
 from typing import Any, Literal
 
 from langchain.agents.middleware.types import AgentMiddleware
@@ -43,32 +42,27 @@ _SIGNATURE_PREVIEW_CHARS = 120
 # Verdicts for a single gated tool call.
 VerdictAction = Literal["allow", "reject", "escalate"]
 
-# Answer tokens the veritas leg maps onto gate outcomes. The veritas LLM
-# already produced a structured verdict (`defer=False`, confidence score);
-# these normalize the verdict token's wire shape. Veritas sometimes emits
-# affirmative prose ("yes, approve the run_command tool call") instead of a
-# bare token — word-boundary matching maps the verdict without re-judging it.
-_APPROVE_TOKENS = ("approve", "allow", "proceed", "yes", "approved", "approving")
-_DENY_TOKENS = ("deny", "reject", "pause", "stop", "no", "denied", "rejecting")
-_APPROVE_RE = re.compile(r"\b(" + "|".join(_APPROVE_TOKENS) + r")\b", re.IGNORECASE)
-_DENY_RE = re.compile(r"\b(" + "|".join(_DENY_TOKENS) + r")\b", re.IGNORECASE)
+# Canonical gate tokens the veritas leg accepts. The approval question
+# solicits exactly one of these tokens; the classifier is an exact match on
+# the normalized answer, not a keyword search over prose — prose answers fall
+# through to "unknown" and escalate instead of being re-judged here.
+_APPROVE_TOKENS = frozenset({"approve", "allow", "proceed", "yes", "approved"})
+_DENY_TOKENS = frozenset({"deny", "reject", "pause", "stop", "no", "denied"})
 
 
 def _classify_veritas_token(answer_text: str) -> Literal["approve", "deny", "unknown"]:
-    """Map a veritas answer string to a gate outcome.
+    """Map a veritas answer token to a gate outcome.
 
-    Word-boundary match so prose-shaped answers ("yes, approve the
-    run_command tool call") resolve as cleanly as a bare "approve" token.
-    Deny wins on a tie so a phrase like "yes, but I'd reject" stays safe.
+    Exact match (case/whitespace normalized) against the canonical token
+    vocabulary. Unrecognized prose does not resolve to a verdict — it maps to
+    `"unknown"` and the call escalates, so affirmative-looking prose can
+    never mint a grant.
     """
-    if not answer_text:
-        return "unknown"
-    has_deny = _DENY_RE.search(answer_text) is not None
-    has_approve = _APPROVE_RE.search(answer_text) is not None
-    if has_deny:
-        return "deny"
-    if has_approve:
+    token = (answer_text or "").strip().lower()
+    if token in _APPROVE_TOKENS:
         return "approve"
+    if token in _DENY_TOKENS:
+        return "deny"
     return "unknown"
 
 
@@ -195,7 +189,13 @@ class AutoModeMiddleware(AgentMiddleware):
         if not isinstance(args, dict):
             args = {}
         request = ClarificationRequest(
-            questions=(f"Should the {name} tool call be approved for the current goal?",),
+            questions=(
+                # The question solicits a canonical gate token so the
+                # veritas answer can be consumed structurally — see
+                # `_classify_veritas_token`.
+                f"Should the {name} tool call be approved for the current goal? "
+                f"Answer with exactly 'approve' or 'deny'.",
+            ),
             origin_node=ORIGIN_TOOL_APPROVAL,
             origin_interrupt_id=f"auto:{tool_call.get('id') or name}",
             loop_state=view,

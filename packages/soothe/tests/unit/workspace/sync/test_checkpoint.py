@@ -298,9 +298,18 @@ class TestCheckpointRecovery:
 
     @pytest.mark.asyncio
     async def test_recover_handles_missing_delta(
-        self, manager: CheckpointManager, workspace_dir: Path, backend: FsspecSyncBackend
+        self,
+        manager: CheckpointManager,
+        workspace_dir: Path,
+        backend: FsspecSyncBackend,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Recovery stops gracefully when a delta is missing."""
+        """Recovery stops gracefully when a delta is missing.
+
+        The payload is marked `incomplete` and the manager counters track
+        the last APPLIED checkpoint, not the newest stored one — a partial
+        recovery must never look complete (review f994682f).
+        """
         # Create snapshot + delta.
         for i in range(2):
             f = workspace_dir / "output" / f"file{i}.md"
@@ -308,14 +317,30 @@ class TestCheckpointRecovery:
             manager._dirty_tracker.mark_dirty(f"output/file{i}.md")
             await manager.create_checkpoint()
 
-        # Simulate a corrupted/missing delta by deleting c002.
-        # (The backend stores at run-123-c002.)
+        # Capture the listing, then delete the delta object while the
+        # listing still reports it (index/listing desync — the shape that
+        # actually triggers the missing-delta branch, since removing the
+        # object also removes it from the listing).
+        listed = await backend.list_checkpoints("run-123")
+        assert len(listed) == 2
         await manager._backend._to_thread(
             backend._fs.rm, f"{ROOT}/runs/run-123/checkpoints/run-123-c002.json"
         )
 
+        async def _list_with_ghost(run_id: str) -> list[str]:
+            if run_id == "run-123":
+                return listed
+            return await FsspecSyncBackend.list_checkpoints(backend, run_id)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(backend, "list_checkpoints", _list_with_ghost)
+
         # Recovery should still work, anchored on the snapshot.
         payload = await manager.recover()
         assert payload is not None
+        assert payload.incomplete is True
         # Only the snapshot's dirty files are recovered.
         assert len(payload.dirty_files) == 1
+        # Counters and checkpoint_id describe the last APPLIED state.
+        assert manager._checkpoint_seq == 1
+        assert manager._delta_count == 0
+        assert payload.checkpoint_id == "run-123-c001"

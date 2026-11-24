@@ -8,7 +8,7 @@ means editing this module only, not the executor capture site. The
 
 from __future__ import annotations
 
-import re
+import logging
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
@@ -24,36 +24,44 @@ if TYPE_CHECKING:
         ClarificationRequest,
     )
 
-# Decision tokens for mapping relay answers to HITL DecisionType. The veritas
-# LLM / TUI may emit prose ("no, reject — too risky") instead of a bare token;
-# word-boundary matching maps the verdict without re-judging it. Reject wins
-# over edit on a tie so "reject and edit the args" stays safe.
-_REJECT_TOKENS = ("reject", "no", "deny", "block", "cancel", "n", "denied", "rejecting")
-_EDIT_TOKENS = ("edit", "modify", "change", "revise", "editing", "modifying")
-_REJECT_RE = re.compile(r"\b(" + "|".join(_REJECT_TOKENS) + r")\b", re.IGNORECASE)
-_EDIT_RE = re.compile(r"\b(" + "|".join(_EDIT_TOKENS) + r")\b", re.IGNORECASE)
+logger = logging.getLogger(__name__)
+
+# Canonical decision vocabulary for tool-approval answers. The answer slot is
+# a single action token chosen on the decision card (structured selector);
+# the comment slot carries any prose. Only exact (whitespace/case-normalized)
+# matches resolve a decision — anything else, including empty answers, maps to
+# "reject" so a malformed or missing answer can never approve a gated tool
+# call. Content judgment must not be re-derived from prose via keyword search.
+_APPROVE_TOKENS = frozenset({"approve", "approved", "allow", "yes", "y", "ok", "proceed"})
+_REJECT_TOKENS = frozenset({"reject", "rejected", "deny", "denied", "no", "n", "block", "cancel"})
+_EDIT_TOKENS = frozenset({"edit", "modify", "revise", "change"})
+_DECISION_BY_TOKEN: dict[str, str] = {
+    **{token: "approve" for token in _APPROVE_TOKENS},
+    **{token: "reject" for token in _REJECT_TOKENS},
+    **{token: "edit" for token in _EDIT_TOKENS},
+}
 
 
 def answer_to_decision(answer: str) -> str:
-    """Map a tool-approval answer string to a HITL `DecisionType`.
+    """Map a tool-approval answer token to a HITL `DecisionType`.
 
-    The relay answers with a free-form string (from veritas or the TUI). The
-    deepagents middleware expects `"approve"` / `"edit"` / `"reject"`. Defaults
-    to `"approve"` for unrecognized positive-ish answers and `"reject"` only
-    on an explicit reject token.
-
-    Word-boundary match so prose-shaped answers ("no, reject — too risky")
-    resolve as cleanly as a bare "reject" token. Reject wins over edit on a
-    tie so "reject and edit the args" stays safe.
+    The deepagents middleware expects `"approve"` / `"edit"` / `"reject"`.
+    Answers are canonical action tokens from the decision card; the mapping
+    is an exact match against the decision vocabulary (case/whitespace
+    normalized). Unrecognized or empty answers default to `"reject"` — the
+    fail-safe direction — and are logged so a misconfigured client is
+    observable instead of silently approving gated tool calls.
     """
-    text = (answer or "").strip()
-    if not text:
-        return "approve"
-    if _REJECT_RE.search(text):
-        return "reject"
-    if _EDIT_RE.search(text):
-        return "edit"
-    return "approve"
+    text = (answer or "").strip().lower()
+    decision = _DECISION_BY_TOKEN.get(text)
+    if decision is not None:
+        return decision
+    if text:
+        logger.warning(
+            "Unrecognized tool-approval answer %r — failing safe to reject",
+            answer,
+        )
+    return "reject"
 
 
 def build_tool_approval_resume_payload(
@@ -98,7 +106,8 @@ def build_clarification_resume_payload(
     - `tool_approval` — map the relay's answer to a HITL `decisions` shape. One
       decision per pending action request; the decisions list length must
       match the number of hanging tool calls. When the answer has fewer
-      entries, remaining slots default to the first answer (or `"approve"`).
+      entries, remaining slots default to the first answer (missing answers
+      fail safe to `"reject"` — see `answer_to_decision`).
     - otherwise (`ask_user` / execute) — deliver answers verbatim so the
       `ask_user` tool returns the Q&A and the agent continues its turn.
 
@@ -111,7 +120,9 @@ def build_clarification_resume_payload(
         n_pending = (
             len(action_requests) if isinstance(action_requests, list) and action_requests else 0
         )
-        answers = list(answer.answers) if answer.answers else ["approve"]
+        # Missing answers must fail safe (reject), never default-approve a
+        # gated tool call. The decision tokenizer logs unrecognized answers.
+        answers = list(answer.answers) if answer.answers else ["reject"]
         if n_pending == 0:
             n_pending = len(answers) if answers else 1
         audit = answer.audit if isinstance(answer.audit, dict) else {}

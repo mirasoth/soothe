@@ -385,8 +385,14 @@ class TestManagerContentWiring:
         # Backend uploads a material to the content root.
         await content_backend.put_content_file("materials/m1/notes.md", b"material v1")
 
+        shared_fs = content_backend._fs  # noqa: SLF001 — test reaches into the fixture
+
         def factory(run_id: str):
-            return content_backend
+            # Production shape: a FRESH per-run backend over the shared
+            # content tree. `Workspace.close()` closes per-run content
+            # backends (their executor), so a factory must not hand the
+            # same instance to two runs.
+            return FsspecSyncBackend(fs=shared_fs, root="/content", max_workers=2)
 
         manager = WorkspaceManager(
             workspaces_root=tmp_path / "workspaces",

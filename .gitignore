@@ -237,3 +237,4 @@ __MACOSX
 packages/soothe/MagicMock/
 .codebuddy/
 _omr/
+.review/

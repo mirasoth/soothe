@@ -623,11 +623,14 @@ class TestVeritasLeg:
         assert await gate.aafter_model(state, _veritas_runtime()) is None
 
     @pytest.mark.asyncio
-    async def test_prose_approve_answer_allows_inline(self) -> None:
-        """Affirmative prose ('yes, approve the run_command tool call')
-        resolves as approve — the regression from loop 6eb7 where veritas
-        reached the right verdict but the wrong wire shape deferred to the
-        human."""
+    async def test_prose_approve_answer_does_not_grant_inline(self) -> None:
+        """Affirmative prose is NOT an approve.
+
+        Keyword classification of prose answers was removed (review
+        f994682f): the approval question solicits a canonical token, and
+        any other answer maps to `unknown` — in autopilot that degrades to
+        an instructive reject instead of minting a loop-scoped grant.
+        """
         from soothe.subagents.veritas.schemas import VeritasAnswerSchema
 
         prose = VeritasAnswerSchema(
@@ -640,29 +643,21 @@ class TestVeritasLeg:
         answerer, calls = _answer(prose)
         gate = _gate(veritas_answer=answerer)
         state = _state([_tc("run_command", {"command": _HINT_COMMAND})])
-        assert await gate.aafter_model(state, _veritas_runtime()) is None
+        result = await gate.aafter_model(state, _veritas_runtime())
+        assert result is not None
+        tool_msg = next(m for m in result["messages"] if isinstance(m, ToolMessage))
+        assert tool_msg.status == "error"
+        assert "unmappable" in tool_msg.content
         assert len(calls) == 1
 
     @pytest.mark.asyncio
-    async def test_prose_approve_with_rationale_allows(self) -> None:
-        """Longer affirmative prose also maps to approve."""
-        from soothe.subagents.veritas.schemas import VeritasAnswerSchema
+    async def test_prose_deny_answer_is_unmappable_not_deny(self) -> None:
+        """Negative prose ('no, reject — too risky') is also unmappable.
 
-        prose = VeritasAnswerSchema(
-            defer=False,
-            answers=["yes, approve the run_command tool call for importing anjian demo data"],
-            confidence=0.80,
-            rationale="demo data import is goal-aligned",
-            answer_is_question=[False],
-        )
-        answerer, _ = _answer(prose)
-        gate = _gate(veritas_answer=answerer)
-        state = _state([_tc("run_command", {"command": _HINT_COMMAND})])
-        assert await gate.aafter_model(state, _veritas_runtime()) is None
-
-    @pytest.mark.asyncio
-    async def test_prose_deny_answer_rejects_inline(self) -> None:
-        """Negative prose ('no, reject — too risky') maps to deny."""
+        The exact-token contract only resolves canonical tokens; prose falls
+        to the unmappable branch, which stays on the safe side (instructive
+        reject in autopilot, human escalation otherwise).
+        """
         from soothe.subagents.veritas.schemas import VeritasAnswerSchema
 
         prose = VeritasAnswerSchema(
@@ -679,12 +674,12 @@ class TestVeritasLeg:
         assert result is not None
         tool_msg = next(m for m in result["messages"] if isinstance(m, ToolMessage))
         assert tool_msg.status == "error"
-        assert "veritas denied" in tool_msg.content
+        assert "unmappable" in tool_msg.content
 
     @pytest.mark.asyncio
-    async def test_prose_with_both_tokens_deny_wins(self) -> None:
-        """A phrase containing both approve and deny tokens stays safe
-        (deny wins) — 'yes, but I'd reject this' → deny."""
+    async def test_mixed_prose_is_unmappable(self) -> None:
+        """A phrase containing both approve and deny tokens resolves to
+        nothing — neither verdict is derived from prose keywords."""
         from soothe.subagents.veritas.schemas import VeritasAnswerSchema
 
         prose = VeritasAnswerSchema(
@@ -701,6 +696,7 @@ class TestVeritasLeg:
         assert result is not None
         tool_msg = next(m for m in result["messages"] if isinstance(m, ToolMessage))
         assert tool_msg.status == "error"
+        assert "unmappable" in tool_msg.content
 
     @pytest.mark.asyncio
     async def test_truly_unmappable_answer_still_defers(self) -> None:

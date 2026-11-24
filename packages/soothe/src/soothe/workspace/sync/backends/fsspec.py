@@ -390,8 +390,17 @@ class FsspecSyncBackend:
     # ------------------------------------------------------------------
 
     def close(self) -> None:
-        """Shut down the dedicated thread pool."""
-        self._executor.shutdown(wait=False)
+        """Shut down the dedicated thread pool.
+
+        Queued-but-unstarted work is dropped; the workspace close sequence
+        drains the uploader BEFORE closing the backend, so in-flight
+        uploads have already completed. Idempotent.
+        """
+        self._executor.shutdown(wait=False, cancel_futures=True)
+
+    async def aclose(self) -> None:
+        """Async close shim — see `close`."""
+        self.close()
 
     async def __aenter__(self) -> FsspecSyncBackend:
         return self

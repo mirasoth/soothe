@@ -146,3 +146,76 @@ async def test_execute_parallel_ledger_uses_step_id_when_completion_order_differ
     assert ledger_msgs[2].content.startswith("EXECUTION TASK:\n")
     assert "fast second in plan" in ledger_msgs[2].content
     assert getattr(ledger_msgs[2], "step_id", None) == "second"
+
+
+@pytest.mark.asyncio
+async def test_execute_parallel_propagates_graph_interrupt_instead_of_hanging() -> None:
+    """A GraphInterrupt escaping one step ends the wave, not the wait loop.
+
+    Regression (review f994682f): the step task re-raised `GraphInterrupt`
+    without enqueuing a completion item, so the wave consumer blocked
+    forever on `live_queue.get()` waiting for the remaining steps. The
+    interrupt must propagate out of the generator and cancel the siblings.
+    """
+    from langgraph.errors import GraphInterrupt
+
+    async def fake_collect(
+        step: StepAction,
+        thread_id: str,
+        workspace: str | None = None,
+        *,
+        live_event_queue: asyncio.Queue[Any] | None = None,
+        **kwargs: Any,
+    ) -> _ExecuteStepResult:
+        del thread_id, workspace, live_event_queue, kwargs
+        if step.id == "pause":
+            raise GraphInterrupt(("pause",))
+        # Sibling would block the wave forever if the interrupt were
+        # swallowed — the consumer must cancel it instead.
+        await asyncio.sleep(5.0)
+        raise AssertionError("unreachable")
+
+    executor = Executor(MagicMock(), max_parallel_steps=4, context_engine=_make_ce())
+    executor._execute_step_collecting_events = fake_collect  # type: ignore[method-assign]
+
+    state = LoopState(goal="g", thread_id="t-int", iteration=0, max_iterations=4)
+    steps = [
+        StepAction(id="pause", description="pausing step"),
+        StepAction(id="other", description="sibling step"),
+    ]
+
+    with pytest.raises(GraphInterrupt):
+        async for _item in executor._execute_parallel(steps, state):
+            pass
+
+
+@pytest.mark.asyncio
+async def test_execute_parallel_step_cancellation_ends_wave() -> None:
+    """A step task exiting via CancelledError also terminates the wave wait."""
+
+    async def fake_collect(
+        step: StepAction,
+        thread_id: str,
+        workspace: str | None = None,
+        *,
+        live_event_queue: asyncio.Queue[Any] | None = None,
+        **kwargs: Any,
+    ) -> _ExecuteStepResult:
+        del thread_id, workspace, live_event_queue, kwargs
+        if step.id == "cancel":
+            raise asyncio.CancelledError()
+        await asyncio.sleep(5.0)
+        raise AssertionError("unreachable")
+
+    executor = Executor(MagicMock(), max_parallel_steps=4, context_engine=_make_ce())
+    executor._execute_step_collecting_events = fake_collect  # type: ignore[method-assign]
+
+    state = LoopState(goal="g", thread_id="t-cancel", iteration=0, max_iterations=4)
+    steps = [
+        StepAction(id="cancel", description="cancelling step"),
+        StepAction(id="other", description="sibling step"),
+    ]
+
+    with pytest.raises(asyncio.CancelledError):
+        async for _item in executor._execute_parallel(steps, state):
+            pass

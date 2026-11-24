@@ -33,6 +33,7 @@ from soothe.sloop.relay.outbox import (
 @pytest.mark.parametrize(
     "answer,expected",
     [
+        # Canonical decision-card tokens (exact match, case-insensitive).
         ("approve", "approve"),
         ("yes", "approve"),
         ("ok", "approve"),
@@ -45,14 +46,18 @@ from soothe.sloop.relay.outbox import (
         ("edit", "edit"),
         ("modify", "edit"),
         ("change", "edit"),
-        ("", "approve"),  # default safe
-        ("unknown token", "approve"),  # default safe
-        # Prose-shaped answers (veritas may emit prose instead of a bare token).
-        ("yes, approve the run_command tool call", "approve"),
+        # Unknown or empty answers fail SAFE (review f994682f: a malformed
+        # answer must never approve a gated tool call).
+        ("", "reject"),
+        ("unknown token", "reject"),
+        # Prose never resolves a decision — keyword classification removed.
+        # "I do not approve" contains an approve token and no exact reject
+        # token, so the old substring matcher granted it; exact matching
+        # keeps it a reject.
+        ("I do not approve", "reject"),
+        ("yes, approve the run_command tool call", "reject"),
         ("no, reject — too risky", "reject"),
-        ("deny this action, it's destructive", "reject"),
-        ("edit the file_path argument", "edit"),
-        ("reject and edit the args", "reject"),  # reject wins over edit
+        ("edit the file_path argument", "reject"),
     ],
 )
 def test_answer_to_decision_mapping(answer: str, expected: str) -> None:

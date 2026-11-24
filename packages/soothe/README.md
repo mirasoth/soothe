@@ -20,6 +20,12 @@ Library only (this package):
 pip install soothe
 ```
 
+With LLM tracing (Langfuse export):
+
+```bash
+pip install "soothe[observability]"
+```
+
 ## What's in this package
 
 | Piece | Role |

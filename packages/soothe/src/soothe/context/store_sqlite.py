@@ -9,6 +9,7 @@ from typing import Any
 
 from soothe_nano.persistence.sqlite_runtime import SqliteRuntimeRegistry, SqliteStoreRuntime
 
+from soothe.context.errors import LedgerCorruptionError
 from soothe.context.models import GoalStepDAG, GoalStepDAGSnapshot
 
 logger = logging.getLogger(__name__)
@@ -139,7 +140,15 @@ class SqliteContextPersistence:
             raise
 
     async def load_ledger(self) -> list[dict[str, Any]]:
-        """Load ledger messages from the `ce_ledger` table, or `[]` on error."""
+        """Load ledger messages from the `ce_ledger` table.
+
+        Raises:
+            LedgerCorruptionError: When the stored row exists but its JSON
+                cannot be parsed — a sticky condition that must not be
+                silently downgraded to an empty ledger (which would drop
+                partial-work evidence). Database unavailability still
+                returns `[]` (transient, logged).
+        """
         loop_id = self._loop_id
 
         def _load(conn: Any) -> str | None:
@@ -161,8 +170,12 @@ class SqliteContextPersistence:
         try:
             return json.loads(json_str)
         except Exception:
-            logger.warning("[CE] Failed to parse ledger JSON", exc_info=True)
-            return []
+            logger.error(
+                "[CE] Corrupt ledger JSON for loop %s — failing loudly instead "
+                "of returning an empty ledger",
+                loop_id,
+            )
+            raise LedgerCorruptionError(loop_id) from None
 
     async def clear(self) -> None:
         """Delete all DAG and ledger rows for this loop_id."""

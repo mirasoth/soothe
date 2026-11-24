@@ -96,20 +96,26 @@ def _start_loop_heartbeat(config: Any, loop_id: str) -> _LoopHeartbeatHandle:
                 StrangeLoopCheckpointPersistenceManager,
             )
 
-            try:
-                pm = await StrangeLoopCheckpointPersistenceManager.for_shared_checkpoint_pool(
-                    config
-                )
-            except Exception:
-                logger.debug(
-                    "Loop heartbeat unavailable for %s; persistence manager init failed",
-                    loop_id,
-                    exc_info=True,
-                )
-                while True:
-                    await asyncio.sleep(_LOOP_HEARTBEAT_INTERVAL_S)
             while True:
                 await asyncio.sleep(_LOOP_HEARTBEAT_INTERVAL_S)
+                if pm is None:
+                    # Retry initialization inside the tick loop: a transient
+                    # startup failure (shared pool not open yet) must disable
+                    # the heartbeat only until the next tick, not forever —
+                    # a permanently stale `updated_at` makes the reconciler
+                    # demote or purge a live loop.
+                    try:
+                        pm = await StrangeLoopCheckpointPersistenceManager.for_shared_checkpoint_pool(
+                            config
+                        )
+                    except Exception:
+                        logger.warning(
+                            "Loop heartbeat unavailable for %s; persistence "
+                            "manager init failed (will retry)",
+                            loop_id,
+                            exc_info=True,
+                        )
+                        continue
                 try:
                     await pm.heartbeat_loop(loop_id)
                 except Exception:

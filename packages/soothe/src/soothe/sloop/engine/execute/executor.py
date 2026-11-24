@@ -2177,11 +2177,18 @@ class Executor:
                         live_event_queue=live_queue,
                         reuse_prior_thread=attempt > 1,
                     )
-                except asyncio.CancelledError:
+                except asyncio.CancelledError as exc:
+                    # Enqueue the terminal outcome so the wave consumer's
+                    # blocking `live_queue.get()` wakes and can cancel sibling
+                    # steps before the cancellation propagates; a bare
+                    # re-raise leaves the consumer waiting forever.
+                    live_queue.put_nowait(_ParallelStepDone(sid, exc))
                     raise
-                except GraphInterrupt:
+                except GraphInterrupt as exc:
                     # A pause escaping the step stream must reach the graph
-                    # runtime, not become a failed step.
+                    # runtime, not become a failed step. Same enqueue-first
+                    # rule: the consumer must observe the terminal outcome.
+                    live_queue.put_nowait(_ParallelStepDone(sid, exc))
                     raise
                 except Exception as exc:
                     if attempt >= max_attempts:
@@ -2274,6 +2281,18 @@ class Executor:
                         continue
                     completed += 1
                     result = item.payload
+                    if isinstance(result, (asyncio.CancelledError, GraphInterrupt)):
+                        # A cancelled / interrupted step is terminal for the
+                        # whole wave — it is NOT a failed-step record. Cancel
+                        # the sibling steps, then propagate so the graph
+                        # runtime sees the pause or cancellation. Without this
+                        # branch the wait loop below would block forever: the
+                        # step task re-raised without yielding a normal
+                        # completion item.
+                        for task in tasks:
+                            if not task.done():
+                                task.cancel()
+                        raise result
                     gather_results[wave_i] = result
                     if isinstance(result, Exception):
                         logger.error(

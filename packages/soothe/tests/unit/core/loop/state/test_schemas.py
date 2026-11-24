@@ -509,6 +509,25 @@ class TestLoopState:
         trace_goal = state.goal_user_submission or state.goal
         assert trace_goal == "/skill:weather x"
 
+    def test_failed_construction_does_not_leak_captured_kwargs(self):
+        """A ValidationError must not bleed property kwargs into the next instance.
+
+        The old class-level scratch kept `loop_messages` captured by the
+        before-validator when construction FAILED (required `thread_id`
+        missing); the next valid instance then inherited the stale messages
+        (review f994682f).
+        """
+        from soothe.sloop.utils.messages import LoopHumanMessage
+
+        stale = LoopHumanMessage(content="stale")
+        with pytest.raises(ValidationError):
+            # thread_id is required — construction fails AFTER the
+            # before-validator captured loop_messages.
+            LoopState(goal="bad", loop_messages=[stale])
+
+        state = LoopState(goal="good", thread_id="t2")
+        assert state.loop_messages == []
+
     def test_add_step_result(self):
         """Test adding step results."""
         state = LoopState(goal="Test", thread_id="t1")

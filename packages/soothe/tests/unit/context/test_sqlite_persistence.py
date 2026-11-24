@@ -110,9 +110,15 @@ class TestSqliteContextPersistence:
         loaded = await persistence.load_dag()
         assert loaded is None
 
-    async def test_corrupt_ledger_returns_empty(
-        self, persistence: SqliteContextPersistence
-    ) -> None:
+    async def test_corrupt_ledger_raises(self, persistence: SqliteContextPersistence) -> None:
+        """Corrupt ledger JSON fails loudly (review f994682f).
+
+        Returning `[]` silently downgraded corruption to "no evidence",
+        which suppressed `goal_interrupted` markers; the sticky corruption
+        must surface as `LedgerCorruptionError` instead.
+        """
+        from soothe.context.errors import LedgerCorruptionError
+
         def _corrupt(conn) -> None:
             conn.execute(
                 "INSERT INTO ce_ledger (loop_id, ledger_json, updated_at) VALUES (?, ?, ?)",
@@ -121,8 +127,8 @@ class TestSqliteContextPersistence:
 
         persistence._runtime.run_write_sync(_corrupt)
 
-        loaded = await persistence.load_ledger()
-        assert loaded == []
+        with pytest.raises(LedgerCorruptionError):
+            await persistence.load_ledger()
 
     async def test_cross_goal_accumulation(self, persistence: SqliteContextPersistence) -> None:
         """Verify that successive goals accumulate in the DAG."""
