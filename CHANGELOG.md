@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.3.7] - 2026-11-25
+
 ### Added
 
 - Approval dock (`Ctrl+R`): pending clarification/approval cards pin in a docked bar above the queued-goals bar instead of mounting inline in the transcript; multiple simultaneous approvals queue FIFO, only the head card is interactive, and the dock never steals focus from the chat input.
@@ -30,6 +32,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Manual clarification mode never decides on the operator's behalf when no human is attached: safety escalations and rule-unresolved gated calls park the goal for a later-attached human instead of auto-deciding.
 - Manual mode escalates user deny-rule hits to the human instead of rejecting inline (the operator may override their own rule). Deny results carry a synthesized `deny_rule:<tool>:<pattern>` rule id routed through the existing `escalated_rule_id` plumbing; a human approval stamps an exact `{"rule": "deny_rule:…"}` allowlist record the pipeline honors at stage 1, so an approved override auto-clears retries of the same deny-matched action for the rest of the loop. Signature/prefix/dir grants never override deny rules, and `active_in_bypass` keeps deny absolute even in manual.
 - Approving the first tool of a batched approval gate no longer silently rejects the remaining tools; every tool gets an explicit decision.
+
+[Compare with previous version]: https://github.com/mirasoth/soothe/compare/v1.3.6...v1.3.7
 
 ## [v1.3.6] - 2026-11-24
 
