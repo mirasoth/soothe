@@ -1517,6 +1517,10 @@ class Executor:
 
         if usage["total_tokens"] > 0:
             state.total_tokens_used += usage["total_tokens"]
+            if usage.get("source") != "actual":
+                # Sticky: totals mixing estimates with real usage stay
+                # approximate until the loop resets.
+                state.token_usage_estimated = True
             logger.debug(
                 "tokens: input=%d output=%d total=%d (actual=%s)",
                 usage["input_tokens"],

@@ -154,8 +154,8 @@ async def test_plan_mode_passes_interaction_mode(monkeypatch: Any) -> None:  # n
 
 
 @pytest.mark.asyncio
-async def test_manual_mode_clamps_to_auto(monkeypatch: Any) -> None:  # noqa: ANN401
-    """Manual is no longer a composer mode; it clamps to auto (no sticky subagent)."""
+async def test_manual_mode_passes_clarification_mode_manual(monkeypatch: Any) -> None:  # noqa: ANN401
+    """Manual composer mode wires clarification_mode=manual (human-confirmed agent mode)."""
     app = _execution_app()
     app._composer_mode = "manual"
     captured: dict[str, Any] = {}
@@ -168,5 +168,6 @@ async def test_manual_mode_clamps_to_auto(monkeypatch: Any) -> None:  # noqa: AN
 
     await app._run_agent_task("hello", skip_daemon_send_turn=False)
 
-    assert captured["clarification_mode"] == "auto"
+    assert captured["clarification_mode"] == "manual"
+    assert captured["interaction_mode"] is None
     assert captured["sticky_preferred_subagent"] is None

@@ -755,6 +755,10 @@ class LoopState(BaseModel):
     last_wave_output_length: int = 0
     last_wave_error_count: int = 0
     total_tokens_used: int = 0
+    # True when any wave contributed content-based estimates instead of real
+    # provider usage (absent usage_metadata). Consumers render such totals as
+    # approximate (e.g. "N+ tokens") instead of exact counts.
+    token_usage_estimated: bool = False
     context_percentage_consumed: float = 0.0
 
     # Action history for progressive specificity tracking (RFC-603)
@@ -908,6 +912,15 @@ class LoopState(BaseModel):
         # Invalidate CE-backed memoization
         self._loop_msg_cache_revision = None
         self._loop_msg_cache_result.clear()
+
+    def token_usage_source(self) -> str:
+        """Provenance for ``total_tokens_used``: "actual" or "estimated".
+
+        "estimated" means at least one wave contributed content-based
+        estimates instead of real provider usage; totals that mix both are
+        still approximate, so the flag is sticky once set.
+        """
+        return "estimated" if self.token_usage_estimated else "actual"
 
     @property
     def loop_messages(self) -> list[LoopHumanMessage | LoopAIMessage]:

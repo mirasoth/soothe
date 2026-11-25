@@ -1035,6 +1035,41 @@ class StrangeLoopStateManager:
         # Save checkpoint
         await self.save(checkpoint)
 
+    async def update_goal_tokens(
+        self,
+        goal_record: GoalIndexEntry | None,
+        *,
+        total_tokens: int,
+    ) -> None:
+        """Refresh a goal's cumulative token snapshot without other metrics.
+
+        `record_iteration` snapshots `tokens_used` while executing the
+        terminal iteration — before the goal-completion synthesis LLM call
+        runs and adds its tokens to `LoopState.total_tokens_used`. Calling
+        this right before the terminal wire event keeps the persisted
+        checkpoint total in sync with the live count that consumers see.
+
+        Monotonic: the snapshot never decreases for the same goal.
+
+        Args:
+            goal_record: Goal index entry to refresh. Detached copies are
+                re-resolved against the checkpoint's goal history.
+            total_tokens: Current cumulative `total_tokens_used` for the
+                goal's LoopState.
+        """
+        if goal_record is None or self._checkpoint is None:
+            return
+        target_goal = self._resolve_goal_in_history(self._checkpoint, goal_record)
+        if target_goal is None:
+            return
+        if total_tokens > target_goal.tokens_used:
+            target_goal.tokens_used = total_tokens
+            logger.debug(
+                "update_goal_tokens: goal=%s tokens=%d",
+                target_goal.goal_id,
+                target_goal.tokens_used,
+            )
+
     async def mark_goal_awaiting_clarification(
         self,
         goal_record: GoalIndexEntry | None,

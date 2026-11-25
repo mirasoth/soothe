@@ -265,13 +265,47 @@ class _ExecutionMixin:
             submitted_widget._submitted = True  # noqa: SLF001
             submitted_widget.add_class("is-submitted")
 
-        # A stale empty remount (resume re-emit) can leave another interactive
-        # plan-review card. Disable extras so a second click cannot fire a
-        # second plan-review turn after clarification_answered cleared the pending flag.
+        # IG-CLNT-005: relocate the decided card from the approval dock into
+        # the transcript — the answered card becomes the permanent record
+        # (per-tool decision rows, identical to reconnect hydration). The
+        # dock itself is transient and never flushed by messages. This runs
+        # before the non_empty guard so an abandoned card (no answers sent)
+        # also lands in the transcript as a dismissal record.
+        dock = getattr(adapter, "_approval_dock", None)
+        if dock is not None and submitted_widget is not None:
+            try:
+                await dock.pop_card(submitted_widget)
+                mount_result = adapter._mount_message(submitted_widget)
+                if mount_result is not None:
+                    await mount_result
+            except Exception:  # noqa: BLE001
+                logger.debug(
+                    "Failed to relocate submitted approval card to transcript",
+                    exc_info=True,
+                )
+
+        # A stale empty remount (resume re-emit) can leave a duplicate card.
+        # Disarm only true duplicates — same origin and same question set.
+        # Never touch other steps' live approvals: with parallel steps each
+        # card is an independent decision the user still has to make, and
+        # disarming them here silently killed the second approval.
+        submitted_key = (
+            origin_node,
+            tuple(str(q) for q in questions),
+        )
         for sid, other in list(adapter._clarification_input_by_step.items()):
             if sid == step_id:
                 continue
             try:
+                other_key = (
+                    str(getattr(other, "_origin_node", "") or ""),
+                    tuple(
+                        q.get("question", str(q)) if isinstance(q, dict) else str(q)
+                        for q in getattr(other, "_questions", []) or []
+                    ),
+                )
+                if other_key != submitted_key:
+                    continue
                 other._submitted = True  # noqa: SLF001
                 other.add_class("is-submitted")
                 # Disable submit/abandon buttons and any active inputs.
@@ -349,13 +383,8 @@ class _ExecutionMixin:
 
         Reads `agent.clarification.default_mode` from the daemon config via
         a one-shot WebSocket RPC. Falls back to `"auto"` when the daemon is
-        unreachable, the section is missing, or the value is not `auto`.
-        A daemon-configured `manual` default clamps to `auto` (manual is no
-        longer a user-selectable composer mode; the auto→manual fallback
-        card is driven by the runtime clarification event instead).
-
-        Returns:
-            Normalized composer mode (`"auto"`).
+        unreachable or the section is missing. `manual` is a valid composer
+        mode and is returned as-is.
         """
         from soothe_cli.tui.composer_mode import normalize_composer_mode
 
@@ -388,9 +417,8 @@ class _ExecutionMixin:
 
         When the operator did not pass `--mode` explicitly, the TUI badge
         reflects `agent.clarification.default_mode` from the daemon config
-        rather than a hard-coded `auto`. A daemon default of `manual` clamps
-        to `auto` (manual is no longer user-selectable; its fallback card is
-        driven by the runtime clarification event). This runs once after the
+        rather than a hard-coded `auto`. `manual` is a valid composer mode
+        and is applied as-is. This runs once after the
         daemon is ready so subsequent turns send the correct
         `clarification_mode` wire field.
 
@@ -1259,6 +1287,16 @@ class _ExecutionMixin:
         """Clean up after agent task completes or is cancelled."""
         self._agent_running = False
         self._agent_worker = None
+
+        # IG-CLNT-005: the resume turn for a queued answer has completed —
+        # promote the next waiting approval card to interactive head. This
+        # keeps at most one answer in flight (matching the relay inbox's
+        # FIFO answer pairing). No-op when the dock has no waiting cards.
+        adapter = self._ui_adapter
+        dock = getattr(adapter, "_approval_dock", None) if adapter is not None else None
+        if dock is not None:
+            with suppress(Exception):
+                await dock.promote_next()
 
         # Restore input focus first so the user can type immediately
         # while remaining cleanup (spinner, tokens, deferred) runs.

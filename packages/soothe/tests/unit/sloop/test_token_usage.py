@@ -99,3 +99,148 @@ def test_estimate_token_usage_host_alias_estimates_on_fallback() -> None:
     assert usage["output_tokens"] > 0
     assert usage["total_tokens"] == usage["input_tokens"] + usage["output_tokens"]
     assert usage["source"] == "estimated"
+
+
+def test_loop_state_token_usage_source_default_actual() -> None:
+    from soothe.sloop.state.schemas import LoopState
+
+    state = LoopState(goal="g", thread_id="t1")
+    assert state.token_usage_source() == "actual"
+    assert state.token_usage_estimated is False
+
+
+def test_loop_state_token_usage_source_estimated() -> None:
+    from soothe.sloop.state.schemas import LoopState
+
+    state = LoopState(goal="g", thread_id="t1", token_usage_estimated=True)
+    assert state.token_usage_source() == "estimated"
+
+
+def test_loop_state_token_usage_estimated_backcompat_default() -> None:
+    """Older persisted LoopState payloads lack the field: default False."""
+    from soothe.sloop.state.schemas import LoopState
+
+    state = LoopState.model_validate({"goal": "g", "thread_id": "t1", "total_tokens_used": 347})
+    assert state.token_usage_estimated is False
+    assert state.token_usage_source() == "actual"
+
+
+def test_aggregate_wave_metrics_marks_estimated_provenance() -> None:
+    """Estimated waves flip the sticky provenance flag on LoopState."""
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    from soothe.coreagent import SootheNanoAgent as CoreAgent
+    from soothe.sloop.engine.execute.executor import Executor
+    from soothe.sloop.state.schemas import LoopState
+
+    executor = Executor(core_agent=MagicMock(spec=CoreAgent), max_parallel_steps=1)
+    state = LoopState(goal="g", thread_id="t1")
+
+    # Estimated wave: no usage_metadata anywhere.
+    executor._aggregate_wave_metrics(
+        [], "", [HumanMessage(content="do the thing"), AIMessage(content="ok")], state
+    )
+    assert state.total_tokens_used > 0
+    assert state.token_usage_estimated is True
+    assert state.token_usage_source() == "estimated"
+
+
+def test_aggregate_wave_metrics_actual_usage_keeps_provenance_actual() -> None:
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    from soothe.coreagent import SootheNanoAgent as CoreAgent
+    from soothe.sloop.engine.execute.executor import Executor
+    from soothe.sloop.state.schemas import LoopState
+
+    executor = Executor(core_agent=MagicMock(spec=CoreAgent), max_parallel_steps=1)
+    state = LoopState(goal="g", thread_id="t1")
+
+    executor._aggregate_wave_metrics(
+        [],
+        "",
+        [
+            HumanMessage(content="do the thing"),
+            AIMessage(
+                content="ok",
+                usage_metadata={"input_tokens": 500, "output_tokens": 20, "total_tokens": 520},
+            ),
+        ],
+        state,
+    )
+    assert state.total_tokens_used == 520
+    assert state.token_usage_estimated is False
+    assert state.token_usage_source() == "actual"
+
+
+def test_update_goal_tokens_refreshes_snapshot_after_synthesis() -> None:
+    """record_progress snapshots tokens before synthesis; refresh covers it."""
+    from datetime import UTC, datetime
+
+    from soothe.sloop.state.checkpoint import StrangeLoopCheckpoint, ThreadHealthMetrics
+    from soothe.sloop.state.execution_checkpoint import GoalIndexEntry
+    from soothe.sloop.state.sloop_manager import StrangeLoopStateManager
+
+    manager = StrangeLoopStateManager.__new__(StrangeLoopStateManager)
+    goal = GoalIndexEntry(goal_id="g1", thread_id="t1", tokens_used=100)
+    now = datetime.now(UTC)
+    checkpoint = StrangeLoopCheckpoint(
+        loop_id="loop-1",
+        current_thread_id="t1",
+        status="running",
+        created_at=now,
+        updated_at=now,
+        thread_health_metrics=ThreadHealthMetrics(thread_id="t1", last_updated=now),
+        goal_history=[goal],
+    )
+    manager._checkpoint = checkpoint
+
+    import asyncio
+
+    asyncio.run(manager.update_goal_tokens(goal, total_tokens=650))
+
+    assert goal.tokens_used == 650
+    assert checkpoint.goal_history[0].tokens_used == 650
+
+
+def test_update_goal_tokens_is_monotonic() -> None:
+    """A lower or equal total never decreases the snapshot."""
+    from datetime import UTC, datetime
+
+    from soothe.sloop.state.checkpoint import StrangeLoopCheckpoint, ThreadHealthMetrics
+    from soothe.sloop.state.execution_checkpoint import GoalIndexEntry
+    from soothe.sloop.state.sloop_manager import StrangeLoopStateManager
+
+    manager = StrangeLoopStateManager.__new__(StrangeLoopStateManager)
+    goal = GoalIndexEntry(goal_id="g1", thread_id="t1", tokens_used=650)
+    now = datetime.now(UTC)
+    checkpoint = StrangeLoopCheckpoint(
+        loop_id="loop-1",
+        current_thread_id="t1",
+        status="running",
+        created_at=now,
+        updated_at=now,
+        thread_health_metrics=ThreadHealthMetrics(thread_id="t1", last_updated=now),
+        goal_history=[goal],
+    )
+    manager._checkpoint = checkpoint
+
+    import asyncio
+
+    asyncio.run(manager.update_goal_tokens(goal, total_tokens=300))
+
+    assert goal.tokens_used == 650
+
+
+def test_update_goal_tokens_noop_without_checkpoint_or_goal() -> None:
+    from soothe.sloop.state.execution_checkpoint import GoalIndexEntry
+    from soothe.sloop.state.sloop_manager import StrangeLoopStateManager
+
+    manager = StrangeLoopStateManager.__new__(StrangeLoopStateManager)
+    manager._checkpoint = None
+
+    import asyncio
+
+    asyncio.run(manager.update_goal_tokens(None, total_tokens=10))
+    asyncio.run(
+        manager.update_goal_tokens(GoalIndexEntry(goal_id="g", thread_id="t"), total_tokens=10)
+    )

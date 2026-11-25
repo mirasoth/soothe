@@ -460,7 +460,11 @@ async def node_plan_review(ctx: LoopRuntimeContext, state: dict[str, Any]) -> di
             comments = (getattr(ctx.scratch, "plan_review_comments", None) or "").strip()
             await ctx.emit(
                 "plan_refinement_started",
-                {"comments": comments[:200] if comments else ""},
+                {
+                    "comments": comments[:200] if comments else "",
+                    "total_tokens_used": ctx.loop_state.total_tokens_used,
+                    "token_usage_source": ctx.loop_state.token_usage_source(),
+                },
             )
             refined = await _refine_plan(ctx)
             if refined:
@@ -472,7 +476,14 @@ async def node_plan_review(ctx: LoopRuntimeContext, state: dict[str, Any]) -> di
                     _record_plan_completion_ledger(ctx, refined)
                     out = build_plan_mode_review_pending(ctx)
                 ctx.scratch.plan_review_comments = None
-                await ctx.emit("plan_refinement_completed", {"plan_chars": len(refined)})
+                await ctx.emit(
+                    "plan_refinement_completed",
+                    {
+                        "plan_chars": len(refined),
+                        "total_tokens_used": ctx.loop_state.total_tokens_used,
+                        "token_usage_source": ctx.loop_state.token_usage_source(),
+                    },
+                )
             else:
                 # Synthesis failed (empty after retries or exception) — keep the
                 # old draft pending and clear the stale comments so a subsequent
@@ -509,11 +520,21 @@ async def node_plan_review(ctx: LoopRuntimeContext, state: dict[str, Any]) -> di
             logger.warning("[PlanModeReview] No synthesis model available")
             plan_draft = ""
         else:
-            await ctx.emit("plan_synthesis_started", {})
+            await ctx.emit(
+                "plan_synthesis_started",
+                {
+                    "total_tokens_used": ctx.loop_state.total_tokens_used,
+                    "token_usage_source": ctx.loop_state.token_usage_source(),
+                },
+            )
             plan_draft = await synthesize_plan(ctx, llm=synth_llm, config=strange_loop.config)
             await ctx.emit(
                 "plan_synthesis_completed",
-                {"plan_chars": len(plan_draft)},
+                {
+                    "plan_chars": len(plan_draft),
+                    "total_tokens_used": ctx.loop_state.total_tokens_used,
+                    "token_usage_source": ctx.loop_state.token_usage_source(),
+                },
             )
 
     if not plan_draft:

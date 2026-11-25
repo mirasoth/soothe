@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -11,6 +12,7 @@ from langchain_core.messages import AIMessageChunk
 
 from soothe.config import SootheConfig
 from soothe.config.models import AgentConfig, StrangeLoopConfig
+from soothe.sloop.engine.completion.scenario_classifier import ScenarioClassification
 from soothe.sloop.engine.completion.synthesis import (
     _SYNTHESIS_STALL_RETRY_MAX,
     SynthesisGenerator,
@@ -47,6 +49,18 @@ def _ok_stream(text: str):
     return _stream()
 
 
+def _delayed_stream(delay: float, text: str):
+    async def _stream():
+        await asyncio.sleep(delay)
+        yield AIMessageChunk(content=text)
+
+    return _stream()
+
+
+def _loop_config(**kwargs: Any) -> SootheConfig:
+    return SootheConfig(agent=AgentConfig(loop=StrangeLoopConfig(**kwargs)))
+
+
 def _partial_then_stall_stream(text: str):
     async def _stream():
         yield AIMessageChunk(content=text)
@@ -79,7 +93,12 @@ def _state() -> LoopState:
 
 def _generator(llm: _ScriptedLlm) -> SynthesisGenerator:
     soothe_cfg = SootheConfig(
-        agent=AgentConfig(loop=StrangeLoopConfig(dispatch_idle_seconds=_IDLE_SECONDS)),
+        agent=AgentConfig(
+            loop=StrangeLoopConfig(
+                dispatch_idle_seconds=_IDLE_SECONDS,
+                goal_synthesis_idle_seconds=_IDLE_SECONDS,
+            ),
+        ),
     )
     return SynthesisGenerator(llm, MagicMock(), soothe_cfg)
 
@@ -162,3 +181,97 @@ async def test_healthy_stream_yields_directly() -> None:
 
     assert llm.calls == 1
     assert _collected_text(events) == "done report"
+
+
+@pytest.mark.asyncio
+async def test_idle_guard_disabled_runs_plain_stream() -> None:
+    """A slow-but-healthy stream is not retried while the guard is disabled."""
+    soothe_cfg = _loop_config(
+        dispatch_idle_seconds=0.2,
+        goal_synthesis_idle_seconds=0.0,
+    )
+    llm = _ScriptedLlm([lambda: _delayed_stream(0.8, "guarded-off report")])
+    gen = SynthesisGenerator(llm, MagicMock(), soothe_cfg)
+
+    events = await _collect(gen)
+
+    assert llm.calls == 1
+    assert _collected_text(events) == "guarded-off report"
+
+
+@pytest.mark.asyncio
+async def test_reader_uses_synthesis_budget_not_dispatch_deadlock_budget() -> None:
+    """A first token between the two budgets must not be treated as a stall."""
+    soothe_cfg = _loop_config(
+        dispatch_idle_seconds=0.2,
+        goal_synthesis_idle_seconds=3.0,
+    )
+    llm = _ScriptedLlm([lambda: _delayed_stream(1.2, "Late report.")])
+    gen = SynthesisGenerator(llm, MagicMock(), soothe_cfg)
+
+    events = await _collect(gen)
+
+    assert llm.calls == 1
+    assert _collected_text(events) == "Late report."
+
+
+@pytest.mark.asyncio
+async def test_scratchpad_timeout_uses_dispatch_deadlock_budget(monkeypatch) -> None:
+    """Scratchpad streams keep the total timeout from dispatch_idle_seconds."""
+    soothe_cfg = _loop_config(
+        dispatch_idle_seconds=7.0,
+        goal_synthesis_idle_seconds=0.2,
+    )
+    llm = _ScriptedLlm([lambda: _ok_stream("scratchpad report")])
+    gen = SynthesisGenerator(llm, MagicMock(), soothe_cfg)
+
+    async def _force_scratchpad(goal: str, state: LoopState):  # noqa: ARG001
+        classification = ScenarioClassification(
+            scenario="custom",
+            contextual_focus=["Summarize the outcome."],
+            evidence_emphasis="Use bullets.",
+        )
+        return classification, True
+
+    monkeypatch.setattr(gen, "_resolve_classification", _force_scratchpad)
+
+    synthesis_module = importlib.import_module("soothe.sloop.engine.completion.synthesis")
+    captured: dict[str, float] = {}
+    real_timeout = asyncio.timeout
+
+    class _CapturingAsyncio:
+        @staticmethod
+        def timeout(seconds: float):
+            captured["seconds"] = seconds
+            return real_timeout(seconds)
+
+    monkeypatch.setattr(synthesis_module, "asyncio", _CapturingAsyncio)
+
+    events = await _collect(gen)
+
+    assert captured["seconds"] == 7.0
+    assert _collected_text(events) == "scratchpad report"
+
+
+def test_default_idle_budget_differs_from_dispatch_deadlock_budget() -> None:
+    """The synthesis idle budget is its own knob (60s vs 240s deadlock watchdog)."""
+    gen = SynthesisGenerator(MagicMock(), MagicMock(), SootheConfig())
+    assert gen._synthesis_idle_seconds() == 60.0
+    assert gen._dispatch_idle_seconds() == 240.0
+
+
+def test_heavy_model_role_keeps_dispatch_deadlock_budget() -> None:
+    """Pinning a non-fast role without setting the field does not lose reports."""
+    cfg = _loop_config(goal_synthesis_model_role="default")
+    gen = SynthesisGenerator(MagicMock(), MagicMock(), cfg)
+    assert gen._synthesis_idle_seconds() == 240.0
+
+
+def test_explicit_idle_budget_wins_over_role_default() -> None:
+    """An explicitly configured budget applies to every model role."""
+    cfg = _loop_config(
+        goal_synthesis_model_role="default",
+        goal_synthesis_idle_seconds=12.0,
+    )
+    gen = SynthesisGenerator(MagicMock(), MagicMock(), cfg)
+    assert gen._synthesis_idle_seconds() == 12.0

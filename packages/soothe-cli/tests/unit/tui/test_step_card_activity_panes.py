@@ -148,25 +148,19 @@ def test_overflow_collapse_is_first_line_of_tools_area() -> None:
     assert all(i > collapse_idx for i in shown_rows)
 
 
-def test_todo_overflow_leads_the_todo_pane_like_tools() -> None:
-    """`+N more` leads the todo pane; the latest todos sit at the bottom.
+def test_todo_pane_shows_all_items_without_overflow() -> None:
+    """Every todo item renders — the pane is the step's progress readout.
 
-    Mirrors the tools pane rule: collapsed overflow is the first row after the
-    header, so the newest todo progress reads nearest the step footer.
+    Live progress must never hide behind a `+N more` overflow row: an agent
+    mid-way through a long list would otherwise look stalled.
     """
-    todos = [{"content": f"task-{i}", "status": "pending"} for i in range(7)]
+    todos = [
+        {"content": f"task-{i}", "status": "success" if i < 3 else "pending"} for i in range(7)
+    ]
     text = _render([], todos=todos)
-    assert "+3 more" in text
-    lines = text.splitlines()
-    header_idx = next(i for i, ln in enumerate(lines) if TODO_HEADER in ln)
-    collapse_idx = next(i for i, ln in enumerate(lines) if "+3 more" in ln)
-    shown_rows = [i for i, ln in enumerate(lines) if "task-" in ln]
-    assert collapse_idx == header_idx + 1
-    assert shown_rows
-    assert all(i > collapse_idx for i in shown_rows)
-    # The latest todos are the visible ones; earlier ones stay collapsed.
-    assert "task-6" in text
-    assert "task-2" not in text
+    assert "+3 more" not in text
+    for i in range(7):
+        assert f"task-{i}" in text
 
 
 # ---------------------------------------------------------------------------

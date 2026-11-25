@@ -1153,7 +1153,8 @@ class _MessagesMixin:
         """Shift+Tab: navigate loop selector when active, otherwise cycle mode.
 
         - In the LoopSelectorScreen, defer to its filter navigation.
-        - On the main screen, cycle composer mode Auto → Bypass → Plan → Ask.
+        - On the main screen, cycle composer mode Auto → Bypass → Manual →
+          Plan → Ask.
         """
         from soothe_cli.tui.widgets.loop_selector import LoopSelectorScreen
 
@@ -1165,9 +1166,10 @@ class _MessagesMixin:
     def cycle_composer_mode(self) -> None:
         """Advance composer mode and refresh the status-bar badge.
 
-        Cycle: Auto → Bypass → Plan → Ask → Auto. For agent sub-modes
-        (auto/bypass) hot-swap the running goal's agent mode via
-        `loop_set_clarification_mode`; Plan/Ask take effect on the next turn.
+        Cycle: Auto → Bypass → Manual → Plan → Ask → Auto. For agent
+        sub-modes (auto/bypass/manual) hot-swap the running goal's agent mode
+        via `loop_set_clarification_mode`; Plan/Ask take effect on the next
+        turn.
         """
         from soothe_cli.tui.composer_mode import (
             AGENT_SUB_MODES,
@@ -1254,6 +1256,25 @@ class _MessagesMixin:
                     continue
                 inputs.append(inp)
         return inputs
+
+    def _manual_tool_approval_pending(self) -> bool:
+        """True when a manual-mode tool approval card awaits a decision.
+
+        The approval dock autofocuses its head card in manual mode; while one
+        is pending, cursor reactivation (turn teardown, shell cleanup) must
+        not reclaim focus for the chat input — focus returns to the input via
+        answering the card, a click, or Tab, per the IG-CLNT-005 contract.
+        """
+        if str(getattr(self, "_composer_mode", "auto") or "") != "manual":
+            return False
+        adapter = getattr(self, "_ui_adapter", None)
+        dock = getattr(adapter, "_approval_dock", None) if adapter is not None else None
+        if dock is None:
+            return False
+        head = getattr(dock, "head_widget", None)
+        if head is None or getattr(head, "_submitted", False):
+            return False
+        return str(getattr(head, "_origin_node", "") or "") == "tool_approval"
 
     def _active_plan_review_widget(self) -> Widget | None:
         """Return the active unsubmitted HITL review card, if any."""

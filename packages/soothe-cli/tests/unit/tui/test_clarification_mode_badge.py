@@ -57,17 +57,17 @@ async def test_badge_flips_to_auto_when_mode_assigned() -> None:
 
 
 @pytest.mark.asyncio
-async def test_badge_clamps_manual_to_auto_when_mode_assigned() -> None:
-    """Manual is no longer selectable; assigning it clamps to auto."""
+async def test_badge_flips_to_manual_when_mode_assigned() -> None:
+    """Setting ``mode`` to manual applies the accent Manual pill."""
     async with _BadgeOnlyApp().run_test() as pilot:
         badge = pilot.app.query_one("#badge", ClarificationModeBadge)
         badge.mode = "manual"
         await pilot.pause()
-        assert badge.has_class("auto")
-        assert not badge.has_class("manual")
+        assert badge.has_class("manual")
+        assert not badge.has_class("auto")
         assert not badge.has_class("plan")
         assert not badge.has_class("bypass")
-        assert _read_static_content(badge) == "⏵⏵ agent · auto (shift+Tab to cycle)"
+        assert _read_static_content(badge) == "⏵⏵ agent · manual (shift+Tab to cycle)"
 
 
 @pytest.mark.asyncio
@@ -131,12 +131,12 @@ def test_badge_has_initial_content_before_mount() -> None:
     assert badge.has_class("auto")
 
 
-def test_badge_constructor_clamps_manual_to_auto() -> None:
-    """``ClarificationModeBadge(mode="manual")`` clamps to the auto variant."""
+def test_badge_constructor_accepts_initial_manual_mode() -> None:
+    """``ClarificationModeBadge(mode="manual")`` starts on the manual variant."""
     badge = ClarificationModeBadge(id="pre-mount-manual", mode="manual")
-    assert _read_static_content(badge) == "⏵⏵ agent · auto (shift+Tab to cycle)"
-    assert badge.has_class("auto")
-    assert not badge.has_class("manual")
+    assert _read_static_content(badge) == "⏵⏵ agent · manual (shift+Tab to cycle)"
+    assert badge.has_class("manual")
+    assert not badge.has_class("auto")
 
 
 def test_badge_constructor_accepts_initial_plan_mode() -> None:

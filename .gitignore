@@ -238,3 +238,5 @@ packages/soothe/MagicMock/
 .codebuddy/
 _omr/
 .review/
+.omcr/
+.omr/

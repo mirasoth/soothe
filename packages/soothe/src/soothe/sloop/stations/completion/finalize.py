@@ -426,6 +426,7 @@ async def _finalize_plan_mode_approve(
             "step_results_count": 0,
             "skip_goal_completion_wire_duplicate": True,
             "total_tokens_used": state.total_tokens_used,
+            "token_usage_source": state.token_usage_source(),
         },
     )
 
@@ -487,6 +488,7 @@ async def _finalize_plan_mode_reject(
             "step_results_count": 0,
             "skip_goal_completion_wire_duplicate": True,
             "total_tokens_used": state.total_tokens_used,
+            "token_usage_source": state.token_usage_source(),
         },
     )
 
@@ -804,6 +806,15 @@ async def node_goal_completion(
     skip_goal_completion_wire_duplicate = (
         action == CompletionStrategy.SYNTHESIZE and not used_synthesis_fallback
     )
+    # Refresh the goal's token snapshot: record_progress takes it before the
+    # goal-completion synthesis runs, so without this refresh the checkpoint
+    # total permanently misses the synthesis call's tokens.
+    try:
+        await ctx.state_manager.update_goal_tokens(
+            goal_record, total_tokens=state.total_tokens_used
+        )
+    except Exception:
+        logger.warning("[goal_completion] goal token refresh failed", exc_info=True)
     await ctx.emit(
         "completed",
         {
@@ -811,6 +822,7 @@ async def node_goal_completion(
             "step_results_count": len(pre_clear_step_results),
             "skip_goal_completion_wire_duplicate": skip_goal_completion_wire_duplicate,
             "total_tokens_used": state.total_tokens_used,
+            "token_usage_source": state.token_usage_source(),
         },
     )
 

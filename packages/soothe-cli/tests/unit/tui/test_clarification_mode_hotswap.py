@@ -2,8 +2,9 @@
 
 Covers the composer-mode cycle → `loop_set_clarification_mode` wire mapping:
 auto pushes `interaction_mode=None`; bypass pushes `interaction_mode="bypass"`
-so the daemon swaps the live CoreAgent graph; plan/ask do not push
-(next-turn-only).
+so the daemon swaps the live CoreAgent graph; manual pushes
+`clarification_mode="manual"` (human-confirmed agent mode); plan/ask do not
+push (next-turn-only).
 """
 
 from __future__ import annotations
@@ -87,9 +88,17 @@ def test_cycle_ask_to_auto_pushs_no_interaction_mode() -> None:
     assert app.pushed == [("auto", None)]
 
 
+def test_cycle_bypass_to_manual_pushes_manual_mode() -> None:
+    """Bypass → Manual pushes (mode=manual, interaction_mode=None)."""
+    app = _CycleHarness(initial="bypass")
+    app.cycle_composer_mode()
+    assert app._composer_mode == "manual"
+    assert app.pushed == [("manual", None)]
+
+
 def test_cycle_plan_does_not_push() -> None:
     """Plan is a standalone working mode; no hot-swap RPC fires."""
-    app = _CycleHarness(initial="bypass")
+    app = _CycleHarness(initial="manual")
     app.cycle_composer_mode()
     assert app._composer_mode == "plan"
     assert app.pushed == []

@@ -74,6 +74,12 @@ TOOL_AUTO_GATE_REJECTED = "soothe.internal.tool.auto_gate.rejected"
 # `clarification_history` so later veritas calls see prior gate answers.
 CLARIFICATION_AUTO_ANSWERED = "soothe.internal.clarification.auto_answered"
 
+# ask_user channel closure (IG-LOOP-018) — emitted whenever an ask_user
+# question terminates WITHOUT an answer: bypass defer sentinel, autopilot
+# opt-in retry, human dismissal, or a malformed ask_user call. kind carries
+# the outcome; questions previews make parked/lost questions greppable.
+CLARIFICATION_UNANSWERED = "soothe.internal.clarification.unanswered"
+
 # ============================================================================
 # CLIENT-FACING (soothe.<domain>.*)
 # ============================================================================
@@ -301,6 +307,9 @@ class StrangeLoopCompletedEvent(LifecycleEvent):
     follow_on_exec: dict[str, str | None] | None = None
     # Authoritative cumulative loop consumption at turn end (TUI reconciliation).
     total_tokens_used: int = 0
+    # Provenance of the cumulative total: "actual" (provider usage) or
+    # "estimated" (content-based estimates, render as approximate).
+    token_usage_source: str = ""
     # Optional per-turn breakdown (input/output/cache/total) for live UIs.
     token_usage: dict[str, Any] | None = None
 
@@ -330,6 +339,9 @@ class StrangeLoopPlanPhaseStatusEvent(LifecycleEvent):
     )
     label: str
     total_tokens_used: int = 0
+    # Provenance of the cumulative total: "actual" (provider usage) or
+    # "estimated" (content-based estimates, render as approximate).
+    token_usage_source: str = ""
     token_usage: dict[str, Any] | None = None
 
 
@@ -446,6 +458,9 @@ class StrangeLoopStepCompletedEvent(LifecycleEvent):
     tool_call_count: int = 0
     clarification: dict[str, Any] | None = None
     total_tokens_used: int = 0
+    # Provenance of the cumulative total: "actual" (provider usage) or
+    # "estimated" (content-based estimates, render as approximate).
+    token_usage_source: str = ""
     token_usage: dict[str, Any] | None = None
     retry_attempt: int = 1
     recovered_by_retry: bool = False

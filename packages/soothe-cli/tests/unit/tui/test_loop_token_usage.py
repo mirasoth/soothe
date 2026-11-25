@@ -153,3 +153,39 @@ def test_completed_source_reconciles_final_total() -> None:
     assert app._display_token_total() == 400
     app._record_loop_turn_tokens(100, 20)
     assert app._loop_baseline_tokens == 400
+
+
+def test_completed_source_forces_lower_correction() -> None:
+    """A terminal `completed` merge below the running total is a correction."""
+    app = _TokenApp()
+    app._apply_authoritative_loop_tokens(500, source="backend")
+    app._apply_authoritative_loop_tokens(300, source="completed")
+
+    assert app._loop_goal_run_tokens == 300
+    assert app._display_token_total() == 300
+
+
+def test_estimated_token_source_marks_display_approximate() -> None:
+    app = _TokenApp()
+    app._apply_authoritative_loop_tokens(347, token_source="estimated")
+
+    assert app._display_token_total() == 347
+    assert app._tokens_approximate is True
+
+
+def test_estimated_flag_is_sticky_across_actual_merges() -> None:
+    """Totals mixing estimates with real usage stay approximate."""
+    app = _TokenApp()
+    app._apply_authoritative_loop_tokens(347, token_source="estimated")
+    app._apply_authoritative_loop_tokens(4000, token_source="actual")
+
+    assert app._display_token_total() == 4000
+    assert app._tokens_approximate is True
+
+
+def test_actual_token_source_keeps_exact_display() -> None:
+    app = _TokenApp()
+    app._apply_authoritative_loop_tokens(4000, token_source="actual")
+
+    assert app._display_token_total() == 4000
+    assert app._tokens_approximate is False

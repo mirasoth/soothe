@@ -58,6 +58,47 @@ def test_plan_review_refine_wire_content_with_comments() -> None:
     assert clarification_wire_content(["Reject", ""]) == "Plan review: Reject"
 
 
+def test_tool_approval_wire_content_multi_tool_not_refinement() -> None:
+    """A second decision slot is never rendered as refinement prose.
+
+    Regression: multi-tool gates send one decision per tool, so
+    ``["Approve", "Reject"]`` used to summarize as
+    "Tool approval: Approve — Reject" (reading the second tool's decision
+    as if it were comment text on the first).
+    """
+    from soothe_cli.tui.app._execution import clarification_wire_content
+
+    # Single decision keeps the stable header (no origin → legacy default).
+    assert clarification_wire_content(["Approve"]) == "Plan review: Approve"
+    assert clarification_wire_content(["Approve", ""], origin_node="tool_approval") == (
+        "Tool approval: Approve"
+    )
+    # Multi-tool batch: per-answer summary, not a bogus refinement.
+    assert (
+        clarification_wire_content(["Approve", "Reject"], origin_node="tool_approval")
+        == "A1: Approve | A2: Reject"
+    )
+    # Edit prose still carries as refinement.
+    assert clarification_wire_content(
+        ["Edit", "drop the --force"], origin_node="tool_approval"
+    ) == ("Tool approval: Edit — drop the --force")
+
+
+def test_tool_approval_wire_content_remember() -> None:
+    """IG-LOOP-018: the remember action is a first-class tool-approval
+    decision — header format matches plain approve, never refinement."""
+    from soothe_cli.tui.app._execution import clarification_wire_content
+
+    assert clarification_wire_content(["Approve & remember", ""], origin_node="tool_approval") == (
+        "Tool approval: Approve & remember"
+    )
+    # Multi-tool batch mixing remember with a plain decision.
+    assert (
+        clarification_wire_content(["Approve & remember", "Reject"], origin_node="tool_approval")
+        == "A1: Approve & remember | A2: Reject"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Widget fixtures
 # ---------------------------------------------------------------------------
@@ -633,3 +674,171 @@ def test_stream_cards_use_horizontal_inset_padding() -> None:
     assert "border-left:" not in step_css
     assert "border-left:" not in assistant_css
     assert "border-left:" not in clarification_css
+
+
+# ---------------------------------------------------------------------------
+# Multi-tool approval gates (batched action requests)
+# ---------------------------------------------------------------------------
+
+
+def _multi_tool_questions() -> list[dict]:
+    q0 = {
+        "question": "Approve run_command (command=git push origin main)?",
+        "header": "Approve run_command (command=git push origin main)",
+        "options": [
+            {"label": "Approve", "description": "Allow this tool call."},
+            {"label": "Reject", "description": "Deny this tool call."},
+        ],
+    }
+    q1 = {
+        "question": "Approve write_file (path=/tmp/out.txt)?",
+        "header": "Approve write_file (path=/tmp/out.txt)",
+        "options": [
+            {"label": "Approve", "description": "Allow this tool call."},
+            {"label": "Reject", "description": "Deny this tool call."},
+        ],
+    }
+    return [q0, q1]
+
+
+def _make_multi_tool_widget(**kwargs) -> StructuredAskUserWidget:
+    defaults = dict(
+        step_id="tool-approval-multi",
+        questions=_multi_tool_questions(),
+        origin_node="tool_approval",
+        allow_custom=False,
+        comment_option_index=None,
+    )
+    defaults.update(kwargs)
+    return StructuredAskUserWidget(**defaults)
+
+
+@pytest.mark.asyncio
+async def test_multi_tool_first_confirm_does_not_submit() -> None:
+    """Selecting a decision on the first tool must NOT finalize the gate.
+
+    Regression: the HITL immediate-submit path finalized on the first
+    selection, leaving the remaining tools' answers empty — which the host
+    maps to the fail-safe reject. Approving tool 1 silently rejected
+    tools 2..N.
+    """
+    widget = _make_multi_tool_widget(id="clarify-tool-multi-live")
+    app = _WidgetApp(widget)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        w = app.query_one(StructuredAskUserWidget)
+        w.action_confirm()  # Approve tool 1 (default highlight)
+        await pilot.pause()
+        assert len(app.submitted) == 0
+        # Auto-advanced to the second tool's tab.
+        assert w._current_q == 1
+        assert w._selected.get(0) == 0
+
+
+@pytest.mark.asyncio
+async def test_multi_tool_per_tool_decisions_submitted_after_review() -> None:
+    """Each tool gets its own decision; Enter on the recap submits all of them."""
+    widget = _make_multi_tool_widget(id="clarify-tool-multi-per")
+    app = _WidgetApp(widget)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        w = app.query_one(StructuredAskUserWidget)
+        w.action_confirm()  # Q0: Approve → auto-advance
+        w.action_next_option()  # Q1 highlight Reject
+        w.action_confirm()  # Q1: Reject → review opens
+        assert w._submit_review_open is True
+        w.action_confirm()  # Enter on recap finalizes
+        await pilot.pause()
+        assert w._submitted is True
+        assert len(app.submitted) == 1
+        assert app.submitted[0].answers == ["Approve", "Reject"]
+
+
+@pytest.mark.asyncio
+async def test_multi_tool_enter_approves_all_defaults() -> None:
+    """Repeated Enter (default highlight = Approve) approves every tool."""
+    widget = _make_multi_tool_widget(id="clarify-tool-multi-all")
+    app = _WidgetApp(widget)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        w = app.query_one(StructuredAskUserWidget)
+        w.action_confirm()  # Q0
+        w.action_confirm()  # Q1 → review opens
+        w.action_confirm()  # finalize
+        await pilot.pause()
+        assert app.submitted[0].answers == ["Approve", "Approve"]
+
+
+@pytest.mark.asyncio
+async def test_multi_tool_tabs_show_short_tool_labels() -> None:
+    """Tab rows show the short tool name, not the full approval header."""
+    widget = _make_multi_tool_widget(id="clarify-tool-multi-tabs")
+    app = _WidgetApp(widget)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        w = app.query_one(StructuredAskUserWidget)
+        tab0 = str(w.query_one("#saq-tab-0").render())
+        tab1 = str(w.query_one("#saq-tab-1").render())
+        assert "run_command" in tab0
+        assert "write_file" in tab1
+        # The long command arg must not blow out the tab bar.
+        assert "git push origin main" not in tab0
+
+
+@pytest.mark.asyncio
+async def test_multi_tool_collapsed_history_shows_per_tool_rows() -> None:
+    """After submit, the collapsed card lists one decision row per tool."""
+    widget = _make_multi_tool_widget(id="clarify-tool-multi-hist")
+    app = _WidgetApp(widget)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        w = app.query_one(StructuredAskUserWidget)
+        w.action_confirm()  # Q0: Approve
+        w.action_next_option()
+        w.action_confirm()  # Q1: Reject
+        w.action_confirm()  # finalize
+        await pilot.pause()
+        rows = [str(r.render()) for r in w.query(".saq-answered-row")]
+        assert any("run_command" in r and "Approved" in r for r in rows)
+        assert any("write_file" in r and "Rejected" in r for r in rows)
+
+
+def test_widget_to_message_serializes_multi_tool_remember() -> None:
+    """IG-LOOP-018: an 'Approve & remember' decision serializes with the
+    loop-grant marker instead of collapsing into a plain approve."""
+    widget = _make_multi_tool_widget(id="clarify-tool-multi-remember")
+    widget._submitted = True
+    widget._answers = ["Approve & remember", "Reject"]
+    data = message_from_widget(widget)
+    assert "run_command approved (remember)" in data.content
+    assert "write_file rejected" in data.content
+
+
+def test_widget_to_message_serializes_single_tool_remember() -> None:
+    """Single-tool remember approval notes the loop grant in the content."""
+    widget = _make_multi_tool_widget(
+        id="clarify-tool-single-remember",
+        questions=[_multi_tool_questions()[0]],
+    )
+    widget._submitted = True
+    widget._answers = ["Approve & remember"]
+    data = message_from_widget(widget)
+    assert "loop grant recorded" in data.content
+    assert data.plan_review_action == "Approve & remember"
+
+
+def test_widget_to_message_serializes_multi_tool_history() -> None:
+    """Hydrated history keeps the per-tool decisions instead of one action."""
+    widget = _make_multi_tool_widget(id="clarify-tool-multi-bind")
+    widget._submitted = True
+    widget._answers = ["Approve", "Reject"]
+    data = message_from_widget(widget)
+    assert "run_command approved" in data.content
+    assert "write_file rejected" in data.content
+
+
+def test_widget_to_message_serializes_multi_tool_awaiting_state() -> None:
+    """Awaiting-state hydration names the tool count."""
+    widget = _make_multi_tool_widget(id="clarify-tool-multi-wait")
+    data = message_from_widget(widget)
+    assert "2 tools" in data.content

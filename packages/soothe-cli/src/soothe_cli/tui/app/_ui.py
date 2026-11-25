@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from contextlib import suppress
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -17,6 +18,7 @@ from textual.css.query import NoMatches
 from soothe_cli.display.spinner_labels import SPINNER_LABEL_INPUT
 from soothe_cli.runtime.state.session_stats import SpinnerStatus
 from soothe_cli.runtime.token_events_debug import TokenEventTrace
+from soothe_cli.tui.widgets.approval_dock import ApprovalDockBar
 from soothe_cli.tui.widgets.loading import LoadingWidget
 from soothe_cli.tui.widgets.messages import AssistantMessage, UserMessage
 from soothe_cli.tui.widgets.pinned_goal_bar import PinnedGoalBar
@@ -165,16 +167,28 @@ class _UIMixin:
         goal_run_tokens: int,
         *,
         source: str = "backend",
+        token_source: str = "",
     ) -> None:
-        """Merge a backend per-goal cumulative total into the live counter."""
+        """Merge a backend per-goal cumulative total into the live counter.
+
+        ``token_source`` is the provenance the backend attached to the total:
+        "estimated" means at least one wave contributed content-based
+        estimates, so the display keeps the approximate marker ("N+ tokens").
+        Terminal ``completed`` merges are forced (a lower authoritative total
+        is a correction, not stale data), while mid-turn merges stay
+        monotonic.
+        """
         from soothe_cli.runtime.token_usage import coerce_total_tokens_used
 
         goal_total = coerce_total_tokens_used(goal_run_tokens)
         self._ensure_loop_token_scope(self._lc_loop_id)
         previous_goal = self._loop_goal_run_tokens
-        applied = goal_total > previous_goal
+        applied = source == "completed" or goal_total > previous_goal
         if applied:
             self._loop_goal_run_tokens = goal_total
+        if token_source == "estimated":
+            # Sticky: totals mixing estimates with real usage stay approximate.
+            self._tokens_approximate = True
         self._refresh_token_displays()
         trace = self._token_event_trace()
         if trace is not None:
@@ -498,6 +512,26 @@ class _UIMixin:
         if not bar.has_goals:
             return
         bar.activate()
+
+    def action_focus_approvals(self) -> None:
+        """Focus the pending approval card in the dock (Ctrl+r).
+
+        Mirrors ``action_focus_queued_goals``: jumps keyboard focus to the
+        interactive head card so the user can answer with ↑/↓/Enter without
+        the dock ever having stolen focus. No-op when the dock is empty or a
+        modal is open.
+        """
+        if self.screen.is_modal:
+            return
+        try:
+            dock = self.query_one("#approval-dock", ApprovalDockBar)
+        except NoMatches:
+            return
+        head = dock.head_widget
+        if head is None:
+            return
+        with suppress(Exception):
+            head.focus(scroll_visible=False)
 
     def _on_chat_scroll_y_changed(self, _old: float, _new: float) -> None:
         """React to chat scroll position changes to show/hide the pinned bar.

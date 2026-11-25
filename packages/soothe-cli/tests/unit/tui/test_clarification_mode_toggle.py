@@ -44,16 +44,24 @@ def test_cycle_auto_to_bypass() -> None:
     assert app._status_bar.last_mode == "bypass"
 
 
-def test_cycle_bypass_to_plan() -> None:
-    """Second press advances Bypass to Plan (exits agent sub-modes)."""
+def test_cycle_bypass_to_manual() -> None:
+    """Second press advances Bypass to Manual (still an agent sub-mode)."""
     app = _AppHarness(initial="bypass")
+    app.cycle_composer_mode()
+    assert app._composer_mode == "manual"
+    assert app._status_bar.last_mode == "manual"
+
+
+def test_cycle_manual_to_plan() -> None:
+    """Third press advances Manual to Plan (exits agent sub-modes)."""
+    app = _AppHarness(initial="manual")
     app.cycle_composer_mode()
     assert app._composer_mode == "plan"
     assert app._status_bar.last_mode == "plan"
 
 
 def test_cycle_plan_to_ask() -> None:
-    """Third press advances Plan to Ask."""
+    """Fourth press advances Plan to Ask."""
     app = _AppHarness(initial="plan")
     app.cycle_composer_mode()
     assert app._composer_mode == "ask"
@@ -61,7 +69,7 @@ def test_cycle_plan_to_ask() -> None:
 
 
 def test_cycle_ask_back_to_auto() -> None:
-    """Fourth press returns Ask to Auto."""
+    """Fifth press returns Ask to Auto."""
     app = _AppHarness(initial="ask")
     app.cycle_composer_mode()
     assert app._composer_mode == "auto"
@@ -69,12 +77,10 @@ def test_cycle_ask_back_to_auto() -> None:
 
 
 def test_cycle_full_round_trip() -> None:
-    """Four presses from Auto land back on Auto."""
+    """Five presses from Auto land back on Auto."""
     app = _AppHarness(initial="auto")
-    app.cycle_composer_mode()
-    app.cycle_composer_mode()
-    app.cycle_composer_mode()
-    app.cycle_composer_mode()
+    for _ in range(5):
+        app.cycle_composer_mode()
     assert app._composer_mode == "auto"
     assert app._status_bar.last_mode == "auto"
 
@@ -107,11 +113,11 @@ def test_shift_tab_action_cycles_mode() -> None:
     assert app._composer_mode == "bypass"
 
 
-def test_plan_approval_clamps_daemon_default_manual_to_auto() -> None:
-    """Manual is no longer a composer mode; a daemon default of manual clamps to auto.
+def test_plan_approval_uses_daemon_default_manual() -> None:
+    """``manual`` is a valid composer mode and passes through unchanged.
 
     When ``agent.clarification.default_mode`` is ``manual``, the composer mode
-    after approval clamps to ``auto`` rather than surfacing a removed mode.
+    after approval is ``manual`` (the human-confirmed agent mode).
     """
     app = _ExecutionHarness()
 
@@ -126,7 +132,7 @@ def test_plan_approval_clamps_daemon_default_manual_to_auto() -> None:
     ):
         mode = asyncio_run(app._resolve_default_clarification_mode())
 
-    assert mode == "auto"
+    assert mode == "manual"
 
 
 def test_plan_approval_uses_daemon_default_auto() -> None:

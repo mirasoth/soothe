@@ -7,6 +7,9 @@ One record vocabulary covers every approval provenance in the loop:
 - `{"tool", "prefix"}` — command-prefix grant (`run_command` only): one
   approve of `pytest -x …` clears every subsequent `pytest …` call at L1
   with zero model calls.
+- `{"tool", "dir"}` — parent-directory grant (path tools only): an
+  "Approve & remember" of `write_file /src/a.py` clears every subsequent
+  write under `/src` in this loop (IG-LOOP-018).
 - `{"rule", ...}` — rule-family override (nano `rule_family()`), honored by
   the safety stage exactly as before.
 
@@ -19,6 +22,7 @@ by the auto-mode gate). `grant_hit()` treats both identically.
 from __future__ import annotations
 
 import logging
+import posixpath
 from collections.abc import Mapping
 from typing import Any
 
@@ -55,6 +59,38 @@ def command_prefix(command: str) -> str | None:
     return token or None
 
 
+def dir_of(file_path: str) -> str | None:
+    """Parent directory of a path-signature, or `None` when it has none.
+
+    Exact `posixpath.dirname` string — no normalization, no symlink or
+    `..` collapsing (Rule 9: structural extraction only).
+    """
+    parent = posixpath.dirname(file_path.strip())
+    return parent or None
+
+
+def remember_record(tool_name: str, args: Mapping[str, Any]) -> dict[str, str] | None:
+    """Generalized grant record for an "Approve & remember" decision.
+
+    `run_command` → `{"tool", "prefix"}` (first command token, the same
+    generalization the veritas leg mints); path tools → `{"tool", "dir"}`
+    (parent directory). `None` when the action has no generalizable operand
+    — the caller falls back to the exact `approval_record`.
+    """
+    if tool_name in _COMMAND_TOOLS:
+        prefix = command_prefix(str(args.get("command") or ""))
+        if prefix:
+            return {"tool": tool_name, "prefix": prefix}
+        return None
+    if tool_name in _PATH_TOOLS:
+        raw = str(args.get("file_path") or args.get("path") or "")
+        parent = dir_of(raw)
+        if parent is not None:
+            return {"tool": tool_name, "dir": parent}
+        return None
+    return None
+
+
 def grant_hit(
     tool_name: str,
     args: Mapping[str, Any],
@@ -68,8 +104,13 @@ def grant_hit(
 
     sig = signature_for(tool_name, args)
     prefix: str | None = None
+    parent: str | None = None
+    raw_path: str | None = None
     if tool_name in _COMMAND_TOOLS:
         prefix = command_prefix(str(args.get("command") or ""))
+    elif tool_name in _PATH_TOOLS:
+        raw_path = str(args.get("file_path") or args.get("path") or "")
+        parent = dir_of(raw_path)
 
     approved_rules = _rule_family(rule_id) if rule_id else frozenset()
 
@@ -82,6 +123,12 @@ def grant_hit(
             if str(rec.get("signature") or "") == sig:
                 return True
             if prefix is not None and str(rec.get("prefix") or "") == prefix and prefix:
+                return True
+        if parent is not None and str(rec.get("tool") or "") == tool_name:
+            rec_dir = str(rec.get("dir") or "")
+            if rec_dir and (
+                parent == rec_dir or (raw_path or "").startswith(rec_dir.rstrip("/") + "/")
+            ):
                 return True
     return False
 
@@ -188,7 +235,9 @@ __all__ = [
     "LoopGrantStore",
     "approval_record",
     "command_prefix",
+    "dir_of",
     "grant_hit",
+    "remember_record",
     "rule_approved",
     "signature_for",
 ]

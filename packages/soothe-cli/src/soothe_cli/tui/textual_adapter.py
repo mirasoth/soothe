@@ -38,7 +38,13 @@ if TYPE_CHECKING:
         def __call__(self) -> tuple[int, int, int]: ...
 
     class _AuthoritativeLoopTokensCallback(Protocol):
-        def __call__(self, _goal_run_tokens: int, *, source: str = "backend") -> None: ...
+        def __call__(
+            self,
+            _goal_run_tokens: int,
+            *,
+            source: str = "backend",
+            token_source: str = "",
+        ) -> None: ...
 
 
 from langchain_core.messages import AIMessage, HumanMessage
@@ -352,12 +358,22 @@ class TextualUIAdapter:
         """Completed steps in the current execute batch."""
 
         self._clarification_input_by_step: dict[str, StructuredAskUserWidget] = {}
-        """Active inline ``StructuredAskUserWidget`` widgets keyed by step id.
+        """Active ``StructuredAskUserWidget`` widgets keyed by step id.
 
         Entry is added when a clarification request arrives and removed once
         the user submits the dialog (the app handler renders the answers on
-        the step card and forwards them to the daemon).
+        the step card and forwards them to the daemon). Cards render inside
+        ``_approval_dock`` when bound; tests/fallbacks without a dock use the
+        legacy inline transcript mount.
         """
+
+        self._approval_dock: Any | None = None
+        """``ApprovalDockBar`` reference (IG-CLNT-005), bound by the app.
+
+        Pending clarification/approval cards are pushed here instead of the
+        ``#messages`` transcript so they stay pinned above the queued-goals
+        bar and are never flushed by new messages. ``None`` keeps the legacy
+        inline mount (unit-test harnesses)."""
 
         self._clarification_answers_pending: list[str] | None = None
         """RFC-622: per-question answers paired with the next clarification turn.
@@ -499,6 +515,9 @@ class TextualUIAdapter:
         self._clarification_answers_pending = None
         self._plan_approve_follow_on_pending = False
         self._clarification_input_by_step.clear()
+        dock = getattr(self, "_approval_dock", None)
+        if dock is not None:
+            dock.clear_pending()
         self._execute_wave_total = 0
         self._execute_wave_completed = 0
         self._last_plan_execution_mode = None
@@ -1126,7 +1145,11 @@ def _apply_backend_loop_tokens_event(
             has_total_field=has_total_field,
         )
     if adapter._apply_authoritative_loop_tokens is not None and has_total_field:
-        adapter._apply_authoritative_loop_tokens(int(total_used or 0), source=source)
+        adapter._apply_authoritative_loop_tokens(
+            int(total_used or 0),
+            source=source,
+            token_source=str(data.get("token_usage_source") or ""),
+        )
 
 
 def _resolve_token_target_card(
@@ -3120,9 +3143,15 @@ async def _mount_manual_clarification_input(
             comment_option_index=comment_option_index,
         )
         adapter._clarification_input_by_step[target_step_id] = input_widget
-        mount_result = adapter._mount_message(input_widget)
-        if mount_result is not None:
-            await mount_result
+        dock = getattr(adapter, "_approval_dock", None)
+        if dock is not None:
+            # IG-CLNT-005: pin the card in the approval dock instead of the
+            # transcript so it survives message flushes and queues head-first.
+            await dock.push_card(input_widget)
+        else:
+            mount_result = adapter._mount_message(input_widget)
+            if mount_result is not None:
+                await mount_result
     return target_step_id
 
 

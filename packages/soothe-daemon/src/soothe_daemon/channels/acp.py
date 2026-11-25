@@ -157,13 +157,17 @@ class _PlanState:
     iteration), and only never-started `pending` steps can be dropped.
     """
 
-    __slots__ = ("order", "steps", "iteration", "_last_emitted")
+    __slots__ = ("order", "steps", "iteration", "_last_emitted", "_prev_total_tokens")
 
     def __init__(self) -> None:
         self.order: list[str] = []
         self.steps: dict[str, _PlanStep] = {}
         self.iteration = 0
         self._last_emitted: str | None = None
+        # Loop-cumulative token total already attributed to settled steps.
+        # `step_completed` carries the CUMULATIVE loop total, so per-step
+        # usage must be the delta against the previous settled step.
+        self._prev_total_tokens = 0
 
     def sync_plan(self, raw_steps: list[Any], iteration: int) -> None:
         """Merge a `plan.decision` step list into the accumulated plan."""
@@ -218,7 +222,14 @@ class _PlanState:
         step.phase = phase
 
     def settle(self, step_id: str, success: bool, **stats: Any) -> None:
-        """Record a terminal phase with its statistics."""
+        """Record a terminal phase with its statistics.
+
+        ``total_tokens_used`` arrives as the cumulative loop total (not
+        per-step usage), so the step's own token count is the delta against
+        the total already attributed to previously settled steps. The
+        running max keeps the delta at zero if totals regress (loop reset,
+        goal boundary) instead of reporting negative usage.
+        """
         step = self.steps.get(step_id)
         if step is None:
             step = _PlanStep(step_id, "(step)")
@@ -228,7 +239,9 @@ class _PlanState:
         step.success = success
         step.duration_ms = int(stats.get("duration_ms") or 0)
         step.tool_call_count = int(stats.get("tool_call_count") or 0)
-        step.tokens_used = int(stats.get("total_tokens_used") or 0)
+        loop_total = int(stats.get("total_tokens_used") or 0)
+        step.tokens_used = max(0, loop_total - self._prev_total_tokens)
+        self._prev_total_tokens = max(self._prev_total_tokens, loop_total)
         summary = str(stats.get("summary") or "").strip()
         step.summary = summary[:_PLAN_SUMMARY_LIMIT]
 

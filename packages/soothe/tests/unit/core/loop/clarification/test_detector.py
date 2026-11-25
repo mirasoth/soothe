@@ -96,3 +96,30 @@ def test_from_interrupt_rejects_non_mapping() -> None:
         )
         is None
     )
+
+
+def test_tool_approval_question_offers_remember_for_command() -> None:
+    """IG-LOOP-018: command actions render the shared decision options with
+    the remember entry (generalizable to a command-prefix grant)."""
+    det = ClarificationDetector()
+    req = det.from_tool_approval_interrupt(
+        {"action_requests": [{"name": "run_command", "args": {"command": "pytest -x"}}]},
+        interrupt_id="iTA1",
+        loop_state=_view(),
+    )
+    assert req is not None
+    labels = [o["label"] for o in req.questions[0]["options"]]
+    assert labels == ["Approve", "Approve & remember", "Reject"]
+
+
+def test_tool_approval_question_plain_pair_without_operand() -> None:
+    """No generalizable operand → the remember option is not offered."""
+    det = ClarificationDetector()
+    req = det.from_tool_approval_interrupt(
+        {"action_requests": [{"name": "run_command", "args": {"command": "   "}}]},
+        interrupt_id="iTA2",
+        loop_state=_view(),
+    )
+    assert req is not None
+    labels = [o["label"] for o in req.questions[0]["options"]]
+    assert labels == ["Approve", "Reject"]

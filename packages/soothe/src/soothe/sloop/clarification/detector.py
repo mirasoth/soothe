@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from soothe.sloop.clarification.approval_options import decision_options
 from soothe.sloop.clarification.interrupt_kinds import (
     INTERRUPT_TYPE_ASK_USER,
     InterruptKind,
@@ -200,10 +201,12 @@ class ClarificationDetector:
                     detail = f" ({truncate_text(first_val.strip(), limit=ClarificationDetector._MAX_ARG_PREVIEW, marker='…', strip=False)})"
         title = f"Approve {name}{detail}?"
         return {
-            "question": title,
+            # Space-saving: the question stays short — the card header right
+            # above already carries the tool name and argument preview.
+            "question": "Approve this action?",
             "header": title,
-            "options": [
-                {"label": "Approve"},
-                {"label": "Reject"},
-            ],
+            # IG-LOOP-018: shared decision vocabulary — every human-decision
+            # surface renders the same options, "Approve & remember" included
+            # when the action has a generalizable grant.
+            "options": decision_options(name, args if isinstance(args, Mapping) else {}),
         }

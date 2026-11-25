@@ -16,5 +16,6 @@ async def emit_plan_phase_status(
         {
             "label": label,
             "total_tokens_used": ctx.loop_state.total_tokens_used,
+            "token_usage_source": ctx.loop_state.token_usage_source(),
         },
     )

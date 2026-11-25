@@ -59,6 +59,38 @@ class TestDenyRules:
         assert result.decision == "reject"
         assert result.stage == "deny_rule"
 
+    def test_user_deny_rule_carries_synthesized_rule_id(self) -> None:
+        """Deny results carry `deny_rule:<tool>:<pattern>` so a manual-mode
+        human approval can stamp an exact override record."""
+        result = _deny_pipeline("apt *").evaluate_action(
+            "run_command", {"command": "apt install foo"}
+        )
+        assert result.decision == "reject"
+        assert result.rule_id == "deny_rule:run_command:apt *"
+
+    def test_deny_rule_overridden_by_exact_human_record(self) -> None:
+        """IG-LOOP-018 follow-up: the exact `deny_rule:*` rule record from a
+        prior manual-mode human approval clears the deny (approve, not
+        fall-through — the override is the grant itself)."""
+        result = _deny_pipeline("apt *").evaluate_action(
+            "run_command",
+            {"command": "apt install foo"},
+            allowlist=[{"rule": "deny_rule:run_command:apt *"}],
+        )
+        assert result.decision == "approve"
+        assert result.stage == "allowlist"
+        assert result.rule_id == "deny_rule:run_command:apt *"
+
+    def test_deny_rule_not_overridden_by_other_deny_record(self) -> None:
+        """An override record for a different deny rule does not clear this one."""
+        result = _deny_pipeline("apt *").evaluate_action(
+            "run_command",
+            {"command": "apt install foo"},
+            allowlist=[{"rule": "deny_rule:run_command:brew *"}],
+        )
+        assert result.decision == "reject"
+        assert result.stage == "deny_rule"
+
     def test_default_deny_rules_empty(self) -> None:
         """Built-ins live in nano; the host list is empty."""
         assert ToolApprovalConfig().deny_rules == []

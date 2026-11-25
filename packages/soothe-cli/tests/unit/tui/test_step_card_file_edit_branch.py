@@ -278,6 +278,8 @@ def test_file_edit_capped_to_latest_five() -> None:
     assert "f2.md" in text
     assert "f0.md" not in text
     assert "+2 more edit" in text
+    # The more line leads the pane (tools/todo rule), above the visible rows.
+    assert text.index("+2 more edit") < text.index("f2.md")
 
 
 def test_file_edit_excludes_file_write_from_tool_use() -> None:

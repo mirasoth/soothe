@@ -112,10 +112,68 @@ class TestDenyRuleReject:
         ai = messages[0]
         assert ai.tool_calls == []
 
+    def test_deny_rule_manual_mode_escalates_to_human(self, monkeypatch) -> None:
+        """IG-LOOP-018 follow-up: manual mode escalates a deny-rule hit to
+        the human (the operator may override their own rule). The interrupt
+        payload carries the synthesized deny rule id so a human approval
+        stamps the loop-scoped override record."""
+        captured = _stub_interrupt(
+            monkeypatch,
+            {"decisions": [{"type": "approve"}]},
+        )
+        state = _state([_tc("run_command", {"command": "apt install foo"})])
+        runtime = _Runtime({"soothe_clarification_mode": "manual"})
+        result = _gate(pipeline=self._deny_pipeline()).after_model(state, runtime)
+        assert len(captured) == 1
+        assert captured[0]["escalated_rule_id"] == "deny_rule:run_command:apt *"
+        # Human approved → the call survives untouched.
+        assert result is None
+
+    def test_deny_rule_manual_without_human_still_escalates(self, monkeypatch) -> None:
+        """Manual + no human attached: the deny hit still escalates (the
+        interrupt parks the goal) — manual never rejects on the operator's
+        behalf, even for their own deny rules."""
+        captured = _stub_interrupt(monkeypatch, {"decisions": [{"type": "approve"}]})
+        state = _state([_tc("run_command", {"command": "apt install foo"})])
+        runtime = _Runtime({"soothe_clarification_mode": "manual"})
+        _gate(pipeline=self._deny_pipeline()).after_model(state, runtime)
+        assert len(captured) == 1
+
+    def test_deny_rule_manual_with_override_record_allows(self) -> None:
+        """A prior human approval of the escalated deny hit (exact
+        `deny_rule:*` rule record) clears the deny — no escalation, no
+        reject; the call runs."""
+        state = _state([_tc("run_command", {"command": "apt install foo"})])
+        runtime = _Runtime(
+            {
+                "soothe_clarification_mode": "manual",
+                "tool_approval_allowlist": [{"rule": "deny_rule:run_command:apt *"}],
+            }
+        )
+        result = _gate(pipeline=self._deny_pipeline()).after_model(state, runtime)
+        assert result is None
+
     def test_deny_rule_rejects_even_in_bypass(self) -> None:
         """active_in_bypass=True: deny rules stay absolute in bypass mode."""
         state = _state([_tc("run_command", {"command": "apt install foo"})])
         runtime = _Runtime({"soothe_interaction_mode": "bypass"})
+        result = _gate(pipeline=self._deny_pipeline(), active_in_bypass=True).after_model(
+            state, runtime
+        )
+        assert result is not None
+        tool_msg = next(m for m in result["messages"] if isinstance(m, ToolMessage))
+        assert tool_msg.status == "error"
+
+    def test_deny_rule_manual_in_bypass_stays_absolute(self) -> None:
+        """active_in_bypass + manual: the operator explicitly kept deny
+        rules enforced in bypass — no escalation."""
+        state = _state([_tc("run_command", {"command": "apt install foo"})])
+        runtime = _Runtime(
+            {
+                "soothe_clarification_mode": "manual",
+                "soothe_interaction_mode": "bypass",
+            }
+        )
         result = _gate(pipeline=self._deny_pipeline(), active_in_bypass=True).after_model(
             state, runtime
         )
@@ -167,6 +225,17 @@ class TestSafetyEscalation:
         tool_msg = next(m for m in result["messages"] if isinstance(m, ToolMessage))
         assert tool_msg.status == "error"
         assert "blocked" in tool_msg.content
+
+    def test_safety_hit_manual_without_human_interrupts(self, monkeypatch) -> None:
+        """Manual mode + no human: safety escalate still routes to the human
+        (interrupt parks the goal) instead of the autopilot degrade-to-reject —
+        manual never rejects on the operator's behalf."""
+        captured = _stub_interrupt(monkeypatch, {"decisions": [{"type": "approve"}]})
+        state = _state([_tc("run_command", {"command": "rm -rf /"})])
+        runtime = _Runtime({"soothe_clarification_mode": "manual"})
+        _gate(manual_scope="all").after_model(state, runtime)
+        assert len(captured) == 1
+        assert captured[0]["action_requests"][0]["name"] == "run_command"
 
     def test_safety_hit_human_attached_interrupts(self, monkeypatch) -> None:
         """Human attached: a critical safety escalate emits the standard
@@ -235,12 +304,15 @@ class TestAmbiguousActions:
         runtime = _Runtime({"soothe_clarification_mode": "manual", "soothe_human_attached": True})
         assert _gate(manual_scope="ambiguous_only").after_model(state, runtime) is None
 
-    def test_manual_mode_autopilot_allows(self) -> None:
-        """Headless manual (defensive): no human → allow (retry-sentinel
-        parity; the old path resolved to execute)."""
+    def test_manual_mode_without_human_interrupts(self, monkeypatch) -> None:
+        """Headless manual: no human attached → still escalate (the interrupt
+        parks the goal awaiting clarification; a later-attached human decides).
+        Silently approving would be a fail-open hole in the manual contract."""
+        captured = _stub_interrupt(monkeypatch, {"decisions": [{"type": "approve"}]})
         state = _state([_tc("run_command", {"command": "pytest -xvs"})])
         runtime = _Runtime({"soothe_clarification_mode": "manual"})
-        assert _gate(manual_scope="all").after_model(state, runtime) is None
+        _gate(manual_scope="all").after_model(state, runtime)
+        assert len(captured) == 1
 
     def test_missing_mode_falls_back_to_default(self) -> None:
         """No clarification mode in configurable → build-time default."""
