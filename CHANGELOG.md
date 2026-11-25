@@ -10,16 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Approval dock (`Ctrl+R`): pending clarification/approval cards pin in a docked bar above the queued-goals bar instead of mounting inline in the transcript; multiple simultaneous approvals queue FIFO, only the head card is interactive, and the dock never steals focus from the chat input.
-- Manual clarification mode (Shift+Tab cycle: Auto → Bypass → Manual → Plan → Ask): every clarification the veritas leg would answer inline is routed to the human relay instead; seeded by `agent.clarification.default_mode: manual`.
-- Approve & remember on tool-approval cards: mints a loop-scoped generalized grant (command prefix or parent directory) so the same class of action never re-asks within the loop.
+- Manual clarification mode (Shift+Tab cycle: Auto → Bypass → Manual → Plan → Ask): every clarification the veritas leg would answer inline is routed to the human relay instead; seeded by `agent.clarification.default_mode: manual`. In manual mode a tool approval landing in the dock takes keyboard focus automatically (clicking the chat input or Tab moves focus back; auto/bypass/plan/ask and ask_user cards never steal focus), and the status badge uses a theme-independent magenta so it never blends into bypass's amber.- Approve & remember on tool-approval cards: mints a loop-scoped generalized grant (command prefix or parent directory) so the same class of action never re-asks within the loop. Approval cards render compact: options are label-only (no verbose descriptions), and the question line no longer repeats the tool/argument preview already shown in the card header.
 
 ### Changed
 
 - Goal-completion reports stream with the fast model role by default (`agent.loop.goal_synthesis_model_role: fast`), bounded by `goal_synthesis_idle_seconds` (default 60s, `0` disables).
+- Step-card todo panes render every item with no overflow cap — live progress is always visible instead of hiding the running item behind a `+N more` row (the tools and files panes keep their preview caps).
 - Multi-tool approval gates collect one explicit decision per pending tool call, with a per-tool recap before submitting; hydrated transcripts keep the per-tool decisions.
 
 ### Fixed
 
+- `Ctrl+R` (focus approvals) never actually focused the head card: `Widget.focus(visible=False)` raises a `TypeError` on this Textual version (`scroll_visible` is the parameter) and the error was silently suppressed — fixed to `focus(scroll_visible=False)`, and the new manual-mode dock autofocus uses the same call.
+- Manual-mode dock autofocus lost the race against turn teardown: when the loop paused for a HITL answer, cursor reactivation at turn end refocused the chat input after the approval card had already taken focus. Cursor reactivation now skips the steal while a manual-mode tool approval is pending; the input regains focus once the card is answered, clicked, or Tab moves focus over.
+- Step card files pane: the `+N more edits` overflow line now leads the pane like the tools and todo panes, instead of trailing below the visible rows.
 - Execution token statistics no longer collapse to content-based estimates: wire events carry `token_usage_source`, goal token snapshots include the completion synthesis, and the TUI marks estimated totals.
 - Every `ask_user` now terminates in an answer, an honest unanswered sentinel, or a park — the fake `"(retry)"` answer and silently-swallowed dismissals are gone; `agent.clarification.autopilot_retry_on_fail` now defaults to `false`.
 - Manual clarification mode never decides on the operator's behalf when no human is attached: safety escalations and rule-unresolved gated calls park the goal for a later-attached human instead of auto-deciding.

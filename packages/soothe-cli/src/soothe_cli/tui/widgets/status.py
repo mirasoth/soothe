@@ -77,7 +77,8 @@ class ClarificationModeBadge(Static):
     """Active composer-mode badge. Shows `⏵⏵ <label> (shift+Tab to cycle)`.
 
     Each mode uses a distinct foreground color: Auto green, Bypass amber,
-    Manual accent, Plan purple, Ask primary blue.
+    Manual magenta (theme-independent — never blends into Bypass's amber),
+    Plan purple, Ask primary blue.
     """
 
     DEFAULT_CSS = """
@@ -98,7 +99,7 @@ class ClarificationModeBadge(Static):
     }
 
     ClarificationModeBadge.manual {
-        color: $accent;
+        color: magenta;
     }
 
     ClarificationModeBadge.plan {

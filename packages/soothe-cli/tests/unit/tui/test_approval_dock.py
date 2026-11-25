@@ -8,11 +8,12 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.containers import Vertical
 
+from soothe_cli.tui.app._messages_mixin import _MessagesMixin
 from soothe_cli.tui.widgets.approval_dock import ApprovalDockBar
 from soothe_cli.tui.widgets.messages.structured_ask_user import StructuredAskUserWidget
 
 
-def _card(name: str, idx: int = 0) -> StructuredAskUserWidget:
+def _card(name: str, idx: int = 0, origin: str = "tool_approval") -> StructuredAskUserWidget:
     return StructuredAskUserWidget(
         step_id=f"step-{idx}",
         questions=[
@@ -24,7 +25,7 @@ def _card(name: str, idx: int = 0) -> StructuredAskUserWidget:
         ],
         widget_id=f"card-{idx}",
         id=f"card-{idx}",
-        origin_node="tool_approval",
+        origin_node=origin,
         allow_custom=False,
     )
 
@@ -35,6 +36,7 @@ class _DockApp(App[None]):
     def __init__(self) -> None:
         super().__init__()
         self.dock = ApprovalDockBar(id="approval-dock")
+        self._composer_mode = "auto"
 
     def compose(self) -> ComposeResult:
         with Vertical():
@@ -181,6 +183,178 @@ async def test_dock_never_steals_focus_on_push() -> None:
         await dock.push_card(_card("write_file", 1))
         await pilot.pause()
         assert app.focused is not dock.head_widget
+
+
+@pytest.mark.asyncio
+async def test_manual_mode_tool_approval_autofocuses_head() -> None:
+    """Manual mode + tool approval: the head card takes focus on push."""
+    app = _DockApp()
+    app._composer_mode = "manual"
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        dock = app.dock
+        card = _card("run_command", 0)
+        await dock.push_card(card)
+        await pilot.pause()
+        assert app.focused is card
+
+
+@pytest.mark.asyncio
+async def test_manual_mode_ask_user_card_does_not_steal_focus() -> None:
+    """Manual mode + non tool_approval card: the focus contract holds."""
+    app = _DockApp()
+    app._composer_mode = "manual"
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        dock = app.dock
+        card = _card("Which option?", 0, origin="execute")
+        await dock.push_card(card)
+        await pilot.pause()
+        assert app.focused is not card
+
+
+@pytest.mark.asyncio
+async def test_manual_mode_promoted_card_autofocuses() -> None:
+    """Manual mode: promote_next re-focuses the new head card."""
+    app = _DockApp()
+    app._composer_mode = "manual"
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        dock = app.dock
+        card_a = _card("run_command", 0)
+        card_b = _card("write_file", 1)
+        await dock.push_card(card_a)
+        await dock.push_card(card_b)
+        await pilot.pause()
+        assert app.focused is card_a
+
+        await dock.pop_card(card_a)
+        await pilot.pause()
+        assert dock.head_widget is card_b
+        assert app.focused is card_b
+
+
+@pytest.mark.asyncio
+async def test_manual_mode_focus_returns_to_input_via_tab() -> None:
+    """The card joins the focus chain: Tab moves focus onward normally."""
+    from textual.widgets import Input
+
+    class _InputApp(_DockApp):
+        def compose(self) -> ComposeResult:
+            with Vertical():
+                yield self.dock
+                yield Input(id="chat-input")
+
+    app = _InputApp()
+    app._composer_mode = "manual"
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        dock = app.dock
+        card = _card("run_command", 0)
+        await dock.push_card(card)
+        await pilot.pause()
+        assert app.focused is card
+        await pilot.press("tab")
+        await pilot.pause()
+        assert app.focused is not card
+
+
+# ---------------------------------------------------------------------------
+# Focus restoration vs. manual autofocus: cursor reactivation must not steal
+# ---------------------------------------------------------------------------
+
+
+class _FakeAdapter:
+    """Adapter stand-in exposing only the dock (matches app attribute usage)."""
+
+    def __init__(self, dock: ApprovalDockBar) -> None:
+        self._approval_dock = dock
+
+
+class _StealApp(App[None]):
+    """Harness binding the real app helper + a real ChatTextArea."""
+
+    _manual_tool_approval_pending = _MessagesMixin._manual_tool_approval_pending
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.dock = ApprovalDockBar(id="approval-dock")
+        self._composer_mode = "auto"
+        self._ui_adapter = _FakeAdapter(self.dock)
+
+    def compose(self) -> ComposeResult:
+        from soothe_cli.tui.widgets.chat_input import ChatTextArea
+
+        with Vertical():
+            yield self.dock
+            yield ChatTextArea(id="chat-input")
+
+
+@pytest.mark.asyncio
+async def test_cursor_reactivation_keeps_manual_approval_focus() -> None:
+    """Turn teardown (set_cursor_active(True)) must not steal card focus."""
+    from soothe_cli.tui.widgets.chat_input import ChatTextArea
+
+    app = _StealApp()
+    app._composer_mode = "manual"
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        dock = app.dock
+        card = _card("run_command", 0)
+        await dock.push_card(card)
+        await pilot.pause()
+        assert app.focused is card
+
+        text_area = app.query_one("#chat-input", ChatTextArea)
+        text_area.set_app_focus(has_focus=True)
+        await pilot.pause()
+        assert app.focused is card
+
+
+@pytest.mark.asyncio
+async def test_cursor_reactivation_steals_when_no_approval_pending() -> None:
+    """Without a pending card, cursor reactivation focuses the input as before."""
+    from soothe_cli.tui.widgets.chat_input import ChatTextArea
+
+    app = _StealApp()
+    app._composer_mode = "manual"
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        dock = app.dock
+        card = _card("run_command", 0)
+        await dock.push_card(card)
+        await pilot.pause()
+        assert app.focused is card
+
+        # Card answered → dock empty → input convenience restored.
+        await dock.pop_card(card)
+        await pilot.pause()
+
+        text_area = app.query_one("#chat-input", ChatTextArea)
+        text_area.set_app_focus(has_focus=True)
+        await pilot.pause()
+        assert app.focused is text_area
+
+
+@pytest.mark.asyncio
+async def test_cursor_reactivation_steals_in_auto_mode() -> None:
+    """Auto mode never autofocuses cards; input convenience is unchanged."""
+    from soothe_cli.tui.widgets.chat_input import ChatTextArea
+
+    app = _StealApp()
+    app._composer_mode = "auto"
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        dock = app.dock
+        card = _card("run_command", 0)
+        await dock.push_card(card)
+        await pilot.pause()
+        assert app.focused is not card
+
+        text_area = app.query_one("#chat-input", ChatTextArea)
+        text_area.set_app_focus(has_focus=True)
+        await pilot.pause()
+        assert app.focused is text_area
 
 
 # ---------------------------------------------------------------------------

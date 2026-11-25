@@ -20,8 +20,6 @@ from soothe_cli.display import theme
 from soothe_cli.display.preview_limits import (
     STEP_CARD_FILE_EDIT_PREVIEW_COUNT,
     STEP_CARD_PANE_LEAD_RULE_CHARS,
-    STEP_CARD_PANE_ROWS_TODO,
-    STEP_CARD_REASONING_LINE_MAX_CHARS,
     STEP_CARD_REASONING_PREVIEW_LINES,
     STEP_CARD_TOOL_ACTIVITY_PREVIEW_COUNT,
     TASK_DELEGATION_DESC_MAX_CHARS,
@@ -33,7 +31,6 @@ from soothe_cli.display.tool_display import (
     format_step_tool_activity_command,
     format_step_tool_activity_line,
     truncate_to_width,
-    truncate_to_width_tail,
 )
 from soothe_cli.runtime.presentation.duration_format import (
     format_duration_ms,
@@ -1037,11 +1034,13 @@ class StepActivityTree:
     Task delegation rows stay flat markers inside the tools pane; while a task
     runs, its line shows that task's subgraph tool count. When tool rows exceed
     the preview cap, a `· +N more tools` line leads the pane to collapse the
-    older calls, keeping the newest rows at the bottom. The todo pane follows
-    the same rule (`· +N more` leads; the latest todos stay at the bottom). The files pane shows
+    older calls, keeping the newest rows at the bottom. The files pane shows
     the latest file-write rows with action labels and line deltas (always
-    rendered when such rows exist — no config gate). The thinking pane shows
-    the latest reasoning lines in an italic muted tone.
+    rendered when such rows exist — no config gate) and follows the same
+    overflow rule (`· +N more edits` leads). The todo pane has no overflow
+    row: every item renders, so live progress is always visible. The thinking
+    pane is a plain text window: the latest reasoning lines render verbatim
+    in an italic muted tone (no bullets, no per-line cap).
     """
 
     @staticmethod
@@ -1062,7 +1061,6 @@ class StepActivityTree:
         glyph_override: str | None = None,
         file_edit_preview_limit: int = STEP_CARD_FILE_EDIT_PREVIEW_COUNT,
         reasoning_preview_lines: int = STEP_CARD_REASONING_PREVIEW_LINES,
-        reasoning_line_max_chars: int = STEP_CARD_REASONING_LINE_MAX_CHARS,
     ) -> Content:
         """Render the step card activity body as one vertical column of panes.
 
@@ -1075,12 +1073,13 @@ class StepActivityTree:
         `glyph_override` is accepted for call compatibility; pane rows no
         longer align to a card header glyph because rows are flat.
 
-        The thinking pane shows the *latest* ``reasoning_preview_lines`` lines
-        of reasoning (captured thinking tokens from
-        ``additional_kwargs["reasoning_content"]`` plus untagged CoreAgent step
-        text). Older lines scroll off and long lines are tail-truncated
-        (ellipsis prepended): reasoning grows while the step runs, so the tail
-        is what the user wants to read.
+        The thinking pane is a text window (not bullet items): it shows the
+        *latest* ``reasoning_preview_lines`` lines of reasoning (captured
+        thinking tokens from ``additional_kwargs["reasoning_content"]`` plus
+        untagged CoreAgent step text) rendered verbatim — no per-line bullet
+        prefix and no per-line character cap. Older lines scroll off as
+        reasoning grows while the step runs. Lines wider than the pane still
+        clip at the pane width (the shared layout bound, like every pane).
         """
         colors = _safe_colors(colors)
         todo_items = list(todos or [])
@@ -1226,20 +1225,10 @@ class StepActivityTree:
         # --- todo pane -----------------------------------------------------
         if todo_items:
             todo_lines: list[PaneLine] = []
-            # Like the tools pane: the collapsed overflow leads the pane and
-            # the newest todos sit at the bottom, nearest the step footer.
-            shown_todos = todo_items[-STEP_CARD_PANE_ROWS_TODO:]
-            hidden_todos = len(todo_items) - len(shown_todos)
-            if hidden_todos > 0:
-                todo_lines.append(
-                    PaneLine(
-                        segs=[
-                            ("  ", theme.SECONDARY_TEXT_STYLE),
-                            (f"· +{hidden_todos} more", theme.SECONDARY_TEXT_STYLE),
-                        ]
-                    )
-                )
-            for item in shown_todos:
+            # No cap: every todo item renders (unlike tools/files previews).
+            # The pane is the step's progress readout — a live item hidden
+            # behind an overflow row would misrepresent current progress.
+            for item in todo_items:
                 content = str(item.get("content") or "").strip()
                 if not content:
                     continue
@@ -1275,6 +1264,16 @@ class StepActivityTree:
 
         # --- files pane ----------------------------------------------------
         files_lines: list[PaneLine] = []
+        # Overflow edits lead the pane (tools/todo rule): the hidden rows are
+        # the older ones, which chronologically belong above the preview.
+        hidden_edits = len(index.file_edit_rows) - len(file_edit_rows)
+        if hidden_edits > 0:
+            label = f"· +{hidden_edits} more edit{'s' if hidden_edits != 1 else ''}"
+            files_lines.append(
+                PaneLine(
+                    segs=[("  ", theme.SECONDARY_TEXT_STYLE), (label, theme.SECONDARY_TEXT_STYLE)]
+                )
+            )
         for row in file_edit_rows:
             phase = (row.phase or "pending").strip().lower()
             icon = phase_icon(
@@ -1295,14 +1294,6 @@ class StepActivityTree:
                     meta=[(suffix, theme.SECONDARY_TEXT_STYLE)] if suffix else [],
                 )
             )
-        hidden_edits = len(index.file_edit_rows) - len(file_edit_rows)
-        if hidden_edits > 0:
-            label = f"· +{hidden_edits} more edit{'s' if hidden_edits != 1 else ''}"
-            files_lines.append(
-                PaneLine(
-                    segs=[("  ", theme.SECONDARY_TEXT_STYLE), (label, theme.SECONDARY_TEXT_STYLE)]
-                )
-            )
         if files_lines:
             stats = format_file_edit_stats_label(
                 len(index.file_edit_rows), index.file_edit_added, index.file_edit_removed
@@ -1319,21 +1310,16 @@ class StepActivityTree:
         # --- thinking pane -------------------------------------------------
         thinking_lines: list[PaneLine] = []
         if reasoning_text:
-            # Thinking lines tail-truncate: when a line is too long, the
-            # *latest* content is kept (ellipsis prepended) because reasoning
-            # accumulates while the step runs and the user wants to see the
-            # most recent progress, not the stale head.
-            prefix_w = display_width("  ") + display_width(f"{g.bullet} ")
-            if max_cols and max_cols > 0:
-                content_budget = max(1, min(reasoning_line_max_chars, max_cols - prefix_w))
-            else:
-                content_budget = reasoning_line_max_chars
+            # Plain text window (no bullets, no per-line cap): the pane shows
+            # the latest lines verbatim so reasoning reads as a contiguous
+            # draft. The pane-width bound in _assemble_pane_line still applies
+            # as the physical limit, like every other pane.
             shown_lines: list[str] = []
             for ln in reasoning_text.splitlines():
                 stripped = ln.strip()
                 if not stripped:
                     continue
-                shown_lines.append(truncate_to_width_tail(stripped, content_budget))
+                shown_lines.append(stripped)
             tail_lines = (
                 shown_lines[-reasoning_preview_lines:] if reasoning_preview_lines > 0 else []
             )
@@ -1343,7 +1329,6 @@ class StepActivityTree:
                     PaneLine(
                         segs=[
                             ("  ", theme.SECONDARY_TEXT_STYLE),
-                            (f"{g.bullet} ", tone),
                             (ln, tone),
                         ]
                     )

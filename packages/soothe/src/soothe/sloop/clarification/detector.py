@@ -201,7 +201,9 @@ class ClarificationDetector:
                     detail = f" ({truncate_text(first_val.strip(), limit=ClarificationDetector._MAX_ARG_PREVIEW, marker='…', strip=False)})"
         title = f"Approve {name}{detail}?"
         return {
-            "question": title,
+            # Space-saving: the question stays short — the card header right
+            # above already carries the tool name and argument preview.
+            "question": "Approve this action?",
             "header": title,
             # IG-LOOP-018: shared decision vocabulary — every human-decision
             # surface renders the same options, "Approve & remember" included

@@ -10,6 +10,18 @@ from soothe.sloop import StrangeLoop
 from soothe.sloop.state.schemas import PlanResult
 
 
+def _make_config() -> SootheConfig:
+    """Config with retry layers disabled.
+
+    These tests assert final-response behavior only; a failed mock step would
+    otherwise be retried with real exponential-backoff sleeps (up to ~3 min).
+    """
+    config = SootheConfig()
+    config.agent.loop.step_retry_max_attempts = 0
+    config.agent.loop.max_step_retries = 0
+    return config
+
+
 def _make_mock_core_with_checkpointer() -> Mock:
     """Create mock CoreAgent with graph.checkpointer as AsyncMock returning None.
 
@@ -169,7 +181,7 @@ async def test_done_skips_second_core_astream_when_policy_reuses_execute() -> No
             return_value=mock_ce,
         ),
     ):
-        loop = StrangeLoop(mock_core, SootheConfig())
+        loop = StrangeLoop(mock_core, _make_config())
 
         events = [
             evt
@@ -222,7 +234,7 @@ async def test_done_skips_goal_completion_synthesis_when_ledger_direct_selected(
             side_effect=empty_gen,
         ),
     ):
-        loop = StrangeLoop(mock_core, SootheConfig())
+        loop = StrangeLoop(mock_core, _make_config())
         loop._fast_llm = None  # Prevent synthesis LLM calls
 
         events = [
@@ -269,7 +281,7 @@ async def test_completed_payload_for_summary_path() -> None:
             side_effect=empty_gen,
         ),
     ):
-        loop = StrangeLoop(mock_core, SootheConfig())
+        loop = StrangeLoop(mock_core, _make_config())
         loop._fast_llm = None  # Prevent synthesis LLM calls
 
         events = [
@@ -307,7 +319,7 @@ async def test_main_thread_id_normalizes_to_loop_id_on_initialize() -> None:
             return_value=mock_ce,
         ),
     ):
-        loop = StrangeLoop(mock_core, SootheConfig())
+        loop = StrangeLoop(mock_core, _make_config())
 
         _ = [
             evt

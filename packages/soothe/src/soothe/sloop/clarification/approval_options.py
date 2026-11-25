@@ -29,16 +29,11 @@ from typing import Any
 from soothe.sloop.clarification.dynamic_rules import remember_record
 
 # Canonical card label — doubles as the answer token after normalization.
+# Options render label-only (no descriptions): the card must stay compact,
+# and the labels are self-explanatory.
 APPROVE_LABEL = "Approve"
 APPROVE_REMEMBER_LABEL = "Approve & remember"
 REJECT_LABEL = "Reject"
-
-# Wire label for the option description (server-rendered into the spec).
-APPROVE_REMEMBER_DESCRIPTION = (
-    "Approve this action and record a loop-scoped grant for the whole "
-    "command prefix / parent directory — the same class of action will not "
-    "ask again in this loop."
-)
 
 APPROVE_TOKENS: frozenset[str] = frozenset(
     {"approve", "approved", "allow", "yes", "y", "ok", "proceed"}
@@ -74,19 +69,13 @@ def decision_options(tool_name: str, args: Mapping[str, Any]) -> list[dict[str, 
     """
     options: list[dict[str, str]] = [{"label": APPROVE_LABEL}]
     if remember_record(tool_name, args) is not None:
-        options.append(
-            {
-                "label": APPROVE_REMEMBER_LABEL,
-                "description": APPROVE_REMEMBER_DESCRIPTION,
-            }
-        )
+        options.append({"label": APPROVE_REMEMBER_LABEL})
     options.append({"label": REJECT_LABEL})
     return options
 
 
 __all__ = [
     "APPROVE_LABEL",
-    "APPROVE_REMEMBER_DESCRIPTION",
     "APPROVE_REMEMBER_LABEL",
     "APPROVE_TOKENS",
     "REJECT_LABEL",

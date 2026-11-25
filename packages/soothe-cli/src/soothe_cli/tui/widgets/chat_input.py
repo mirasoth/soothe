@@ -475,11 +475,24 @@ class ChatTextArea(TextArea):
         """Set whether the app should show the cursor as active.
 
         Args:
-        has_focus: Whether the app input should be focused.
+            has_focus: Whether the app input should be focused.
+
+        A manual-mode tool approval owns focus until answered, so cursor
+        reactivation (turn teardown, shell cleanup) must not steal it back
+        for the chat input (IG-CLNT-005 autofocus contract).
         """
         self._backslash_pending_time = None
         if has_focus and not self.has_focus:
+            if self._manual_approval_holds_focus():
+                return
             self.call_after_refresh(self.focus)
+
+    def _manual_approval_holds_focus(self) -> bool:
+        """True while a manual-mode tool approval card awaits a decision."""
+        with contextlib.suppress(Exception):
+            pending = getattr(self.app, "_manual_tool_approval_pending", None)
+            return bool(callable(pending) and pending())
+        return False
 
     def set_completion_active(self, *, active: bool) -> None:
         """Set whether completion suggestions are visible."""

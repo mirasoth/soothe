@@ -531,7 +531,7 @@ class _UIMixin:
         if head is None:
             return
         with suppress(Exception):
-            head.focus(visible=False)
+            head.focus(scroll_visible=False)
 
     def _on_chat_scroll_y_changed(self, _old: float, _new: float) -> None:
         """React to chat scroll position changes to show/hide the pinned bar.

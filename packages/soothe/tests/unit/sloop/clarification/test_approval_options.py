@@ -41,8 +41,8 @@ class TestDecisionOptions:
         options = decision_options("run_command", {"command": "pytest -xvs"})
         labels = [o["label"] for o in options]
         assert labels == [APPROVE_LABEL, APPROVE_REMEMBER_LABEL, REJECT_LABEL]
-        remember = options[1]
-        assert "description" in remember
+        # Space-saving: label-only options — no verbose descriptions.
+        assert all(set(o.keys()) == {"label"} for o in options)
 
     def test_path_tool_offers_remember(self) -> None:
         options = decision_options("write_file", {"file_path": "/src/a.py"})

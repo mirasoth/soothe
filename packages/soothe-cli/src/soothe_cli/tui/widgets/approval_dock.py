@@ -110,7 +110,7 @@ class ApprovalDockBar(Vertical):
         """Add a pending card. First card becomes the interactive head.
 
         Returns:
-        False when the card is already docked (duplicate push); True otherwise.
+            False when the card is already docked (duplicate push); True otherwise.
         """
         if any(card is widget for card in self._cards):
             return False
@@ -125,6 +125,7 @@ class ApprovalDockBar(Vertical):
             self._rows[id(widget)] = row
             await self.mount(row)
         self._sync()
+        self._autofocus_head()
         return True
 
     async def pop_card(self, widget: Any) -> bool:
@@ -164,9 +165,11 @@ class ApprovalDockBar(Vertical):
             header = self.query_one("#approval-dock-header")
             await self.mount(head, before=header)
             self._sync()
+            self._autofocus_head()
             return True
         await self.mount(head)
         self._sync()
+        self._autofocus_head()
         return True
 
     def clear_pending(self) -> None:
@@ -189,6 +192,25 @@ class ApprovalDockBar(Vertical):
         self._sync()
 
     # ── Internals ────────────────────────────────────────────────────
+
+    def _autofocus_head(self) -> None:
+        """Focus the head card for manual-mode tool approvals.
+
+        In manual mode the operator is the sole decision maker, so a tool
+        approval card becomes the focused region the moment it lands (and
+        again on promote). Clicking the chat input or Tab moves focus back —
+        the standard focus chain applies. Auto/bypass/plan/ask and ask_user
+        clarifications never steal focus (IG-CLNT-005 contract unchanged).
+        """
+        if not self._cards:
+            return
+        head = self._cards[0]
+        if str(getattr(head, "_origin_node", "") or "") != "tool_approval":
+            return
+        if str(getattr(self.app, "_composer_mode", "auto") or "") != "manual":
+            return
+        with suppress(Exception):
+            head.focus(scroll_visible=False)
 
     def _sync(self) -> None:
         """Refresh the header label and empty-state visibility."""

@@ -125,7 +125,11 @@ Consumers:
 - **detector** `_format_action_request` renders options from
   `decision_options` — every human-decision surface (manual escalations, auto
   safety escalations, deferred tool approvals) gets the same options because
-  they all render through this one formatter.
+  they all render through this one formatter. Card compaction: options are
+  label-only (the remember description was dropped — the label is
+  self-explanatory and the card must stay compact), and the question is the
+  short "Approve this action?" (the header right above already carries the
+  tool name and argument preview).
 - **outbox** `answer_to_decision` maps remember tokens → `"approve"` HITL
   decision (the resume payload carries `"remember": True` for audit; the HITL
   middleware ignores extra keys). `build_clarification_resume_payload` uses

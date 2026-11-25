@@ -14,14 +14,10 @@ STEP_CARD_TOOL_ACTIVITY_PREVIEW_COUNT: Final[int] = 5
 # are file-write tool rows for the step.
 STEP_CARD_FILE_EDIT_PREVIEW_COUNT: Final[int] = 5
 
-# Reasoning branch on step cards: max lines shown in the Reasoning section.
-# Reasoning accumulates while a step runs, so the section renders the *latest*
-# this many lines and drops older ones (no "+N more lines" footer).
-STEP_CARD_REASONING_PREVIEW_LINES: Final[int] = 8
-
-# Reasoning branch: max characters per line before truncation (width-aware
-# truncation also applies at render time via max_cols).
-STEP_CARD_REASONING_LINE_MAX_CHARS: Final[int] = 120
+# Reasoning branch on step cards: window height of the thinking text block.
+# The pane renders the *latest* this many reasoning lines verbatim (no bullet
+# prefix, no per-line character cap) and drops older ones as reasoning grows.
+STEP_CARD_REASONING_PREVIEW_LINES: Final[int] = 10
 
 # --- Step card activity panes (embedded windows, not a nested tree) ---
 # Panes always stack vertically in one column (tools → todo → files →
@@ -30,11 +26,6 @@ STEP_CARD_REASONING_LINE_MAX_CHARS: Final[int] = 120
 
 # Leading rule characters before a pane label (`──── tools ──── 22 · ⚠1`).
 STEP_CARD_PANE_LEAD_RULE_CHARS: Final[int] = 4
-
-# Todo rows kept inside the todo pane; overflow is summarized by a leading
-# `· +N more` row inside the pane (latest todos stay at the bottom, like the
-# tools pane).
-STEP_CARD_PANE_ROWS_TODO: Final[int] = 4
 
 # TUI file-change preview cards (the standalone write/edit/delete diff cards
 # mounted in the chat transcript, NOT the step-card File-edit branch).

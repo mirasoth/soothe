@@ -32,6 +32,15 @@ of the message area, directly above the queued-goals bar:
   promoted to interactive **at turn end** (one answer in flight at a time).
 - Focus never auto-steals; `Ctrl+R` jumps into the dock (mirrors `Ctrl+Q` for the
   queue bar), so queued goals stay typable while approvals pend.
+  **Exception (2026-11-25)**: in manual composer mode, a tool-approval head
+  card takes keyboard focus when it lands (and on promote) — the operator is
+  the sole decision maker there. Clicking the chat input or Tab returns
+  focus; auto/bypass/plan/ask and non-tool-approval cards never steal focus.
+  Cursor reactivation at turn/shell teardown (`set_cursor_active(True)`) also
+  honors the pending card: it skips its `call_after_refresh(focus)` steal
+  while a manual tool approval is head, otherwise it would refocus the chat
+  input right after the card took focus (fix landed same day; guarded by the
+  app-level `_manual_tool_approval_pending` helper).
 
 ### 1.2 Decisions (user-approved)
 

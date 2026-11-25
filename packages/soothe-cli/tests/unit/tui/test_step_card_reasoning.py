@@ -87,12 +87,12 @@ def test_render_reasoning_section_content_shown() -> None:
     assert "Let me analyze the code." in text
 
 
-def test_render_reasoning_truncates_long_lines() -> None:
-    """Long reasoning lines are tail-truncated: the *latest* content is kept.
+def test_render_reasoning_long_lines_not_capped() -> None:
+    """Long reasoning lines render verbatim — no per-line character cap.
 
-    Reasoning accumulates while a step runs, so a truncated line shows the
-    tail (most recent progress) with an ellipsis prepended — not the stale
-    head with an ellipsis appended.
+    The thinking pane is a text window, not bullet items: lines are shown
+    without an ellipsis as long as they fit the pane width. Only the shared
+    pane-width bound (layout) clips, which needs a line wider than max_cols.
     """
     long_line = "HEAD" + "x" * 200 + "TAIL"
     content = StepActivityTree.render(
@@ -105,25 +105,16 @@ def test_render_reasoning_truncates_long_lines() -> None:
         colors=None,
         g=get_glyphs(),
         reasoning=long_line,
-        reasoning_line_max_chars=50,
+        max_cols=400,  # wider than the line: the pane bound never fires
     )
     text = str(content)
-    assert "…" in text
-    # The full line should not appear.
-    assert long_line not in text
-    # Tail content is visible; head content is dropped.
-    assert "TAIL" in text
-    assert "HEAD" not in text
+    assert long_line in text
+    assert "…" not in text
 
 
-def test_render_reasoning_tail_truncate_shows_latest_progress() -> None:
-    """A single growing reasoning line shows the latest progress as it grows.
-
-    Simulates the real streaming shape: one long line that keeps growing. The
-    displayed text always ends with the most recently appended content.
-    """
-    latest = "checking the other docs for references now"
-    growing = "Let me first find all the paper references. " * 10 + latest
+def test_render_reasoning_lines_have_no_bullet_prefix() -> None:
+    """Thinking lines render as a plain text window, not bullet items."""
+    bullet = get_glyphs().bullet
     content = StepActivityTree.render(
         step_id="s1",
         step_status="running",
@@ -133,14 +124,15 @@ def test_render_reasoning_tail_truncate_shows_latest_progress() -> None:
         spinner_position=0,
         colors=None,
         g=get_glyphs(),
-        reasoning=growing,
-        reasoning_line_max_chars=60,
+        reasoning="First thought\nSecond thought",
     )
-    text = str(content)
-    # The latest progress is visible at the end of the truncated line.
-    assert latest in text
-    # The stale beginning is not shown.
-    assert "Let me first find all the paper references." not in text
+    lines = str(content).splitlines()
+    thinking_rows = [ln for ln in lines if "thought" in ln]
+    assert thinking_rows
+    for ln in thinking_rows:
+        stripped = ln.strip()
+        assert stripped.startswith(("First thought", "Second thought"))
+        assert not stripped.startswith(bullet)
 
 
 def test_render_reasoning_keeps_latest_lines() -> None:
