@@ -265,6 +265,25 @@ class _ExecutionMixin:
             submitted_widget._submitted = True  # noqa: SLF001
             submitted_widget.add_class("is-submitted")
 
+        # IG-CLNT-005: relocate the decided card from the approval dock into
+        # the transcript — the answered card becomes the permanent record
+        # (per-tool decision rows, identical to reconnect hydration). The
+        # dock itself is transient and never flushed by messages. This runs
+        # before the non_empty guard so an abandoned card (no answers sent)
+        # also lands in the transcript as a dismissal record.
+        dock = getattr(adapter, "_approval_dock", None)
+        if dock is not None and submitted_widget is not None:
+            try:
+                await dock.pop_card(submitted_widget)
+                mount_result = adapter._mount_message(submitted_widget)
+                if mount_result is not None:
+                    await mount_result
+            except Exception:  # noqa: BLE001
+                logger.debug(
+                    "Failed to relocate submitted approval card to transcript",
+                    exc_info=True,
+                )
+
         # A stale empty remount (resume re-emit) can leave a duplicate card.
         # Disarm only true duplicates — same origin and same question set.
         # Never touch other steps' live approvals: with parallel steps each
@@ -1274,6 +1293,16 @@ class _ExecutionMixin:
         """Clean up after agent task completes or is cancelled."""
         self._agent_running = False
         self._agent_worker = None
+
+        # IG-CLNT-005: the resume turn for a queued answer has completed —
+        # promote the next waiting approval card to interactive head. This
+        # keeps at most one answer in flight (matching the relay inbox's
+        # FIFO answer pairing). No-op when the dock has no waiting cards.
+        adapter = self._ui_adapter
+        dock = getattr(adapter, "_approval_dock", None) if adapter is not None else None
+        if dock is not None:
+            with suppress(Exception):
+                await dock.promote_next()
 
         # Restore input focus first so the user can type immediately
         # while remaining cleanup (spinner, tokens, deferred) runs.

@@ -39,6 +39,7 @@ from soothe_cli.tui.app._types import (
 )
 from soothe_cli.tui.app._ui import _UIMixin
 from soothe_cli.tui.composer_mode import normalize_composer_mode
+from soothe_cli.tui.widgets.approval_dock import ApprovalDockBar
 from soothe_cli.tui.widgets.chat_input import ChatInput
 from soothe_cli.tui.widgets.loading import LoadingWidget, TipRow
 from soothe_cli.tui.widgets.message_store import MessageStore
@@ -135,6 +136,13 @@ class SootheApp(
             "ctrl+q",
             "focus_queued_goals",
             "Focus Queued Goals",
+            show=False,
+            priority=True,
+        ),
+        Binding(
+            "ctrl+r",
+            "focus_approvals",
+            "Review Approvals",
             show=False,
             priority=True,
         ),
@@ -502,6 +510,12 @@ class SootheApp(
             default_visible=plan_visible,
         )
         with Container(id="bottom-app-container"):
+            # Approval dock (IG-CLNT-005) — inside the docked bottom container,
+            # directly above the queued-goals bar. Hidden while empty; holds
+            # pending clarification/approval cards head-first so they are
+            # never flushed by transcript updates. Same non-stacking rationale
+            # as the queue bar below (Textual overlaps same-edge docks).
+            yield ApprovalDockBar(id="approval-dock")
             # Queued goals bar — inside the docked bottom container, above
             # the thinking row and chat input. Hidden when the queue is
             # empty; shows all pending queued goals as selectable rows.

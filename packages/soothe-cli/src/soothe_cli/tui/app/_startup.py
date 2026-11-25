@@ -208,6 +208,16 @@ class _StartupMixin:
             sync_message_content=self._sync_message_content,
         )
 
+        # Bind the approval dock (IG-CLNT-005): clarification/approval cards
+        # pin above the queued-goals bar instead of the transcript. _post_paint_init
+        # runs after compose, so the dock widget exists.
+        from soothe_cli.tui.widgets.approval_dock import ApprovalDockBar
+
+        try:
+            self._ui_adapter._approval_dock = self.query_one("#approval-dock", ApprovalDockBar)
+        except Exception:  # noqa: BLE001
+            self._ui_adapter._approval_dock = None
+
         # Live turns consume ``soothe.card.*`` on the adapter stream path (raw main
         # assistant mounts are suppressed). Background attach uses the same
         # App method via ``_consume_daemon_events_background``.

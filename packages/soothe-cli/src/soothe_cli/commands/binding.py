@@ -290,8 +290,7 @@ def message_from_widget(widget: Widget) -> MessageData:
                 content = "Plan review: awaiting Approve / Reject / Refine"
             elif multi_tool:
                 content = (
-                    f"Tool approval ({len(hitl_questions)} tools): "
-                    "awaiting a decision per tool"
+                    f"Tool approval ({len(hitl_questions)} tools): awaiting a decision per tool"
                 )
             else:
                 content = "Tool approval: awaiting Approve / Edit / Reject"

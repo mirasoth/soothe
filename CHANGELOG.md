@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Approval dock (`Ctrl+R`): pending clarification/approval cards now pin in a docked bar directly above the queued-goals bar instead of mounting inline in the transcript (IG-CLNT-005). The dock queues multiple simultaneous approvals head-first — only the head card is interactive, queued cards render as one-line waiting rows ("· write_file — waiting (answer #1 first)") — and is never flushed by new messages. On a decision, the decided card relocates into the transcript as the permanent record (per-tool decision rows, identical to reconnect hydration), and the next waiting card is promoted to interactive at turn end, keeping at most one answer in flight (matching the relay inbox's FIFO answer pairing). The dock never steals focus: the chat input stays typable while approvals pend, and `Ctrl+R` (mirroring `Ctrl+Q` for queued goals) jumps into the head card. Spec: `.platonic/impl/client/IG-CLNT-005-approval-dock.md`.
+
 ### Changed
 
 - Step-card activity panes always stack vertically with a blank line before each pane, spacing the first pane from the step title and separating adjacent panes at every terminal width (previously panes abutted the title row and each other).

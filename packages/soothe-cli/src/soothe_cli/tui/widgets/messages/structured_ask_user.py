@@ -522,7 +522,6 @@ class StructuredAskUserWidget(Vertical):
         self._submit_btn: Button | None = None
         self._abandon_btn: Button | None = None
         self._footer_focused = False  # False = question area, True = footer
-        self._focus_guard_timer = None  # recurring timer that steals focus back from chat input
         # HITL extensions
         self._body_markdown = (body_markdown or "").strip()
         self._body_path = (body_path or "").strip()
@@ -975,27 +974,15 @@ class StructuredAskUserWidget(Vertical):
         if self._submitted:
             self._refresh_answered_summary()
             return
-        if self._degraded:
-            if self._degraded_inputs:
-                self._schedule_focus(self._degraded_inputs[0])
-            return
         # Render plan body markdown for HITL plan review.
         if self._is_plan_review:
             self._render_plan_body()
         self._update_option_highlight()
         self._update_tab_highlight()
         self._update_submit_state()
-        # Focus the widget so keybindings work.
-        self._schedule_focus(self)
-        # Belt-and-braces: keep focus pinned to the widget for the first
-        # ~600 ms after mount so the user can immediately press ↑/↓/Enter
-        # without the screen stealing focus back to the chat input.
-        self._schedule_robust_focus()
-        # Long-running focus guard: while the widget is active, anything
-        # in the chat input that steals focus back to the prompt would
-        # break arrow/Enter handling.  Poll every 200 ms and recapture
-        # if focus has drifted to the chat input.  Stopped on submit/abandon.
-        self._start_focus_guard()
+        # IG-CLNT-005: no focus steal, ever. Cards live in the approval dock
+        # so the chat input stays typable while approvals pend; focus arrives
+        # via Ctrl+R (action_focus_approvals) or a click.
 
     def _render_plan_body(self) -> None:
         """Render the plan body markdown via the themed renderer."""
@@ -1023,86 +1010,12 @@ class StructuredAskUserWidget(Vertical):
             logger.debug("Plan review markdown render failed; using plain text", exc_info=True)
             body_widget.update(text)
 
-    def _start_focus_guard(self) -> None:
-        """Poll every 200 ms and recapture focus if it drifted from the widget.
-
-        Stopped on submit/abandon.
-        """
-
-        def _tick() -> None:
-            if self._submitted:
-                return
-            try:
-                focused = self.app.focused
-            except Exception:  # noqa: BLE001
-                return
-            if not self._focus_drifted(focused):
-                return
-            self._refocus_self_no_scroll()
-
-        try:
-            self._focus_guard_timer = self.set_interval(0.2, _tick)
-        except Exception:  # noqa: BLE001
-            self._focus_guard_timer = None
-
-    def _stop_focus_guard(self) -> None:
-        """Stop the focus-recapture timer (called on submit/abandon)."""
-        timer = getattr(self, "_focus_guard_timer", None)
-        if timer is not None:
-            try:
-                timer.stop()
-            except Exception:  # noqa: BLE001
-                pass
-            self._focus_guard_timer = None
-
-    def _schedule_robust_focus(self) -> None:
-        """Pin focus to the widget for ~600 ms after mount."""
-
-        def _refocus() -> None:
-            try:
-                if self._submitted:
-                    return
-                focused = self.app.focused
-                if not self._focus_drifted(focused):
-                    return
-            except Exception:  # noqa: BLE001
-                pass
-            self._refocus_self_no_scroll()
-
-        try:
-            self.set_timer(0.05, _refocus)
-            self.set_timer(0.15, _refocus)
-            self.set_timer(0.30, _refocus)
-            self.set_timer(0.60, _refocus)
-        except Exception:  # noqa: BLE001
-            pass
-
     def _refocus_self_no_scroll(self) -> None:
         """Focus the container without scrolling (prevents plan-header jump)."""
         try:
             self.app.set_focus(self, scroll_visible=False)
         except Exception:  # noqa: BLE001
             pass
-
-    def _focus_drifted(self, focused: Any) -> bool:
-        """Return True if focus left the widget and its descendants.
-
-        Covers the chat input, scroll container, ``None``, and any foreign
-        widget. Returns False for the widget itself or its descendants
-        (e.g. the comment input, footer buttons).
-        """
-        if focused is self:
-            return False
-        if focused is None:
-            return True
-        # Allow focus on a descendant (e.g. the comment input or a
-        # footer button) — the user deliberately moved it there.
-        try:
-            if self in focused.ancestors_with_self:
-                return False
-        except Exception:  # noqa: BLE001
-            pass
-        return True
 
     # ── HITL: plan body expand/collapse + comment focus guard ──────
 
@@ -1499,7 +1412,6 @@ class StructuredAskUserWidget(Vertical):
         if self._submitted:
             return
         self._submitted = True
-        self._stop_focus_guard()
         self.add_class("is-submitted")
         self._answers = self._answers_collected()
         self._refresh_title()
@@ -1519,7 +1431,6 @@ class StructuredAskUserWidget(Vertical):
         if self._submitted:
             return
         self._submitted = True
-        self._stop_focus_guard()
         self.add_class("is-submitted")
         self._answers = []
         self._refresh_title()

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from contextlib import suppress
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -17,6 +18,7 @@ from textual.css.query import NoMatches
 from soothe_cli.display.spinner_labels import SPINNER_LABEL_INPUT
 from soothe_cli.runtime.state.session_stats import SpinnerStatus
 from soothe_cli.runtime.token_events_debug import TokenEventTrace
+from soothe_cli.tui.widgets.approval_dock import ApprovalDockBar
 from soothe_cli.tui.widgets.loading import LoadingWidget
 from soothe_cli.tui.widgets.messages import AssistantMessage, UserMessage
 from soothe_cli.tui.widgets.pinned_goal_bar import PinnedGoalBar
@@ -498,6 +500,26 @@ class _UIMixin:
         if not bar.has_goals:
             return
         bar.activate()
+
+    def action_focus_approvals(self) -> None:
+        """Focus the pending approval card in the dock (Ctrl+r).
+
+        Mirrors ``action_focus_queued_goals``: jumps keyboard focus to the
+        interactive head card so the user can answer with ↑/↓/Enter without
+        the dock ever having stolen focus. No-op when the dock is empty or a
+        modal is open.
+        """
+        if self.screen.is_modal:
+            return
+        try:
+            dock = self.query_one("#approval-dock", ApprovalDockBar)
+        except NoMatches:
+            return
+        head = dock.head_widget
+        if head is None:
+            return
+        with suppress(Exception):
+            head.focus(visible=False)
 
     def _on_chat_scroll_y_changed(self, _old: float, _new: float) -> None:
         """React to chat scroll position changes to show/hide the pinned bar.
