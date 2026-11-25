@@ -821,6 +821,111 @@ async def test_submitted_event_abandon_sends_nothing() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Concurrent approval cards — submitting one must not kill another step's
+# live approval (parallel steps each gate their own tool calls)
+# ---------------------------------------------------------------------------
+
+
+def _tool_q(name: str, arg: str) -> dict:
+    return {
+        "question": f"Approve {name} ({arg})?",
+        "header": f"Approve {name} ({arg})",
+        "options": [{"label": "Approve"}, {"label": "Reject"}],
+    }
+
+
+@pytest.mark.asyncio
+async def test_submit_does_not_disarm_other_steps_live_approval() -> None:
+    """A different step's live approval card stays interactive after a submit.
+
+    Regression: the handler used to disarm EVERY other clarification widget
+    across steps, silently killing the second approval when two parallel
+    steps each awaited a tool decision.
+    """
+    from soothe_cli.tui.app._execution import _ExecutionMixin
+
+    class _Harness(_ForwardingHarness, _ExecutionMixin):
+        pass
+
+    app = _Harness()
+    adapter = app._ui_adapter
+    q_this = _tool_q("run_command", "git status")
+    q_other = _tool_q("write_file", "/tmp/out.txt")
+    card_this = StructuredAskUserWidget(
+        step_id="step-1",
+        questions=[q_this],
+        widget_id="card-this",
+        id="card-this",
+        origin_node="tool_approval",
+        allow_custom=False,
+    )
+    card_other = StructuredAskUserWidget(
+        step_id="step-2",
+        questions=[q_other],
+        widget_id="card-other",
+        id="card-other",
+        origin_node="tool_approval",
+        allow_custom=False,
+    )
+    adapter._clarification_input_by_step = {"step-1": card_this, "step-2": card_other}
+
+    event = StructuredAskUserWidget.Submitted(
+        step_id="step-1",
+        questions=[q_this],
+        answers=["Approve"],
+        widget_id="card-this",
+        origin_node="tool_approval",
+    )
+    await app.on_structured_ask_user_widget_submitted(event)
+
+    assert card_this._submitted is True
+    assert card_other._submitted is False, "another step's live approval must stay interactive"
+    assert "is-submitted" not in card_other.classes
+
+
+@pytest.mark.asyncio
+async def test_submit_disarms_duplicate_card_with_same_questions() -> None:
+    """A stale re-emit duplicate (same origin + same questions) is disarmed."""
+    from soothe_cli.tui.app._execution import _ExecutionMixin
+
+    class _Harness(_ForwardingHarness, _ExecutionMixin):
+        pass
+
+    app = _Harness()
+    adapter = app._ui_adapter
+    q = _tool_q("run_command", "git status")
+    card_this = StructuredAskUserWidget(
+        step_id="step-1",
+        questions=[q],
+        widget_id="card-this",
+        id="card-this",
+        origin_node="tool_approval",
+        allow_custom=False,
+    )
+    card_dup = StructuredAskUserWidget(
+        step_id="orphan-key",
+        questions=[q],
+        widget_id="card-dup",
+        id="card-dup",
+        origin_node="tool_approval",
+        allow_custom=False,
+    )
+    adapter._clarification_input_by_step = {"step-1": card_this, "orphan-key": card_dup}
+
+    event = StructuredAskUserWidget.Submitted(
+        step_id="step-1",
+        questions=[q],
+        answers=["Approve"],
+        widget_id="card-this",
+        origin_node="tool_approval",
+    )
+    await app.on_structured_ask_user_widget_submitted(event)
+
+    assert card_this._submitted is True
+    assert card_dup._submitted is True
+
+
+# ---------------------------------------------------------------------------
 # Focus on mount — keep focus on the widget, not the chat input
 # ---------------------------------------------------------------------------
 

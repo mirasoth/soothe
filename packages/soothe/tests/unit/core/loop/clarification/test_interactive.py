@@ -281,6 +281,21 @@ async def test_tool_approval_defers_on_blank_action(
         await policy.answer(_request(1, origin_node="tool_approval"))
 
 
+async def test_tool_approval_multi_tool_truncates_trailing_comment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Multi-tool gate (expected > 2): a trailing Edit comment appended by
+    the TUI must not dismiss the whole answer — the per-tool decision slots
+    survive and the extra slot is dropped."""
+    _stub_interrupt(
+        monkeypatch,
+        {"answers": ["Approve", "Reject", "Approve", "tighten args"]},
+    )
+    policy = InteractiveClarificationPolicy()
+    ans = await policy.answer(_request(3, origin_node="tool_approval"))
+    assert ans.answers == ("Approve", "Reject", "Approve")
+
+
 # ---------------------------------------------------------------------------
 # Tool-approval routing (RFC-634: middleware-originated interrupts)
 # ---------------------------------------------------------------------------

@@ -37,7 +37,6 @@ logger = logging.getLogger(__name__)
 
 # Wire origin constants (mirror host ORIGIN_* constants). CLI must not import
 # soothe host packages; keep the wire strings local.
-_ORIGIN_EXECUTE = "execute"
 _ORIGIN_PLAN_MODE_REVIEW = "plan_mode_review"
 _ORIGIN_TOOL_APPROVAL = "tool_approval"
 
@@ -80,11 +79,28 @@ def _strip_plan_frontmatter(markdown: str) -> str:
     return _FRONTMATTER_RE.sub("", raw, count=1).strip()
 
 
+def tool_label_from_header(header: str) -> str:
+    """Short tool label from an approval question header.
+
+    ``"Approve run_command (command=git status)?"`` → ``"run_command"``.
+    Falls back to the (stripped) header when it does not match the shape.
+    """
+    body = (header or "").strip()
+    if body.startswith("Approve "):
+        body = body[len("Approve ") :]
+    paren = body.find(" (")
+    if paren >= 0:
+        body = body[:paren]
+    if body.endswith("?"):
+        body = body[:-1]
+    return body.strip() or (header or "").strip()
+
+
 class StructuredAskUserWidget(Vertical):
     """Unified multi-question option-picker for ``ask_user`` and HITL gates.
 
     Three modes:
-    - **Structured** (default): tabs + options + hover-preview + footer.
+    - **Structured** (default): tabs + options + inline descriptions + footer.
       Used for generic ``ask_user`` (execute origin) with LLM-emitted options.
     - **HITL**: same structured layout but ``allow_custom=False`` (no "Other"
       row), origin-aware title, optional plan body rendering, and a comment
@@ -513,16 +529,11 @@ class StructuredAskUserWidget(Vertical):
         self._allow_custom = allow_custom
         self._comment_option_index = comment_option_index  # option idx that shows comment
         self._comment_input: Input | None = None
-        self._comment_text: str = ""
         self._body_expanded = False
         self._plan_body_widget: Static | None = None
         self._plan_body_text: str = ""
 
     # ── Properties ───────────────────────────────────────────────────
-
-    @property
-    def _is_structured(self) -> bool:
-        return not self._degraded
 
     @property
     def _is_hitl(self) -> bool:
@@ -583,7 +594,7 @@ class StructuredAskUserWidget(Vertical):
         """The comment text from the HITL comment input (if any)."""
         if self._comment_input is not None:
             return str(self._comment_input.value or "").strip()
-        return self._comment_text
+        return ""
 
     def _answers_collected(self) -> list[str]:
         """All answer texts in question order (empty string if unanswered).
@@ -596,11 +607,11 @@ class StructuredAskUserWidget(Vertical):
         if self._is_hitl and self._comment_option_index is not None:
             sel = self._selected.get(0)
             if sel == self._comment_option_index and self._hitl_comment_label():
-                # Append comment as second answer for the host decoder.
-                if len(answers) == 1:
-                    answers.append(self._hitl_comment_label())
-                elif len(answers) > 1:
-                    answers[1] = self._hitl_comment_label()
+                # Append the comment as a trailing slot for the host decoder.
+                # Never overwrite answers[1]: with multiple pending tool calls
+                # that slot carries the second tool's decision, and clobbering
+                # it would flip that call to the fail-safe reject.
+                answers.append(self._hitl_comment_label())
         return answers
 
     # ── Title content ───────────────────────────────────────────────
@@ -646,6 +657,10 @@ class StructuredAskUserWidget(Vertical):
             return f"Approve {more + 1} tools: {body} (+{more} more)"
         return f"Approve tool: {body}"
 
+    def _tool_label(self, idx: int) -> str:
+        """Short tool label for a tool-approval question (tab rows / history)."""
+        return tool_label_from_header(self._question_header(idx))
+
     def _path_footer_text(self) -> str:
         if self._body_path:
             return f"Plan saved to: {self._body_path}"
@@ -673,6 +688,24 @@ class StructuredAskUserWidget(Vertical):
         gutter = _card_body_gutter()
         with Vertical(classes="saq-answered-box"):
             if self._is_hitl:
+                if self._is_tool_approval and self._num_questions > 1:
+                    # Multi-tool gate: one history row per pending tool call —
+                    # a single "[Approved]" line would hide which of the
+                    # batched calls got which decision.
+                    for i in range(self._num_questions):
+                        action = self._answers[i] if i < len(self._answers) else ""
+                        if action == "Approve":
+                            display = "Approved"
+                        elif action == "Reject":
+                            display = "Rejected"
+                        else:
+                            display = action or "—"
+                        yield Static(
+                            f"{gutter}[{self._tool_label(i)} → {display}]",
+                            classes="saq-answered-row",
+                            markup=False,
+                        )
+                    return
                 # HITL answered view: action label + optional comments + body toggle
                 answer = self._answers[0] if self._answers else ""
                 comments = self._answers[1] if len(self._answers) > 1 else ""
@@ -930,7 +963,11 @@ class StructuredAskUserWidget(Vertical):
         answered = idx in self._selected
         if answered:
             prefix = f"{g.checkmark} " if idx == self._current_q else f"{g.checkmark} "
-        return f"{prefix}{self._question_header(idx)}"
+        # Tool-approval tabs show the short tool name — the full
+        # "Approve <name> (<arg>)?" header would blow out the tab bar when
+        # several tool calls are batched into one gate.
+        title = self._tool_label(idx) if self._is_tool_approval else self._question_header(idx)
+        return f"{prefix}{title}"
 
     # ── on_mount ────────────────────────────────────────────────────
 
@@ -1362,6 +1399,24 @@ class StructuredAskUserWidget(Vertical):
                 child.remove()
             gutter = _card_body_gutter()
             if self._is_hitl:
+                if self._is_tool_approval and self._num_questions > 1:
+                    # Multi-tool gate: mirror the per-tool history rows.
+                    for i in range(self._num_questions):
+                        action = self._answers[i] if i < len(self._answers) else ""
+                        if action == "Approve":
+                            display = "Approved"
+                        elif action == "Reject":
+                            display = "Rejected"
+                        else:
+                            display = action or "—"
+                        box.mount(
+                            Static(
+                                f"{gutter}[{self._tool_label(i)} → {display}]",
+                                classes="saq-answered-row",
+                                markup=False,
+                            )
+                        )
+                    return
                 answers = self._answers if hasattr(self, "_answers") else self._answers_collected()
                 action = answers[0] if answers else ""
                 comments = answers[1] if len(answers) > 1 else ""
@@ -1554,8 +1609,13 @@ class StructuredAskUserWidget(Vertical):
             except Exception:  # noqa: BLE001
                 self._schedule_focus(self._comment_input)
             return
-        # HITL: immediate submit on action selection (Approve/Reject).
-        if self._is_hitl:
+        # HITL: immediate submit on action selection (Approve/Reject) — but
+        # only for the single-question gate. With multiple pending tool calls
+        # each question is one tool's decision; finalizing here would send
+        # empty answers for the unanswered tools, which the host maps to the
+        # fail-safe reject. Route through the auto-advance + review flow so
+        # every tool gets an explicit decision before submit.
+        if self._is_hitl and self._num_questions == 1:
             self._finalize()
             return
         # Auto-advance to next unanswered question; when every question is
@@ -1655,7 +1715,7 @@ class StructuredAskUserWidget(Vertical):
                 text = str(event.input.value or "").strip()
                 if text:
                     hint.remove_class("is-visible")
-                elif self._highlighted == 3:
+                elif self._highlighted == len(self._question_options(self._current_q)):
                     hint.add_class("is-visible")
             except Exception:  # noqa: BLE001
                 pass
@@ -1671,7 +1731,6 @@ class StructuredAskUserWidget(Vertical):
             text = str(event.input.value or "").strip()
             if not text:
                 return
-            self._comment_text = text
             # Select Refine/Edit so _answers_collected appends the comment.
             self._selected[self._current_q] = self._comment_option_index
             self._finalize()

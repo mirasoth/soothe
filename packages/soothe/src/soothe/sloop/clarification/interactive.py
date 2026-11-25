@@ -141,12 +141,25 @@ class InteractiveClarificationPolicy:
             and stripped[0]
         ):
             # Preserve the comment (index 1) even when expected=1 — the host
-            # decoder (parse_plan_review_answers / _answer_to_decision) reads
+            # decoder (parse_plan_review_answers / answer_to_decision) reads
             # it from answer.answers[1].
             if len(stripped) == 1:
                 stripped.append("")
             # Don't truncate — return both [action, comment].
             return stripped
+
+        # Multi-tool approval gates (expected > 2): one decision slot per
+        # pending tool call. A trailing comment (Edit/Refine prose) appended
+        # by the TUI must not dismiss the whole answer — drop the extras;
+        # per-slot decisions are what the host decoder consumes.
+        if (
+            origin == ORIGIN_TOOL_APPROVAL
+            and expected > 2
+            and stripped
+            and stripped[0]
+            and len(stripped) > expected
+        ):
+            stripped = stripped[:expected]
 
         if any(not a for a in stripped):
             return None

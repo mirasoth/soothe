@@ -265,13 +265,28 @@ class _ExecutionMixin:
             submitted_widget._submitted = True  # noqa: SLF001
             submitted_widget.add_class("is-submitted")
 
-        # A stale empty remount (resume re-emit) can leave another interactive
-        # plan-review card. Disable extras so a second click cannot fire a
-        # second plan-review turn after clarification_answered cleared the pending flag.
+        # A stale empty remount (resume re-emit) can leave a duplicate card.
+        # Disarm only true duplicates — same origin and same question set.
+        # Never touch other steps' live approvals: with parallel steps each
+        # card is an independent decision the user still has to make, and
+        # disarming them here silently killed the second approval.
+        submitted_key = (
+            origin_node,
+            tuple(str(q) for q in questions),
+        )
         for sid, other in list(adapter._clarification_input_by_step.items()):
             if sid == step_id:
                 continue
             try:
+                other_key = (
+                    str(getattr(other, "_origin_node", "") or ""),
+                    tuple(
+                        q.get("question", str(q)) if isinstance(q, dict) else str(q)
+                        for q in getattr(other, "_questions", []) or []
+                    ),
+                )
+                if other_key != submitted_key:
+                    continue
                 other._submitted = True  # noqa: SLF001
                 other.add_class("is-submitted")
                 # Disable submit/abandon buttons and any active inputs.

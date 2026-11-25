@@ -219,7 +219,39 @@ def message_from_widget(widget: Widget) -> MessageData:
         is_plan_review = origin == "plan_mode_review"
         is_tool_approval = origin == "tool_approval"
         is_hitl = is_plan_review or is_tool_approval
+        hitl_questions = list(getattr(widget, "_questions", []) or [])  # noqa: SLF001
+        multi_tool = is_tool_approval and len(hitl_questions) > 1
         if widget._submitted and widget._answers and is_hitl:  # noqa: SLF001
+            if multi_tool:
+                # Per-tool history — a single action summary would collapse
+                # the batched decisions into one line (and answers[1] is the
+                # second tool's decision here, not a comment).
+                from soothe_cli.tui.widgets.messages.structured_ask_user import (
+                    tool_label_from_header,
+                )
+
+                parts = []
+                for i, q in enumerate(hitl_questions):
+                    header = q.get("header", "") if isinstance(q, dict) else str(q)
+                    ans = widget._answers[i] if i < len(widget._answers) else ""  # noqa: SLF001
+                    if ans == "Approve":
+                        verdict = "approved"
+                    elif ans == "Reject":
+                        verdict = "rejected"
+                    else:
+                        verdict = ans.strip().lower() or "no decision"
+                    parts.append(f"{tool_label_from_header(header)} {verdict}")
+                content = "Tool actions: " + "; ".join(parts)
+                return MessageData(
+                    type=MessageType.PLAN_REVIEW,
+                    content=content,
+                    id=widget_id,
+                    plan_review_action=widget._answers[0],  # noqa: SLF001
+                    plan_review_comments=None,
+                    plan_markdown=widget._body_markdown or None,  # noqa: SLF001
+                    plan_path=widget._body_path or None,  # noqa: SLF001
+                    plan_origin_node=origin or None,
+                )
             action = widget._answers[0] if widget._answers else ""  # noqa: SLF001
             comments = widget._answers[1] if len(widget._answers) > 1 else ""  # noqa: SLF001
             if is_tool_approval:
@@ -256,6 +288,11 @@ def message_from_widget(widget: Widget) -> MessageData:
         if is_hitl and not widget._submitted:  # noqa: SLF001
             if is_plan_review:
                 content = "Plan review: awaiting Approve / Reject / Refine"
+            elif multi_tool:
+                content = (
+                    f"Tool approval ({len(hitl_questions)} tools): "
+                    "awaiting a decision per tool"
+                )
             else:
                 content = "Tool approval: awaiting Approve / Edit / Reject"
             return MessageData(type=MessageType.APP, content=content, id=widget_id)

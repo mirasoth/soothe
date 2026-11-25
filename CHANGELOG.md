@@ -11,6 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Step-card activity panes always stack vertically with a blank line before each pane, spacing the first pane from the step title and separating adjacent panes at every terminal width (previously panes abutted the title row and each other).
 - The TUI step-card title row carries a collapse chevron (`▼` expanded / `▶` collapsed) for every collapsible card — the same predicate the click handler uses, so a card without a toggleable body never advertises one; the title text reserves the chevron width and the marker repaints together with the body visibility change.
+- Multi-tool approval gates collect one decision per pending tool call: the TUI card no longer submits on the first selection — it auto-advances through the batched tools (Enter approves each with the default `Approve` highlight) and shows a per-tool recap before submitting; the tab bar and the collapsed history render short tool names with per-tool `Approved`/`Rejected` rows instead of one aggregate line, and hydrated transcripts keep the per-tool decisions (`Tool actions: run_command approved; write_file rejected`).
+
+### Fixed
+
+- Approving the first tool of a batched multi-tool approval gate no longer silently rejects the remaining tools: the immediate-submit path sent empty answers for the unanswered tool slots, which the host maps to the fail-safe reject; multi-tool gates now route through the per-question flow and every tool gets an explicit decision. The Refine/Edit comment is appended as a trailing slot instead of overwriting the second tool's decision, and the interactive clarification policy tolerates the extra slot for gates with more than two pending tools.
+- Submitting one clarification card no longer disables every other pending card across steps: only true duplicates (same origin and question set, from stale re-emits) are disarmed, so parallel steps' live tool-approval cards stay interactive.
+- Dead code and legacy cleanup around the approval flow: the unused `execute` wire-origin constant and the never-referenced `_is_structured` property were removed from the clarification widget along with the dead `_comment_text` mirror attribute (its write path required the comment input to exist, its read path required it to be absent); the widget docstring no longer advertises the removed hover-preview feature; the clarification wire-content formatter now recognizes the tool-approval `Edit` action (it previously lost the stable `Tool approval:` header and dropped the refinement prose into the generic summary) and never reads a second decision token as refinement prose.
 
 ## [v1.3.6] - 2026-11-24
 
