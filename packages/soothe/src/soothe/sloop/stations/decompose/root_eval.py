@@ -197,7 +197,53 @@ def _pce_signal_lines(goal: Any, limit: int = 5) -> list[str]:
     ]
 
 
-def _eval_envelope(goal_text: str, nodes: list[Any]) -> str:
+_RETRY_SENTINEL = "(retry)"
+
+
+def _question_text(question: Any) -> str:
+    """Render a structured question or plain string as text."""
+    if isinstance(question, dict):
+        return str(question.get("question") or question.get("header") or "")
+    return str(question)
+
+
+def _format_prior_clarifications(history: Any) -> str:
+    """Format clarification history into a section for the eval envelope.
+
+    Returns an empty string when the history is empty or contains only
+    autopilot retry sentinels (which are not real answers). The eval LLM
+    uses this section to avoid re-asking questions it already posed.
+    """
+    if not history:
+        return ""
+    lines: list[str] = []
+    for item in history:
+        if not isinstance(item, dict):
+            continue
+        questions = item.get("questions") or []
+        answers = item.get("answers") or []
+        source = item.get("source", "unknown")
+        confidence = item.get("confidence")
+        for i, q in enumerate(questions):
+            a = str(answers[i]) if i < len(answers) else "(no answer)"
+            if a == _RETRY_SENTINEL:
+                continue
+            conf_str = f" (conf={confidence:.2f})" if confidence is not None else ""
+            lines.append(f"Q: {_question_text(q)}\nA: {a} [source={source}{conf_str}]")
+    if not lines:
+        return ""
+    return (
+        "\n\nPRIOR CLARIFICATIONS (you already asked these and they were "
+        "answered — do NOT re-ask; use the answers to decide coverage or "
+        "emit remaining_subtasks that implement the chosen approach):\n" + "\n".join(lines)
+    )
+
+
+def _eval_envelope(
+    goal_text: str,
+    nodes: list[Any],
+    prior_clarifications: Any = None,
+) -> str:
     rows: list[str] = []
     for node in nodes:
         close = node.close_report.model_dump() if node.close_report is not None else None
@@ -209,6 +255,7 @@ def _eval_envelope(goal_text: str, nodes: list[Any]) -> str:
             f"  outcome={outcome or '(none)'}"
         )
     history = "\n".join(rows)
+    prior_section = _format_prior_clarifications(prior_clarifications)
     return (
         "Assess whether the ORIGINAL USER GOAL below is fully achieved. This is "
         "a coverage audit, not a work session — produce a verdict quickly.\n\n"
@@ -228,12 +275,18 @@ def _eval_envelope(goal_text: str, nodes: list[Any]) -> str:
         "verdict is treated as unconfirmed and forces a re-audit.\n\n"
         f"ORIGINAL USER GOAL:\n{goal_text}\n\n"
         f"INTRA-GOAL STEP HISTORY:\n{history}"
+        f"{prior_section}"
     )
 
 
-def _eval_envelope_with_signals(goal_text: str, nodes: list[Any], goal: Any) -> str:
+def _eval_envelope_with_signals(
+    goal_text: str,
+    nodes: list[Any],
+    goal: Any,
+    prior_clarifications: Any = None,
+) -> str:
     """Eval envelope plus unconsumed PCE signals as untrusted evidence."""
-    envelope = _eval_envelope(goal_text, nodes)
+    envelope = _eval_envelope(goal_text, nodes, prior_clarifications)
     lines = _pce_signal_lines(goal)
     if not lines:
         return envelope
@@ -487,6 +540,9 @@ class RootEvalNode(LoopNode):
                                 resolve_user_request(ctx.loop_state) or goal.description,
                                 list(goal.steps.nodes.values()),
                                 goal,
+                                prior_clarifications=getattr(
+                                    ctx.loop_state, "clarification_history", None
+                                ),
                             ),
                             soothe_config=ctx.strange_loop.config,
                         )
@@ -574,6 +630,7 @@ class RootEvalNode(LoopNode):
                         resolve_user_request(ctx.loop_state) or goal.description,
                         list(goal.steps.nodes.values()),
                         goal,
+                        prior_clarifications=getattr(ctx.loop_state, "clarification_history", None),
                     ),
                     expected_output="Structured coverage_verdict (complete or continuation subtasks)",
                     status="pending",

@@ -45,6 +45,7 @@ logger = logging.getLogger(__name__)
 
 _STREAM_CHUNK_LEN = 3
 _RECENT_STEP_OUTPUTS_CAP = 8
+_RETRY_SENTINEL = "(retry)"
 
 PLANNER_ASK_INTERRUPT_PREFIX = "planner-ask:"
 """Sentinel prefix marking a clarification request that came from a planner-emitted
@@ -187,6 +188,56 @@ def _extract_prior_clarifications(state: Any) -> tuple[str, ...]:
             conf_str = f", conf={confidence:.2f}" if confidence is not None else ""
             entries.append(f"Q: {q}\nA: {a} (source={source}{conf_str})")
     return tuple(entries)
+
+
+def _gate_question_text(question: Any) -> str:
+    """Render a gate question (QuestionSpec dict or plain string) as text."""
+    if isinstance(question, dict):
+        return str(question.get("question") or question.get("header") or "")
+    return str(question)
+
+
+def _coverage_gate_already_answered(
+    gate_questions: list[Any],
+    history: Any,
+) -> bool:
+    """Check whether every gate question was already answered in history.
+
+    Prevents the coverage-gate re-ask dead loop: when the eval LLM re-emits
+    a ``pending_clarification`` whose question text matches a prior entry in
+    ``clarification_history`` with a real answer (not the autopilot retry
+    sentinel), the gate is skipped instead of re-queued to the relay. The
+    eval envelope (``_eval_envelope``) includes the prior Q&A so the LLM
+    can proceed to a coverage verdict or actionable subtasks instead of
+    re-asking.
+
+    Returns ``True`` when ALL gate questions have a matching prior answer.
+    """
+    if not history or not gate_questions:
+        return False
+
+    answered: dict[str, str] = {}
+    for item in history:
+        if not isinstance(item, dict):
+            continue
+        questions = item.get("questions") or []
+        answers = item.get("answers") or []
+        for i, q in enumerate(questions):
+            a = str(answers[i]) if i < len(answers) else ""
+            if not a or a == _RETRY_SENTINEL:
+                continue
+            key = _gate_question_text(q).strip().lower()
+            if key:
+                answered[key] = a
+
+    if not answered:
+        return False
+
+    for gq in gate_questions:
+        key = _gate_question_text(gq).strip().lower()
+        if key not in answered:
+            return False
+    return True
 
 
 def _is_rate_limit_error(error: str | None) -> bool:
@@ -1166,6 +1217,17 @@ async def node_execute(ctx: LoopRuntimeContext, state_dict: dict[str, Any]) -> d
                     continue
                 questions.append(qs.model_dump())
             if not questions:
+                continue
+            if _coverage_gate_already_answered(
+                questions,
+                getattr(state, "clarification_history", None),
+            ):
+                logger.info(
+                    "[execute] coverage-gate skipped (already answered in "
+                    "clarification_history); eval envelope will use the prior "
+                    "answer (questions=%d)",
+                    len(questions),
+                )
                 continue
             gate_request = ClarificationRequest(
                 questions=tuple(questions),
