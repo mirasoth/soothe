@@ -39,6 +39,11 @@ from soothe.sloop.relay.outbox import (
         ("ok", "approve"),
         ("Allow", "approve"),
         ("proceed", "approve"),
+        # IG-LOOP-018: remember tokens map to the plain approve decision —
+        # the grant generalization is minted by the executor.
+        ("Approve & remember", "approve"),
+        ("approve_remember", "approve"),
+        ("always", "approve"),
         ("reject", "reject"),
         ("no", "reject"),
         ("deny", "reject"),
@@ -136,6 +141,16 @@ def test_build_clarification_resume_payload_tool_approval() -> None:
     ans = _bridge_answer(("approve",))
     payload = build_clarification_resume_payload(req, ans)  # type: ignore[arg-type]
     assert payload == {"i1": {"decisions": [{"type": "approve"}]}}
+
+
+def test_build_clarification_resume_payload_tool_approval_remember() -> None:
+    """IG-LOOP-018: a remember token decodes to the approve decision and
+    carries the `remember` audit marker (the HITL middleware reads `type`
+    only — grant generalization happens executor-side)."""
+    req = _bridge_request(ORIGIN_TOOL_APPROVAL)
+    ans = _bridge_answer(("Approve & remember",))
+    payload = build_clarification_resume_payload(req, ans)  # type: ignore[arg-type]
+    assert payload == {"i1": {"decisions": [{"type": "approve", "remember": True}]}}
 
 
 def test_build_clarification_resume_payload_tool_approval_multi_action() -> None:

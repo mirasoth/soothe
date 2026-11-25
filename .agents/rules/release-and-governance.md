@@ -15,15 +15,18 @@ Spec↔code drift is tracked through **canonical documentation mechanisms only**
 - **Incidental "drift" mentions** — the word "drift" describing unrelated concepts (timestamp drift, message-shape drift, pin drift) in comments/docstrings/errors is fine. This rule governs spec↔code drift infrastructure only.
 
 ## Changelog (MUST)
-Keep changelogs **brief and sharp**. Each entry is a single scannable line telling *what changed and why* — nothing more.
+Keep changelogs **brief and sharp**, written for end users and operators — not for reviewers of the commit history. Each entry is a single scannable line telling *what changed and why* — nothing more.
+- **Record only major, feature-level, and high-level changes**: new features, significant improvements or optimizations, user-visible behavior changes, operator-relevant operational changes, and hard breaks (removed features, renamed config keys/CLI flags, schema or wire-contract changes).
+- **No commit-level detail.** Omit internal refactors, test-only additions, docstring/comment cleanses, micro UI polish, release-workflow/CI fixes, submodule-pointer bumps without user impact, and "patch version bump" boilerplate.
+- If a change isn't user-visible, it doesn't belong in the changelog. If an entry needs a second paragraph, it is too detailed — compress to the user-facing effect.
 - One line per change — no multi-paragraph prose, no preamble, no "This PR..." narration.
 - Lead with user-facing effect, not implementation detail.
 - Active voice, imperative mood — "Add retry backoff to channel sends", not "Retries were added".
 - Concrete and specific — name the component, config key, or command. Avoid "various improvements", "misc fixes".
-- Group by release section (`Added` / `Changed` / `Fixed` / `Removed`); most impactful first.
-- No internal jargon — omit design doc identifiers, ticket IDs, commit hashes from the body. Link from release notes if needed.
+- Group by release section (`Added` / `Changed` / `Fixed` / `Removed`); most impactful first. Empty sections are omitted.
+- No internal jargon — omit design doc identifiers, ticket IDs, commit hashes, review-report paths, and loop/example IDs from the body. Link from release notes if needed.
 - No AI attribution.
-- If a change isn't user-visible, it probably doesn't belong in the changelog. Internal refactors, test additions, and tooling that don't alter behavior are omitted unless they affect operators.
+- When compressing history, never rewrite released version boundaries, dates, or `[Compare with previous version]` links — compress entry prose only.
 
 Good: `Add \`persistence.default_backend\` validation that rejects mixed sqlite/postgres in one process.`
 Bad: `This PR updates the persistence layer to add a check for the default backend config so that users don't accidentally mix backends. (#1234, authored by...)`

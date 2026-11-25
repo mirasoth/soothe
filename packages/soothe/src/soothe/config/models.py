@@ -1346,8 +1346,28 @@ class StrangeLoopConfig(BaseModel):
     )
 
     goal_synthesis_model_role: ModelRole = Field(
-        default="default",
-        description="Router model role for goal-completion synthesis streaming.",
+        default="fast",
+        description=(
+            "Router model role for goal-completion synthesis streaming. Falls back "
+            "to the default spec when the fast role is not configured or fails to "
+            "instantiate."
+        ),
+    )
+
+    goal_synthesis_idle_seconds: float = Field(
+        default=60.0,
+        ge=0,
+        description=(
+            "Max seconds the goal-completion synthesis stream may emit nothing "
+            "before the idle watchdog re-dispatches a fresh stream or falls back "
+            "to the summary stub (0 disables the guard; explicitly configured "
+            "values always win). Unlike dispatch_idle_seconds (execute-graph "
+            "deadlock watchdog), synthesis runs no tools, so this is a pure "
+            "first-token/inter-chunk latency budget. When the field is not "
+            "configured and a non-fast synthesis model role is pinned, the "
+            "dispatch deadlock budget is used instead — slow heavy models must "
+            "not lose their report to the fast-role latency budget."
+        ),
     )
 
     context_engine: ContextEngineConfig = Field(
@@ -1504,12 +1524,16 @@ class ClarificationConfig(BaseModel):
     defer. The user sees an ask widget and can answer manually. Ignored for
     autopilot (headless) runs — see `autopilot_retry_on_fail`."""
 
-    autopilot_retry_on_fail: bool = True
+    autopilot_retry_on_fail: bool = False
     """When True and no human is attached (autopilot), veritas failures return a
-    synthetic retry answer instead of parking the goal. The sentinel
-    `"(retry)"` is fed back to the CoreAgent as the tool result, prompting the
-    LLM to try a different action. When False, veritas failures hard-defer
-    (the goal parks in `awaiting_clarification` status)."""
+    synthetic retry answer instead of parking the goal. The honest
+    "(no answer available — veritas deferred)" sentinel is fed back to the
+    CoreAgent as the tool result, prompting the LLM to try a different
+    action. When False (default, IG-LOOP-018), veritas failures hard-defer
+    (the goal parks in `awaiting_clarification` status) so a later-attached
+    human (reconnect / channel reply) decides — closing the silent
+    question-swallowing hole. Enable only for progress-over-pause unattended
+    workloads."""
 
     default_mode: Literal["auto", "manual"] = "auto"
     """Mode used when a request payload does not specify `clarification_mode`.

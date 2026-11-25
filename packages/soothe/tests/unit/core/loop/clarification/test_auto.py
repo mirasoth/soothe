@@ -295,7 +295,7 @@ async def test_autopilot_retry_on_low_confidence() -> None:
     )
     ans = await policy.answer(_request())
     assert ans.source == "retry"
-    assert ans.answers == ("(retry)",)
+    assert ans.answers[0].startswith("(no answer available")
     assert ans.confidence == 0.0
     assert ans.audit["reason"] == "veritas failed; autopilot retry"
 
@@ -312,7 +312,7 @@ async def test_autopilot_retry_on_explicit_defer() -> None:
     )
     ans = await policy.answer(_request())
     assert ans.source == "retry"
-    assert ans.answers == ("(retry)",)
+    assert ans.answers[0].startswith("(no answer available")
 
 
 @pytest.mark.asyncio
@@ -330,7 +330,7 @@ async def test_autopilot_retry_on_structured_output_failed() -> None:
     )
     ans = await policy.answer(_request())
     assert ans.source == "retry"
-    assert ans.answers == ("(retry)",)
+    assert ans.answers[0].startswith("(no answer available")
 
 
 @pytest.mark.asyncio
@@ -348,7 +348,7 @@ async def test_autopilot_retry_on_answer_was_question() -> None:
     )
     ans = await policy.answer(_request())
     assert ans.source == "retry"
-    assert ans.answers == ("(retry)",)
+    assert ans.answers[0].startswith("(no answer available")
 
 
 @pytest.mark.asyncio
@@ -361,7 +361,7 @@ async def test_autopilot_retry_on_empty_answers() -> None:
     )
     ans = await policy.answer(_request())
     assert ans.source == "retry"
-    assert ans.answers == ("(retry)",)
+    assert ans.answers[0].startswith("(no answer available")
 
 
 @pytest.mark.asyncio
@@ -390,7 +390,7 @@ async def test_autopilot_retry_multi_question() -> None:
     ans = await policy.answer(request)
     assert ans.source == "retry"
     assert len(ans.answers) == 2
-    assert all(a == "(retry)" for a in ans.answers)
+    assert all(a.startswith("(no answer available") for a in ans.answers)
 
 
 # ---- autopilot: opt-out of retry (legacy hard defer) ----
@@ -544,7 +544,7 @@ async def test_human_gate_autopilot_retry_without_fallback() -> None:
     request = _request(origin_node=ORIGIN_PLAN_MODE_REVIEW)
     ans = await policy.answer(request)
     assert ans.source == "retry"
-    assert ans.answers == ("(retry)",)
+    assert ans.answers[0].startswith("(no answer available")
 
 
 @pytest.mark.asyncio
@@ -591,7 +591,7 @@ async def test_tool_approval_autopilot_retry_without_fallback() -> None:
     policy = AutoClarificationPolicy(_veritas)
     ans = await policy.answer(_tool_approval_request("curl https://example.com"))
     assert ans.source == "retry"
-    assert ans.answers == ("(retry)",)
+    assert ans.answers[0].startswith("(no answer available")
 
 
 @pytest.mark.asyncio

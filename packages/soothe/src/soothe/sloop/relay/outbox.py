@@ -12,6 +12,11 @@ import logging
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
+from soothe.sloop.clarification.approval_options import (
+    APPROVE_TOKENS,
+    REMEMBER_TOKENS,
+    is_remember_answer,
+)
 from soothe.sloop.clarification.interrupt_kinds import (
     InterruptKind,
     classify_interrupt_payload,
@@ -32,11 +37,16 @@ logger = logging.getLogger(__name__)
 # matches resolve a decision — anything else, including empty answers, maps to
 # "reject" so a malformed or missing answer can never approve a gated tool
 # call. Content judgment must not be re-derived from prose via keyword search.
-_APPROVE_TOKENS = frozenset({"approve", "approved", "allow", "yes", "y", "ok", "proceed"})
+# IG-LOOP-018: the token tables live in `approval_options` (shared module);
+# remember tokens map to the plain "approve" HITL decision — the remember
+# generalization is a grant-mint concern of the executor, not the resume
+# payload.
+_APPROVE_TOKENS = APPROVE_TOKENS
 _REJECT_TOKENS = frozenset({"reject", "rejected", "deny", "denied", "no", "n", "block", "cancel"})
 _EDIT_TOKENS = frozenset({"edit", "modify", "revise", "change"})
 _DECISION_BY_TOKEN: dict[str, str] = {
     **{token: "approve" for token in _APPROVE_TOKENS},
+    **{token: "approve" for token in REMEMBER_TOKENS},
     **{token: "reject" for token in _REJECT_TOKENS},
     **{token: "edit" for token in _EDIT_TOKENS},
 }
@@ -134,6 +144,11 @@ def build_clarification_resume_payload(
             ans = answers[i] if i < len(answers) else answers[0]
             decision_type = answer_to_decision(ans)
             decision: dict[str, Any] = {"type": decision_type}
+            if decision_type == "approve" and is_remember_answer(ans):
+                # Audit marker only — the HITL middleware reads `type`; the
+                # grant generalization is minted by the executor from the
+                # answer token directly.
+                decision["remember"] = True
             if decision_type == "reject" and instructive_reason is not None:
                 decision["message"] = instructive_reason
             decisions.append(decision)

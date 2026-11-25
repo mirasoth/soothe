@@ -10,7 +10,8 @@ Sub-critical security matches no longer escalate — they come back as
 `risk_hints` on the `default_approve` result so the middleware can route
 them to the veritas decision fast path instead of a human. The built-in
 deny rules live in nano's severity-tiered registry; only user-configured
-`deny_rules` are evaluated here (always absolute).
+`deny_rules` are evaluated here (absolute in auto/bypass; manual-mode
+escalations can be overridden by the human's loop-scoped deny-rule record).
 """
 
 from __future__ import annotations
@@ -66,8 +67,11 @@ class ToolApprovalPipeline:
     Stage order (first deciding stage wins): user deny rules → loop
     allowlist (signature / prefix / rule family) → safety checks
     (rule-family allowlist override honored; sub-critical matches become
-    risk hints). User deny rules are absolute; no allowlist entry overrides
-    them.
+    risk hints). User deny rules are absolute in auto/bypass; in manual
+    mode the middleware escalates a deny hit to the human, and the human's
+    approval stamps a `{"rule": "deny_rule:<tool>:<pattern>"}` allowlist
+    record which this stage honors as an exact-string override (IG-LOOP-018
+    follow-up: human sovereignty in manual mode).
     """
 
     def __init__(
@@ -103,12 +107,32 @@ class ToolApprovalPipeline:
         """
         allowlist = allowlist or []
 
-        # Stage 1: user deny rules — absolute, never overridden.
-        if self._matches_any_rule(tool_name, args, self._deny_rules, workspace_root):
+        # Stage 1: user deny rules — absolute in auto/bypass. A prior manual
+        # approval of the escalated deny hit stamps an exact `deny_rule:*`
+        # rule record; only that overrides the deny (never signature /
+        # prefix grants).
+        matched_rule = self._matching_rule(tool_name, args, self._deny_rules, workspace_root)
+        if matched_rule is not None:
+            deny_id = f"deny_rule:{tool_name}:{matched_rule.pattern}"
+            if any(
+                isinstance(rec, Mapping) and str(rec.get("rule") or "") == deny_id
+                for rec in allowlist
+            ):
+                logger.info(
+                    "[tool_approval] deny rule=%s overridden by prior human approval",
+                    deny_id,
+                )
+                return ApprovalResult(
+                    "approve",
+                    "allowlist",
+                    f"deny rule {matched_rule.pattern} overridden by prior human approval",
+                    rule_id=deny_id,
+                )
             return ApprovalResult(
                 "reject",
                 "deny_rule",
                 f"matched deny rule for {tool_name}",
+                rule_id=deny_id,
             )
 
         # Stage 2: loop allowlist — prior human approval or grant for this action.
@@ -200,22 +224,22 @@ class ToolApprovalPipeline:
             return decision.reason, decision.rule_id, decision.verdict
         return None
 
-    def _matches_any_rule(
+    def _matching_rule(
         self,
         tool_name: str,
         args: Mapping[str, Any],
         rules: list,
         workspace_root: str | None,
-    ) -> bool:
-        """Check if a tool action matches any rule in the list."""
+    ) -> Any | None:
+        """Return the first user rule matching this action, or `None`."""
         if tool_name == "run_command":
             val = str(args.get("command") or "")
             for rule in rules:
                 if rule.tool != tool_name:
                     continue
                 if match_command_rule(val, rule.pattern):
-                    return True
-            return False
+                    return rule
+            return None
 
         if tool_name in ("edit_file", "write_file", "delete"):
             val = str(args.get("file_path") or args.get("path") or "")
@@ -223,10 +247,10 @@ class ToolApprovalPipeline:
                 if rule.tool != tool_name:
                     continue
                 if match_path_rule(val, rule.pattern, workspace_root):
-                    return True
-            return False
+                    return rule
+            return None
 
-        return False  # unknown tool type — no rule match
+        return None  # unknown tool type — no rule match
 
 
 __all__ = [

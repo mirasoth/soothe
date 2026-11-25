@@ -914,6 +914,28 @@ class TestPlanProjection:
 
         assert meta["outcome"] == "ok"
 
+    def test_settle_reports_per_step_token_delta_not_cumulative(self):
+        """`step_completed` carries the cumulative loop total; the step's own
+        token count must be the delta against previously settled steps."""
+        state = _PlanState()
+        state.sync_plan([{"id": "S1", "description": "One"}, {"id": "S2", "description": "Two"}], 0)
+        state.settle("S1", True, total_tokens_used=100)
+        state.settle("S2", True, total_tokens_used=150)
+
+        entries = state.update()["entries"]
+        assert entries[0]["_meta"]["soothe"]["tokens_used"] == 100
+        assert entries[1]["_meta"]["soothe"]["tokens_used"] == 50
+
+    def test_settle_token_delta_never_negative_on_total_regression(self):
+        """A regressed cumulative total (loop reset) clamps the delta to 0."""
+        state = _PlanState()
+        state.sync_plan([{"id": "S1", "description": "One"}, {"id": "S2", "description": "Two"}], 0)
+        state.settle("S1", True, total_tokens_used=500)
+        state.settle("S2", True, total_tokens_used=300)
+
+        entries = state.update()["entries"]
+        assert entries[1]["_meta"]["soothe"]["tokens_used"] == 0
+
     def test_unknown_phase_still_emits_a_legal_status(self):
         """An unmapped phase must never reach the wire verbatim."""
         state = _PlanState()

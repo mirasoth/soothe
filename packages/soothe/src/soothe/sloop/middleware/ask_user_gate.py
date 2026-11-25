@@ -3,9 +3,18 @@
 `AskUserGateMiddleware` runs veritas in ``aafter_model`` and answers
 confident questions with a synthetic `ToolMessage` (zero interrupts).
 Defer / failure outcomes are re-emitted as a ``gate_deferred`` interrupt
-so the station skips its own veritas call. In bypass mode the gate
-activates regardless of clarification mode and routes all defer / failure
-outcomes to the retry sentinel instead of the human relay.
+so the station skips its own veritas call; without an attached human they
+hard-defer (goal parks in awaiting_clarification) unless the operator
+opted into `autopilot_retry_on_fail`.
+
+Channel closure invariants (IG-LOOP-018): every ask_user question ends in
+exactly one of — a veritas answer, a human answer, an explicit unanswered
+sentinel, or a park. Malformed ask_user args are stripped with an
+instructive error in ALL modes (their native interrupt is uncapturable
+and would terminate the step stream). In bypass mode the gate activates
+regardless of clarification mode: veritas still answers confident
+questions, and defers render an honest bypass sentinel (never a fake
+answer). Non-answer outcomes emit `CLARIFICATION_UNANSWERED`.
 """
 
 from __future__ import annotations
@@ -17,7 +26,7 @@ from langchain.agents.middleware.types import AgentMiddleware
 from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.types import interrupt
 
-from soothe.events.catalog import CLARIFICATION_AUTO_ANSWERED
+from soothe.events.catalog import CLARIFICATION_AUTO_ANSWERED, CLARIFICATION_UNANSWERED
 from soothe.sloop.clarification.interrupt_kinds import INTERRUPT_TYPE_ASK_USER
 from soothe.sloop.clarification.origins import ORIGIN_EXECUTE
 from soothe.sloop.clarification.protocol import (
@@ -40,13 +49,20 @@ _ASK_USER_TOOL = "ask_user"
 _LOOP_VIEW_KEY = "soothe_veritas_loop_view"
 _LOOP_ID_KEY = "soothe_loop_id"
 
-_RETRY_SENTINEL = "(retry)"
+# Honest sentinels — they declare themselves NOT answers, so the agent never
+# mistakes them for one (IG-LOOP-018 closure invariant).
+_BYPASS_SENTINEL = (
+    "(bypass mode: unanswered — no human surface is attached; "
+    "decide autonomously or switch composer mode)"
+)
+_RETRY_SENTINEL = "(no answer available — veritas deferred; try a different action)"
+_NO_ANSWER_SENTINEL = "(no answer provided for this question)"
 
 
 class _GateOutcome:
     """One ask_user call's gate outcome."""
 
-    __slots__ = ("questions", "result", "kind", "failed", "inline_retry")
+    __slots__ = ("questions", "result", "kind", "failed", "inline_retry", "malformed")
 
     def __init__(
         self,
@@ -56,12 +72,14 @@ class _GateOutcome:
         *,
         failed: bool = False,
         inline_retry: bool = False,
+        malformed: bool = False,
     ) -> None:
         self.questions = questions or []
         self.result = result
         self.kind = kind
         self.failed = failed
         self.inline_retry = inline_retry
+        self.malformed = malformed
 
     @property
     def confident(self) -> bool:
@@ -88,8 +106,10 @@ class AskUserGateMiddleware(AgentMiddleware):
             min_confidence: Confidence threshold (mirrors the station policy).
             default_clarification_mode: Fallback when the per-run mode is
                 absent from `configurable`.
-            autopilot_retry_on_fail: Return the retry sentinel inline when no
-                human is attached and veritas fails (station parity).
+            autopilot_retry_on_fail: Render the honest retry sentinel inline
+                when no human is attached and veritas fails/defers (explicit
+                operator opt-in — default is park: the interrupt hard-defers
+                and the goal waits for a human).
         """
         super().__init__()
         self._veritas_answer = veritas_answer
@@ -121,15 +141,25 @@ class AskUserGateMiddleware(AgentMiddleware):
         view = self._loop_view(ctx)
         if view is None:
             return None
-        # Gate activates in auto mode, or in bypass mode (defer routes to
-        # the retry sentinel instead of the human relay).
-        if not ctx.bypass and ctx.clarification_mode != "auto":
-            return None
+        # Veritas leg activates in auto mode, or in bypass mode (defers
+        # render the honest bypass sentinel). The validation leg below runs
+        # in EVERY mode: malformed ask_user args must never reach the real
+        # tool — its interrupt is uncapturable and terminates the step
+        # stream.
+        veritas_leg = ctx.bypass or ctx.clarification_mode == "auto"
 
         outcomes: list[tuple[int, Any, _GateOutcome]] = []
         for idx, tc in gated:
-            outcome = await self._evaluate(tc, ctx, view)
-            outcomes.append((idx, tc, outcome))
+            questions = self._extract_questions(tc)
+            if not questions:
+                outcomes.append((idx, tc, _GateOutcome(None, None, None, malformed=True)))
+                continue
+            if veritas_leg:
+                outcomes.append((idx, tc, await self._evaluate(tc, questions, ctx, view)))
+            else:
+                # Non-auto mode: a valid ask_user passes through to the
+                # native human interrupt (manual relay / plan review).
+                outcomes.append((idx, tc, _GateOutcome(None, None, None)))
 
         # Confident outcomes resolve inline; inline-retry outcomes never reach
         # the interrupt. Remaining deferred outcomes bundle into one gate
@@ -160,6 +190,22 @@ class AskUserGateMiddleware(AgentMiddleware):
                 revised.append(tc)
                 continue
             _, outcome = entry
+            if outcome.malformed:
+                artificial.append(
+                    ToolMessage(
+                        content=(
+                            "ask_user was called with malformed or empty "
+                            "questions; the call was not executed. Re-emit "
+                            "the tool call with at least one valid question."
+                        ),
+                        name=_ASK_USER_TOOL,
+                        tool_call_id=tc["id"],
+                        status="error",
+                    )
+                )
+                self._notify_unanswered(outcome, "malformed", ctx)
+                changed = True
+                continue
             if outcome.confident:
                 content = self._render_answers(outcome.questions, list(outcome.result.answers))
                 artificial.append(
@@ -173,8 +219,12 @@ class AskUserGateMiddleware(AgentMiddleware):
                 changed = True
                 continue
             if outcome.inline_retry:
+                # B-a: bypass renders the honest bypass sentinel; the
+                # autopilot opt-in retry renders the deferred sentinel.
+                # Neither pretends to be an answer.
+                sentinel = _BYPASS_SENTINEL if ctx.bypass else _RETRY_SENTINEL
                 content = self._render_answers(
-                    outcome.questions, [_RETRY_SENTINEL] * len(outcome.questions)
+                    outcome.questions, [sentinel] * len(outcome.questions)
                 )
                 artificial.append(
                     ToolMessage(
@@ -183,6 +233,7 @@ class AskUserGateMiddleware(AgentMiddleware):
                         tool_call_id=tc["id"],
                     )
                 )
+                self._notify_unanswered(outcome, "bypass" if ctx.bypass else "autopilot_retry", ctx)
                 changed = True
                 continue
             if idx in answers_by_idx:
@@ -204,6 +255,7 @@ class AskUserGateMiddleware(AgentMiddleware):
                         tool_call_id=tc["id"],
                     )
                 )
+                self._notify_unanswered(outcome, "dismissed", ctx)
                 changed = True
                 continue
             revised.append(tc)
@@ -214,13 +266,13 @@ class AskUserGateMiddleware(AgentMiddleware):
         return {"messages": [last_ai_msg, *artificial]}
 
     async def _evaluate(
-        self, tool_call: Any, ctx: AutoModeContext, view: LoopStateView
+        self,
+        tool_call: Any,
+        questions: list[dict[str, Any]],
+        ctx: AutoModeContext,
+        view: LoopStateView,
     ) -> _GateOutcome:
-        """Run veritas inline for one ask_user call."""
-        questions = self._extract_questions(tool_call)
-        if not questions:
-            return _GateOutcome(None, None, None)
-
+        """Run veritas inline for one ask_user call (questions pre-parsed)."""
         request = ClarificationRequest(
             questions=tuple(questions),
             origin_node=ORIGIN_EXECUTE,
@@ -238,7 +290,8 @@ class AskUserGateMiddleware(AgentMiddleware):
                 "[ask_user_gate] veritas call failed; falling back to station path",
                 exc_info=True,
             )
-            # Bypass or autopilot: inline retry sentinel; else interrupt for the human.
+            # Bypass or autopilot opt-in: honest inline sentinel; else
+            # interrupt so the outcome parks for the human.
             if ctx.bypass or (not ctx.human_attached and self._autopilot_retry_on_fail):
                 return _GateOutcome(
                     questions,
@@ -256,7 +309,8 @@ class AskUserGateMiddleware(AgentMiddleware):
                 return _GateOutcome(questions, None, "explicit")
             return _GateOutcome(questions, result, None)
 
-        # Defer / failure: bypass or autopilot routes to inline retry sentinel.
+        # Defer / failure: bypass or autopilot opt-in renders the honest
+        # inline sentinel; anything else defers (park-capable) for the human.
         if ctx.bypass or (not ctx.human_attached and self._autopilot_retry_on_fail):
             return _GateOutcome(
                 questions,
@@ -333,8 +387,10 @@ class AskUserGateMiddleware(AgentMiddleware):
                 slice_ = flat * n
             else:
                 slice_ = flat[pos : pos + n]
+                # Missing slots render an explicit no-answer marker — never
+                # a fabricated duplicate of the last answer (IG-LOOP-018).
                 while len(slice_) < n:
-                    slice_.append(flat[-1])
+                    slice_.append(_NO_ANSWER_SENTINEL)
             pos += n
             answers_by_idx[idx] = self._render_answers(outcome.questions, slice_)
 
@@ -362,6 +418,37 @@ class AskUserGateMiddleware(AgentMiddleware):
                         "answers": list(outcome.result.answers),
                         "confidence": outcome.result.confidence,
                         "source": "veritas",
+                    }
+                )
+        except Exception:  # noqa: BLE001 — observability only, never fatal
+            pass
+
+    def _notify_unanswered(self, outcome: _GateOutcome, kind: str, ctx: AutoModeContext) -> None:
+        """Log and stream-emit a non-answer termination for observability."""
+        preview = truncate_text(
+            " | ".join(q.get("question", "") for q in outcome.questions),
+            limit=160,
+        )
+        logger.info(
+            "[ask_user_gate] ask_user terminated without an answer (kind=%s, "
+            "mode=%s, bypass=%s): %s",
+            kind,
+            ctx.clarification_mode,
+            ctx.bypass,
+            preview,
+        )
+        try:
+            from langgraph.config import get_stream_writer
+
+            writer = get_stream_writer()
+            if callable(writer):
+                writer(
+                    {
+                        "type": CLARIFICATION_UNANSWERED,
+                        "kind": kind,
+                        "mode": ctx.clarification_mode,
+                        "bypass": ctx.bypass,
+                        "questions": outcome.questions,
                     }
                 )
         except Exception:  # noqa: BLE001 — observability only, never fatal

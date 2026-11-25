@@ -6,6 +6,12 @@ become instructive error `ToolMessage`s with no interrupt; auto-mode
 approvals execute silently. Only human-decision cases emit the standard
 `action_requests` interrupt.
 
+In manual mode every judgment escalates to the human instead: safety
+failures, deny-rule hits (the operator may override their own rule — the
+approval stamps an exact `deny_rule:*` allowlist record the pipeline
+honors), and rule-unresolved calls. Manual never rejects on the operator's
+behalf, even without an attached human (the interrupt parks the goal).
+
 Rule-unresolved calls that carry security risk hints route to the veritas
 leg (`aafter_model`) — the decision-model fast path first, the LLM second —
 and an approve mints a loop-scoped grant so repeated shapes never pay for
@@ -327,15 +333,30 @@ class AutoModeMiddleware(AgentMiddleware):
             return _Verdict("allow")
 
         if result.decision == "reject":
+            # Manual mode: a user deny-rule hit escalates to the human
+            # (human sovereignty — the operator may override their own
+            # rule; approval stamps an exact `deny_rule:*` allowlist record
+            # the pipeline honors on re-evaluation). Bypass with
+            # active_in_bypass keeps deny absolute even in manual.
+            if (
+                result.stage == "deny_rule"
+                and ctx.clarification_mode == "manual"
+                and not ctx.bypass
+            ):
+                return _Verdict("escalate", result)
             self._notify_rejected(name, result, args)
             return _Verdict("reject", result)
 
         if result.decision == "escalate":
-            if not ctx.human_attached:
+            if not ctx.human_attached and ctx.clarification_mode != "manual":
                 # Autopilot: no human at the other end — instructive reject
                 # (parity with the old station degrade-to-reject path).
                 self._notify_rejected(name, result, args)
                 return _Verdict("reject", result)
+            # Manual mode escalates even without an attached human: the
+            # interrupt parks the goal awaiting clarification, and a human
+            # deciding later (reconnect / channel reply) resumes it. Rejecting
+            # on the operator's behalf would violate the manual contract.
             return _Verdict("escalate", result)
 
         # approve: allowlist/grant override (signature, prefix, or rule family)
@@ -355,7 +376,11 @@ class AutoModeMiddleware(AgentMiddleware):
         if ctx.bypass:
             return False
         if ctx.clarification_mode == "manual":
-            return ctx.human_attached and self._manual_scope == "all"
+            # Manual routes to the human relay regardless of current
+            # attachment: without a live human the interrupt parks the goal
+            # (awaiting clarification) instead of silently approving — the
+            # fail-open hole is closed by parking, not by rejecting.
+            return self._manual_scope == "all"
         return False
 
     def _apply_verdicts(self, last_ai_msg: AIMessage, verdicts: list) -> dict[str, Any] | None:

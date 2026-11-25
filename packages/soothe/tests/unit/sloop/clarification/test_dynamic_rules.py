@@ -6,7 +6,9 @@ from soothe.sloop.clarification.dynamic_rules import (
     DEFAULT_GRANT_CAP,
     LoopGrantStore,
     command_prefix,
+    dir_of,
     grant_hit,
+    remember_record,
 )
 
 
@@ -60,6 +62,62 @@ class TestGrantHit:
     def test_empty_records(self) -> None:
         assert grant_hit("run_command", {"command": "x"}, None) is False
         assert grant_hit("run_command", {"command": "x"}, []) is False
+
+
+class TestDirOf:
+    def test_parent(self) -> None:
+        assert dir_of("/workspace/src/a.py") == "/workspace/src"
+
+    def test_no_parent(self) -> None:
+        assert dir_of("a.py") is None
+
+    def test_empty(self) -> None:
+        assert dir_of("") is None
+        assert dir_of("  ") is None
+
+
+class TestRememberRecord:
+    """IG-LOOP-018: the generalized grant for "Approve & remember"."""
+
+    def test_run_command_mints_prefix(self) -> None:
+        assert remember_record("run_command", {"command": "pytest -xvs a"}) == {
+            "tool": "run_command",
+            "prefix": "pytest",
+        }
+
+    def test_path_tool_mints_dir(self) -> None:
+        assert remember_record("edit_file", {"file_path": "/src/a.py"}) == {
+            "tool": "edit_file",
+            "dir": "/src",
+        }
+
+    def test_no_operand_is_not_rememberable(self) -> None:
+        assert remember_record("run_command", {"command": "  "}) is None
+        assert remember_record("write_file", {"file_path": "notes.md"}) is None
+
+    def test_non_signable_tool_is_not_rememberable(self) -> None:
+        assert remember_record("get_weather", {"city": "SF"}) is None
+
+
+class TestDirGrantHit:
+    def test_same_dir_matches(self) -> None:
+        recs = [{"tool": "write_file", "dir": "/src"}]
+        assert grant_hit("write_file", {"file_path": "/src/b.py"}, recs) is True
+        assert grant_hit("write_file", {"file_path": "/src/nested/c.py"}, recs) is True
+
+    def test_different_dir_does_not_match(self) -> None:
+        recs = [{"tool": "write_file", "dir": "/src"}]
+        assert grant_hit("write_file", {"file_path": "/docs/b.py"}, recs) is False
+
+    def test_dir_record_only_applies_to_path_tools(self) -> None:
+        recs = [{"tool": "run_command", "dir": "/src"}]
+        assert grant_hit("run_command", {"command": "pytest"}, recs) is False
+
+    def test_dir_record_requires_exact_equality(self) -> None:
+        """Directory prefixes are exact-string matches — `/sr` must not
+        clear `/src` (Rule 9: no normalization heuristics)."""
+        recs = [{"tool": "write_file", "dir": "/sr"}]
+        assert grant_hit("write_file", {"file_path": "/src/a.py"}, recs) is False
 
 
 class TestLoopGrantStore:

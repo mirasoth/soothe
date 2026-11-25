@@ -336,7 +336,8 @@ class TestSootheConfig:
             cfg.agent.loop.plan_prompt_ledger.plan_ledger_max_message_chars
             == GOAL_COMPLETION_REPORT_MAX_PER_MESSAGE_CHARS
         )
-        assert cfg.agent.loop.goal_synthesis_model_role == "default"
+        assert cfg.agent.loop.goal_synthesis_model_role == "fast"
+        assert cfg.agent.loop.goal_synthesis_idle_seconds == 60.0
 
     def test_loop_plan_model_roles_yaml(self) -> None:
         cfg = SootheConfig(

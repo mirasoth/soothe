@@ -38,6 +38,8 @@ def _build_ctx(
         thread_id="t1",
         iteration=0,
         workspace="/ws",
+        total_tokens_used=0,
+        token_usage_source=lambda: "actual",
     )
     strange_loop = types.SimpleNamespace(
         config=None,

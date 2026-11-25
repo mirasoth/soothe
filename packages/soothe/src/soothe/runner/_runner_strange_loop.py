@@ -530,6 +530,17 @@ def _step_completed_ui_summary(event_data: dict[str, Any]) -> str:
     return summary[:100]
 
 
+def coerce_plan_phase_tokens(event_data: dict[str, Any]) -> int:
+    """Coerce a plan-phase payload's `total_tokens_used` into a safe int.
+
+    Accepts 0/absent (plan-mode label events carry totals only when the
+    emitting station attached them).
+    """
+    from soothe.sloop.utils.token_usage import coerce_total_tokens_used
+
+    return coerce_total_tokens_used(event_data.get("total_tokens_used"))
+
+
 class StrangeLoopMixin:
     """StrangeLoop integration mixin.
 
@@ -780,6 +791,7 @@ class StrangeLoopMixin:
                             if isinstance(clarification, dict)
                             else None,
                             total_tokens_used=total_tokens_used,
+                            token_usage_source=str(event_data.get("token_usage_source") or ""),
                             token_usage=token_usage_accumulator.snapshot(),
                             retry_attempt=int(event_data.get("retry_attempt", 1)),
                             recovered_by_retry=bool(event_data.get("recovered_by_retry", False)),
@@ -862,6 +874,7 @@ class StrangeLoopMixin:
                             StrangeLoopPlanPhaseStatusEvent(
                                 label=label,
                                 total_tokens_used=total_tokens_used,
+                                token_usage_source=str(event_data.get("token_usage_source") or ""),
                                 token_usage=token_usage_accumulator.snapshot(),
                             ).to_dict()
                         )
@@ -916,22 +929,42 @@ class StrangeLoopMixin:
 
                 elif event_type == "plan_synthesis_started":
                     yield custom_event(
-                        StrangeLoopPlanPhaseStatusEvent(label="Synthesizing plan").to_dict()
+                        StrangeLoopPlanPhaseStatusEvent(
+                            label="Synthesizing plan",
+                            total_tokens_used=coerce_plan_phase_tokens(event_data),
+                            token_usage_source=str(event_data.get("token_usage_source") or ""),
+                            token_usage=token_usage_accumulator.snapshot(),
+                        ).to_dict()
                     )
 
                 elif event_type == "plan_synthesis_completed":
                     yield custom_event(
-                        StrangeLoopPlanPhaseStatusEvent(label="Plan ready").to_dict()
+                        StrangeLoopPlanPhaseStatusEvent(
+                            label="Plan ready",
+                            total_tokens_used=coerce_plan_phase_tokens(event_data),
+                            token_usage_source=str(event_data.get("token_usage_source") or ""),
+                            token_usage=token_usage_accumulator.snapshot(),
+                        ).to_dict()
                     )
 
                 elif event_type == "plan_refinement_started":
                     yield custom_event(
-                        StrangeLoopPlanPhaseStatusEvent(label="Refining plan").to_dict()
+                        StrangeLoopPlanPhaseStatusEvent(
+                            label="Refining plan",
+                            total_tokens_used=coerce_plan_phase_tokens(event_data),
+                            token_usage_source=str(event_data.get("token_usage_source") or ""),
+                            token_usage=token_usage_accumulator.snapshot(),
+                        ).to_dict()
                     )
 
                 elif event_type == "plan_refinement_completed":
                     yield custom_event(
-                        StrangeLoopPlanPhaseStatusEvent(label="Refined plan ready").to_dict()
+                        StrangeLoopPlanPhaseStatusEvent(
+                            label="Refined plan ready",
+                            total_tokens_used=coerce_plan_phase_tokens(event_data),
+                            token_usage_source=str(event_data.get("token_usage_source") or ""),
+                            token_usage=token_usage_accumulator.snapshot(),
+                        ).to_dict()
                     )
 
                 elif event_type == "plan_refinement_failed":
@@ -1003,6 +1036,11 @@ class StrangeLoopMixin:
                             # signal so the daemon auto-enqueues the exec goal.
                             follow_on_exec=getattr(final_result, "follow_on_exec", None),
                             total_tokens_used=completed_total,
+                            token_usage_source=(
+                                str(event_data.get("token_usage_source") or "")
+                                if isinstance(event_data, dict)
+                                else ""
+                            ),
                             token_usage=token_usage_accumulator.snapshot(),
                         ).to_dict()
                     )

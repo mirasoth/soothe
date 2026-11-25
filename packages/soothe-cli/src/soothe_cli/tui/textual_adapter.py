@@ -38,7 +38,13 @@ if TYPE_CHECKING:
         def __call__(self) -> tuple[int, int, int]: ...
 
     class _AuthoritativeLoopTokensCallback(Protocol):
-        def __call__(self, _goal_run_tokens: int, *, source: str = "backend") -> None: ...
+        def __call__(
+            self,
+            _goal_run_tokens: int,
+            *,
+            source: str = "backend",
+            token_source: str = "",
+        ) -> None: ...
 
 
 from langchain_core.messages import AIMessage, HumanMessage
@@ -1139,7 +1145,11 @@ def _apply_backend_loop_tokens_event(
             has_total_field=has_total_field,
         )
     if adapter._apply_authoritative_loop_tokens is not None and has_total_field:
-        adapter._apply_authoritative_loop_tokens(int(total_used or 0), source=source)
+        adapter._apply_authoritative_loop_tokens(
+            int(total_used or 0),
+            source=source,
+            token_source=str(data.get("token_usage_source") or ""),
+        )
 
 
 def _resolve_token_target_card(

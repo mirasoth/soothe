@@ -167,9 +167,11 @@ def test_detector_captures_tool_approval_interrupt() -> None:
     assert "edit_file" in q["header"]
     assert "/a.py" in q["header"]
     assert "approve" in q["header"].lower()
-    assert len(q["options"]) == 2
+    assert len(q["options"]) == 3
     labels = [opt["label"] for opt in q["options"]]
     assert "Approve" in labels
+    # IG-LOOP-018: path actions offer the remember variant (dir grant).
+    assert "Approve & remember" in labels
     assert "Reject" in labels
 
 

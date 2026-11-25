@@ -236,6 +236,8 @@ def message_from_widget(widget: Widget) -> MessageData:
                     ans = widget._answers[i] if i < len(widget._answers) else ""  # noqa: SLF001
                     if ans == "Approve":
                         verdict = "approved"
+                    elif ans == "Approve & remember":
+                        verdict = "approved (remember)"
                     elif ans == "Reject":
                         verdict = "rejected"
                     else:
@@ -261,6 +263,8 @@ def message_from_widget(widget: Widget) -> MessageData:
                     content = (
                         f"Tool edit requested: {comments}" if comments else "Tool edit requested"
                     )
+                elif action == "Approve & remember":
+                    content = "Tool action approved (loop grant recorded)"
                 else:
                     content = "Tool action approved"
             else:

@@ -20,6 +20,7 @@ def _step(
     status: str = "completed",
     plan_iteration: int = 0,
     output_messages: list | None = None,
+    kind: str = "action",
 ) -> StepNode:
     return StepNode(
         id=step_id,
@@ -27,6 +28,7 @@ def _step(
         status=status,
         plan_iteration=plan_iteration,
         execution=StepExecution(output_messages=output_messages or []),
+        kind=kind,
     )
 
 
@@ -159,3 +161,71 @@ class TestLastStepOutputContent:
         result = last_step_output_content(state, nodes)
         assert "Block 1." in result
         assert "Block 2." in result
+
+    def test_prefers_execute_deliverable_over_eval_verdict(self) -> None:
+        """The eval audit step must not become the report source."""
+        state = _make_state()
+        nodes = {
+            "01": _step(
+                "01",
+                plan_iteration=0,
+                output_messages=[
+                    {"role": "assistant", "content": "Updated file /tmp/appr-1.txt"},
+                ],
+            ),
+            "01-EVAL": _step(
+                "01-EVAL",
+                plan_iteration=1,
+                kind="eval",
+                output_messages=[
+                    {"role": "assistant", "content": "Coverage verdict recorded (complete)."},
+                ],
+            ),
+        }
+        result = last_step_output_content(state, nodes)
+        assert result == "Updated file /tmp/appr-1.txt"
+
+    def test_eval_only_dag_returns_eval_output(self) -> None:
+        state = _make_state()
+        nodes = {
+            "01-EVAL": _step(
+                "01-EVAL",
+                plan_iteration=1,
+                kind="eval",
+                output_messages=[
+                    {"role": "assistant", "content": "Coverage verdict recorded (complete)."},
+                ],
+            ),
+        }
+        result = last_step_output_content(state, nodes)
+        assert result == "Coverage verdict recorded (complete)."
+
+    def test_later_execute_step_wins_over_earlier_eval(self) -> None:
+        """Among non-eval steps the latest by plan_iteration still wins."""
+        state = _make_state()
+        nodes = {
+            "01": _step(
+                "01",
+                plan_iteration=0,
+                output_messages=[{"role": "assistant", "content": "First deliverable."}],
+            ),
+            "01-EVAL": _step(
+                "01-EVAL",
+                plan_iteration=1,
+                kind="eval",
+                output_messages=[{"role": "assistant", "content": "Verdict one."}],
+            ),
+            "02": _step(
+                "02",
+                plan_iteration=2,
+                output_messages=[{"role": "assistant", "content": "Second deliverable."}],
+            ),
+            "02-EVAL": _step(
+                "02-EVAL",
+                plan_iteration=3,
+                kind="eval",
+                output_messages=[{"role": "assistant", "content": "Verdict two."}],
+            ),
+        }
+        result = last_step_output_content(state, nodes)
+        assert result == "Second deliverable."

@@ -35,7 +35,8 @@ _REASON_TEMPLATES: dict[DeferKind, str] = {
 }
 
 # Sentinel answer for autopilot retry — tells the LLM to try a different action.
-_RETRY_SENTINEL = "(retry)"
+# IG-LOOP-018: honest sentinel — declares itself NOT an answer.
+_RETRY_SENTINEL = "(no answer available — veritas deferred; try a different action)"
 
 # Structural human-gate origins: veritas routes these straight to the relay
 # without an LLM determination. They are review/pause semantics that require a

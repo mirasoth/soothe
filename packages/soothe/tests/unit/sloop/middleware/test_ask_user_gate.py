@@ -100,10 +100,10 @@ def _gate(veritas: _Veritas, **kwargs: Any) -> AskUserGateMiddleware:
     return AskUserGateMiddleware(**defaults)
 
 
-def _runtime(human: bool = False) -> _Runtime:
+def _runtime(human: bool = False, mode: str = "auto") -> _Runtime:
     return _Runtime(
         {
-            "soothe_clarification_mode": "auto",
+            "soothe_clarification_mode": mode,
             "soothe_human_attached": human,
             "soothe_veritas_loop_view": _view(),
             "thread_id": "t1",
@@ -205,7 +205,7 @@ class TestDeferPaths:
 
     @pytest.mark.asyncio
     async def test_defer_autopilot_retry_inline(self, monkeypatch) -> None:
-        """Defer without a human + retry enabled: (retry) sentinel inline,
+        """Defer without a human + retry enabled: honest retry sentinel inline,
         no interrupt."""
         captured = _stub_interrupt(monkeypatch, {"answers": []})
         _stub_writer(monkeypatch)
@@ -214,7 +214,7 @@ class TestDeferPaths:
         result = await _gate(veritas).aafter_model(state, _runtime(human=False))
         assert captured == []
         tool_msg = next(m for m in result["messages"] if isinstance(m, ToolMessage))
-        assert "(retry)" in tool_msg.content
+        assert "no answer available" in tool_msg.content
 
     @pytest.mark.asyncio
     async def test_defer_autopilot_retry_disabled_interrupts(self, monkeypatch) -> None:
@@ -244,6 +244,20 @@ class TestDeferPaths:
         assert captured[0]["gate_deferred_kind"] == "low_confidence"
 
     @pytest.mark.asyncio
+    async def test_defer_autopilot_parks_by_default(self, monkeypatch) -> None:
+        """IG-LOOP-018: autopilot defer WITHOUT the retry opt-in interrupts
+        (gate_deferred) so the station hard-defers — the goal parks in
+        awaiting_clarification for a later-attached human."""
+        captured = _stub_interrupt(monkeypatch, {"answers": []})
+        _stub_writer(monkeypatch)
+        veritas = _Veritas(_schema(defer=True, rationale="no evidence"))
+        state = _state([_ask_tc(["What DB?"])])
+        gate = _gate(veritas, autopilot_retry_on_fail=False)
+        await gate.aafter_model(state, _runtime(human=False))
+        assert len(captured) == 1
+        assert captured[0].get("gate_deferred") is True
+
+    @pytest.mark.asyncio
     async def test_veritas_exception_autopilot_retry(self, monkeypatch) -> None:
         """Gate exception under autopilot: retry sentinel inline (parity with
         the station's structured_output_failed ladder)."""
@@ -254,7 +268,7 @@ class TestDeferPaths:
         result = await _gate(veritas).aafter_model(state, _runtime(human=False))
         assert captured == []
         tool_msg = next(m for m in result["messages"] if isinstance(m, ToolMessage))
-        assert "(retry)" in tool_msg.content
+        assert "no answer available" in tool_msg.content
 
     @pytest.mark.asyncio
     async def test_veritas_exception_human_interrupts(self, monkeypatch) -> None:
@@ -297,12 +311,47 @@ class TestFailSafes:
         assert await _gate(veritas).aafter_model(state, _runtime()) is None
 
     @pytest.mark.asyncio
-    async def test_malformed_args_pass_through(self, monkeypatch) -> None:
-        """Unparseable ask_user args: leave the call for the tool itself."""
+    async def test_malformed_args_stripped_with_error(self, monkeypatch) -> None:
+        """Unparseable ask_user args are stripped with an instructive error —
+        the real tool's interrupt is uncapturable and would end the stream."""
+        _stub_writer(monkeypatch)
         veritas = _Veritas(_schema(["x"]))
         state = _state([_tc("ask_user", {"questions": 42})])
-        assert await _gate(veritas).aafter_model(state, _runtime()) is None
+        result = await _gate(veritas).aafter_model(state, _runtime())
         assert veritas.requests == []
+        assert result is not None
+        tool_msg = next(m for m in result["messages"] if isinstance(m, ToolMessage))
+        assert tool_msg.status == "error"
+        assert "malformed or empty questions" in tool_msg.content
+        assert tool_msg.tool_call_id == "c1"
+
+    @pytest.mark.asyncio
+    async def test_malformed_args_stripped_in_manual_mode(self, monkeypatch) -> None:
+        """The validation leg is mode-independent: malformed ask_user args
+        error out in manual too (previously they passed through to the
+        uncapturable-interrupt death)."""
+        _stub_writer(monkeypatch)
+        veritas = _Veritas(_schema(["x"]))
+        state = _state([_tc("ask_user", {"questions": 42})])
+        runtime = _runtime(mode="manual")
+        result = await _gate(veritas).aafter_model(state, runtime)
+        assert veritas.requests == []
+        tool_msg = next(m for m in result["messages"] if isinstance(m, ToolMessage))
+        assert tool_msg.status == "error"
+        assert "malformed or empty questions" in tool_msg.content
+
+    @pytest.mark.asyncio
+    async def test_valid_ask_user_passes_through_in_manual(self, monkeypatch) -> None:
+        """Manual mode: a valid ask_user is left for the native human
+        interrupt — the gate never answers and never interrupts."""
+        captured = _stub_interrupt(monkeypatch, {"answers": []})
+        _stub_writer(monkeypatch)
+        veritas = _Veritas(_schema(["auto"], confidence=0.9))
+        state = _state([_ask_tc(["What DB?"])])
+        result = await _gate(veritas).aafter_model(state, _runtime(mode="manual"))
+        assert result is None
+        assert veritas.requests == []
+        assert captured == []
 
     @pytest.mark.asyncio
     async def test_empty_state_noop(self, monkeypatch) -> None:
@@ -468,7 +517,7 @@ class TestPolicyGateDeferredBranch:
         request = dc_replace(base, metadata={**base.metadata, "gate_deferred": True})
         answer = await policy.answer(request)
         assert answer.source == "retry"
-        assert answer.answers == ("(retry)",)
+        assert answer.answers[0].startswith("(no answer available")
 
 
 def _gate_request() -> Any:
@@ -660,8 +709,8 @@ class TestBypassMode:
 
     @pytest.mark.asyncio
     async def test_bypass_defer_routes_to_retry_not_human(self, monkeypatch) -> None:
-        """Bypass mode: defer outcome uses the retry sentinel instead of
-        interrupting the human relay."""
+        """Bypass mode: defer outcome renders the honest bypass sentinel
+        instead of interrupting the human relay."""
         captured = _stub_interrupt(monkeypatch, {"answers": ["human says X"]})
         _stub_writer(monkeypatch)
         veritas = _Veritas(_schema(defer=True, rationale="no evidence"))
@@ -670,11 +719,11 @@ class TestBypassMode:
         # No human interrupt in bypass mode.
         assert captured == []
         tool_msg = next(m for m in result["messages"] if isinstance(m, ToolMessage))
-        assert "(retry)" in tool_msg.content
+        assert "bypass mode: unanswered" in tool_msg.content
 
     @pytest.mark.asyncio
     async def test_bypass_low_confidence_routes_to_retry(self, monkeypatch) -> None:
-        """Bypass mode: low-confidence outcome uses the retry sentinel."""
+        """Bypass mode: low-confidence outcome uses the honest bypass sentinel."""
         captured = _stub_interrupt(monkeypatch, {"answers": []})
         _stub_writer(monkeypatch)
         veritas = _Veritas(_schema(["maybe"], confidence=0.1))
@@ -682,11 +731,11 @@ class TestBypassMode:
         result = await _gate(veritas).aafter_model(state, _bypass_runtime(human=True))
         assert captured == []
         tool_msg = next(m for m in result["messages"] if isinstance(m, ToolMessage))
-        assert "(retry)" in tool_msg.content
+        assert "bypass mode: unanswered" in tool_msg.content
 
     @pytest.mark.asyncio
     async def test_bypass_veritas_exception_routes_to_retry(self, monkeypatch) -> None:
-        """Bypass mode: veritas exception uses the retry sentinel."""
+        """Bypass mode: veritas exception uses the honest bypass sentinel."""
         captured = _stub_interrupt(monkeypatch, {"answers": []})
         _stub_writer(monkeypatch)
         veritas = _Veritas(RuntimeError("llm down"))
@@ -694,7 +743,7 @@ class TestBypassMode:
         result = await _gate(veritas).aafter_model(state, _bypass_runtime(human=True))
         assert captured == []
         tool_msg = next(m for m in result["messages"] if isinstance(m, ToolMessage))
-        assert "(retry)" in tool_msg.content
+        assert "bypass mode: unanswered" in tool_msg.content
 
     @pytest.mark.asyncio
     async def test_bypass_confident_answer_inlined(self, monkeypatch) -> None:

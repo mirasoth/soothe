@@ -109,21 +109,78 @@ def _ledger_direct_eligible(
 ) -> bool:
     """Declarative structural gates for `ledger_direct` (no content heuristics)."""
     rules = _rules(completion_rules)
-    if failed_steps != 0 or total_steps > rules.simple_ledger_direct_max_steps:
+
+    # Eval steps are coverage-audit rides-along (ROOT_EVAL inserts them with
+    # parent_step_id=root.id and no dependencies); they must not count as
+    # deliverable steps in any structural gate.
+    nodes: dict[str, Any] | None = None
+    non_eval: dict[str, Any] = {}
+    effective_total_steps = total_steps
+    effective_tool_calls = last_wave_tool_call_count
+    if dag_nodes is not None:
+        raw_nodes = dag_nodes.nodes if hasattr(dag_nodes, "nodes") else dag_nodes
+        nodes = raw_nodes or {}
+        non_eval = {cid: n for cid, n in nodes.items() if getattr(n, "kind", "") != "eval"}
+        eval_nodes = {cid: n for cid, n in nodes.items() if getattr(n, "kind", "") == "eval"}
+        effective_total_steps = len(non_eval)
+
+        if nodes and not non_eval:
+            # No deliverable step ever completed — passthrough would surface
+            # audit verdict prose as the goal report.
+            logger.info("LedgerDirect: no non-eval steps in DAG → synthesize")
+            return False
+
+        eval_ids = set(eval_nodes)
+        if any(
+            eval_ids.intersection(getattr(n, "dependencies", []) or []) for n in non_eval.values()
+        ):
+            logger.info("LedgerDirect: step depends on eval step → synthesize")
+            return False
+
+        last_iteration = max(
+            (getattr(n, "plan_iteration", 0) or 0 for n in nodes.values()),
+            default=0,
+        )
+        eval_tool_calls = sum(
+            int(getattr(n.execution, "tool_call_count", 0) or 0)
+            for n in eval_nodes.values()
+            if (getattr(n, "plan_iteration", 0) or 0) == last_iteration
+            and getattr(n, "execution", None) is not None
+        )
+        effective_tool_calls = max(0, last_wave_tool_call_count - eval_tool_calls)
+
+    if failed_steps != 0:
+        logger.info("LedgerDirect: failed_steps=%d → synthesize", failed_steps)
+        return False
+    if effective_total_steps > rules.simple_ledger_direct_max_steps:
+        logger.info(
+            "LedgerDirect: total_steps=%d > max=%d → synthesize",
+            effective_total_steps,
+            rules.simple_ledger_direct_max_steps,
+        )
         return False
 
-    if dag_nodes is not None:
-        if not _is_linear_chain(dag_nodes, max_depth=rules.linear_chain_max_depth):
+    if nodes is not None:
+        if not _is_linear_chain(non_eval, max_depth=rules.linear_chain_max_depth):
+            logger.info(
+                "LedgerDirect: DAG not a linear chain (%d steps, eval excluded) → synthesize",
+                len(non_eval),
+            )
             return False
     elif chain_depth > rules.linear_chain_max_depth:
+        logger.info(
+            "LedgerDirect: chain_depth=%d > max=%d → synthesize",
+            chain_depth,
+            rules.linear_chain_max_depth,
+        )
         return False
 
     if rules.ledger_direct_max_tool_calls > 0 and (
-        last_wave_tool_call_count > rules.ledger_direct_max_tool_calls
+        effective_tool_calls > rules.ledger_direct_max_tool_calls
     ):
         logger.info(
             "LedgerDirect: tool_calls=%d > max=%d → synthesize",
-            last_wave_tool_call_count,
+            effective_tool_calls,
             rules.ledger_direct_max_tool_calls,
         )
         return False

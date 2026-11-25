@@ -7,7 +7,12 @@ from datetime import UTC, datetime
 from typing import Any
 
 from soothe.events import STRANGE_LOOP_CONTEXT_COMPACTED
+from soothe.sloop.clarification.approval_options import (
+    is_approve_answer,
+    is_remember_answer,
+)
 from soothe.sloop.clarification.detector import ClarificationDetector
+from soothe.sloop.clarification.dynamic_rules import remember_record
 from soothe.sloop.clarification.origins import (
     ORIGIN_COVERAGE_GATE,
     ORIGIN_EXECUTE,
@@ -389,6 +394,7 @@ async def _record_and_emit_step_completed(
         "tool_call_count": result.tool_call_count,
         "subgraph_tool_call_count": result.subgraph_tool_call_count,
         "total_tokens_used": state.total_tokens_used,
+        "token_usage_source": state.token_usage_source(),
         "retry_attempt": result.retry_attempt,
         "recovered_by_retry": result.recovered_by_retry,
         "prior_attempts_tool_calls": result.prior_attempts_tool_calls,
@@ -615,30 +621,51 @@ async def node_execute(ctx: LoopRuntimeContext, state_dict: dict[str, Any]) -> d
                     ans = answer_from_state(ans_state)
                     resume_answer_payload.update(build_clarification_resume_payload(req, ans))
                     origin_node = str(req_state.get("origin_node", ""))
-                    # IG-774: record a human tool_approval approval so the agent's
-                    # retry of the same action auto-approves instead of re-escalating.
+                    # IG-774 / IG-LOOP-018: record a human tool_approval
+                    # approval so the agent's retry of the same action
+                    # auto-approves instead of re-escalating. One record per
+                    # (action_request, answer) pair — only tools whose own
+                    # answer is approve-family mint a grant (a batched
+                    # [approve, reject] must not grant the rejected tool).
+                    # Remember tokens ("Approve & remember") mint the
+                    # generalized record (command prefix / parent directory)
+                    # so the same class of action never re-asks in this loop.
                     if (
                         origin_node == ORIGIN_TOOL_APPROVAL
                         and ans.source == "human"
                         and ans.answers
-                        and str(ans.answers[0]).strip().lower() == "approve"
+                        and is_approve_answer(str(ans.answers[0]))
                     ):
                         req_metadata = req_state.get("metadata") or {}
                         if isinstance(req_metadata, dict):
-                            for ar in req_metadata.get("action_requests") or []:
-                                if not isinstance(ar, dict):
+                            action_requests = [
+                                ar
+                                for ar in (req_metadata.get("action_requests") or [])
+                                if isinstance(ar, dict)
+                            ]
+                            for ar, answer in zip(
+                                action_requests,
+                                list(ans.answers) + [str(ans.answers[0])],
+                            ):
+                                if not is_approve_answer(str(answer)):
                                     continue
-                                rec = approval_record(
-                                    str(ar.get("name") or ""),
-                                    ar.get("args") or {},
-                                )
+                                ar_args = ar.get("args") or {}
+                                if is_remember_answer(str(answer)):
+                                    rec = remember_record(
+                                        str(ar.get("name") or ""), ar_args
+                                    ) or approval_record(str(ar.get("name") or ""), ar_args)
+                                else:
+                                    rec = approval_record(str(ar.get("name") or ""), ar_args)
                                 if rec is not None and rec not in current_allowlist:
                                     current_allowlist.append(rec)
                                     allowlist_dirty = True
                                     logger.info(
-                                        "[execute] recorded loop allowlist signature "
+                                        "[execute] recorded loop allowlist %s "
                                         "tool=%s for tool_approval approval",
-                                        rec["tool"],
+                                        "prefix/dir grant"
+                                        if is_remember_answer(str(answer))
+                                        else "signature",
+                                        rec.get("tool"),
                                     )
                         # Record a rule-level override when the human approved a
                         # safety-escalated action so the same rule does not

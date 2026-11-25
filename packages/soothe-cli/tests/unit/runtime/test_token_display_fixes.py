@@ -130,7 +130,9 @@ def test_backend_completed_event_applies_authoritative_total() -> None:
     applied: list[tuple[int, str]] = []
     adapter = SimpleNamespace(
         _token_event_trace=TokenEventTrace(),
-        _apply_authoritative_loop_tokens=lambda total, source: applied.append((total, source)),
+        _apply_authoritative_loop_tokens=lambda total, source, token_source="": applied.append(
+            (total, source)
+        ),
     )
     _apply_backend_loop_tokens_event(
         adapter,
@@ -139,3 +141,21 @@ def test_backend_completed_event_applies_authoritative_total() -> None:
     )
     assert applied == [(640, "completed")]
     assert adapter._token_event_trace.completed_with_total_field == 1
+
+
+def test_backend_event_forwards_token_usage_source() -> None:
+    from soothe_cli.tui.textual_adapter import _apply_backend_loop_tokens_event
+
+    applied: list[tuple[int, str, str]] = []
+    adapter = SimpleNamespace(
+        _token_event_trace=TokenEventTrace(),
+        _apply_authoritative_loop_tokens=lambda total, source, token_source="": applied.append(
+            (total, source, token_source)
+        ),
+    )
+    _apply_backend_loop_tokens_event(
+        adapter,
+        {"total_tokens_used": 347, "token_usage_source": "estimated"},
+        source="plan_phase",
+    )
+    assert applied == [(347, "plan_phase", "estimated")]

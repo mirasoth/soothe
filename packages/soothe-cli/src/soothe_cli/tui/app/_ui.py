@@ -167,16 +167,28 @@ class _UIMixin:
         goal_run_tokens: int,
         *,
         source: str = "backend",
+        token_source: str = "",
     ) -> None:
-        """Merge a backend per-goal cumulative total into the live counter."""
+        """Merge a backend per-goal cumulative total into the live counter.
+
+        ``token_source`` is the provenance the backend attached to the total:
+        "estimated" means at least one wave contributed content-based
+        estimates, so the display keeps the approximate marker ("N+ tokens").
+        Terminal ``completed`` merges are forced (a lower authoritative total
+        is a correction, not stale data), while mid-turn merges stay
+        monotonic.
+        """
         from soothe_cli.runtime.token_usage import coerce_total_tokens_used
 
         goal_total = coerce_total_tokens_used(goal_run_tokens)
         self._ensure_loop_token_scope(self._lc_loop_id)
         previous_goal = self._loop_goal_run_tokens
-        applied = goal_total > previous_goal
+        applied = source == "completed" or goal_total > previous_goal
         if applied:
             self._loop_goal_run_tokens = goal_total
+        if token_source == "estimated":
+            # Sticky: totals mixing estimates with real usage stay approximate.
+            self._tokens_approximate = True
         self._refresh_token_displays()
         trace = self._token_event_trace()
         if trace is not None:

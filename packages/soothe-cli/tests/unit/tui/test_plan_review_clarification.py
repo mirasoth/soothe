@@ -84,6 +84,21 @@ def test_tool_approval_wire_content_multi_tool_not_refinement() -> None:
     ) == ("Tool approval: Edit — drop the --force")
 
 
+def test_tool_approval_wire_content_remember() -> None:
+    """IG-LOOP-018: the remember action is a first-class tool-approval
+    decision — header format matches plain approve, never refinement."""
+    from soothe_cli.tui.app._execution import clarification_wire_content
+
+    assert clarification_wire_content(["Approve & remember", ""], origin_node="tool_approval") == (
+        "Tool approval: Approve & remember"
+    )
+    # Multi-tool batch mixing remember with a plain decision.
+    assert (
+        clarification_wire_content(["Approve & remember", "Reject"], origin_node="tool_approval")
+        == "A1: Approve & remember | A2: Reject"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Widget fixtures
 # ---------------------------------------------------------------------------
@@ -786,6 +801,30 @@ async def test_multi_tool_collapsed_history_shows_per_tool_rows() -> None:
         rows = [str(r.render()) for r in w.query(".saq-answered-row")]
         assert any("run_command" in r and "Approved" in r for r in rows)
         assert any("write_file" in r and "Rejected" in r for r in rows)
+
+
+def test_widget_to_message_serializes_multi_tool_remember() -> None:
+    """IG-LOOP-018: an 'Approve & remember' decision serializes with the
+    loop-grant marker instead of collapsing into a plain approve."""
+    widget = _make_multi_tool_widget(id="clarify-tool-multi-remember")
+    widget._submitted = True
+    widget._answers = ["Approve & remember", "Reject"]
+    data = message_from_widget(widget)
+    assert "run_command approved (remember)" in data.content
+    assert "write_file rejected" in data.content
+
+
+def test_widget_to_message_serializes_single_tool_remember() -> None:
+    """Single-tool remember approval notes the loop grant in the content."""
+    widget = _make_multi_tool_widget(
+        id="clarify-tool-single-remember",
+        questions=[_multi_tool_questions()[0]],
+    )
+    widget._submitted = True
+    widget._answers = ["Approve & remember"]
+    data = message_from_widget(widget)
+    assert "loop grant recorded" in data.content
+    assert data.plan_review_action == "Approve & remember"
 
 
 def test_widget_to_message_serializes_multi_tool_history() -> None:

@@ -695,6 +695,8 @@ class StructuredAskUserWidget(Vertical):
                         action = self._answers[i] if i < len(self._answers) else ""
                         if action == "Approve":
                             display = "Approved"
+                        elif action == "Approve & remember":
+                            display = "Approved (remember)"
                         elif action == "Reject":
                             display = "Rejected"
                         else:
@@ -709,9 +711,12 @@ class StructuredAskUserWidget(Vertical):
                 answer = self._answers[0] if self._answers else ""
                 comments = self._answers[1] if len(self._answers) > 1 else ""
                 display_action = answer
-                # Tool-approval "Approve" reads as past-tense "Approved"
+                # Tool-approval "Approve" reads as past-tense "Approved";
+                # "Approve & remember" marks the loop-scoped grant.
                 if self._is_tool_approval and answer == "Approve":
                     display_action = "Approved"
+                elif self._is_tool_approval and answer == "Approve & remember":
+                    display_action = "Approved (remember)"
                 shows_comments = comments and answer in ("Refine", "Edit")
                 summary = f"{display_action}: {comments}" if shows_comments else display_action
                 yield Static(
@@ -1318,6 +1323,8 @@ class StructuredAskUserWidget(Vertical):
                         action = self._answers[i] if i < len(self._answers) else ""
                         if action == "Approve":
                             display = "Approved"
+                        elif action == "Approve & remember":
+                            display = "Approved (remember)"
                         elif action == "Reject":
                             display = "Rejected"
                         else:
@@ -1336,6 +1343,8 @@ class StructuredAskUserWidget(Vertical):
                 display_action = action
                 if self._is_tool_approval and action == "Approve":
                     display_action = "Approved"
+                elif self._is_tool_approval and action == "Approve & remember":
+                    display_action = "Approved (remember)"
                 shows_comments = comments and action in ("Refine", "Edit")
                 summary = f"{display_action}: {comments}" if shows_comments else display_action
                 box.mount(

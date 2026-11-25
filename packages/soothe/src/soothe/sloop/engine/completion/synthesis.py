@@ -93,9 +93,13 @@ class SynthesisGenerator:
         former two-phase classify→generate into a single LLM call.
 
         The scratchpad stream is wrapped in `asyncio.timeout` bounded by
-        `dispatch_idle_seconds`; the standard stream is guarded by an idle
-        watchdog with one fresh-stream re-dispatch. Both fall back to
-        `generate_user_fallback_summary` on persistent stalls.
+        `dispatch_idle_seconds` (total-timeout semantics); the standard
+        stream is guarded by an idle watchdog bounded by
+        `goal_synthesis_idle_seconds` (a pure first-token/inter-chunk
+        budget — synthesis runs no tools) with one fresh-stream
+        re-dispatch; pinning a non-fast synthesis role without setting
+        that field keeps the dispatch deadlock budget instead. Both fall
+        back to `generate_user_fallback_summary` on persistent stalls.
 
         Uses isolated checkpoint thread to prevent replay of parent StrangeLoop
         history.
@@ -196,7 +200,7 @@ class SynthesisGenerator:
                 )
                 return
         else:
-            idle_seconds = self._dispatch_idle_seconds()
+            idle_seconds = self._synthesis_idle_seconds()
             if idle_seconds <= 0:
                 with direct_llm_token_call_scope():
                     async for chunk in self.llm.astream(messages, config=graph_config):
@@ -462,10 +466,27 @@ class SynthesisGenerator:
             return
 
     def _dispatch_idle_seconds(self) -> float:
-        """Return the dispatch idle timeout used by synthesis stream guards."""
+        """Return the total timeout used by the scratchpad stream guard."""
         if self._soothe_config is None:
             return 0.0
         return max(0.0, float(self._soothe_config.agent.loop.dispatch_idle_seconds))
+
+    def _synthesis_idle_seconds(self) -> float:
+        """Return the synthesis stream idle budget (0 disables the guard).
+
+        Explicitly configured values always win. Otherwise the fast role uses
+        the configured default, while heavier roles keep the deadlock-scale
+        budget: those models can legitimately take minutes to emit the first
+        token, and abandoning them would replace the report with a stub.
+        """
+        if self._soothe_config is None:
+            return 0.0
+        loop_cfg = self._soothe_config.agent.loop
+        if "goal_synthesis_idle_seconds" in loop_cfg.model_fields_set:
+            return max(0.0, float(loop_cfg.goal_synthesis_idle_seconds))
+        if loop_cfg.goal_synthesis_model_role != "fast":
+            return self._dispatch_idle_seconds()
+        return max(0.0, float(loop_cfg.goal_synthesis_idle_seconds))
 
     async def _yield_fallback_chunk(
         self,

@@ -7,7 +7,7 @@ keep the execution mixin focused on agent execution and message routing.
 from __future__ import annotations
 
 _PLAN_REVIEW_ACTIONS = frozenset({"Approve", "Reject", "Refine"})
-_TOOL_APPROVAL_ACTIONS = frozenset({"Approve", "Reject", "Edit"})
+_TOOL_APPROVAL_ACTIONS = frozenset({"Approve", "Reject", "Edit", "Approve & remember"})
 
 
 def clarification_wire_content(answers: list[str], *, origin_node: str = "") -> str:

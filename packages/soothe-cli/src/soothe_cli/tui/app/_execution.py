@@ -383,13 +383,8 @@ class _ExecutionMixin:
 
         Reads `agent.clarification.default_mode` from the daemon config via
         a one-shot WebSocket RPC. Falls back to `"auto"` when the daemon is
-        unreachable, the section is missing, or the value is not `auto`.
-        A daemon-configured `manual` default clamps to `auto` (manual is no
-        longer a user-selectable composer mode; the auto→manual fallback
-        card is driven by the runtime clarification event instead).
-
-        Returns:
-            Normalized composer mode (`"auto"`).
+        unreachable or the section is missing. `manual` is a valid composer
+        mode and is returned as-is.
         """
         from soothe_cli.tui.composer_mode import normalize_composer_mode
 
@@ -422,9 +417,8 @@ class _ExecutionMixin:
 
         When the operator did not pass `--mode` explicitly, the TUI badge
         reflects `agent.clarification.default_mode` from the daemon config
-        rather than a hard-coded `auto`. A daemon default of `manual` clamps
-        to `auto` (manual is no longer user-selectable; its fallback card is
-        driven by the runtime clarification event). This runs once after the
+        rather than a hard-coded `auto`. `manual` is a valid composer mode
+        and is applied as-is. This runs once after the
         daemon is ready so subsequent turns send the correct
         `clarification_mode` wire field.
 

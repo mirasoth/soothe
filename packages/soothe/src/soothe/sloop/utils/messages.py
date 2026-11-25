@@ -121,21 +121,23 @@ def last_step_output_content(
     state: LoopState,
     goal_steps: dict[str, Any] | Any | None = None,
 ) -> str:
-    """Return AI text from the last completed step's execution output.
+    """Return AI text from the latest completed deliverable step.
 
-    Used by goal completion ``LEDGER_DIRECT`` passthrough to surface the
+    Used by goal completion `LEDGER_DIRECT` passthrough to surface the
     actual step deliverable (e.g. a design draft) rather than just the last
-    ledger message. Falls back to ``last_ledger_ai_content`` when the step
-    execution output is empty.
+    ledger message. Coverage-audit steps (`kind="eval"`) are skipped: they
+    carry a verdict, not the deliverable. When no non-eval step exists, the
+    latest eval step is used. Falls back to `last_ledger_ai_content` when the
+    selected step has no AI output.
 
     Args:
-        state: LoopState with populated ``loop_messages`` (for fallback).
-        goal_steps: ``StepDAG.nodes`` dict (or a ``StepDAG`` with a ``nodes``
-            attribute). When None, returns empty string (caller falls back).
+        state: LoopState with populated `loop_messages` (for fallback).
+        goal_steps: `StepDAG.nodes` dict (or a `StepDAG` with a `nodes`
+            attribute). When None, returns the ledger fallback.
 
     Returns:
-        Concatenated AI message text from the last completed step's
-        ``execution.output_messages``, or ``last_ledger_ai_content`` if empty.
+        Concatenated AI message text from the selected step's
+        `execution.output_messages`, or `last_ledger_ai_content` if empty.
     """
     if goal_steps is not None and hasattr(goal_steps, "nodes"):
         goal_steps = goal_steps.nodes
@@ -154,7 +156,12 @@ def last_step_output_content(
         key=lambda n: (getattr(n, "plan_iteration", 0), getattr(n, "id", "")),
         reverse=True,
     )
-    last = completed[0]
+    # Prefer the latest non-eval completed step: eval steps carry a coverage
+    # verdict, not the user-facing deliverable.
+    last = next(
+        (n for n in completed if getattr(n, "kind", "") != "eval"),
+        completed[0],
+    )
 
     output_msgs = getattr(last.execution, "output_messages", None) or []
     parts: list[str] = []
