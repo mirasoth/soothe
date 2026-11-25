@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from soothe_cli.display import theme
 from soothe_cli.display.preview_limits import (
     STEP_CARD_REASONING_PREVIEW_LINES,
 )
@@ -133,6 +134,19 @@ def test_render_reasoning_lines_have_no_bullet_prefix() -> None:
         stripped = ln.strip()
         assert stripped.startswith(("First thought", "Second thought"))
         assert not stripped.startswith(bullet)
+
+
+def test_thinking_tone_has_no_italic() -> None:
+    """The thinking tone is muted-foreground only — italic never applied.
+
+    tmux terminals without `sitm` render italic as reverse video, which paints
+    a solid background block behind the whole pane (user-reported).
+    """
+    from soothe_cli.tui.widgets.messages.cognition_step_activity import _thinking_tone
+
+    tone = _thinking_tone(theme.DARK_COLORS)
+    assert "italic" not in tone.lower()
+    assert tone == theme.DARK_COLORS.muted
 
 
 def test_render_reasoning_keeps_latest_lines() -> None:

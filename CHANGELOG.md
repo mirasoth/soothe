@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Goal-completion reports stream with the fast model role by default (`agent.loop.goal_synthesis_model_role: fast`), bounded by `goal_synthesis_idle_seconds` (default 60s, `0` disables).
 - Step-card todo panes render every item with no overflow cap — live progress is always visible instead of hiding the running item behind a `+N more` row (the tools and files panes keep their preview caps).
+- Step-card thinking pane is a plain text window (default 10 lines, up from 8): reasoning lines render verbatim with no bullet prefix and no per-line character cap, showing only the latest lines; the pane-width layout bound still clips lines wider than the terminal.
+- The thinking pane no longer styles reasoning as italic: tmux terminals without `sitm` render italic as reverse video, painting a solid background block behind the whole pane. The muted foreground alone distinguishes the pane.
 - Multi-tool approval gates collect one explicit decision per pending tool call, with a per-tool recap before submitting; hydrated transcripts keep the per-tool decisions.
 
 ### Fixed

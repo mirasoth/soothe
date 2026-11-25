@@ -902,8 +902,13 @@ def _bold(color: str) -> str:
 
 
 def _thinking_tone(colors: Any) -> str:
-    """Italic muted tone for captured reasoning (draft-grade content)."""
-    return f"{colors.muted} italic"
+    """Muted foreground for captured reasoning (draft-grade content).
+
+    Deliberately not italic: several tmux/terminfo combinations lack `sitm`
+    and render italic as reverse video — a solid background block behind the
+    whole pane. The muted gray alone distinguishes the pane.
+    """
+    return colors.muted
 
 
 def _pane_header_line(
@@ -1040,7 +1045,8 @@ class StepActivityTree:
     overflow rule (`· +N more edits` leads). The todo pane has no overflow
     row: every item renders, so live progress is always visible. The thinking
     pane is a plain text window: the latest reasoning lines render verbatim
-    in an italic muted tone (no bullets, no per-line cap).
+    in a muted tone (no bullets, no per-line cap, no italic — italic degrades
+    to a background block in tmux terminals without italic support).
     """
 
     @staticmethod
