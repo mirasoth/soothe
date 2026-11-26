@@ -4,7 +4,9 @@ Tests verify:
     - open() creates workspace directories and components.
     - get() returns open workspaces.
     - close() cleans up.
-    - open_from_uri() uses the provided backend.
+    - open() loads the remote manifest (F-L2).
+    - content_backend_factory wiring and failure handling.
+    - materialize-content security invariants through the manager path.
 """
 
 from __future__ import annotations
@@ -21,10 +23,7 @@ from soothe.workspace.sync.manager import WorkspaceManager
 @pytest.fixture
 def manager(tmp_path: Path) -> WorkspaceManager:
     """Fresh workspace manager."""
-    return WorkspaceManager(
-        workspaces_root=tmp_path / "workspaces",
-        cas_root=tmp_path / "cas",
-    )
+    return WorkspaceManager(workspaces_root=tmp_path / "workspaces")
 
 
 @pytest.fixture
@@ -76,20 +75,19 @@ class TestWorkspaceManager:
         assert manager.get("run-001") is None
         assert manager.get("run-002") is None
 
-    async def test_open_from_uri(
-        self, manager: WorkspaceManager, backend: FsspecSyncBackend
+    async def test_open_without_backend_warns_local_only(
+        self, manager: WorkspaceManager, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """open_from_uri() uses the provided backend."""
-        ws = await manager.open_from_uri("run-001", backend=backend)
-        assert ws._backend is backend
+        """open() without a backend logs the local-only fallback."""
+        with caplog.at_level("WARNING"):
+            ws = await manager.open("run-001")
+        assert "without a remote backend" in caplog.text
+        assert ws._backend is None
         await ws.close()
 
     async def test_open_creates_default_dirs_only(self, tmp_path: Path) -> None:
         """Without watched_subdirs, only the engine defaults are created."""
-        manager = WorkspaceManager(
-            workspaces_root=tmp_path / "workspaces",
-            cas_root=tmp_path / "cas",
-        )
+        manager = WorkspaceManager(workspaces_root=tmp_path / "workspaces")
         ws = await manager.open("run-001")
         assert (ws.root / "deliverables").exists() is False
         assert ws._dirty_tracker.watched_subdirs == ("input", "working", "output")
@@ -99,7 +97,6 @@ class TestWorkspaceManager:
         """Configured watched subdirs are pre-created and reach the tracker."""
         manager = WorkspaceManager(
             workspaces_root=tmp_path / "workspaces",
-            cas_root=tmp_path / "cas",
             watched_subdirs=("input", "working", "output", "deliverables"),
         )
         ws = await manager.open("run-001")
@@ -113,52 +110,20 @@ class TestWorkspaceManager:
         await ws.close()
 
     async def test_open_with_unsafe_watched_subdirs_fails_loud(self, tmp_path: Path) -> None:
-        """Unsafe watched subdir entries raise at open (bad config fails fast)."""
-        manager = WorkspaceManager(
-            workspaces_root=tmp_path / "workspaces",
-            cas_root=tmp_path / "cas",
-            watched_subdirs=("../escape",),
-        )
-        with pytest.raises(ValueError, match="unsafe watched subdir"):
-            await manager.open("run-001")
+        """Unsafe watched subdir entries raise at construction (bad config fails fast)."""
+        with pytest.raises(ValueError, match="safe path component"):
+            WorkspaceManager(
+                workspaces_root=tmp_path / "workspaces",
+                watched_subdirs=("../escape",),
+            )
 
 
 # ---------------------------------------------------------------------------
-# F-L1 wiring + consumer contract (flowjet call sequence)
+# F-L2 wiring + consumer contract (flowjet call sequence)
 # ---------------------------------------------------------------------------
 
 
 class TestLifecycleWiring:
-    """F-L1 regression: dirty events reach the debouncer via the tracker."""
-
-    async def test_dirty_event_fires_debounced_checkpoint(
-        self, tmp_path: Path, backend: FsspecSyncBackend
-    ) -> None:
-        """A tracked write produces a checkpoint without consumer glue."""
-        manager = WorkspaceManager(
-            workspaces_root=tmp_path / "workspaces",
-            cas_root=tmp_path / "cas",
-            backend=backend,
-        )
-        ws = await manager.open("run-wire")
-        await ws.start_tracking()
-
-        (ws.root / "output" / "note.md").write_text("written mid-turn")
-        ws._dirty_tracker.mark_dirty("output/note.md")
-
-        # Debounce window (5 s default) — wait past it.
-        import asyncio
-
-        for _ in range(200):
-            if await backend.get_manifest("run-wire") is not None:
-                break
-            await asyncio.sleep(0.05)
-        await ws.close()
-
-        manifest = await backend.get_manifest("run-wire")
-        assert manifest is not None
-        assert any(e.path == "output/note.md" for e in manifest.artifacts)
-
     async def test_open_initializes_manifest_state(
         self, tmp_path: Path, backend: FsspecSyncBackend
     ) -> None:
@@ -175,27 +140,25 @@ class TestLifecycleWiring:
         )
         manager = WorkspaceManager(
             workspaces_root=tmp_path / "workspaces",
-            cas_root=tmp_path / "cas",
             backend=backend,
         )
         ws = await manager.open("run-init")
-        assert ws._checkpoint_mgr is not None
-        assert ws._checkpoint_mgr.manifest is not None
-        assert ws._checkpoint_mgr.manifest.version == 7
+        assert ws.manifest is not None
+        assert ws.manifest.version == 7
+        assert [e.path for e in ws.manifest.artifacts] == ["output/old.md"]
         await ws.close()
 
-    async def test_open_from_uri_does_not_mutate_default_backend(
+    async def test_open_without_manifest_starts_clean(
         self, tmp_path: Path, backend: FsspecSyncBackend
     ) -> None:
-        """F-C10: open_from_uri keeps the manager's default backend intact."""
+        """A run with no prior commits opens with manifest=None."""
         manager = WorkspaceManager(
             workspaces_root=tmp_path / "workspaces",
-            cas_root=tmp_path / "cas",
+            backend=backend,
         )
-        assert manager._backend is None
-        await manager.open_from_uri("run-uri", backend=backend)
-        assert manager._backend is None
-        await manager.close("run-uri")
+        ws = await manager.open("run-fresh")
+        assert ws.manifest is None
+        await ws.close()
 
     async def test_materialize_content_breaks_escaping_broken_symlink(self, tmp_path: Path) -> None:
         """F-C14: a broken symlink pointing outside cannot escape the root.
@@ -207,10 +170,7 @@ class TestLifecycleWiring:
         outside = tmp_path / "outside.md"
         assert not outside.exists()
 
-        manager = WorkspaceManager(
-            workspaces_root=tmp_path / "workspaces",
-            cas_root=tmp_path / "cas",
-        )
+        manager = WorkspaceManager(workspaces_root=tmp_path / "workspaces")
         ws = await manager.open("run-sym")
 
         target_dir = ws.root / "output"
@@ -240,10 +200,7 @@ class TestLifecycleWiring:
 
     async def test_materialize_content_skips_invalid_remote_keys(self, tmp_path: Path) -> None:
         """Remote listings with traversal keys never reach path joining."""
-        manager = WorkspaceManager(
-            workspaces_root=tmp_path / "workspaces",
-            cas_root=tmp_path / "cas",
-        )
+        manager = WorkspaceManager(workspaces_root=tmp_path / "workspaces")
         ws = await manager.open("run-badkey")
 
         escaped = tmp_path / "escaped.txt"
@@ -268,32 +225,19 @@ class TestConsumerContract:
     """The flowjet call sequence against the full component stack."""
 
     async def test_full_turn_round_trip(self, tmp_path: Path) -> None:
-        """open → recover → materialize_content → materialize → track →
-        write → checkpoint → close, then a fresh open recovers it all."""
-        import hashlib
-
-        from soothe.workspace.state.sqlite import SqliteWorkspaceStateStore
-        from soothe.workspace.sync.workspace_sync import Manifest, ManifestEntry
-
+        """open → materialize_content → track → write → checkpoint → close,
+        then a fresh open re-materializes it all from the content tree."""
         fs = MemoryFileSystem()
         backend = FsspecSyncBackend(fs=fs, root="/ws-sync", max_workers=2)
         content_fs = MemoryFileSystem()
         scratch = FsspecSyncBackend(fs=content_fs, root="/ws-content", max_workers=2)
         try:
-            # Seed a prior content-tree file (materials) and a resource blob.
+            # Seed a prior content-tree file (materials).
             await scratch.put_content_file("input/material.txt", b"prior material")
-            await backend.put_blob(hashlib.sha256(b"brief").hexdigest(), b"brief")
-
-            def _state_store_factory(loop_id: str, workspace_dir: Path):
-                return SqliteWorkspaceStateStore(
-                    db_path=workspace_dir / ".workspace" / "state.db", loop_id=loop_id
-                )
 
             manager = WorkspaceManager(
                 workspaces_root=tmp_path / "workspaces",
-                cas_root=tmp_path / "cas",
                 backend=backend,
-                state_store_factory=_state_store_factory,
                 # Per-open content backend (workspace close releases its
                 # thread pool), all sharing one content filesystem.
                 content_backend_factory=lambda run_id: FsspecSyncBackend(
@@ -303,52 +247,29 @@ class TestConsumerContract:
 
             # --- first session (the agent turn) ---
             ws = await manager.open("run-rt")
-            payload = await ws.recover()
-            assert payload is None  # fresh run
 
             fetched = await ws.materialize_content(reconcile=True)
             assert fetched == 1
             assert (ws.root / "input" / "material.txt").read_bytes() == b"prior material"
 
-            await ws.materialize(
-                Manifest(
-                    run_id="run-rt",
-                    resources=[
-                        ManifestEntry(
-                            path="brief.txt",
-                            sha256=hashlib.sha256(b"brief").hexdigest(),
-                            size=5,
-                        )
-                    ],
-                )
-            )
-            assert (ws.root / "input" / "brief.txt").read_bytes() == b"brief"
-
-            await ws.start_tracking()
+            ws.start_tracking()
             (ws.root / "output" / "report.md").write_text("final report")
             ws._dirty_tracker.mark_dirty("output/report.md")
 
-            ckpt = await ws.checkpoint()
-            assert ckpt == "run-rt-c000001"
+            version = await ws.checkpoint()
+            assert version == 1
             await manager.close("run-rt")
 
-            # Remote state: manifest + blob + payload (drained at close).
+            # Remote state: manifest committed + content tree carries the write.
             manifest = await backend.get_manifest("run-rt")
             assert manifest is not None
             assert any(e.path == "output/report.md" for e in manifest.artifacts)
-            assert await backend.get_checkpoint("run-rt-c000001") is not None
-            data = await backend.get_blob(hashlib.sha256(b"final report").hexdigest())
-            assert data == b"final report"
-
-            # Content mirror carries the write.
-            mirrored = await scratch.get_content_file("output/report.md")
-            assert mirrored == b"final report"
+            assert await scratch.get_content_file("output/report.md") == b"final report"
 
             # --- second session (restart) ---
             ws2 = await manager.open("run-rt")
-            payload2 = await ws2.recover()
-            assert payload2 is not None
-            assert "output/report.md" in {e.path for e in payload2.dirty_files}
+            assert ws2.manifest is not None
+            assert ws2.manifest.version == 1
             await ws2.materialize_content(reconcile=True)
             assert (ws2.root / "input" / "material.txt").read_bytes() == b"prior material"
             assert (ws2.root / "output" / "report.md").read_bytes() == b"final report"

@@ -15,8 +15,6 @@ DAEMON_LOOP_METADATA_KEYS = frozenset(
         # Resume-picker label (written once at first goal intake; not part of
         # StrangeLoopCheckpoint). Must survive full checkpoint replaces.
         "resume_topic",
-        # RFC-906: remote workspace sync source URI (for crash recovery).
-        "workspace_sync_source",
     }
 )
 

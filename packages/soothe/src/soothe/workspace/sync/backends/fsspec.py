@@ -3,23 +3,26 @@
 One adapter supports S3 (`s3fs`), GCS (`gcsfs`), Azure Blob (`adlfs`),
 local, and memory filesystems.  All fsspec calls are offloaded to a
 dedicated thread pool via `asyncio.to_thread()`.
+
+Under the content-authoritative representation (IG-CORE-010) the backend
+addresses two key spaces: the manifest root (``<root>/runs/<run_id>/
+manifest.json`` — engine commit records) and the plain content tree
+(``<root>/<relative workspace path>`` — authoritative file bytes).  A
+single backend instance typically serves ONE of the two roots; hosts pass
+a second, independently-rooted backend as the content backend.
 """
 
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from soothe.workspace.sync.errors import ConcurrentModificationError, IntegrityError
+from soothe.workspace.sync.errors import ConcurrentModificationError
 from soothe.workspace.sync.paths import validate_path_component, validate_relative_path
-from soothe.workspace.sync.workspace_sync import (
-    Artifact,
-    Manifest,
-)
+from soothe.workspace.sync.workspace_sync import Manifest
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -42,46 +45,10 @@ _S3_PUT_MAX_CONCURRENCY = 2
 # Range-GET size for streaming reads from s3 (same sizing rationale).
 _S3_RANGE_CHUNK_SIZE = 8 * 1024 * 1024  # 8 MiB
 
-
-def _hash_file(src: Path) -> str:
-    """Compute SHA-256 hex digest of a file (chunked, bounded memory).
-
-    Args:
-        src: File path.
-
-    Returns:
-        Hex-encoded SHA-256 digest.
-    """
-    h = hashlib.sha256()
-    with open(src, "rb") as f:
-        while True:
-            chunk = f.read(_STREAM_CHUNK_SIZE)
-            if not chunk:
-                break
-            h.update(chunk)
-    return h.hexdigest()
-
-
 # Filesystems whose writes require the parent directory to exist.
 # Object stores (s3/gs/az) create keys under implicit prefixes — calling
 # ``makedirs`` there only costs a bucket probe per write.
 _DIR_BEARING_PROTOCOLS = frozenset({"local", "file", "memory", "dir"})
-
-
-def _checkpoint_sort_key(checkpoint_id: str) -> tuple[str, int, str]:
-    """Sort key ordering checkpoint IDs by numeric sequence within a run.
-
-    Args:
-        checkpoint_id: Full checkpoint ID (``<run_id>-cNNNNNN``).
-
-    Returns:
-        Tuple of (run prefix, numeric sequence, raw ID).  IDs that do
-        not match the expected shape sort last, lexicographically.
-    """
-    run_id, _, seq = checkpoint_id.rpartition("-")
-    if run_id and seq.startswith("c") and seq[1:].isdigit():
-        return (run_id, int(seq[1:]), checkpoint_id)
-    return (checkpoint_id, -1, checkpoint_id)
 
 
 class FsspecSyncBackend:
@@ -90,13 +57,9 @@ class FsspecSyncBackend:
     Args:
         fs: An fsspec filesystem instance (e.g. `MemoryFileSystem`,
             `S3FileSystem`, `LocalFileSystem`).
-        root: Root path within the filesystem where all workspace sync
-            objects are stored.
+        root: Root path within the filesystem that all addressed keys
+            are stored under (manifest root OR content-tree root).
         max_workers: Thread pool size for I/O offloading.
-
-    Example:
-        >>> backend = FsspecSyncBackend(fs=MemoryFileSystem(), root="/ws")
-        >>> data = await backend.get_blob("abc123...")
     """
 
     def __init__(
@@ -128,37 +91,15 @@ class FsspecSyncBackend:
     # Path-layout mapper
     # ------------------------------------------------------------------
 
-    def _blob_path(self, sha256: str) -> str:
-        """Map a content hash to its storage path."""
-        validate_path_component(sha256, name="sha256")
-        return f"{self._root}/blobs/sha256/{sha256[:2]}/{sha256}"
-
     def _manifest_path(self, run_id: str) -> str:
         """Map a run ID to its manifest storage path."""
         validate_path_component(run_id, name="run_id")
         return f"{self._root}/runs/{run_id}/manifest.json"
 
-    def _checkpoint_dir(self, run_id: str) -> str:
-        """Map a run ID to its checkpoint directory."""
-        validate_path_component(run_id, name="run_id")
-        return f"{self._root}/runs/{run_id}/checkpoints"
-
-    def _checkpoint_path(self, checkpoint_id: str) -> str:
-        """Map a checkpoint ID to its storage path."""
-        validate_path_component(checkpoint_id, name="checkpoint_id")
-        if "-" in checkpoint_id:
-            run_id = checkpoint_id.rsplit("-", 1)[0]
-            validate_path_component(run_id, name="checkpoint_id (run prefix)")
-            seq = checkpoint_id.rsplit("-", 1)[1]
-            validate_path_component(seq, name="checkpoint_id (sequence)")
-        else:
-            run_id = checkpoint_id
-        return f"{self._root}/runs/{run_id}/checkpoints/{checkpoint_id}.json"
-
-    def _artifact_storage_path(self, artifact_path: str) -> str:
-        """Map an artifact relative path to its storage path."""
-        validated = validate_relative_path(artifact_path, name="artifact_path")
-        return f"{self._root}/artifacts/{validated}"
+    def _content_path(self, rel_path: str) -> str:
+        """Map a relative workspace path to its content-tree storage path."""
+        validated = validate_relative_path(rel_path, name="content_path")
+        return f"{self._root}/{validated}"
 
     def _ensure_parent_dir(self, path: str) -> None:
         """Create the parent directory for ``path`` when required.
@@ -177,7 +118,7 @@ class FsspecSyncBackend:
         self._ensure_parent_dir(path)
         self._fs.pipe(path, data)
 
-    def _stream_from_file(self, dest: str, src: Path, *, expected_sha256: str | None) -> None:
+    def _stream_from_file(self, dest: str, src: Path) -> None:
         """Copy a local file to ``dest`` with bounded memory.
 
         Runs as a single thread job.  The transfer uses
@@ -185,30 +126,13 @@ class FsspecSyncBackend:
         object stores can set Content-Length and use multipart upload
         (s3fs's ``open('wb')`` incremental writes send chunked
         Transfer-Encoding, which S3-compatible stores like Tencent COS
-        reject).  When ``expected_sha256`` is given the source is
-        hashed first (chunked local read) and a mismatch removes the
-        stored object and raises — a blob stored under a wrong hash
-        key would poison every future read of that key.
+        reject).
 
         Args:
             dest: Destination path on the filesystem.
             src: Local source file path.
-            expected_sha256: When provided, verify the content hashes
-                to this value.
-
-        Raises:
-            IntegrityError: On hash mismatch (stored object removed).
         """
         self._ensure_parent_dir(dest)
-        if expected_sha256 is not None:
-            actual = _hash_file(src)
-            if actual != expected_sha256:
-                from soothe.workspace.sync.errors import IntegrityError
-
-                raise IntegrityError(
-                    f"streamed content hash mismatch for {dest}: "
-                    f"expected {expected_sha256[:16]}..., got {actual[:16]}..."
-                )
         protocol = self._fs.protocol
         protocols = protocol if isinstance(protocol, (tuple, list)) else (protocol,)
         put_kwargs: dict[str, Any] = {}
@@ -228,62 +152,7 @@ class FsspecSyncBackend:
         )
 
     # ------------------------------------------------------------------
-    # Blob operations (content-addressed)
-    # ------------------------------------------------------------------
-
-    async def get_blob(self, sha256: str) -> bytes | None:
-        """Return blob content by hash, or `None` if absent."""
-        path = self._blob_path(sha256)
-        try:
-            return await self._to_thread(self._fs.cat, path)
-        except FileNotFoundError:
-            return None
-
-    async def put_blob(self, sha256: str, data: bytes) -> None:
-        """Store a blob.  Idempotent — no-op if the hash already exists.
-
-        Verifies content hash before storing.
-
-        Raises:
-            IntegrityError: If `data`'s actual SHA-256 does not match
-                `sha256`.
-        """
-        validate_path_component(sha256, name="sha256")
-        actual_hash = hashlib.sha256(data).hexdigest()
-        if actual_hash != sha256:
-            raise IntegrityError(
-                f"content hash mismatch for blob {sha256[:8]!r}: "
-                f"expected {sha256[:16]}..., got {actual_hash[:16]}..."
-            )
-
-        path = self._blob_path(sha256)
-        await self._to_thread(self._write_bytes, path, data)
-
-    async def put_blob_from_file(self, sha256: str, src: Path) -> None:
-        """Store a blob by streaming a local file.
-
-        The content hash is verified against the source file before
-        the transfer; the transfer itself uses ``fs.put`` (known
-        source size → Content-Length set, multipart for large files).
-
-        Args:
-            sha256: Expected content hash.
-            src: Local source file path.
-
-        Raises:
-            IntegrityError: If the source does not hash to `sha256`.
-        """
-        validate_path_component(sha256, name="sha256")
-        path = self._blob_path(sha256)
-        await self._to_thread(self._stream_from_file, path, src, expected_sha256=sha256)
-
-    async def head_blob(self, sha256: str) -> bool:
-        """Return whether a blob with this hash exists remotely."""
-        path = self._blob_path(sha256)
-        return await self._to_thread(self._fs.exists, path)
-
-    # ------------------------------------------------------------------
-    # Manifest operations (optimistic concurrency)
+    # Manifest operations (commit records, optimistic concurrency)
     # ------------------------------------------------------------------
 
     async def get_manifest(self, run_id: str) -> Manifest | None:
@@ -302,7 +171,7 @@ class FsspecSyncBackend:
         *,
         if_match: str | None = None,
     ) -> Manifest:
-        """Write or update the manifest for `run_id`.
+        """Write or update the manifest for `run_id` (the commit point).
 
         Args:
             run_id: Target run identifier.
@@ -335,94 +204,6 @@ class FsspecSyncBackend:
         data = manifest.model_dump_json().encode("utf-8")
         await self._to_thread(self._write_bytes, path, data)
         return manifest
-
-    # ------------------------------------------------------------------
-    # Checkpoint operations
-    # ------------------------------------------------------------------
-
-    async def list_checkpoints(self, run_id: str) -> list[str]:
-        """Return checkpoint IDs for `run_id`, ordered oldest-first."""
-        ckpt_dir = self._checkpoint_dir(run_id)
-        try:
-            entries = await self._to_thread(self._fs.ls, ckpt_dir)
-        except FileNotFoundError:
-            return []
-
-        ids: list[str] = []
-        for entry in entries:
-            name = entry if isinstance(entry, str) else entry.get("name", "")
-            if name.endswith(".json"):
-                ckpt_id = name.rsplit("/", 1)[-1].removesuffix(".json")
-                ids.append(ckpt_id)
-        ids.sort(key=_checkpoint_sort_key)
-        return ids
-
-    async def get_checkpoint(self, checkpoint_id: str) -> bytes | None:
-        """Fetch checkpoint payload by ID, or `None` if absent."""
-        path = self._checkpoint_path(checkpoint_id)
-        try:
-            return await self._to_thread(self._fs.cat, path)
-        except FileNotFoundError:
-            return None
-
-    async def put_checkpoint(
-        self,
-        checkpoint_id: str,
-        data: bytes,
-    ) -> None:
-        """Store a checkpoint payload.
-
-        Args:
-            checkpoint_id: Unique checkpoint identifier.
-            data: Serialized checkpoint payload.
-        """
-        path = self._checkpoint_path(checkpoint_id)
-        await self._to_thread(self._write_bytes, path, data)
-
-    async def delete_checkpoint(self, checkpoint_id: str) -> None:
-        """Delete a stored checkpoint payload (idempotent).
-
-        Args:
-            checkpoint_id: Unique checkpoint identifier.
-        """
-        path = self._checkpoint_path(checkpoint_id)
-        try:
-            await self._to_thread(self._fs.rm_file, path)
-        except FileNotFoundError:
-            pass
-
-    # ------------------------------------------------------------------
-    # Publish operations
-    # ------------------------------------------------------------------
-
-    async def publish_artifact(
-        self,
-        artifact_path: str,
-        data: bytes,
-        *,
-        content_type: str | None = None,
-    ) -> Artifact:
-        """Publish an artifact to the durable store.
-
-        Args:
-            artifact_path: Relative workspace path of the artifact.
-            data: Raw artifact content.
-            content_type: MIME type hint (unused by fsspec).
-
-        Returns:
-            Published `Artifact` with SHA-256, size, and storage URI.
-        """
-        del content_type
-        sha256 = hashlib.sha256(data).hexdigest()
-        size = len(data)
-        storage_path = self._artifact_storage_path(artifact_path)
-        await self._to_thread(self._write_bytes, storage_path, data)
-        return Artifact(
-            path=artifact_path,
-            sha256=sha256,
-            size=size,
-            published_uri=storage_path,
-        )
 
     # ------------------------------------------------------------------
     # Optional streaming (true chunked transfer)
@@ -481,36 +262,6 @@ class FsspecSyncBackend:
         finally:
             await self._to_thread(f.close)
 
-    async def stream_blob(self, sha256: str) -> AsyncIterator[bytes]:
-        """Yield blob content in chunks.
-
-        Args:
-            sha256: Content hash of the blob to stream.
-
-        Yields:
-            Chunks of blob content.
-
-        Raises:
-            KeyError: If the blob does not exist.
-        """
-        async for chunk in self._stream_path(self._blob_path(sha256)):
-            yield chunk
-
-    async def stream_checkpoint(self, checkpoint_id: str) -> AsyncIterator[bytes]:
-        """Yield checkpoint content in chunks.
-
-        Args:
-            checkpoint_id: Unique checkpoint identifier.
-
-        Yields:
-            Chunks of checkpoint content.
-
-        Raises:
-            KeyError: If the checkpoint does not exist.
-        """
-        async for chunk in self._stream_path(self._checkpoint_path(checkpoint_id)):
-            yield chunk
-
     async def stream_content_file(self, rel_path: str) -> AsyncIterator[bytes]:
         """Yield content-tree file content in chunks.
 
@@ -527,19 +278,14 @@ class FsspecSyncBackend:
             yield chunk
 
     # ------------------------------------------------------------------
-    # Flat content-tree operations (content mirror / dual-source sync)
+    # Flat content-tree operations (authoritative file bytes)
     # ------------------------------------------------------------------
     #
-    # Unlike the CAS/manifest layout above, these address a PLAIN file tree
-    # rooted at `root` (e.g. s3://<bucket>/workspaces/<wsId>/): paths map
-    # 1:1 to relative workspace paths. Used by the content-mirror half of
-    # dual-source sync: materialize workspace files at open, mirror dirty
-    # file writes/deletes back at checkpoint.
-
-    def _content_path(self, rel_path: str) -> str:
-        """Map a relative workspace path to its content-tree storage path."""
-        validated = validate_relative_path(rel_path, name="content_path")
-        return f"{self._root}/{validated}"
+    # These address a PLAIN file tree rooted at `root` (e.g.
+    # s3://<bucket>/workspaces/<wsId>/): paths map 1:1 to relative
+    # workspace paths.  The materialize half of content sync restores
+    # these into the workspace at open; the commit half uploads dirty
+    # file writes/deletes back at checkpoint time.
 
     async def list_content_files(self) -> list[str]:
         """List all files in the content tree as relative workspace paths.
@@ -587,7 +333,7 @@ class FsspecSyncBackend:
             src: Local source file path.
         """
         path = self._content_path(rel_path)
-        await self._to_thread(self._stream_from_file, path, src, expected_sha256=None)
+        await self._to_thread(self._stream_from_file, path, src)
 
     async def delete_content_file(self, rel_path: str) -> None:
         """Delete the content-tree object, if present (idempotent).
@@ -610,8 +356,8 @@ class FsspecSyncBackend:
     def close(self) -> None:
         """Shut down the dedicated thread pool.
 
-        Queued-but-unstarted work is dropped; the workspace close sequence
-        drains the uploader BEFORE closing the backend, so in-flight
+        Queued-but-unstarted work is dropped; the workspace close
+        sequence commits BEFORE closing the backend, so in-flight
         uploads have already completed. Idempotent.
         """
         self._executor.shutdown(wait=False, cancel_futures=True)

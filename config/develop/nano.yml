@@ -234,18 +234,6 @@ tools:
       - duckduckgo
       - bing
 
-# Sync is off by default (enabled is false); this only supplies a default
-# source_uri and fsspec options for client-initiated s3 workspaces. ${VAR}
-# expansion matches bare names only, so the ':-default' forms below are not
-# expanded: set the env vars or the literal placeholder reaches s3fs.
-workspace_sync:
-  source_uri: "s3://soothe/"
-  storage_options:
-    endpoint_url: "http://127.0.0.1:${SOOTHE_MINIO_PORT:-19100}"
-    key: "${SOOTHE_MINIO_ROOT_USER:-soothe}"
-    secret: "${SOOTHE_MINIO_ROOT_PASSWORD:-soothe@minio}"
-    anon: false
-
 # Dev-only relaxation: allow file access outside the workspace. Production
 # keeps this restricted.
 security:

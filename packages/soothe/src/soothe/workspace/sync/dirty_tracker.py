@@ -27,6 +27,26 @@ _DEFAULT_POLL_INTERVAL = 2.0  # seconds
 
 _EXCLUDED_DIRS = frozenset({".workspace", "__pycache__", ".git"})
 
+
+def _is_symlink_escaping(symlink: Path, root: Path) -> bool:
+    """Return whether a symlink's resolved target escapes ``root``.
+
+    Args:
+        symlink: The symlink path (not followed).
+        root: The workspace root (already resolved).
+
+    Returns:
+        `True` when the target resolves outside ``root`` or cannot be
+        resolved at all (broken / permission-denied).
+    """
+    try:
+        resolved = symlink.resolve(strict=False)
+        resolved.relative_to(root)
+    except (ValueError, OSError):
+        return True
+    return False
+
+
 # Engine default tracked subtrees (workspace root files are always tracked).
 _DEFAULT_WATCHED_SUBDIRS = ("input", "working", "output")
 
@@ -241,9 +261,7 @@ class DirtyTracker:
             return
 
         if stat.S_ISLNK(st.st_mode):
-            from soothe.workspace.sync.cas import is_symlink_escaping
-
-            if is_symlink_escaping(full_path, self._root):
+            if _is_symlink_escaping(full_path, self._root):
                 logger.warning("Rejecting escaping symlink: %s", relative_path)
                 self._dirty_files[relative_path] = FileEvent(
                     kind=kind or FileEventKind.MODIFY,

@@ -55,7 +55,6 @@ from soothe.config.models import (
     VectorStoreProviderConfig,
     VectorStoreRouter,
     WebSearchConfig,
-    WorkspaceSyncConfig,
 )
 from soothe.config.ownership import (
     OwnershipViolation,
@@ -132,5 +131,4 @@ __all__ = [
     "VectorStoreProviderConfig",
     "VectorStoreRouter",
     "WebSearchConfig",
-    "WorkspaceSyncConfig",
 ]

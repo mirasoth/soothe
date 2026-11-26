@@ -133,27 +133,25 @@ sync-verify:
 # ============================================================================
 #
 # Profiles in docker-compose.yml:
-#   - default:    Dev dependencies (soothe-pgvector + soothe-minio)
+#   - default:    Dev dependencies (soothe-pgvector)
 #   - langfuse:   Langfuse v3 observability stack
 #
 # Quick reference:
 #   Dev stack (deps + Langfuse): make docker-dev-up
 #   Production stack:           make docker-prod-up
 
-# --- Dev Dependencies (pgvector + MinIO + Langfuse by default) ----------------
+# --- Dev Dependencies (pgvector + Langfuse by default) -----------------------
 
 docker-dev-pull:
-	@echo "Pulling dev images (pgvector + MinIO + Langfuse)..."
+	@echo "Pulling dev images (pgvector + Langfuse)..."
 	docker compose --profile langfuse pull
 	@echo "Pull complete"
 
 docker-dev-up:
-	@echo "Starting dev dependencies (pgvector + MinIO + Langfuse)..."
+	@echo "Starting dev dependencies (pgvector + Langfuse)..."
 	docker compose --profile langfuse up -d
 	@echo ""
 	@echo "Dev database: port 6432"
-	@echo "MinIO S3 API: http://localhost:19100  (bucket: soothe)"
-	@echo "MinIO console: http://localhost:19101"
 	@echo "Langfuse UI: http://localhost:3300"
 	@echo "Sign-in: dev@soothe.local / SootheLangfuseLocalDev1"
 

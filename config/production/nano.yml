@@ -73,31 +73,6 @@ workspace_mount:
   container_root: /var/lib/soothe/workspaces
 
 # =============================================================================
-# Workspace Sync (external S3)
-# =============================================================================
-# Disabled by default: loops sync only when a client passes an
-# `s3://bucket/prefix` workspace (or `workspace_sync_source`) to `loop_new`;
-# `storage_options` below supply the external S3 service for those requests.
-# Flip `enabled: true` to route **every** new loop through this S3 source
-# (local `client_workspace` values are then ignored).
-#
-# `${VAR}` placeholders resolve from the container environment at daemon
-# load time; unresolved placeholders stay literal and fail loudly at
-# sync-open time (per loop, not at startup). Set the vars in example.env.
-#
-# Keep `region_name` out of storage_options: s3fs (2026.9+) rejects it here.
-# For AWS-native S3 (no custom endpoint), drop `endpoint_url` and prefer
-# profile/IAM credentials instead of key/secret.
-workspace_sync:
-  enabled: false
-  source_uri: "s3://${SOOTHE_SYNC_BUCKET}/${SOOTHE_SYNC_PREFIX}/"
-  storage_options:
-    endpoint_url: "${SOOTHE_SYNC_ENDPOINT_URL}"
-    key: "${SOOTHE_SYNC_ACCESS_KEY}"
-    secret: "${SOOTHE_SYNC_SECRET_KEY}"
-    anon: false
-
-# =============================================================================
 # Sandbox (os_sandbox, on by default)
 # =============================================================================
 # The agent build creates the backend from this config (fail-loud: no host

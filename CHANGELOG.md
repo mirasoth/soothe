@@ -9,23 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Workspace-sync streaming for large files: blob upload/download and content-tree restore transfer in bounded-size chunks (s3 multipart with explicit chunk size and concurrency; ranged GETs for reads), so MB–GB files never sit whole in memory; content hashes are verified end to end.
-- Workspace-sync crash-recovery staging (option A): checkpoint payloads are inserted into the state DB as `pending_upload` rows before any remote write and drained to the object store by the background uploader, which also prunes checkpoints superseded by a pushed snapshot.
+- Turn-scoped workspace sync facade (`soothe.workspace.sync.TurnScopedWorkspaces`): hosts that bracket agent turns with open/close hooks get the full per-turn sequence (manifest load, content-tree materialization, reconcile gating, dirty tracking, checkpoint commit, last-turn-out close) from one entry point instead of reimplementing it over `WorkspaceManager`.
+- Workspace-sync streaming for large files: content-tree uploads and restores transfer in bounded-size chunks (s3 multipart with explicit chunk size and concurrency; ranged GETs for reads), so MB–GB files never sit whole in memory; content hashes are verified end to end.
 
 ### Changed
 
-- Workspace-sync checkpoint IDs widen to 6-digit sequences (`run-123-c000001`), sort numerically, and survive restarts: `WorkspaceManager.open()` now initializes manifest/counter state from the remote and merges pending-row sequence numbers so a crashed process's checkpoint is never overwritten.
-- `Workspace.materialize()` takes the manifest itself (the resource-list overload was a type mismatch with the actual call chain); materialization failures aggregate with the failed paths named.
-- Dirty tracking is wired end-to-end in the workspace manager: tracker events notify the debouncer, uploader backpressure widens the debounce window, and `Workspace.close()` stops the debouncer timers after the final flush.
+- **Workspace sync is content-authoritative (IG-CORE-010, breaking).** The plain content tree is the single authoritative file store and the manifest is the atomic commit point: `Workspace.checkpoint()` streams dirty files to the content tree (per-file atomic), mirrors deletions, then writes the manifest (version+1, `if_match` optimistic concurrency) before acknowledging the dirty set; a crash mid-close leaves per-file atomic state that the next open re-materializes. Mid-turn durability policy is "turn completion = persisted" — no debounced auto-checkpoints, no staging rows. S3 write volume roughly halves (one representation instead of CAS + content mirror).
+- **soothe-daemon no longer wires workspace sync.** `loop_new` requests carrying a `workspace_sync_source` or a URI-shaped workspace are rejected fail-loud with `WORKSPACE_RESOLUTION_FAILED` — sync is an agent-plane capability (flowjet via the facade). The daemon-side `workspace_sync` config block, sync manager singleton, the dead `workspace_sync_source` loop-metadata persistence field, and the dev-stack `soothe-minio`/`soothe-minio-init` services are removed.
+
+### Removed
+
+- Workspace-sync CAS subsystem (breaking): the `workspace.state` SQLite staging store, CAS blob key space and materializer, SNAPSHOT/DELTA checkpoint payloads, the background uploader, the checkpoint debouncer, and the publish/artifact channel. Existing deployments keep their old `blobs/`, `runs/<wsId>/checkpoints/`, and `artifacts/` objects as inert orphans (bucket GC is manual).
+- `WorkspaceSyncConfig` from the shared config surface.
 
 ### Fixed
 
-- Mid-checkpoint file writes were silently dropped: the checkpoint pipeline cleared the whole dirty set instead of acknowledging only the captured paths.
-- Checkpoint deletions resurrected across recovery: payloads now carry tombstones and replay removes deleted paths from both the dirty set and the manifest.
-- CAS materialization no longer hands out hardlinks — in-place edits of a materialized workspace file used to corrupt the immutable cache through the shared inode.
 - Content-tree restore could escape the workspace root through a broken symlink at the destination, and unvalidated remote listing keys reached path joining; both are now rejected/replaced.
 - s3fs streaming against chunked-intolerant S3-compatible stores (e.g. Tencent COS): transfers use known-length multipart parts and ranged reads, and the integration config disables botocore's default request checksums (aws-chunked framing COS rejects).
-- SQLite state store serializes access to its shared connection (its driver reports `threadsafety==1`), and pending-checkpoint rows now round-trip their payload bytes.
 - Trivial single-step goals finish with their verified step recap instead of waiting for a separate report generation call (`agent.loop.rules.completion.ledger_direct_passthrough_max_tool_calls`, default 4).
 
 ### Fixed

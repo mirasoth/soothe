@@ -1,9 +1,9 @@
 """Integration tests for ``FsspecSyncBackend`` against a real S3-compatible endpoint.
 
-These tests exercise the full workspace-sync backend (blob CAS, manifest
-optimistic concurrency, checkpoints, artifact publish, content-tree ops,
-streaming) against a live object-store.  Any S3-compatible service works:
-AWS S3, MinIO, Tencent COS, Cloudflare R2, etc.
+These tests exercise the content-authoritative workspace-sync backend
+(manifest optimistic concurrency, content-tree ops, streaming) against a
+live object-store.  Any S3-compatible service works: AWS S3, MinIO,
+Tencent COS, Cloudflare R2, etc.
 
 Credentials are read **only** from environment variables — never hardcoded.
 
@@ -39,13 +39,7 @@ import pytest
 from soothe.workspace.sync.backends.fsspec import FsspecSyncBackend
 from soothe.workspace.sync.errors import ConcurrentModificationError
 from soothe.workspace.sync.factory import construct_sync_backend
-from soothe.workspace.sync.workspace_sync import (
-    Artifact,
-    CheckpointPayload,
-    CheckpointType,
-    Manifest,
-    ManifestEntry,
-)
+from soothe.workspace.sync.workspace_sync import Manifest, ManifestEntry
 
 pytestmark = pytest.mark.integration
 
@@ -71,8 +65,8 @@ def _factory_config() -> dict[str, object]:
     default integrity checksums (1.36+): those switch request bodies to
     aws-chunked framing, which Tencent COS rejects with ``You must
     provide the Content-Length HTTP header``.  End-to-end integrity is
-    provided by the workspace-sync CAS layer (sha256 on every blob
-    path), not transport checksums.
+    provided by the content-tree manifest (sha256 on every artifact
+    entry), not transport checksums.
     """
     return {
         "endpoint_url": _ENDPOINT,
@@ -191,52 +185,7 @@ def run_id() -> str:
 
 
 # ---------------------------------------------------------------------------
-# Blob operations (content-addressed storage)
-# ---------------------------------------------------------------------------
-
-
-class TestS3BlobOps:
-    """Blob CRUD against a real S3-compatible endpoint."""
-
-    @pytest.mark.asyncio
-    async def test_put_get_head_blob(self, backend: FsspecSyncBackend) -> None:
-        data = b"hello s3 integration"
-        h = _sha256(data)
-        await backend.put_blob(h, data)
-
-        assert await backend.head_blob(h) is True
-        result = await backend.get_blob(h)
-        assert result == data
-
-    @pytest.mark.asyncio
-    async def test_get_blob_missing(self, backend: FsspecSyncBackend) -> None:
-        h = _sha256(b"nonexistent-blob-data-12345")
-        assert await backend.get_blob(h) is None
-        assert await backend.head_blob(h) is False
-
-    @pytest.mark.asyncio
-    async def test_put_blob_idempotent(self, backend: FsspecSyncBackend) -> None:
-        data = b"idempotent content"
-        h = _sha256(data)
-        await backend.put_blob(h, data)
-        await backend.put_blob(h, data)
-
-        result = await backend.get_blob(h)
-        assert result == data
-
-    @pytest.mark.asyncio
-    async def test_put_blob_large(self, backend: FsspecSyncBackend) -> None:
-        """Verify multi-part upload path for blobs > 5 MB."""
-        data = os.urandom(6 * 1024 * 1024)  # 6 MB
-        h = _sha256(data)
-        await backend.put_blob(h, data)
-        result = await backend.get_blob(h)
-        assert result == data
-        assert len(result) == len(data)
-
-
-# ---------------------------------------------------------------------------
-# Manifest operations (optimistic concurrency)
+# Manifest operations (commit records, optimistic concurrency)
 # ---------------------------------------------------------------------------
 
 
@@ -252,8 +201,7 @@ class TestS3ManifestOps:
         manifest = Manifest(
             run_id=run_id,
             version=1,
-            resources=[ManifestEntry(path="input/data.csv", sha256="abc123", size=100)],
-            artifacts=[],
+            artifacts=[ManifestEntry(path="input/data.csv", sha256="abc123", size=100)],
         )
         await backend.put_manifest(run_id, manifest)
 
@@ -261,8 +209,8 @@ class TestS3ManifestOps:
         assert result is not None
         assert result.run_id == run_id
         assert result.version == 1
-        assert len(result.resources) == 1
-        assert result.resources[0].path == "input/data.csv"
+        assert len(result.artifacts) == 1
+        assert result.artifacts[0].path == "input/data.csv"
 
     @pytest.mark.asyncio
     async def test_get_manifest_missing(self, backend: FsspecSyncBackend) -> None:
@@ -297,142 +245,12 @@ class TestS3ManifestOps:
 
 
 # ---------------------------------------------------------------------------
-# Checkpoint operations
-# ---------------------------------------------------------------------------
-
-
-class TestS3CheckpointOps:
-    """Checkpoint write/read/list against real object storage."""
-
-    @pytest.mark.asyncio
-    async def test_put_get_checkpoint(
-        self,
-        backend: FsspecSyncBackend,
-        run_id: str,
-    ) -> None:
-        ckpt_id = f"{run_id}-c001"
-        payload = CheckpointPayload(
-            checkpoint_id=ckpt_id,
-            kind=CheckpointType.SNAPSHOT,
-            manifest_version=1,
-            dirty_files=[ManifestEntry(path="out.txt", sha256="deadbeef", size=4)],
-            manifest_snapshot=Manifest(run_id=run_id, version=1),
-        )
-        data = payload.model_dump_json().encode()
-        await backend.put_checkpoint(ckpt_id, data)
-
-        result = await backend.get_checkpoint(ckpt_id)
-        assert result == data
-
-        restored = CheckpointPayload.model_validate_json(result)
-        assert restored.checkpoint_id == ckpt_id
-        assert restored.is_snapshot()
-
-    @pytest.mark.asyncio
-    async def test_get_checkpoint_missing(self, backend: FsspecSyncBackend) -> None:
-        result = await backend.get_checkpoint("ghost-run-c999")
-        assert result is None
-
-    @pytest.mark.asyncio
-    async def test_list_checkpoints_ordered(
-        self,
-        backend: FsspecSyncBackend,
-        run_id: str,
-    ) -> None:
-        for seq in ("c001", "c002", "c003"):
-            ckpt_id = f"{run_id}-{seq}"
-            await backend.put_checkpoint(ckpt_id, b'{"checkpoint_id":"x"}')
-
-        ids = await backend.list_checkpoints(run_id)
-        assert len(ids) == 3
-        assert ids == sorted(ids)
-
-    @pytest.mark.asyncio
-    async def test_list_checkpoints_empty(self, backend: FsspecSyncBackend) -> None:
-        ids = await backend.list_checkpoints("empty-run-xyz")
-        assert ids == []
-
-
-# ---------------------------------------------------------------------------
-# Publish operations
-# ---------------------------------------------------------------------------
-
-
-class TestS3PublishOps:
-    """Artifact publication returns correct metadata and content."""
-
-    @pytest.mark.asyncio
-    async def test_publish_artifact(self, backend: FsspecSyncBackend) -> None:
-        data = b"# Integration Report\n\nGenerated by S3 integration test."
-        artifact = await backend.publish_artifact("output/report.md", data)
-
-        assert artifact.path == "output/report.md"
-        assert artifact.sha256 == _sha256(data)
-        assert artifact.size == len(data)
-        assert artifact.published_uri is not None
-
-    @pytest.mark.asyncio
-    async def test_publish_artifact_binary(self, backend: FsspecSyncBackend) -> None:
-        data = os.urandom(1024)
-        artifact: Artifact = await backend.publish_artifact(
-            "output/binary.bin",
-            data,
-            content_type="application/octet-stream",
-        )
-        assert artifact.size == 1024
-        assert artifact.sha256 == _sha256(data)
-
-
-# ---------------------------------------------------------------------------
-# Streaming
-# ---------------------------------------------------------------------------
-
-
-class TestS3Streaming:
-    """Chunked streaming reads for blobs and checkpoints."""
-
-    @pytest.mark.asyncio
-    async def test_stream_blob(self, backend: FsspecSyncBackend) -> None:
-        data = b"S" * 200_000  # exercises multi-chunk path
-        h = _sha256(data)
-        await backend.put_blob(h, data)
-
-        chunks: list[bytes] = []
-        async for chunk in backend.stream_blob(h):
-            chunks.append(chunk)
-
-        assert b"".join(chunks) == data
-
-    @pytest.mark.asyncio
-    async def test_stream_blob_missing(self, backend: FsspecSyncBackend) -> None:
-        h = _sha256(b"missing-stream")
-        with pytest.raises(KeyError):
-            async for _chunk in backend.stream_blob(h):
-                pass
-
-    @pytest.mark.asyncio
-    async def test_stream_checkpoint(
-        self,
-        backend: FsspecSyncBackend,
-        run_id: str,
-    ) -> None:
-        ckpt_id = f"{run_id}-c001"
-        data = b"C" * 130_000
-        await backend.put_checkpoint(ckpt_id, data)
-
-        chunks: list[bytes] = []
-        async for chunk in backend.stream_checkpoint(ckpt_id):
-            chunks.append(chunk)
-        assert b"".join(chunks) == data
-
-
-# ---------------------------------------------------------------------------
-# Content-tree operations (flat file mirror)
+# Content-tree operations (authoritative file bytes)
 # ---------------------------------------------------------------------------
 
 
 class TestS3ContentTree:
-    """Plain file-tree CRUD used by dual-source workspace sync."""
+    """Plain file-tree CRUD used by the content-authoritative sync."""
 
     @pytest.mark.asyncio
     async def test_put_get_content_file(self, backend: FsspecSyncBackend) -> None:
@@ -471,6 +289,32 @@ class TestS3ContentTree:
 
 
 # ---------------------------------------------------------------------------
+# Streaming
+# ---------------------------------------------------------------------------
+
+
+class TestS3Streaming:
+    """Chunked streaming reads for content-tree files."""
+
+    @pytest.mark.asyncio
+    async def test_stream_content_file(self, backend: FsspecSyncBackend) -> None:
+        data = b"S" * 20_000_000  # exercises the ranged multi-chunk path
+        await backend.put_content_file("output/big.bin", data)
+
+        chunks: list[bytes] = []
+        async for chunk in backend.stream_content_file("output/big.bin"):
+            chunks.append(chunk)
+
+        assert b"".join(chunks) == data
+
+    @pytest.mark.asyncio
+    async def test_stream_content_file_missing(self, backend: FsspecSyncBackend) -> None:
+        with pytest.raises(KeyError):
+            async for _chunk in backend.stream_content_file("missing.bin"):
+                pass
+
+
+# ---------------------------------------------------------------------------
 # Factory integration
 # ---------------------------------------------------------------------------
 
@@ -489,9 +333,8 @@ class TestS3Factory:
         backend = construct_sync_backend(s3_uri, config=_factory_config())
         try:
             data = b"factory roundtrip"
-            h = _sha256(data)
-            await backend.put_blob(h, data)
-            assert await backend.get_blob(h) == data
+            await backend.put_content_file("factory/roundtrip.txt", data)
+            assert await backend.get_content_file("factory/roundtrip.txt") == data
         finally:
             assert isinstance(backend, FsspecSyncBackend)
             _cleanup_prefix(backend._fs, backend._root)

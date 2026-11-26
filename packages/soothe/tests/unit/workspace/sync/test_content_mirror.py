@@ -1,21 +1,21 @@
-"""Tests for dual-source sync (content mirror / ``content_backend``).
+"""Tests for dual-source sync (content tree / ``content_backend``).
 
 Covers the read path (``Workspace.materialize_content`` restores a plain
-content tree into the workspace) and the write path (``CheckpointManager``
-mirrors dirty-file writes and deletions back to the content tree), plus the
-flat content-tree primitives on ``FsspecSyncBackend``.
+content tree into the workspace) and the write path
+(``Workspace.checkpoint`` mirrors dirty-file writes and deletions back to
+the content tree and commits the manifest), plus the flat content-tree
+primitives on ``FsspecSyncBackend``.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 from fsspec.implementations.memory import MemoryFileSystem
 
 from soothe.workspace.sync.backends.fsspec import FsspecSyncBackend
-from soothe.workspace.sync.cas import CASCache
-from soothe.workspace.sync.checkpoint import CheckpointManager
 from soothe.workspace.sync.dirty_tracker import DirtyTracker
 from soothe.workspace.sync.manager import WorkspaceManager
 from soothe.workspace.sync.workspace import Workspace
@@ -54,13 +54,8 @@ def _make_workspace(
         run_id="run-001",
         root=root,
         backend=sync_backend,
-        cas=CASCache(cache_root=tmp_path / "cas"),
-        state_store=None,
-        dirty_tracker=DirtyTracker(workspace_root=root),
-        debouncer=None,
-        checkpoint_mgr=None,
-        uploader=None,
         content_backend=content_backend,
+        dirty_tracker=DirtyTracker(workspace_root=root),
     )
 
 
@@ -253,42 +248,41 @@ class TestMaterializeContentReconcile:
 
 
 # ---------------------------------------------------------------------------
-# CheckpointManager — write path (mirror back)
+# Workspace.checkpoint — write path (mirror back)
 # ---------------------------------------------------------------------------
 
 
-def _make_checkpoint_mgr(
+def _make_tracked_workspace(
     tmp_path: Path,
-    sync_backend,
-    content_backend,
+    sync_backend: FsspecSyncBackend,
+    content_backend: Any,
     *,
     run_id: str = "run-001",
-) -> tuple[CheckpointManager, DirtyTracker, Path]:
+) -> tuple[Workspace, DirtyTracker, Path]:
     root = tmp_path / "ws"
     root.mkdir(exist_ok=True)
     tracker = DirtyTracker(workspace_root=root)
-    mgr = CheckpointManager(
+    ws = Workspace(
         run_id=run_id,
+        root=root,
         backend=sync_backend,
-        cas=CASCache(cache_root=tmp_path / "cas"),
-        dirty_tracker=tracker,
-        workspace_root=root,
         content_backend=content_backend,
+        dirty_tracker=tracker,
     )
-    return mgr, tracker, root
+    return ws, tracker, root
 
 
 class TestCheckpointContentMirror:
     async def test_dirty_files_mirrored_to_content_tree(
         self, tmp_path: Path, sync_backend, content_backend
     ) -> None:
-        mgr, tracker, root = _make_checkpoint_mgr(tmp_path, sync_backend, content_backend)
+        ws, tracker, root = _make_tracked_workspace(tmp_path, sync_backend, content_backend)
         out = root / "output/result.txt"
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_bytes(b"agent output")
         tracker.mark_dirty("output/result.txt")
 
-        await mgr.create_checkpoint()
+        await ws.checkpoint()
 
         assert await content_backend.get_content_file("output/result.txt") == b"agent output"
 
@@ -296,11 +290,11 @@ class TestCheckpointContentMirror:
         self, tmp_path: Path, sync_backend, content_backend
     ) -> None:
         await content_backend.put_content_file("output/stale.txt", b"old")
-        mgr, tracker, root = _make_checkpoint_mgr(tmp_path, sync_backend, content_backend)
+        ws, tracker, root = _make_tracked_workspace(tmp_path, sync_backend, content_backend)
         # mark_dirty on a path that no longer exists on disk registers a deletion.
         tracker.mark_dirty("output/stale.txt")
 
-        await mgr.create_checkpoint()
+        await ws.checkpoint()
 
         assert await content_backend.get_content_file("output/stale.txt") is None
 
@@ -308,31 +302,13 @@ class TestCheckpointContentMirror:
         self, tmp_path: Path, sync_backend, content_backend
     ) -> None:
         await content_backend.put_content_file("gone.txt", b"vanishing")
-        mgr, tracker, root = _make_checkpoint_mgr(tmp_path, sync_backend, content_backend)
+        ws, tracker, root = _make_tracked_workspace(tmp_path, sync_backend, content_backend)
         # Dirty path whose file no longer exists on disk.
         tracker.mark_dirty("gone.txt")
 
-        await mgr.create_checkpoint()
+        await ws.checkpoint()
 
         assert await content_backend.get_content_file("gone.txt") is None
-
-    async def test_mirror_failure_is_not_fatal(self, tmp_path: Path, sync_backend) -> None:
-        class FailingContentBackend:
-            async def put_content_file(self, rel_path, data):
-                raise RuntimeError("content backend down")
-
-            async def delete_content_file(self, rel_path):
-                raise RuntimeError("content backend down")
-
-        mgr, tracker, root = _make_checkpoint_mgr(tmp_path, sync_backend, FailingContentBackend())
-        out = root / "output/ok.txt"
-        out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_bytes(b"data")
-        tracker.mark_dirty("output/ok.txt")
-
-        # Must not raise — CAS/manifest remain the source of truth.
-        checkpoint_id = await mgr.create_checkpoint()
-        assert checkpoint_id == "run-001-c000001"
 
 
 # ---------------------------------------------------------------------------
@@ -352,14 +328,12 @@ class TestManagerContentWiring:
 
         manager = WorkspaceManager(
             workspaces_root=tmp_path / "workspaces",
-            cas_root=tmp_path / "cas",
             backend=sync_backend,
             content_backend_factory=factory,
         )
         ws = await manager.open("run-001")
         assert created_for == ["run-001"]
         assert ws._content_backend is content_backend
-        assert ws._checkpoint_mgr._content_backend is content_backend
         await manager.close("run-001")
 
     async def test_factory_failure_disables_mirror_for_run(
@@ -370,7 +344,6 @@ class TestManagerContentWiring:
 
         manager = WorkspaceManager(
             workspaces_root=tmp_path / "workspaces",
-            cas_root=tmp_path / "cas",
             backend=sync_backend,
             content_backend_factory=factory,
         )
@@ -396,7 +369,6 @@ class TestManagerContentWiring:
 
         manager = WorkspaceManager(
             workspaces_root=tmp_path / "workspaces",
-            cas_root=tmp_path / "cas",
             backend=sync_backend,
             content_backend_factory=factory,
         )

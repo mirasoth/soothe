@@ -1,8 +1,12 @@
-"""Workspace handle — per-run lifecycle: open, materialize, checkpoint, publish, close.
+"""Workspace handle — per-run lifecycle: open, materialize, checkpoint, close.
 
-The `Workspace` is the agent-facing handle to a single run's workspace.
-It coordinates the CAS cache, dirty tracker, debouncer, checkpoint
-manager, and background uploader to provide a simple async lifecycle API.
+The `Workspace` is the agent-facing handle to a single run's workspace under
+the content-authoritative representation (IG-CORE-010): the plain content
+tree is the single authoritative file store and the manifest is the atomic
+commit record.  `checkpoint()` hashes dirty files, streams them to the
+content tree, mirrors deletions, and writes the manifest (version+1,
+optimistic-concurrency guard) as the commit point — there is no CAS blob
+duplicate, no checkpoint payload, and no staging state.
 """
 
 from __future__ import annotations
@@ -16,50 +20,57 @@ from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from soothe.workspace.sync.cas import CASCache
-from soothe.workspace.sync.checkpoint import CheckpointManager
-from soothe.workspace.sync.debouncer import CheckpointDebouncer
 from soothe.workspace.sync.dirty_tracker import DirtyTracker
-from soothe.workspace.sync.materializer import Materializer
 from soothe.workspace.sync.paths import validate_relative_path
-from soothe.workspace.sync.streaming import iter_content_chunks
-from soothe.workspace.sync.uploader import BackgroundUploader
-from soothe.workspace.sync.workspace_sync import (
-    Artifact,
-    ArtifactSpec,
-    Manifest,
-)
+from soothe.workspace.sync.streaming import iter_content_chunks, put_content_file_from_file
+from soothe.workspace.sync.workspace_sync import Manifest, ManifestEntry
 
 if TYPE_CHECKING:
-    from soothe.workspace.state.protocol import WorkspaceStateStore
-    from soothe.workspace.sync.workspace_sync import CheckpointPayload, WorkspaceSyncBackend
+    from soothe.workspace.sync.workspace_sync import WorkspaceSyncBackend
 
 logger = logging.getLogger(__name__)
 
 _FILE_COPY_CHUNK = 1024 * 1024  # 1 MiB
+_MAX_CONCURRENT_FILES = 8  # per-commit hashing/upload concurrency bound
+
+
+def _hash_file(path: str | Path) -> str:
+    """Compute SHA-256 hex digest of a file's contents (chunked).
+
+    Args:
+        path: File path.
+
+    Returns:
+        Hex-encoded SHA-256 digest.
+    """
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        while True:
+            chunk = f.read(_FILE_COPY_CHUNK)
+            if not chunk:
+                break
+            h.update(chunk)
+    return h.hexdigest()
 
 
 class Workspace:
-    """Per-run workspace handle.
+    """Per-run workspace handle (content-authoritative sync).
 
-    Coordinates materialization, dirty tracking, checkpointing, and
-    publication for a single agent run.
+    Coordinates content materialization, dirty tracking, and turn commits
+    for a single agent run.
 
     Args:
         run_id: Unique run identifier.
         root: Local filesystem root of the workspace.
-        backend: Remote storage backend.
-        cas: Local CAS cache.
-        state_store: Workspace state database.
+        backend: Remote manifest backend (commit records).  `None`
+            disables remote commits.
+        content_backend: Backend addressing the plain content tree —
+            the authoritative file store.  `materialize_content` pulls
+            it into the local workspace at open; `checkpoint` uploads
+            dirty writes and mirrors deletions back.
         dirty_tracker: Dirty file tracker.
-        debouncer: Debounced checkpoint trigger.
-        checkpoint_mgr: Checkpoint lifecycle manager.
-        uploader: Background uploader.
-        content_backend: Optional second backend addressing a plain file
-            tree (the "content root", e.g. workspace materials + mirrored
-            agent outputs). `materialize_content` pulls it into the local
-            workspace at open; the checkpoint manager mirrors dirty writes
-            and deletions back at checkpoint time.
+        manifest: Manifest loaded from the backend at open (the
+            engine-owned artifact set of the last committed turn).
     """
 
     def __init__(
@@ -68,27 +79,18 @@ class Workspace:
         run_id: str,
         root: Path,
         backend: WorkspaceSyncBackend | None,
-        cas: CASCache,
-        state_store: WorkspaceStateStore | None,
+        content_backend: WorkspaceSyncBackend | None,
         dirty_tracker: DirtyTracker,
-        debouncer: CheckpointDebouncer | None,
-        checkpoint_mgr: CheckpointManager | None,
-        uploader: BackgroundUploader | None,
-        content_backend: WorkspaceSyncBackend | None = None,
+        manifest: Manifest | None = None,
     ) -> None:
         """Initialize the workspace sync session with all sub-components."""
         self.run_id = run_id
         self.root = root
         self._backend = backend
-        self._cas = cas
-        self._state_store = state_store
-        self._dirty_tracker = dirty_tracker
-        self._debouncer = debouncer
-        self._checkpoint_mgr = checkpoint_mgr
-        self._uploader = uploader
         self._content_backend = content_backend
+        self._dirty_tracker = dirty_tracker
+        self._manifest = manifest
         self._closing = False
-        self._manifest: Manifest | None = None
 
     @property
     def closing(self) -> bool:
@@ -97,36 +99,12 @@ class Workspace:
 
     @property
     def manifest(self) -> Manifest | None:
-        """Return the current manifest, or `None` if not yet loaded."""
+        """Return the current manifest, or `None` if none was loaded."""
         return self._manifest
 
-    async def materialize(self, manifest: Manifest) -> None:
-        """Materialize a resource manifest into the local workspace.
-
-        Downloads missing blobs from the backend, stores them in CAS,
-        and creates local file representations (reflink/copy).
-
-        Args:
-            manifest: The manifest whose `resources` are materialized
-                (under `<root>/input/`).  Callers holding bare
-                :class:`Resource` lists can wrap them in a `Manifest`.
-        """
-        if self._backend is None:
-            logger.warning("Materialize called without a remote backend — nothing to fetch")
-            return
-        materializer = Materializer(
-            backend=self._backend,
-            cas=self._cas,
-            workspace_root=self.root,
-        )
-        materialized = await materializer.materialize(manifest)
-        self._manifest = manifest
-        logger.info(
-            "Materialized %d/%d resources for run %s",
-            len(materialized),
-            len(manifest.resources),
-            self.run_id,
-        )
+    # ------------------------------------------------------------------
+    # Read path — materialize the content tree into the workspace
+    # ------------------------------------------------------------------
 
     async def materialize_content(
         self,
@@ -134,28 +112,25 @@ class Workspace:
         protected: Iterable[str] = (),
         reconcile: bool = True,
     ) -> int:
-        """Materialize the content tree (dual-source sync) into the workspace.
+        """Materialize the content tree (authoritative file store) into the workspace.
 
         Lists every file under the content backend's root and restores it at
         the same relative path locally, skipping engine directories, paths
         that fail relative-path validation, and files whose local content
         already matches. Downloads stream chunk-by-chunk into a temp file
         (running hash), so memory stays bounded for large content; an
-        unchanged file costs one streamed read, not a rewrite. This is the
-        "read path" half of content mirroring — the write half happens at
-        checkpoint time (dirty files/deletions are mirrored back by the
-        checkpoint manager).
+        unchanged file costs one streamed read, not a rewrite.
 
         Args:
             protected: Relative paths that must never be reconciled away
-                (e.g. engine manifest artifact paths — agent outputs that
-                live in the workspace but not necessarily in the content
-                tree).  The current dirty set and the in-memory manifest
-                artifact paths are ALWAYS protected implicitly (F-C13).
+                (e.g. manifest artifact paths — engine-owned outputs that
+                a mid-commit crash may not have landed in the content
+                tree yet).  The current dirty set and the in-memory
+                manifest artifact paths are ALWAYS protected implicitly.
             reconcile: When true, after the restore pass delete local files
                 that no longer exist in the content tree and are not
-                `protected` (the delete half of the read path — backend-side
-                deletions must not linger in the workspace,).
+                `protected` (backend-side deletions must not linger in
+                the workspace).
 
         Returns:
             Number of files downloaded (unchanged files are skipped).
@@ -249,10 +224,8 @@ class Workspace:
         keep = {p.strip("/") for p in protected if p}
         keep.update(self._dirty_tracker.get_dirty().keys())
         keep.update(self._dirty_tracker.deleted_files)
-        manifest = self._checkpoint_mgr.manifest if self._checkpoint_mgr else None
-        if manifest is not None:
-            keep.update(e.path for e in manifest.artifacts)
-            keep.update(e.path for e in manifest.resources)
+        if self._manifest is not None:
+            keep.update(e.path for e in self._manifest.artifacts)
         return keep
 
     async def _reconcile_content(
@@ -264,10 +237,9 @@ class Workspace:
         """Delete local files that no longer exist in the content tree.
 
         Files under the skip prefixes, symlinked paths, and `protected`
-        relative paths (agent artifacts absent from the content tree) are
-        never removed. Now-empty parent directories are pruned best-effort,
-        except the root and the engine-created top-level dirs
-        (`.workspace`/`input`/`working`/`output`).
+        relative paths are never removed. Now-empty parent directories
+        are pruned best-effort, except the root and the engine-created
+        top-level dirs (`.workspace`/`input`/`working`/`output`).
         """
         keep = set(remote_rel_paths)
         keep.update(protected)
@@ -320,95 +292,201 @@ class Workspace:
         """Return all regular files under the workspace root (sync)."""
         return [p for p in self.root.rglob("*") if p.is_file()]
 
-    async def start_tracking(self) -> None:
-        """Start dirty tracking and background uploader.
+    # ------------------------------------------------------------------
+    # Write path — turn commit
+    # ------------------------------------------------------------------
+
+    def start_tracking(self) -> None:
+        """Start dirty tracking.
 
         Call after materialization, before the agent begins work.
-        Every component is optional — a workspace opened without a
-        remote backend or state store starts the pieces it has.
         """
         self._dirty_tracker.start()
-        if self._uploader is not None:
-            self._uploader.start()
-        if self._debouncer is not None:
-            self._debouncer.start()
         logger.info("Started tracking for run %s", self.run_id)
 
-    async def checkpoint(self) -> str | None:
-        """Create a checkpoint of the current dirty state.
+    async def checkpoint(self) -> int | None:
+        """Commit the current dirty state to the content tree.
+
+        Content-authoritative commit sequence:
+
+        1. Hash dirty files (streaming, bounded concurrency) and upload
+           them to the content tree at their relative paths.
+        2. Mirror deletions to the content tree (dirty paths that
+           vanished between scan and commit count as deletions).
+        3. Advance the manifest (fold entries + tombstones, version+1)
+           and write it to the manifest backend — **the manifest write
+           is the commit point**; a crash before it leaves per-file
+           atomic state that the next open re-materializes.
+        4. Acknowledge exactly the committed paths in the dirty
+           tracker — writes that arrived mid-commit stay dirty (F-C2).
+
+        Per-file failures produce a partial commit (failed paths stay
+        dirty for the next one) and a final `RuntimeError`.
 
         Returns:
-            Checkpoint ID, or `None` if nothing was dirty or the
-            workspace has no checkpoint manager.
+            The new manifest version, or `None` when nothing was dirty
+            or deleted, or the workspace has no content backend /
+            manifest backend.
         """
         if self._closing:
             logger.warning("Checkpoint skipped — workspace is closing")
             return None
-
-        if self._checkpoint_mgr is None:
-            logger.debug("No checkpoint manager — skipping checkpoint")
+        if self._content_backend is None or self._backend is None:
+            logger.debug("No content/manifest backend — skipping checkpoint")
             return None
 
         self._dirty_tracker.scan_now()
-        # Ack-clearing is the checkpoint manager's job (snapshot-ack
-        # semantics, F-C2) — a full clear here would drop mid-checkpoint
-        # writes.
-        return await self._checkpoint_mgr.create_checkpoint()
 
-    async def publish(self, artifacts: list[ArtifactSpec]) -> list[Artifact]:
-        """Publish artifacts to the durable store.
+        dirty = self._dirty_tracker.get_dirty()
+        deleted = set(self._dirty_tracker.deleted_files)
+
+        # Dirty paths that vanished between scan and commit are
+        # deletions, not writes.
+        for rel_path in dirty:
+            if not (self.root / rel_path).exists():
+                deleted.add(rel_path)
+        dirty = {p: e for p, e in dirty.items() if p not in deleted}
+
+        if not dirty and not deleted:
+            logger.debug("No dirty or deleted files — skipping checkpoint")
+            return None
+
+        semaphore = asyncio.Semaphore(_MAX_CONCURRENT_FILES)
+        committed: list[ManifestEntry] = []
+        failures: list[tuple[str, BaseException]] = []
+
+        async def _commit_file(rel_path: str) -> None:
+            async with semaphore:
+                try:
+                    entry = await self._commit_one_file(rel_path)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "Failed to commit %s for run %s; it stays dirty for the next commit",
+                        rel_path,
+                        self.run_id,
+                        exc_info=True,
+                    )
+                    failures.append((rel_path, exc))
+                    return
+                committed.append(entry)
+
+        await asyncio.gather(*(_commit_file(rel_path) for rel_path in sorted(dirty)))
+
+        # Mirror deletions to the content tree (also covers dirty paths
+        # that vanished between scan and commit).
+        for d in sorted(deleted):
+            try:
+                await self._content_backend.delete_content_file(d)
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "Content delete mirror failed for %s (run %s)",
+                    d,
+                    self.run_id,
+                    exc_info=True,
+                )
+
+        self._manifest = self._advance_manifest(committed, deleted)
+        await self._backend.put_manifest(
+            self.run_id,
+            self._manifest,
+            if_match=(str(self._manifest.version - 1) if self._manifest.version > 1 else None),
+        )
+        logger.info(
+            "Committed run %s at manifest version %d: %d file(s), %d deletion(s)",
+            self.run_id,
+            self._manifest.version,
+            len(committed),
+            len(deleted),
+        )
+
+        # Acknowledge ONLY the paths committed here — writes that
+        # arrived mid-commit stay dirty (F-C2).
+        self._dirty_tracker.clear(acked_paths=[e.path for e in committed] + sorted(deleted))
+
+        if failures:
+            failed_paths = ", ".join(p for p, _ in failures)
+            raise RuntimeError(
+                f"commit for run {self.run_id} completed partially: "
+                f"{len(failures)} file(s) failed to upload ({failed_paths}); "
+                "they remain dirty"
+            )
+
+        return self._manifest.version
+
+    async def _commit_one_file(self, rel_path: str) -> ManifestEntry:
+        """Hash and upload one dirty file to the content tree.
 
         Args:
-            artifacts: List of artifact specs to publish.
+            rel_path: Workspace-relative path of the file.
 
         Returns:
-            List of published artifact metadata.
+            The manifest entry for the committed file.
+
+        Raises:
+            Exception: When the file cannot be committed (caller keeps
+                it dirty and records the failure).
         """
-        if self._backend is None:
-            logger.warning("Publish called without a remote backend — nothing to publish")
-            return []
-        published: list[Artifact] = []
-        for spec in artifacts:
-            if not spec.publish:
-                continue
-            file_path = self.root / spec.path
-            if not file_path.exists():
-                logger.warning("Artifact not found for publish: %s", spec.path)
-                continue
-            data = await asyncio.to_thread(file_path.read_bytes)
-            artifact = await self._backend.publish_artifact(
-                spec.path, data, content_type=spec.content_type
+        abs_path = self.root / rel_path
+        if not abs_path.exists():
+            raise FileNotFoundError(rel_path)
+        if abs_path.is_symlink():
+            target = abs_path.resolve()
+            try:
+                target.relative_to(self.root.resolve())
+            except ValueError:
+                raise ValueError(f"escaping symlink not committed: {rel_path}") from None
+
+        sha256 = await asyncio.to_thread(_hash_file, abs_path)
+        size = abs_path.stat().st_size
+        await put_content_file_from_file(self._content_backend, rel_path, abs_path)
+        return ManifestEntry(path=rel_path, sha256=sha256, size=size)
+
+    def _advance_manifest(
+        self,
+        committed: list[ManifestEntry],
+        deleted: set[str],
+    ) -> Manifest:
+        """Fold committed entries and tombstones into the manifest.
+
+        Args:
+            committed: Successfully uploaded entries.
+            deleted: Tombstoned relative paths.
+
+        Returns:
+            The next manifest (version incremented).
+        """
+        if self._manifest is None:
+            return Manifest(
+                run_id=self.run_id,
+                version=1,
+                artifacts=sorted(committed, key=lambda e: e.path),
             )
-            published.append(artifact)
-            logger.info("Published artifact: %s → %s", spec.path, artifact.published_uri)
-        return published
+        artifacts = {e.path: e for e in self._manifest.artifacts}
+        for entry in committed:
+            artifacts[entry.path] = entry
+        for d in deleted:
+            artifacts.pop(d, None)
+        return Manifest(
+            run_id=self.run_id,
+            version=self._manifest.version + 1,
+            artifacts=sorted(artifacts.values(), key=lambda e: e.path),
+        )
+
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
 
     async def close(self) -> None:
-        """Close the workspace with multi-step drain.
+        """Close the workspace.
 
-        Sequence:
-            1. Stop dirty tracker (no new events).
-            2. Flush debouncer (force final checkpoint), then stop its
-               timers.
-            3. Wait for uploader to drain (pending rows pushed remote).
-            4. Close state store.
-            5. Close the per-run content backend (its thread pool / fsspec
-               client). The primary `backend` is shared across workspaces
-               (owned by the manager / caller) and is NOT closed here.
+        Stops the dirty tracker and closes the per-run content backend
+        (its thread pool / fsspec client).  The manifest backend is
+        shared across workspaces (owned by the manager / caller) and is
+        NOT closed here.
         """
         self._closing = True
 
         await self._dirty_tracker.stop()
-
-        if self._debouncer is not None:
-            await self._debouncer.flush()
-            await self._debouncer.stop()
-
-        if self._uploader is not None:
-            await self._uploader.stop()
-
-        if self._state_store is not None:
-            await self._state_store.close()
 
         if self._content_backend is not None:
             # Duck-typed call: test fakes implement the sync surface only.
@@ -417,44 +495,3 @@ class Workspace:
                 await aclose()
 
         logger.info("Workspace closed for run %s", self.run_id)
-
-    async def cleanup(self) -> None:
-        """Remove all workspace state and local files."""
-        if self._state_store is not None:
-            await self._state_store.cleanup()
-        import shutil
-
-        if self.root.exists():
-            shutil.rmtree(self.root, ignore_errors=True)
-        logger.info("Workspace cleaned up for run %s", self.run_id)
-
-    async def recover(self) -> CheckpointPayload | None:
-        """Recover workspace state from the latest replayable checkpoint.
-
-        Returns:
-            The recovered checkpoint payload (``incomplete=True`` when delta
-            replay stopped early — the dirty state is then partial), or
-            `None` if no checkpoints exist.
-        """
-        if self._checkpoint_mgr is None:
-            return None
-        return await self._checkpoint_mgr.recover()
-
-
-def _hash_file(path: str | Path) -> str:
-    """Compute SHA-256 hex digest of a file's contents (chunked).
-
-    Args:
-        path: File path.
-
-    Returns:
-        Hex-encoded SHA-256 digest.
-    """
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        while True:
-            chunk = f.read(_FILE_COPY_CHUNK)
-            if not chunk:
-                break
-            h.update(chunk)
-    return h.hexdigest()

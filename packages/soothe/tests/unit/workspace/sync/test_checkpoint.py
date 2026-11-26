@@ -1,554 +1,501 @@
-"""Tests for the checkpoint manager — snapshot/delta, compaction, recovery.
+"""Tests for ``Workspace.checkpoint`` — content-authoritative commit semantics.
 
-Tests verify:
-    - First checkpoint is a SNAPSHOT.
-    - Subsequent checkpoints are DELTAs.
-    - Compaction triggers a new SNAPSHOT after max_deltas.
-    - Recovery anchors on the latest snapshot and replays deltas.
-    - Dirty file blobs are uploaded to the backend.
-    - Manifest is updated with correct version.
+Under IG-CORE-010 the plain content tree is the authoritative file store
+and the manifest write is the atomic commit point.  These tests pin:
+
+    - First commit creates the manifest at version 1; commits increment.
+    - Dirty writes stream to the content tree and land in manifest
+      artifacts (path → sha256/size).
+    - Deletions leave the manifest and mirror to the content tree;
+      dirty paths vanishing before the commit count as deletions.
+    - Mid-commit writes stay dirty (F-C2).
+    - Per-file upload failures produce a partial commit + RuntimeError.
+    - Manifest write failure (incl. version conflict) leaves everything
+      dirty — the commit point never fired.
+    - Recovery = manifest + content tree re-materialized by a fresh
+      workspace.
 """
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Any
 
 import pytest
 from fsspec.implementations.memory import MemoryFileSystem
 
 from soothe.workspace.sync.backends.fsspec import FsspecSyncBackend
-from soothe.workspace.sync.cas import CASCache
-from soothe.workspace.sync.checkpoint import CheckpointManager
 from soothe.workspace.sync.dirty_tracker import DirtyTracker
-from soothe.workspace.sync.workspace_sync import (
-    CheckpointType,
-)
-
-if TYPE_CHECKING:
-    pass
-
+from soothe.workspace.sync.errors import ConcurrentModificationError
+from soothe.workspace.sync.workspace import Workspace
+from soothe.workspace.sync.workspace_sync import Manifest, ManifestEntry
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
-ROOT = "/test-checkpoint"
+RUN_ID = "run-123"
 
 
 @pytest.fixture
-def fs() -> MemoryFileSystem:
-    """Fresh in-memory filesystem."""
+def sync_fs() -> MemoryFileSystem:
+    """Fresh in-memory filesystem for the manifest root."""
     mem = MemoryFileSystem()
     yield mem
-    try:
-        mem.rm(ROOT, recursive=True)
-    except FileNotFoundError:
-        pass
     mem.store.clear()
 
 
 @pytest.fixture
-def backend(fs: MemoryFileSystem) -> FsspecSyncBackend:
-    """Fresh backend instance."""
-    b = FsspecSyncBackend(fs=fs, root=ROOT, max_workers=2)
+def content_fs() -> MemoryFileSystem:
+    """Fresh in-memory filesystem for the content tree."""
+    mem = MemoryFileSystem()
+    yield mem
+    mem.store.clear()
+
+
+@pytest.fixture
+def backend(sync_fs: MemoryFileSystem) -> FsspecSyncBackend:
+    """Manifest-root backend."""
+    b = FsspecSyncBackend(fs=sync_fs, root="/sync", max_workers=2)
     yield b
     b.close()
 
 
 @pytest.fixture
-def workspace_dir(tmp_path: Path) -> Path:
-    """Temporary workspace with input/working/output dirs."""
-    d = tmp_path / "workspace"
-    for subdir in ("input", "working", "output"):
-        (d / subdir).mkdir(parents=True)
-    return d
+def content_backend(content_fs: MemoryFileSystem) -> FsspecSyncBackend:
+    """Content-tree backend."""
+    b = FsspecSyncBackend(fs=content_fs, root="/content", max_workers=2)
+    yield b
+    b.close()
 
 
 @pytest.fixture
-def cas(tmp_path: Path) -> CASCache:
-    """Fresh CAS cache."""
-    return CASCache(cache_root=tmp_path / "cas")
+def workspace_root(tmp_path: Path) -> Path:
+    """Temporary workspace with the engine subdirectories."""
+    root = tmp_path / "ws"
+    for subdir in ("input", "working", "output", ".workspace"):
+        (root / subdir).mkdir(parents=True)
+    return root
 
 
-@pytest.fixture
-def tracker(workspace_dir: Path) -> DirtyTracker:
-    """Fresh dirty tracker (not started — used for manual mark_dirty)."""
-    return DirtyTracker(workspace_root=workspace_dir)
-
-
-@pytest.fixture
-def manager(
-    backend: FsspecSyncBackend,
-    cas: CASCache,
-    tracker: DirtyTracker,
-    workspace_dir: Path,
-) -> CheckpointManager:
-    """Fresh checkpoint manager."""
-    return CheckpointManager(
-        run_id="run-123",
-        backend=backend,
-        cas=cas,
-        dirty_tracker=tracker,
-        workspace_root=workspace_dir,
-        max_deltas=3,
-        max_cumulative_dirty=100,
-    )
-
-
-def _sha256(data: bytes) -> str:
+def _sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-# ---------------------------------------------------------------------------
-# Checkpoint creation
-# ---------------------------------------------------------------------------
-
-
-class TestCheckpointCreation:
-    """Tests for snapshot/delta checkpoint creation."""
-
-    @pytest.mark.asyncio
-    async def test_first_checkpoint_is_snapshot(
-        self, manager: CheckpointManager, workspace_dir: Path, backend: FsspecSyncBackend
-    ) -> None:
-        """First checkpoint is a SNAPSHOT with full manifest."""
-        f = workspace_dir / "output" / "report.md"
-        f.write_text("# Report")
-        tracker = manager._dirty_tracker
-        tracker.mark_dirty("output/report.md")
-
-        ckpt_id = await manager.create_checkpoint()
-        assert ckpt_id == "run-123-c000001"
-
-        # Verify the stored payload is a SNAPSHOT.
-        data = await backend.get_checkpoint("run-123-c000001")
-        assert data is not None
-        from soothe.workspace.sync.workspace_sync import CheckpointPayload
-
-        payload = CheckpointPayload.model_validate_json(data)
-        assert payload.kind == CheckpointType.SNAPSHOT
-        assert payload.manifest_snapshot is not None
-        assert payload.parent_checkpoint_id is None
-        assert len(payload.dirty_files) == 1
-        assert payload.dirty_files[0].path == "output/report.md"
-
-    @pytest.mark.asyncio
-    async def test_second_checkpoint_is_delta(
-        self, manager: CheckpointManager, workspace_dir: Path, backend: FsspecSyncBackend
-    ) -> None:
-        """Second checkpoint is a DELTA referencing the first."""
-        # First checkpoint.
-        f1 = workspace_dir / "output" / "a.md"
-        f1.write_text("A")
-        manager._dirty_tracker.mark_dirty("output/a.md")
-        await manager.create_checkpoint()
-
-        # Second checkpoint.
-        f2 = workspace_dir / "output" / "b.md"
-        f2.write_text("B")
-        manager._dirty_tracker.mark_dirty("output/b.md")
-        ckpt_id = await manager.create_checkpoint()
-        assert ckpt_id == "run-123-c000002"
-
-        data = await backend.get_checkpoint("run-123-c000002")
-        assert data is not None
-        from soothe.workspace.sync.workspace_sync import CheckpointPayload
-
-        payload = CheckpointPayload.model_validate_json(data)
-        assert payload.kind == CheckpointType.DELTA
-        assert payload.manifest_snapshot is None
-        assert payload.parent_checkpoint_id == "run-123-c000001"
-        assert len(payload.dirty_files) == 1
-        assert payload.dirty_files[0].path == "output/b.md"
-
-    @pytest.mark.asyncio
-    async def test_compaction_creates_snapshot(
-        self, manager: CheckpointManager, workspace_dir: Path, backend: FsspecSyncBackend
-    ) -> None:
-        """After max_deltas (3), a compaction SNAPSHOT is written."""
-        # Create 4 checkpoints (c001=SNAPSHOT, c002-c004=DELTA, c005=SNAPSHOT).
-        for i in range(5):
-            f = workspace_dir / "output" / f"file{i}.md"
-            f.write_text(f"content{i}")
-            manager._dirty_tracker.mark_dirty(f"output/file{i}.md")
-            await manager.create_checkpoint()
-
-        # c000005 should be a SNAPSHOT (compaction after 3 deltas).
-        from soothe.workspace.sync.workspace_sync import CheckpointPayload
-
-        data = await backend.get_checkpoint("run-123-c000005")
-        assert data is not None
-        payload = CheckpointPayload.model_validate_json(data)
-        assert payload.kind == CheckpointType.SNAPSHOT
-        assert payload.manifest_snapshot is not None
-
-    @pytest.mark.asyncio
-    async def test_dirty_blobs_uploaded(
-        self, manager: CheckpointManager, workspace_dir: Path, backend: FsspecSyncBackend
-    ) -> None:
-        """Dirty file content is uploaded as a blob to the backend."""
-        data = b"checkpoint me"
-        f = workspace_dir / "output" / "data.bin"
-        f.write_bytes(data)
-        manager._dirty_tracker.mark_dirty("output/data.bin")
-
-        await manager.create_checkpoint()
-
-        h = _sha256(data)
-        assert await backend.head_blob(h) is True
-
-    @pytest.mark.asyncio
-    async def test_manifest_version_increments(
-        self, manager: CheckpointManager, workspace_dir: Path
-    ) -> None:
-        """Manifest version increments with each checkpoint."""
-        f = workspace_dir / "output" / "a.md"
-        f.write_text("A")
-        manager._dirty_tracker.mark_dirty("output/a.md")
-        await manager.create_checkpoint()
-        assert manager.manifest is not None
-        assert manager.manifest.version == 1
-
-        f.write_text("AA")
-        manager._dirty_tracker.mark_dirty("output/a.md")
-        await manager.create_checkpoint()
-        assert manager.manifest.version == 2
-
-    @pytest.mark.asyncio
-    async def test_deleted_files_removed_from_manifest(
-        self, manager: CheckpointManager, workspace_dir: Path, backend: FsspecSyncBackend
-    ) -> None:
-        """Deleted files are removed from the manifest."""
-        f = workspace_dir / "output" / "temp.md"
-        f.write_text("temp")
-        manager._dirty_tracker.mark_dirty("output/temp.md")
-        await manager.create_checkpoint()
-        assert manager.manifest is not None
-        assert any(e.path == "output/temp.md" for e in manager.manifest.artifacts)
-
-        # Delete the file.
-        f.unlink()
-        manager._dirty_tracker.mark_dirty("output/temp.md")
-        await manager.create_checkpoint()
-        assert not any(e.path == "output/temp.md" for e in manager.manifest.artifacts)
-
-    @pytest.mark.asyncio
-    async def test_dirty_cleared_after_checkpoint(
-        self, manager: CheckpointManager, workspace_dir: Path
-    ) -> None:
-        """Dirty tracker is cleared after a checkpoint."""
-        f = workspace_dir / "output" / "a.md"
-        f.write_text("A")
-        manager._dirty_tracker.mark_dirty("output/a.md")
-        assert len(manager._dirty_tracker.dirty_files) == 1
-
-        await manager.create_checkpoint()
-        assert len(manager._dirty_tracker.dirty_files) == 0
+def _make_workspace(
+    root: Path,
+    backend: FsspecSyncBackend | None,
+    content_backend: Any,
+    *,
+    run_id: str = RUN_ID,
+    manifest: Manifest | None = None,
+) -> Workspace:
+    """Build a Workspace over the given backends (fresh tracker)."""
+    return Workspace(
+        run_id=run_id,
+        root=root,
+        backend=backend,
+        content_backend=content_backend,
+        dirty_tracker=DirtyTracker(workspace_root=root),
+        manifest=manifest,
+    )
 
 
 # ---------------------------------------------------------------------------
-# Recovery
+# Commit basics
 # ---------------------------------------------------------------------------
 
 
-class TestCheckpointRecovery:
-    """Tests for crash recovery via snapshot + delta replay."""
-
-    @pytest.mark.asyncio
-    async def test_recover_from_snapshot_and_deltas(
-        self, manager: CheckpointManager, workspace_dir: Path, backend: FsspecSyncBackend
+class TestCommitBasics:
+    async def test_first_commit_streams_content_and_writes_manifest_v1(
+        self, workspace_root: Path, backend: FsspecSyncBackend, content_backend: FsspecSyncBackend
     ) -> None:
-        """Recovery replays snapshot + deltas to restore state."""
-        # Create a snapshot + 2 deltas.
-        for i in range(3):
-            f = workspace_dir / "output" / f"file{i}.md"
-            f.write_text(f"content{i}")
-            manager._dirty_tracker.mark_dirty(f"output/file{i}.md")
-            await manager.create_checkpoint()
+        ws = _make_workspace(workspace_root, backend, content_backend)
+        ws.start_tracking()
+        (workspace_root / "output" / "report.md").write_bytes(b"final report")
 
-        # Simulate crash: create a new manager (no in-memory state).
-        manager2 = CheckpointManager(
-            run_id="run-123",
+        version = await ws.checkpoint()
+
+        assert version == 1
+        assert await content_backend.get_content_file("output/report.md") == b"final report"
+        manifest = await backend.get_manifest(RUN_ID)
+        assert manifest is not None
+        assert manifest.version == 1
+        entry = next(e for e in manifest.artifacts if e.path == "output/report.md")
+        assert entry.sha256 == _sha(b"final report")
+        assert entry.size == len(b"final report")
+
+    async def test_subsequent_commit_increments_version(
+        self, workspace_root: Path, backend: FsspecSyncBackend, content_backend: FsspecSyncBackend
+    ) -> None:
+        ws = _make_workspace(workspace_root, backend, content_backend)
+        ws.start_tracking()
+        (workspace_root / "output" / "a.md").write_bytes(b"a")
+        assert await ws.checkpoint() == 1
+
+        (workspace_root / "output" / "b.md").write_bytes(b"b")
+        assert await ws.checkpoint() == 2
+
+        manifest = await backend.get_manifest(RUN_ID)
+        assert manifest is not None
+        assert manifest.version == 2
+        assert [e.path for e in manifest.artifacts] == ["output/a.md", "output/b.md"]
+
+    async def test_commit_folds_updates_into_existing_entries(
+        self, workspace_root: Path, backend: FsspecSyncBackend, content_backend: FsspecSyncBackend
+    ) -> None:
+        ws = _make_workspace(workspace_root, backend, content_backend)
+        ws.start_tracking()
+        target = workspace_root / "output" / "a.md"
+        target.write_bytes(b"v1")
+        await ws.checkpoint()
+        target.write_bytes(b"v2-longer")
+        await ws.checkpoint()
+
+        manifest = await backend.get_manifest(RUN_ID)
+        assert manifest is not None
+        assert [e.path for e in manifest.artifacts] == ["output/a.md"]
+        entry = manifest.artifacts[0]
+        assert entry.sha256 == _sha(b"v2-longer")
+        assert entry.size == len(b"v2-longer")
+
+    async def test_checkpoint_without_changes_returns_none(
+        self, workspace_root: Path, backend: FsspecSyncBackend, content_backend: FsspecSyncBackend
+    ) -> None:
+        ws = _make_workspace(workspace_root, backend, content_backend)
+        ws.start_tracking()
+        assert await ws.checkpoint() is None
+
+    async def test_checkpoint_without_backends_returns_none(self, workspace_root: Path) -> None:
+        ws = _make_workspace(workspace_root, None, None)
+        ws.start_tracking()
+        (workspace_root / "output" / "a.md").write_bytes(b"a")
+        assert await ws.checkpoint() is None
+
+    async def test_checkpoint_while_closing_returns_none(
+        self, workspace_root: Path, backend: FsspecSyncBackend, content_backend: FsspecSyncBackend
+    ) -> None:
+        ws = _make_workspace(workspace_root, backend, content_backend)
+        ws._closing = True
+        (workspace_root / "output" / "a.md").write_bytes(b"a")
+        assert await ws.checkpoint() is None
+
+
+# ---------------------------------------------------------------------------
+# Deletions
+# ---------------------------------------------------------------------------
+
+
+class TestCommitDeletions:
+    async def test_tracked_deletion_removes_artifact_and_mirrors(
+        self, workspace_root: Path, backend: FsspecSyncBackend, content_backend: FsspecSyncBackend
+    ) -> None:
+        ws = _make_workspace(workspace_root, backend, content_backend)
+        ws.start_tracking()
+        (workspace_root / "output" / "a.md").write_bytes(b"a")
+        (workspace_root / "output" / "b.md").write_bytes(b"b")
+        await ws.checkpoint()
+
+        (workspace_root / "output" / "a.md").unlink()
+        assert await ws.checkpoint() == 2
+
+        manifest = await backend.get_manifest(RUN_ID)
+        assert manifest is not None
+        assert [e.path for e in manifest.artifacts] == ["output/b.md"]
+        assert await content_backend.get_content_file("output/a.md") is None
+        assert await content_backend.get_content_file("output/b.md") == b"b"
+
+    async def test_dirty_path_vanishing_before_commit_is_a_deletion(
+        self, workspace_root: Path, backend: FsspecSyncBackend, content_backend: FsspecSyncBackend
+    ) -> None:
+        ws = _make_workspace(workspace_root, backend, content_backend)
+        ws.start_tracking()
+        target = workspace_root / "output" / "a.md"
+        target.write_bytes(b"a")
+        await ws.checkpoint()
+
+        # Modify (dirty), then remove the file before the commit — the
+        # vanished dirty path must commit as a deletion, not a write.
+        target.write_bytes(b"dirty")
+        target.unlink()
+        assert await ws.checkpoint() == 2
+
+        manifest = await backend.get_manifest(RUN_ID)
+        assert manifest is not None
+        assert manifest.artifacts == []
+        assert await content_backend.get_content_file("output/a.md") is None
+
+    async def test_manual_mark_dirty_on_missing_path_is_a_deletion(
+        self, workspace_root: Path, backend: FsspecSyncBackend, content_backend: FsspecSyncBackend
+    ) -> None:
+        await content_backend.put_content_file("output/stale.txt", b"old")
+        ws = _make_workspace(workspace_root, backend, content_backend)
+        ws.start_tracking()
+        # mark_dirty on a path with no local file registers a deletion.
+        ws._dirty_tracker.mark_dirty("output/stale.txt")
+
+        assert await ws.checkpoint() == 1
+        assert await content_backend.get_content_file("output/stale.txt") is None
+
+
+# ---------------------------------------------------------------------------
+# F-C2: mid-commit writes stay dirty
+# ---------------------------------------------------------------------------
+
+
+class _MidCommitHookBackend:
+    """Content backend wrapper that performs a write during the commit."""
+
+    def __init__(self, inner: Any, root: Path, tracker: DirtyTracker) -> None:
+        self._inner = inner
+        self._root = root
+        self._tracker = tracker
+        self._fired = False
+
+    async def put_content_file_from_file(self, rel_path: str, src: Path) -> None:
+        if not self._fired:
+            self._fired = True
+            mid = self._root / "output" / "mid.md"
+            mid.write_bytes(b"mid-commit write")
+            self._tracker.mark_dirty("output/mid.md")
+        await self._inner.put_content_file_from_file(rel_path, src)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
+class TestMidCommitSemantics:
+    async def test_mid_commit_write_stays_dirty(
+        self, workspace_root: Path, backend: FsspecSyncBackend, content_backend: FsspecSyncBackend
+    ) -> None:
+        tracker = DirtyTracker(workspace_root=workspace_root)
+        hooked = _MidCommitHookBackend(content_backend, workspace_root, tracker)
+        ws = Workspace(
+            run_id=RUN_ID,
+            root=workspace_root,
             backend=backend,
-            cas=manager._cas,
-            dirty_tracker=DirtyTracker(workspace_root=workspace_dir),
-            workspace_root=workspace_dir,
+            content_backend=hooked,
+            dirty_tracker=tracker,
         )
-        await manager2.initialize()
+        ws.start_tracking()
+        (workspace_root / "output" / "a.md").write_bytes(b"a")
 
-        # The new manager should have recovered the manifest.
-        assert manager2.manifest is not None
-        assert manager2.manifest.version == 3
-        assert len(manager2.manifest.artifacts) == 3
+        version = await ws.checkpoint()
 
-        # Recover the latest state.
-        payload = await manager2.recover()
-        assert payload is not None
-        assert len(payload.dirty_files) == 3
+        assert version == 1
+        # Only the pre-commit write is acked; the mid-commit write stays
+        # dirty for the next commit (F-C2).
+        assert "output/mid.md" in tracker.get_dirty()
+        assert "output/a.md" not in tracker.get_dirty()
+        # The mid-commit write is not in this commit's manifest.
+        manifest = await backend.get_manifest(RUN_ID)
+        assert manifest is not None
+        assert [e.path for e in manifest.artifacts] == ["output/a.md"]
 
-    @pytest.mark.asyncio
-    async def test_recover_empty_returns_none(
-        self, manager: CheckpointManager, backend: FsspecSyncBackend
+        # The next commit picks it up.
+        assert await ws.checkpoint() == 2
+        assert tracker.get_dirty() == {}
+        manifest = await backend.get_manifest(RUN_ID)
+        assert manifest is not None
+        assert [e.path for e in manifest.artifacts] == ["output/a.md", "output/mid.md"]
+        assert await content_backend.get_content_file("output/mid.md") == b"mid-commit write"
+
+
+# ---------------------------------------------------------------------------
+# Failure semantics
+# ---------------------------------------------------------------------------
+
+
+class _FailingContentBackend:
+    """Content backend wrapper failing one path's uploads."""
+
+    def __init__(self, inner: Any, fail_path: str) -> None:
+        self._inner = inner
+        self._fail_path = fail_path
+
+    async def put_content_file_from_file(self, rel_path: str, src: Path) -> None:
+        if rel_path == self._fail_path:
+            raise OSError("injected upload failure")
+        await self._inner.put_content_file_from_file(rel_path, src)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
+class _FailingManifestBackend:
+    """Manifest backend wrapper whose put_manifest always fails."""
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+
+    async def put_manifest(self, *args: Any, **kwargs: Any) -> Manifest:
+        raise RuntimeError("injected manifest write failure")
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
+class TestCommitFailures:
+    async def test_upload_failure_partial_commit_and_stays_dirty(
+        self, workspace_root: Path, backend: FsspecSyncBackend, content_backend: FsspecSyncBackend
     ) -> None:
-        """Recovery with no checkpoints returns None."""
-        payload = await manager.recover()
-        assert payload is None
+        hooked = _FailingContentBackend(content_backend, "output/bad.md")
+        ws = _make_workspace(workspace_root, backend, hooked)
+        ws.start_tracking()
+        (workspace_root / "output" / "ok.md").write_bytes(b"ok")
+        (workspace_root / "output" / "bad.md").write_bytes(b"bad")
 
-    @pytest.mark.asyncio
-    async def test_recover_handles_missing_delta(
+        with pytest.raises(RuntimeError, match="partially"):
+            await ws.checkpoint()
+
+        # The healthy file is committed (per-file atomic state); the
+        # failed one stays dirty for the next commit.
+        assert await content_backend.get_content_file("output/ok.md") == b"ok"
+        manifest = await backend.get_manifest(RUN_ID)
+        assert manifest is not None
+        assert [e.path for e in manifest.artifacts] == ["output/ok.md"]
+        assert "output/bad.md" in ws._dirty_tracker.get_dirty()
+
+    async def test_manifest_write_failure_leaves_everything_dirty(
+        self, workspace_root: Path, backend: FsspecSyncBackend, content_backend: FsspecSyncBackend
+    ) -> None:
+        failing = _FailingManifestBackend(backend)
+        ws = _make_workspace(workspace_root, failing, content_backend)
+        ws.start_tracking()
+        (workspace_root / "output" / "a.md").write_bytes(b"a")
+
+        with pytest.raises(RuntimeError, match="injected manifest write failure"):
+            await ws.checkpoint()
+
+        # Per-file state is atomic (bytes landed), but the commit point
+        # never fired: the manifest is unchanged and everything stays
+        # dirty for the next commit.
+        assert await backend.get_manifest(RUN_ID) is None
+        assert await content_backend.get_content_file("output/a.md") == b"a"
+        assert "output/a.md" in ws._dirty_tracker.get_dirty()
+
+    async def test_version_conflict_propagates_and_stays_dirty(
+        self, workspace_root: Path, backend: FsspecSyncBackend, content_backend: FsspecSyncBackend
+    ) -> None:
+        # The workspace holds a stale manifest view (version 1) while the
+        # backend already advanced to version 5 — a concurrent writer.
+        ws = _make_workspace(
+            workspace_root,
+            backend,
+            content_backend,
+            manifest=Manifest(
+                run_id=RUN_ID,
+                version=1,
+                artifacts=[ManifestEntry(path="output/old.md", sha256=_sha(b"old"), size=3)],
+            ),
+        )
+        await backend.put_manifest(RUN_ID, Manifest(run_id=RUN_ID, version=5))
+        ws.start_tracking()
+        (workspace_root / "output" / "a.md").write_bytes(b"a")
+
+        with pytest.raises(ConcurrentModificationError):
+            await ws.checkpoint()
+
+        # The lost race leaves the dirty set intact.
+        assert "output/a.md" in ws._dirty_tracker.get_dirty()
+        manifest = await backend.get_manifest(RUN_ID)
+        assert manifest is not None
+        assert manifest.version == 5
+
+
+# ---------------------------------------------------------------------------
+# Recovery — manifest + content tree re-materialized
+# ---------------------------------------------------------------------------
+
+
+class TestRecovery:
+    async def test_fresh_workspace_rematerializes_committed_state(
+        self, tmp_path: Path, backend: FsspecSyncBackend, content_backend: FsspecSyncBackend
+    ) -> None:
+        root1 = tmp_path / "ws1"
+        for subdir in ("input", "working", "output", ".workspace"):
+            (root1 / subdir).mkdir(parents=True)
+        ws = _make_workspace(root1, backend, content_backend)
+        ws.start_tracking()
+        (root1 / "output" / "a.md").write_bytes(b"keep")
+        (root1 / "output" / "drop.md").write_bytes(b"drop")
+        await ws.checkpoint()
+        (root1 / "output" / "drop.md").unlink()
+        await ws.checkpoint()
+
+        # A fresh process opens the run: manifest loads, content tree
+        # re-materializes (the tombstoned file must not resurrect).
+        root2 = tmp_path / "ws2"
+        for subdir in ("input", "working", "output", ".workspace"):
+            (root2 / subdir).mkdir(parents=True)
+        manifest = await backend.get_manifest(RUN_ID)
+        ws2 = _make_workspace(root2, backend, content_backend, manifest=manifest)
+        fetched = await ws2.materialize_content()
+
+        assert fetched == 1
+        assert (root2 / "output" / "a.md").read_bytes() == b"keep"
+        assert not (root2 / "output" / "drop.md").exists()
+        assert ws2.manifest is not None
+        assert ws2.manifest.version == 2
+
+    async def test_manifest_artifacts_survive_reconcile(
         self,
-        manager: CheckpointManager,
-        workspace_dir: Path,
+        tmp_path: Path,
         backend: FsspecSyncBackend,
-        monkeypatch: pytest.MonkeyPatch,
+        content_backend: FsspecSyncBackend,
     ) -> None:
-        """Recovery stops gracefully when a delta is missing.
+        """Artifacts listed in the manifest are protected at materialize.
 
-        The payload is marked `incomplete` and the manager counters track
-        the last APPLIED checkpoint, not the newest stored one — a partial
-        recovery must never look complete (review f994682f).
+        A mid-commit crash may have left engine-owned files in the
+        workspace but not yet in the content tree — the manifest
+        protection set keeps reconcile from deleting them.
         """
-        # Create snapshot + delta.
-        for i in range(2):
-            f = workspace_dir / "output" / f"file{i}.md"
-            f.write_text(f"content{i}")
-            manager._dirty_tracker.mark_dirty(f"output/file{i}.md")
-            await manager.create_checkpoint()
-
-        # Capture the listing, then delete the delta object while the
-        # listing still reports it (index/listing desync — the shape that
-        # actually triggers the missing-delta branch, since removing the
-        # object also removes it from the listing).
-        listed = await backend.list_checkpoints("run-123")
-        assert len(listed) == 2
-        await manager._backend._to_thread(
-            backend._fs.rm, f"{ROOT}/runs/run-123/checkpoints/run-123-c000002.json"
+        root = tmp_path / "ws"
+        for subdir in ("input", "working", "output", ".workspace"):
+            (root / subdir).mkdir(parents=True)
+        manifest = Manifest(
+            run_id=RUN_ID,
+            version=1,
+            artifacts=[ManifestEntry(path="output/pending.md", sha256="a" * 64, size=1)],
         )
+        ws = _make_workspace(root, backend, content_backend, manifest=manifest)
+        (root / "output" / "pending.md").write_bytes(b"not yet uploaded")
 
-        async def _list_with_ghost(run_id: str) -> list[str]:
-            if run_id == "run-123":
-                return listed
-            return await FsspecSyncBackend.list_checkpoints(backend, run_id)  # type: ignore[arg-type]
+        await ws.materialize_content(reconcile=True)
 
-        monkeypatch.setattr(backend, "list_checkpoints", _list_with_ghost)
-
-        # Recovery should still work, anchored on the snapshot.
-        payload = await manager.recover()
-        assert payload is not None
-        assert payload.incomplete is True
-        # Only the snapshot's dirty files are recovered.
-        assert len(payload.dirty_files) == 1
-        # Counters and checkpoint_id describe the last APPLIED state.
-        assert manager._checkpoint_seq == 1
-        assert manager._delta_count == 0
-        assert payload.checkpoint_id == "run-123-c000001"
+        assert (root / "output" / "pending.md").read_bytes() == b"not yet uploaded"
 
 
 # ---------------------------------------------------------------------------
-# Regression: mid-checkpoint write loss (F-C2) and option-A lifecycle
+# Dirty tracker ack contract
 # ---------------------------------------------------------------------------
 
 
-class _FakeStateStore:
-    """Minimal WorkspaceStateStore for pending-row lifecycle tests."""
-
-    def __init__(self) -> None:
-        self.rows: dict[str, dict] = {}
-
-    async def insert_checkpoint(self, checkpoint_id, *, manifest_hash, status, data=None):
-        self.rows[checkpoint_id] = {
-            "checkpoint_id": checkpoint_id,
-            "manifest_hash": manifest_hash,
-            "status": status,
-            "data": data,
-        }
-
-    async def list_pending_checkpoints(self):
-        return [r for r in self.rows.values() if r["status"] == "pending_upload"]
-
-    async def update_checkpoint_status(self, checkpoint_id, status):
-        if checkpoint_id in self.rows:
-            self.rows[checkpoint_id]["status"] = status
-
-    async def mark_checkpoint_uploaded(self, checkpoint_id):
-        if checkpoint_id in self.rows:
-            self.rows[checkpoint_id]["status"] = "uploaded"
-            self.rows[checkpoint_id]["data"] = None
-
-
-class TestMidCheckpointWrites:
-    """F-C2 regression: writes arriving during the checkpoint survive."""
-
-    @pytest.mark.asyncio
-    async def test_write_during_checkpoint_stays_dirty(
-        self,
-        manager: CheckpointManager,
-        workspace_dir: Path,
-        backend: FsspecSyncBackend,
-        monkeypatch: pytest.MonkeyPatch,
+class TestDirtyAckContract:
+    async def test_commit_acks_only_committed_and_deleted_paths(
+        self, workspace_root: Path, backend: FsspecSyncBackend, content_backend: FsspecSyncBackend
     ) -> None:
-        """A write landing mid-checkpoint is NOT acked away."""
-        f1 = workspace_dir / "output" / "a.md"
-        f1.write_text("A")
-        tracker = manager._dirty_tracker
-        tracker.mark_dirty("output/a.md")
-
-        original_capture = manager._capture_file
-
-        async def _capture_with_mid_write(rel_path: str):
-            # Simulate the stat-scan poll firing mid-checkpoint: a new
-            # file is marked dirty and the baseline advances past it.
-            f2 = workspace_dir / "output" / "b.md"
-            f2.write_text("B")
-            tracker.mark_dirty("output/b.md")
-            return await original_capture(rel_path)
-
-        monkeypatch.setattr(manager, "_capture_file", _capture_with_mid_write)
-
-        await manager.create_checkpoint()
-
-        # b.md arrived during the checkpoint and must remain dirty.
-        assert "output/b.md" in tracker.get_dirty()
-
-        # The manifest of THIS checkpoint does not include b.md, but the
-        # next one does.
-        assert manager.manifest is not None
-        assert not any(e.path == "output/b.md" for e in manager.manifest.artifacts)
-        await manager.create_checkpoint()
-        assert any(e.path == "output/b.md" for e in manager.manifest.artifacts)
-        assert await backend.get_blob(_sha256(b"B")) is not None
-
-    @pytest.mark.asyncio
-    async def test_deletion_tombstone_replayed_on_recovery(
-        self, workspace_dir: Path, backend: FsspecSyncBackend, tmp_path: Path
-    ) -> None:
-        """Deletions do not resurrect across crash recovery (F-C3)."""
-        tracker = DirtyTracker(workspace_root=workspace_dir)
-        manager = CheckpointManager(
-            run_id="run-tomb",
+        tracker = DirtyTracker(workspace_root=workspace_root)
+        ws = Workspace(
+            run_id=RUN_ID,
+            root=workspace_root,
             backend=backend,
-            cas=CASCache(cache_root=tmp_path / "cas"),
+            content_backend=content_backend,
             dirty_tracker=tracker,
-            workspace_root=workspace_dir,
         )
-        f = workspace_dir / "output" / "temp.md"
-        f.write_text("temp")
-        tracker.mark_dirty("output/temp.md")
-        await manager.create_checkpoint()
+        ws.start_tracking()
+        (workspace_root / "output" / "a.md").write_bytes(b"a")
+        (workspace_root / "output" / "b.md").write_bytes(b"b")
+        await ws.checkpoint()
 
-        f.unlink()
-        tracker.mark_dirty("output/temp.md")
-        await manager.create_checkpoint()
+        (workspace_root / "output" / "b.md").unlink()
+        (workspace_root / "output" / "c.md").write_bytes(b"c")
+        await ws.checkpoint()
 
-        # Crash: fresh manager recovers state.
-        tracker2 = DirtyTracker(workspace_root=workspace_dir)
-        manager2 = CheckpointManager(
-            run_id="run-tomb",
-            backend=backend,
-            cas=CASCache(cache_root=tmp_path / "cas"),
-            dirty_tracker=tracker2,
-            workspace_root=workspace_dir,
-        )
-        await manager2.initialize()
-        payload = await manager2.recover()
-        assert payload is not None
-        assert "output/temp.md" not in {e.path for e in payload.dirty_files}
-        assert manager2.manifest is not None
-        assert not any(e.path == "output/temp.md" for e in manager2.manifest.artifacts)
+        assert tracker.get_dirty() == {}
+        assert tracker.deleted_files == set()
 
-
-class TestOptionALifecycle:
-    """Option A: pending-row staging + async push + mark-uploaded."""
-
-    @pytest.mark.asyncio
-    async def test_pending_row_lifecycle(
-        self, workspace_dir: Path, backend: FsspecSyncBackend, tmp_path: Path
-    ) -> None:
-        """With a state store the payload is staged, not remotely pushed."""
-        store = _FakeStateStore()
-        tracker = DirtyTracker(workspace_root=workspace_dir)
-        manager = CheckpointManager(
-            run_id="run-optA",
-            backend=backend,
-            cas=CASCache(cache_root=tmp_path / "cas"),
-            dirty_tracker=tracker,
-            workspace_root=workspace_dir,
-            state_store=store,
-        )
-        f = workspace_dir / "output" / "a.md"
-        f.write_text("A")
-        tracker.mark_dirty("output/a.md")
-
-        full_id = await manager.create_checkpoint()
-        assert full_id == "run-optA-c000001"
-
-        # Local durability: pending row holds the serialized payload.
-        row = store.rows[full_id]
-        assert row["status"] == "pending_upload"
-        assert row["data"] is not None
-        # Remote payload not pushed yet (uploader's job) — but the
-        # manifest (authoritative for artifacts) IS.
-        assert await backend.get_checkpoint(full_id) is None
-        assert await backend.get_manifest("run-optA") is not None
-
-        # The background uploader drains: push + mark uploaded.
-        from soothe.workspace.sync.uploader import BackgroundUploader
-
-        uploader = BackgroundUploader(
-            backend=backend, store=store, run_id="run-optA", poll_interval=0.05
-        )
-        uploader.start()
-        for _ in range(100):
-            if store.rows[full_id]["status"] == "uploaded":
-                break
-            await asyncio.sleep(0.05)
-        await uploader.stop()
-
-        assert store.rows[full_id]["status"] == "uploaded"
-        assert store.rows[full_id]["data"] is None
-        assert await backend.get_checkpoint(full_id) is not None
-
-    @pytest.mark.asyncio
-    async def test_initialize_merges_pending_rows_into_seq(
-        self, workspace_dir: Path, backend: FsspecSyncBackend, tmp_path: Path
-    ) -> None:
-        """A crashed process's pending row reserves its sequence number."""
-        store = _FakeStateStore()
-        tracker = DirtyTracker(workspace_root=workspace_dir)
-        manager = CheckpointManager(
-            run_id="run-seq",
-            backend=backend,
-            cas=CASCache(cache_root=tmp_path / "cas"),
-            dirty_tracker=tracker,
-            workspace_root=workspace_dir,
-            state_store=store,
-        )
-        f = workspace_dir / "output" / "a.md"
-        f.write_text("A")
-        tracker.mark_dirty("output/a.md")
-        await manager.create_checkpoint()  # pending row run-seq-c000001
-
-        # Crash: new manager, same state store, no remote checkpoints.
-        tracker2 = DirtyTracker(workspace_root=workspace_dir)
-        manager2 = CheckpointManager(
-            run_id="run-seq",
-            backend=backend,
-            cas=CASCache(cache_root=tmp_path / "cas"),
-            dirty_tracker=tracker2,
-            workspace_root=workspace_dir,
-            state_store=store,
-        )
-        await manager2.initialize()
-
-        f2 = workspace_dir / "output" / "b.md"
-        f2.write_text("B")
-        tracker2.mark_dirty("output/b.md")
-        full_id = await manager2.create_checkpoint()
-        # c000001 was reserved by the pending row — the new checkpoint
-        # must not reuse (and overwrite) it.
-        assert full_id == "run-seq-c000002"
-        assert store.rows["run-seq-c000001"]["status"] == "pending_upload"
-        assert store.rows["run-seq-c000001"]["data"] is not None
+        manifest = await backend.get_manifest(RUN_ID)
+        assert manifest is not None
+        assert [e.path for e in manifest.artifacts] == ["output/a.md", "output/c.md"]

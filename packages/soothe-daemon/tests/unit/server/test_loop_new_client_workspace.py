@@ -507,39 +507,12 @@ async def test_checkpoint_thread_id_overrides_stale_runner_for_workspace_resolut
 
 
 # ---------------------------------------------------------------------------
-# Workspace sync (RFC-906 §51) — URI detection and sync workspace opening
+# Workspace sync — daemon de-wiring (IG-CORE-010)
+#
+# Workspace sync is an agent-plane capability (flowjet via soothe
+# ``TurnScopedWorkspaces``); the daemon does NOT wire it. Requests asking
+# for it fail loud with WORKSPACE_RESOLUTION_FAILED.
 # ---------------------------------------------------------------------------
-
-
-class _SyncDaemon(_CapturingDaemon):
-    """Daemon double that supports workspace sync manager mocking."""
-
-    def __init__(self, config: Any = None) -> None:
-        super().__init__(config=config)
-        self._workspace_manager: Any = None
-
-    def _get_workspace_manager(self) -> Any:
-        return self._workspace_manager
-
-
-def _patch_sync_backend(monkeypatch: pytest.MonkeyPatch, root: Path) -> None:
-    """Patch ``construct_sync_backend`` to return a fake workspace with ``root``."""
-
-    class _FakeBackend:
-        pass
-
-    class _FakeWorkspace:
-        def __init__(self, root_path: Path) -> None:
-            self.root = root_path
-
-    class _FakeManager:
-        async def open_from_uri(self, *, run_id: str, backend: Any) -> _FakeWorkspace:
-            return _FakeWorkspace(root)
-
-    def _fake_construct(_uri: str, _config: Any = None) -> _FakeBackend:
-        return _FakeBackend()
-
-    monkeypatch.setattr("soothe.workspace.sync.construct_sync_backend", _fake_construct)
 
 
 @pytest.mark.asyncio
@@ -574,28 +547,14 @@ async def test_loop_new_rejects_non_allowlisted_uri_scheme(
 
 
 @pytest.mark.asyncio
-async def test_loop_new_s3_uri_triggers_sync_path(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """An ``s3://`` URI in ``client_workspace`` opens a sync workspace."""
+async def test_loop_new_s3_uri_is_rejected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An ``s3://`` URI in ``client_workspace`` fails loud — the daemon has no sync path."""
     monkeypatch.setattr("soothe.config.SOOTHE_HOME", str(tmp_path / "soothe-home"))
-
-    sync_root = tmp_path / "sync-ws"
-    sync_root.mkdir()
-
-    _patch_sync_backend(monkeypatch, sync_root)
 
     from soothe.config import SootheConfig
 
     config = SootheConfig()
-    daemon = _SyncDaemon(config=config)
-    daemon._persistence_manager = StrangeLoopCheckpointPersistenceManager(config=config)
-
-    class _FakeManager:
-        async def open_from_uri(self, *, run_id: str, backend: Any) -> Any:
-            return SimpleNamespace(root=sync_root)
-
-    daemon._workspace_manager = _FakeManager()
+    daemon = _make_daemon_with_pm(config)
     router = MessageRouter(daemon)
 
     try:
@@ -607,88 +566,57 @@ async def test_loop_new_s3_uri_triggers_sync_path(
                 "request_id": "rid-1",
             },
         )
-        assert daemon.sent, "Daemon must respond"
+        assert daemon.sent, "Daemon must respond with an error"
         response = daemon.sent[-1]
-        assert response["type"] == "response"
-        loop_id = response["result"]["loop_id"]
-
-        metadata = await _read_metadata(loop_id, config)
-        assert metadata.get("workspace_sync_source") == "s3://test-bucket/project/"
-        assert metadata.get("current_workspace") == str(sync_root)
+        assert response["type"] == "error"
+        assert response["error"]["code"] == ErrorCode.WORKSPACE_RESOLUTION_FAILED
+        assert "s3" in response["error"]["message"]
     finally:
         await daemon.close()
 
 
 @pytest.mark.asyncio
-async def test_loop_new_config_default_enables_sync(
+async def test_loop_new_workspace_field_uri_is_rejected(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Config ``workspace_sync`` with enabled+source_uri activates sync."""
+    """A URI in the legacy ``workspace`` field fails loud too (no sync wiring)."""
     monkeypatch.setattr("soothe.config.SOOTHE_HOME", str(tmp_path / "soothe-home"))
-
-    sync_root = tmp_path / "sync-ws"
-    sync_root.mkdir()
-
-    _patch_sync_backend(monkeypatch, sync_root)
 
     from soothe.config import SootheConfig
 
     config = SootheConfig()
-    config.workspace_sync.enabled = True
-    config.workspace_sync.source_uri = "s3://soothe/"
-    assert config.workspace_sync.is_enabled
-
-    class _FakeManager:
-        async def open_from_uri(self, *, run_id: str, backend: Any) -> Any:
-            return SimpleNamespace(root=sync_root)
-
-    daemon = _SyncDaemon(config=config)
-    daemon._persistence_manager = StrangeLoopCheckpointPersistenceManager(config=config)
-    daemon._workspace_manager = _FakeManager()
+    daemon = _make_daemon_with_pm(config)
     router = MessageRouter(daemon)
 
     try:
         await router._handle_loop_new(
             client_id="client-1",
-            msg={"type": "loop_new", "request_id": "rid-1"},
+            msg={
+                "type": "loop_new",
+                "workspace": "s3://test-bucket/project/",
+                "request_id": "rid-1",
+            },
         )
-        assert daemon.sent, "Daemon must respond"
+        assert daemon.sent, "Daemon must respond with an error"
         response = daemon.sent[-1]
-        assert response["type"] == "response"
-        loop_id = response["result"]["loop_id"]
-
-        metadata = await _read_metadata(loop_id, config)
-        assert metadata.get("workspace_sync_source") == "s3://soothe/"
-        assert metadata.get("current_workspace") == str(sync_root)
+        assert response["type"] == "error"
+        assert response["error"]["code"] == ErrorCode.WORKSPACE_RESOLUTION_FAILED
+        assert "s3" in response["error"]["message"]
     finally:
         await daemon.close()
 
 
 @pytest.mark.asyncio
-async def test_loop_new_sync_source_field_overrides_config(
+async def test_loop_new_sync_source_field_is_rejected(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Explicit ``workspace_sync_source`` field takes priority over config default."""
+    """A non-empty ``workspace_sync_source`` fails loud (agent-plane capability)."""
     monkeypatch.setattr("soothe.config.SOOTHE_HOME", str(tmp_path / "soothe-home"))
-
-    sync_root = tmp_path / "sync-ws"
-    sync_root.mkdir()
-
-    _patch_sync_backend(monkeypatch, sync_root)
 
     from soothe.config import SootheConfig
 
     config = SootheConfig()
-    config.workspace_sync.enabled = True
-    config.workspace_sync.source_uri = "s3://config-default/"
-
-    class _FakeManager:
-        async def open_from_uri(self, *, run_id: str, backend: Any) -> Any:
-            return SimpleNamespace(root=sync_root)
-
-    daemon = _SyncDaemon(config=config)
-    daemon._persistence_manager = StrangeLoopCheckpointPersistenceManager(config=config)
-    daemon._workspace_manager = _FakeManager()
+    daemon = _make_daemon_with_pm(config)
     router = MessageRouter(daemon)
 
     try:
@@ -700,11 +628,10 @@ async def test_loop_new_sync_source_field_overrides_config(
                 "request_id": "rid-1",
             },
         )
+        assert daemon.sent, "Daemon must respond with an error"
         response = daemon.sent[-1]
-        assert response["type"] == "response"
-        loop_id = response["result"]["loop_id"]
-
-        metadata = await _read_metadata(loop_id, config)
-        assert metadata.get("workspace_sync_source") == "s3://explicit/override/"
+        assert response["type"] == "error"
+        assert response["error"]["code"] == ErrorCode.WORKSPACE_RESOLUTION_FAILED
+        assert "not supported" in response["error"]["message"]
     finally:
         await daemon.close()

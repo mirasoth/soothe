@@ -12,11 +12,10 @@ class WorkspaceSyncError(Exception):
 
 
 class IntegrityError(WorkspaceSyncError):
-    """Content hash mismatch detected during blob storage or retrieval.
+    """Content hash mismatch detected during storage or retrieval.
 
-    Raised when `put_blob` receives data whose SHA-256 does not match
-    the declared hash, or when a CAS cache hit's stored content does
-    not match its key.
+    Raised when stored or streamed content does not match its declared
+    SHA-256 digest.
     """
 
 

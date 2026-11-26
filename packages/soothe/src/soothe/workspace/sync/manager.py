@@ -1,93 +1,119 @@
-"""WorkspaceManager — lifecycle orchestrator for agent workspaces.
+"""Workspace manager — owns the open-workspace set for a sync root.
 
-Creates, opens, recovers, and closes workspaces.  Wires together the CAS
-cache, dirty tracker, debouncer, checkpoint manager, and background
-uploader for each run.
+The manager creates local workspace directories, wires each run's
+`DirtyTracker`, resolves the per-run content backend, and loads the
+run's manifest (the engine-owned artifact set of the last committed
+turn) from the remote backend at open — a fresh process never resets
+manifest state (F-L2).
 """
 
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Sequence
+import re
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from soothe.workspace.sync.cas import CASCache
-from soothe.workspace.sync.checkpoint import CheckpointManager
-from soothe.workspace.sync.debouncer import CheckpointDebouncer
-from soothe.workspace.sync.dirty_tracker import DirtyTracker, _normalize_watched_subdirs
-from soothe.workspace.sync.uploader import BackgroundUploader
+from soothe.workspace.sync.dirty_tracker import DirtyTracker
 from soothe.workspace.sync.workspace import Workspace
-from soothe.workspace.sync.workspace_sync import WorkspaceSyncBackend
 
 if TYPE_CHECKING:
-    from soothe.workspace.state.protocol import WorkspaceStateStore
+    from collections.abc import Sequence
+
+    from soothe.workspace.sync.workspace_sync import Manifest, WorkspaceSyncBackend
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_CAS_ROOT = "data/agent-cache"
+# Workspace directory names double as sync run IDs: a single safe path
+# component (mirrored by hosts mapping their session/workspace ids to
+# run ids).
+_RUN_ID_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$")
+
+# Subtrees pre-created at workspace open; the dirty tracker watches
+# these plus root-level files.  Additional subtrees (e.g.
+# "deliverables") come from the manager's `watched_subdirs`.
+_DEFAULT_WATCHED_SUBDIRS = ("input", "working", "output")
+
+
+def _normalize_watched_subdirs(
+    watched_subdirs: Sequence[str] | None,
+) -> tuple[str, ...]:
+    """Normalize the watched-subdir configuration.
+
+    Args:
+        watched_subdirs: Configured additional subtrees, or `None`.
+
+    Returns:
+        The full watched-subdir tuple (defaults + configured extras).
+
+    Raises:
+        ValueError: When an entry is not a single safe path component.
+    """
+    subdirs = list(_DEFAULT_WATCHED_SUBDIRS)
+    for entry in watched_subdirs or ():
+        if not isinstance(entry, str) or not _RUN_ID_RE.match(entry) or "/" in entry:
+            raise ValueError(f"watched subdir {entry!r} must be a single safe path component")
+        if entry not in subdirs:
+            subdirs.append(entry)
+    return tuple(subdirs)
 
 
 class WorkspaceManager:
-    """Lifecycle orchestrator for agent workspaces.
-
-    Creates workspace directories, wires together all sync components
-    (CAS, dirty tracker, debouncer, checkpoint manager, uploader), and
-    provides open/recover/close lifecycle operations.
+    """Owns the set of open workspaces for one manifest-sync root.
 
     Args:
-        workspaces_root: Root directory for workspace runs.
-        cas_root: Root directory for the CAS cache.
-        backend: Remote storage backend (or `None` for local-only mode).
-        state_store_factory: Callable that creates a `WorkspaceStateStore`
-            for a given loop_id and workspace_dir.
-        content_backend_factory: Optional callable mapping a run_id to a
-            second backend addressing a plain file tree (the "content
-            root", e.g. `s3://<bucket>/workspaces/<run_id>`). Enables
-            dual-source sync: content files materialize into the workspace
-            at open and dirty writes/deletes mirror back at checkpoint.
-            Return `None` to disable content mirroring for a run.
-        watched_subdirs: Workspace-relative subtrees tracked by the dirty
-            tracker (and pre-created at workspace open). `None` keeps the
-            engine defaults (`input`, `working`, `output`).
+        workspaces_root: Local root directory holding per-run
+            workspaces.
+        backend: Remote manifest backend (commit records).  `None`
+            opens workspaces in local-only mode (no remote commits).
+        content_backend_factory: Optional callable mapping a run id to
+            the run's content backend (the plain file tree — the
+            authoritative file store).  Returning `None` disables
+            content sync for that run.
+        watched_subdirs: Additional workspace-relative subtrees tracked
+            by the dirty tracker (beyond `input`/`working`/`output`).
     """
 
     def __init__(
         self,
         *,
         workspaces_root: Path,
-        cas_root: Path,
         backend: WorkspaceSyncBackend | None = None,
-        state_store_factory: Callable[..., WorkspaceStateStore] | None = None,
         content_backend_factory: Callable[[str], WorkspaceSyncBackend | None] | None = None,
         watched_subdirs: Sequence[str] | None = None,
     ) -> None:
-        """Initialize the sync manager with workspace/CAS roots and optional backend.
-
-        Args:
-            workspaces_root: Root directory holding per-run workspaces.
-            cas_root: Root directory for the content-addressed cache.
-            backend: Remote sync backend; `None` disables remote checkpointing.
-            state_store_factory: Optional factory for per-run state stores.
-            content_backend_factory: Optional factory for per-run content backends.
-            watched_subdirs: Workspace-relative subtrees tracked by the dirty
-                tracker (and pre-created at workspace open). `None` keeps the
-                engine defaults (`input`, `working`, `output`).
-        """
-        self._workspaces_root = workspaces_root
-        self._cas_root = cas_root
+        """Initialize the manager with its root, backend, and factories."""
+        self._workspaces_root = Path(workspaces_root)
         self._backend = backend
-        self._state_store_factory = state_store_factory
         self._content_backend_factory = content_backend_factory
-        self._watched_subdirs = list(watched_subdirs) if watched_subdirs is not None else None
+        self._watched_subdirs = _normalize_watched_subdirs(watched_subdirs)
         self._workspaces: dict[str, Workspace] = {}
 
+    @property
+    def workspaces_root(self) -> Path:
+        """Return the local root directory holding per-run workspaces."""
+        return self._workspaces_root
+
     def _workspace_root(self, run_id: str) -> Path:
-        """Return the workspace root path for a run."""
+        """Return the workspace directory for a run id.
+
+        Args:
+            run_id: Unique run identifier (also the directory name).
+
+        Returns:
+            The workspace root path.
+
+        Raises:
+            ValueError: When the run id is not a single safe path
+                component.
+        """
+        if not _RUN_ID_RE.match(run_id):
+            raise ValueError(f"run id {run_id!r} must be a single safe path component")
         return self._workspaces_root / run_id
 
     def _create_workspace_dirs(self, run_id: str) -> Path:
-        """Create the workspace directory structure.
+        """Create the workspace directory structure for a run.
 
         Args:
             run_id: Unique run identifier.
@@ -110,62 +136,22 @@ class WorkspaceManager:
     async def open(self, run_id: str) -> Workspace:
         """Open a workspace for a run using the manager's backend.
 
-        Args:
-            run_id: Unique run identifier.
-
-        Returns:
-            A `Workspace` handle ready for materialization.
-        """
-        return await self._open(run_id, self._backend)
-
-    async def open_from_uri(
-        self,
-        run_id: str,
-        backend: WorkspaceSyncBackend,
-    ) -> Workspace:
-        """Open a workspace with a specific backend (e.g. from a URI).
-
-        The supplied backend is used for THIS run only — the manager's
-        default backend is not mutated (F-C10).
+        Creates the workspace directory structure, wires the dirty
+        tracker and per-run content backend, and loads any existing
+        remote manifest (the last committed artifact set) so a fresh
+        process never resets manifest state.
 
         Args:
             run_id: Unique run identifier.
-            backend: Remote storage backend to use for this run.
-
-        Returns:
-            A `Workspace` handle.
-        """
-        return await self._open(run_id, backend)
-
-    async def _open(self, run_id: str, backend: WorkspaceSyncBackend | None) -> Workspace:
-        """Open a workspace with an explicit backend.
-
-        Creates the workspace directory structure, initializes all sync
-        components (wiring the debouncer into the dirty tracker and the
-        uploader's backpressure into the debouncer), loads any existing
-        remote manifest state, and returns a `Workspace` handle.
-
-        Args:
-            run_id: Unique run identifier.
-            backend: Remote storage backend (or `None` for local-only).
 
         Returns:
             A `Workspace` handle ready for materialization.
         """
         root = self._create_workspace_dirs(run_id)
-        cas = CASCache(cache_root=self._cas_root)
 
-        state_store: WorkspaceStateStore | None = None
-        if self._state_store_factory is not None:
-            state_store = self._state_store_factory(
-                loop_id=run_id,
-                workspace_dir=root,
-            )
-
-        if backend is None:
+        if self._backend is None:
             logger.warning(
-                "Opening workspace %s without a remote backend — "
-                "checkpointing to remote is disabled",
+                "Opening workspace %s without a remote backend — remote commits disabled",
                 run_id,
             )
 
@@ -176,69 +162,34 @@ class WorkspaceManager:
             except Exception:  # noqa: BLE001
                 logger.exception(
                     "Content backend factory failed for run %s — "
-                    "content mirroring disabled for this run",
+                    "content sync disabled for this run",
                     run_id,
                 )
                 content_backend = None
 
-        # Late-bound debouncer wiring: the dirty tracker needs
-        # `debouncer.notify_dirty` and the debouncer needs the
-        # checkpoint manager's `create_checkpoint`, but the manager
-        # needs the tracker — the closure resolves the cycle.
-        debouncer_ref: list[CheckpointDebouncer] = []
-
-        def _on_dirty() -> None:
-            if debouncer_ref:
-                debouncer_ref[0].notify_dirty()
-
         dirty_tracker = DirtyTracker(
             workspace_root=root,
             watched_subdirs=self._watched_subdirs,
-            on_dirty=_on_dirty,
         )
 
-        checkpoint_mgr: CheckpointManager | None = None
-        debouncer: CheckpointDebouncer | None = None
-        if backend is not None:
-            checkpoint_mgr = CheckpointManager(
-                run_id=run_id,
-                backend=backend,
-                cas=cas,
-                dirty_tracker=dirty_tracker,
-                workspace_root=root,
-                state_store=state_store,
-                content_backend=content_backend,
-            )
-            debouncer = CheckpointDebouncer(
-                trigger=checkpoint_mgr.create_checkpoint,
-            )
-            debouncer_ref.append(debouncer)
-
-        uploader: BackgroundUploader | None = None
-        if backend is not None and state_store is not None:
-            uploader = BackgroundUploader(
-                backend=backend,
-                store=state_store,
-                run_id=run_id,
-                on_backpressure=debouncer.set_pending_count if debouncer else None,
-            )
-
-        if checkpoint_mgr is not None:
-            # One-stop lifecycle (F-L2): load the remote manifest and
-            # counters so a fresh process never resets manifest state.
-            await checkpoint_mgr.initialize()
+        manifest: Manifest | None = None
+        if self._backend is not None:
+            manifest = await self._backend.get_manifest(run_id)
+            if manifest is not None:
+                logger.info(
+                    "Loaded manifest for run %s at version %d (%d artifacts)",
+                    run_id,
+                    manifest.version,
+                    len(manifest.artifacts),
+                )
 
         ws = Workspace(
             run_id=run_id,
             root=root,
-            backend=backend,
-            cas=cas,
-            state_store=state_store,
-            dirty_tracker=dirty_tracker,
-            debouncer=debouncer,
-            checkpoint_mgr=checkpoint_mgr,
-            uploader=uploader,
+            backend=self._backend,
             content_backend=content_backend,
+            dirty_tracker=dirty_tracker,
+            manifest=manifest,
         )
         self._workspaces[run_id] = ws
         logger.info("Opened workspace for run %s at %s", run_id, root)
@@ -269,7 +220,7 @@ class WorkspaceManager:
         """Close all open workspaces.
 
         One failing close is logged and the loop continues — a single
-        bad workspace must not block the shutdown of the rest (F-C10).
+        bad workspace must not block the shutdown of the rest.
         """
         run_ids = list(self._workspaces.keys())
         for run_id in run_ids:
@@ -280,3 +231,11 @@ class WorkspaceManager:
                 await ws.close()
             except Exception:  # noqa: BLE001
                 logger.exception("Failed to close workspace %s", run_id)
+
+    def __len__(self) -> int:
+        """Return the number of open workspaces."""
+        return len(self._workspaces)
+
+    def __repr__(self) -> str:
+        """Return a debug representation."""
+        return f"WorkspaceManager(root={self._workspaces_root}, open={len(self._workspaces)})"
