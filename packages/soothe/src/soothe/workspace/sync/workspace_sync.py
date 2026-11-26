@@ -2,9 +2,10 @@
 
 Defines the data models and abstract protocol used to synchronize agent
 workspaces with durable object-storage backends (S3-compatible, MinIO, GCS,
-local filesystem, etc.) under the content-authoritative representation
-(IG-CORE-010): the plain content tree is the single authoritative file store
-and the manifest is the atomic commit record.
+local filesystem, etc.) under the single-root content-authoritative
+representation (IG-CORE-011): one per-run backend root holds the plain
+content tree (the single authoritative file store) and the engine-private
+commit record (``.workspace/manifest.json``).
 
 The protocol lives in soothe so host consumers can construct
 ``Manifest`` objects without importing host code, while concrete backend
@@ -77,12 +78,13 @@ class WorkspaceSyncBackend(Protocol):
 
     Implementations provide the concrete transport (S3, GCS, local FS, ...)
     while keeping the workspace manager's dirty-tracking / commit algorithm
-    backend-agnostic.  Two key spaces exist:
+    backend-agnostic.  One backend instance serves one per-run root with
+    two key spaces (IG-CORE-011):
 
-    * the *manifest root* (the backend's own ``root``) holding
-      ``runs/<run_id>/manifest.json`` — the engine-private commit records;
     * the *content tree* — a plain file tree addressed by relative
-      workspace path, holding the authoritative file bytes.
+      workspace path, holding the authoritative file bytes;
+    * the *engine-private* ``.workspace/`` key space holding
+      ``manifest.json`` — the commit record.
 
     Every method is async and idempotent.
     """

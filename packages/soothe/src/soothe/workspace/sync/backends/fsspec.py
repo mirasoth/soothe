@@ -4,12 +4,11 @@ One adapter supports S3 (`s3fs`), GCS (`gcsfs`), Azure Blob (`adlfs`),
 local, and memory filesystems.  All fsspec calls are offloaded to a
 dedicated thread pool via `asyncio.to_thread()`.
 
-Under the content-authoritative representation (IG-CORE-010) the backend
-addresses two key spaces: the manifest root (``<root>/runs/<run_id>/
-manifest.json`` — engine commit records) and the plain content tree
-(``<root>/<relative workspace path>`` — authoritative file bytes).  A
-single backend instance typically serves ONE of the two roots; hosts pass
-a second, independently-rooted backend as the content backend.
+Under the single-root representation (IG-CORE-011) one backend instance
+serves ONE per-run root (``<base>/<run_id>``) and addresses both key
+spaces within it: the plain content tree (``<root>/<relative workspace
+path>`` — authoritative file bytes) and the engine-private commit record
+(``<root>/.workspace/manifest.json``).
 """
 
 from __future__ import annotations
@@ -57,8 +56,9 @@ class FsspecSyncBackend:
     Args:
         fs: An fsspec filesystem instance (e.g. `MemoryFileSystem`,
             `S3FileSystem`, `LocalFileSystem`).
-        root: Root path within the filesystem that all addressed keys
-            are stored under (manifest root OR content-tree root).
+        root: Per-run root path within the filesystem — everything the
+            engine addresses for that run lives under it (content tree +
+            ``.workspace/`` commit records).
         max_workers: Thread pool size for I/O offloading.
     """
 
@@ -92,9 +92,21 @@ class FsspecSyncBackend:
     # ------------------------------------------------------------------
 
     def _manifest_path(self, run_id: str) -> str:
-        """Map a run ID to its manifest storage path."""
+        """Map a run ID to its manifest storage path.
+
+        The backend is per-run rooted (IG-CORE-011), so the manifest
+        lives under the engine-private ``.workspace/`` key space of the
+        run's own root — the ``run_id`` argument is validated for misuse
+        defense but not part of the path.
+
+        Args:
+            run_id: Run identifier (validated, unused for pathing).
+
+        Returns:
+            The manifest key under this backend's root.
+        """
         validate_path_component(run_id, name="run_id")
-        return f"{self._root}/runs/{run_id}/manifest.json"
+        return f"{self._root}/.workspace/manifest.json"
 
     def _content_path(self, rel_path: str) -> str:
         """Map a relative workspace path to its content-tree storage path."""
@@ -290,7 +302,9 @@ class FsspecSyncBackend:
     async def list_content_files(self) -> list[str]:
         """List all files in the content tree as relative workspace paths.
 
-        Returns an empty list when the tree does not exist yet.
+        Returns an empty list when the tree does not exist yet.  The
+        engine-private ``.workspace/`` key space (commit records) is not
+        part of the content tree and is excluded.
         """
         try:
             entries = await self._to_thread(self._fs.find, self._root)
@@ -298,6 +312,7 @@ class FsspecSyncBackend:
             return []
         rel_paths: list[str] = []
         prefix = f"{self._root}/"
+        engine_prefix = f"{self._root}/.workspace/"
         for entry in entries:
             name = entry if isinstance(entry, str) else str(entry.get("name", ""))
             if not name:
@@ -306,6 +321,8 @@ class FsspecSyncBackend:
                 continue  # directory entries (some filesystems emit them)
             if not name.startswith(prefix):
                 continue
+            if name.startswith(engine_prefix):
+                continue  # engine-private commit records, not content
             rel = name[len(prefix) :]
             if rel:
                 rel_paths.append(rel)

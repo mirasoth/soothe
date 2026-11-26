@@ -1,7 +1,9 @@
 """Tests for ``Workspace.checkpoint`` — content-authoritative commit semantics.
 
-Under IG-CORE-010 the plain content tree is the authoritative file store
-and the manifest write is the atomic commit point.  These tests pin:
+Under IG-CORE-011 one per-run backend root holds the plain content tree
+(the authoritative file store) and the engine-private manifest
+(``.workspace/manifest.json`` — the atomic commit point).  These tests
+pin:
 
     - First commit creates the manifest at version 1; commits increment.
     - Dirty writes stream to the content tree and land in manifest
@@ -40,15 +42,7 @@ RUN_ID = "run-123"
 
 @pytest.fixture
 def sync_fs() -> MemoryFileSystem:
-    """Fresh in-memory filesystem for the manifest root."""
-    mem = MemoryFileSystem()
-    yield mem
-    mem.store.clear()
-
-
-@pytest.fixture
-def content_fs() -> MemoryFileSystem:
-    """Fresh in-memory filesystem for the content tree."""
+    """Fresh in-memory filesystem holding the per-run root."""
     mem = MemoryFileSystem()
     yield mem
     mem.store.clear()
@@ -56,16 +50,8 @@ def content_fs() -> MemoryFileSystem:
 
 @pytest.fixture
 def backend(sync_fs: MemoryFileSystem) -> FsspecSyncBackend:
-    """Manifest-root backend."""
-    b = FsspecSyncBackend(fs=sync_fs, root="/sync", max_workers=2)
-    yield b
-    b.close()
-
-
-@pytest.fixture
-def content_backend(content_fs: MemoryFileSystem) -> FsspecSyncBackend:
-    """Content-tree backend."""
-    b = FsspecSyncBackend(fs=content_fs, root="/content", max_workers=2)
+    """Per-run backend (content tree + manifest under one root)."""
+    b = FsspecSyncBackend(fs=sync_fs, root="/run", max_workers=2)
     yield b
     b.close()
 
@@ -86,18 +72,17 @@ def _sha(data: bytes) -> str:
 def _make_workspace(
     root: Path,
     backend: FsspecSyncBackend | None,
-    content_backend: Any,
     *,
     run_id: str = RUN_ID,
     manifest: Manifest | None = None,
+    tracker: DirtyTracker | None = None,
 ) -> Workspace:
-    """Build a Workspace over the given backends (fresh tracker)."""
+    """Build a Workspace over the given per-run backend (fresh tracker)."""
     return Workspace(
         run_id=run_id,
         root=root,
         backend=backend,
-        content_backend=content_backend,
-        dirty_tracker=DirtyTracker(workspace_root=root),
+        dirty_tracker=tracker or DirtyTracker(workspace_root=root),
         manifest=manifest,
     )
 
@@ -109,16 +94,16 @@ def _make_workspace(
 
 class TestCommitBasics:
     async def test_first_commit_streams_content_and_writes_manifest_v1(
-        self, workspace_root: Path, backend: FsspecSyncBackend, content_backend: FsspecSyncBackend
+        self, workspace_root: Path, backend: FsspecSyncBackend
     ) -> None:
-        ws = _make_workspace(workspace_root, backend, content_backend)
+        ws = _make_workspace(workspace_root, backend)
         ws.start_tracking()
         (workspace_root / "output" / "report.md").write_bytes(b"final report")
 
         version = await ws.checkpoint()
 
         assert version == 1
-        assert await content_backend.get_content_file("output/report.md") == b"final report"
+        assert await backend.get_content_file("output/report.md") == b"final report"
         manifest = await backend.get_manifest(RUN_ID)
         assert manifest is not None
         assert manifest.version == 1
@@ -126,10 +111,23 @@ class TestCommitBasics:
         assert entry.sha256 == _sha(b"final report")
         assert entry.size == len(b"final report")
 
-    async def test_subsequent_commit_increments_version(
-        self, workspace_root: Path, backend: FsspecSyncBackend, content_backend: FsspecSyncBackend
+    async def test_manifest_lives_in_the_engine_key_space(
+        self, workspace_root: Path, backend: FsspecSyncBackend, sync_fs: MemoryFileSystem
     ) -> None:
-        ws = _make_workspace(workspace_root, backend, content_backend)
+        """The manifest lands under ``.workspace/`` — not the content tree."""
+        ws = _make_workspace(workspace_root, backend)
+        ws.start_tracking()
+        (workspace_root / "output" / "a.md").write_bytes(b"a")
+        await ws.checkpoint()
+
+        assert "/run/.workspace/manifest.json" in sync_fs.store
+        # And the engine key space is excluded from content listings.
+        assert await backend.list_content_files() == ["output/a.md"]
+
+    async def test_subsequent_commit_increments_version(
+        self, workspace_root: Path, backend: FsspecSyncBackend
+    ) -> None:
+        ws = _make_workspace(workspace_root, backend)
         ws.start_tracking()
         (workspace_root / "output" / "a.md").write_bytes(b"a")
         assert await ws.checkpoint() == 1
@@ -143,9 +141,9 @@ class TestCommitBasics:
         assert [e.path for e in manifest.artifacts] == ["output/a.md", "output/b.md"]
 
     async def test_commit_folds_updates_into_existing_entries(
-        self, workspace_root: Path, backend: FsspecSyncBackend, content_backend: FsspecSyncBackend
+        self, workspace_root: Path, backend: FsspecSyncBackend
     ) -> None:
-        ws = _make_workspace(workspace_root, backend, content_backend)
+        ws = _make_workspace(workspace_root, backend)
         ws.start_tracking()
         target = workspace_root / "output" / "a.md"
         target.write_bytes(b"v1")
@@ -161,22 +159,22 @@ class TestCommitBasics:
         assert entry.size == len(b"v2-longer")
 
     async def test_checkpoint_without_changes_returns_none(
-        self, workspace_root: Path, backend: FsspecSyncBackend, content_backend: FsspecSyncBackend
+        self, workspace_root: Path, backend: FsspecSyncBackend
     ) -> None:
-        ws = _make_workspace(workspace_root, backend, content_backend)
+        ws = _make_workspace(workspace_root, backend)
         ws.start_tracking()
         assert await ws.checkpoint() is None
 
-    async def test_checkpoint_without_backends_returns_none(self, workspace_root: Path) -> None:
-        ws = _make_workspace(workspace_root, None, None)
+    async def test_checkpoint_without_backend_returns_none(self, workspace_root: Path) -> None:
+        ws = _make_workspace(workspace_root, None)
         ws.start_tracking()
         (workspace_root / "output" / "a.md").write_bytes(b"a")
         assert await ws.checkpoint() is None
 
     async def test_checkpoint_while_closing_returns_none(
-        self, workspace_root: Path, backend: FsspecSyncBackend, content_backend: FsspecSyncBackend
+        self, workspace_root: Path, backend: FsspecSyncBackend
     ) -> None:
-        ws = _make_workspace(workspace_root, backend, content_backend)
+        ws = _make_workspace(workspace_root, backend)
         ws._closing = True
         (workspace_root / "output" / "a.md").write_bytes(b"a")
         assert await ws.checkpoint() is None
@@ -189,9 +187,9 @@ class TestCommitBasics:
 
 class TestCommitDeletions:
     async def test_tracked_deletion_removes_artifact_and_mirrors(
-        self, workspace_root: Path, backend: FsspecSyncBackend, content_backend: FsspecSyncBackend
+        self, workspace_root: Path, backend: FsspecSyncBackend
     ) -> None:
-        ws = _make_workspace(workspace_root, backend, content_backend)
+        ws = _make_workspace(workspace_root, backend)
         ws.start_tracking()
         (workspace_root / "output" / "a.md").write_bytes(b"a")
         (workspace_root / "output" / "b.md").write_bytes(b"b")
@@ -203,13 +201,13 @@ class TestCommitDeletions:
         manifest = await backend.get_manifest(RUN_ID)
         assert manifest is not None
         assert [e.path for e in manifest.artifacts] == ["output/b.md"]
-        assert await content_backend.get_content_file("output/a.md") is None
-        assert await content_backend.get_content_file("output/b.md") == b"b"
+        assert await backend.get_content_file("output/a.md") is None
+        assert await backend.get_content_file("output/b.md") == b"b"
 
     async def test_dirty_path_vanishing_before_commit_is_a_deletion(
-        self, workspace_root: Path, backend: FsspecSyncBackend, content_backend: FsspecSyncBackend
+        self, workspace_root: Path, backend: FsspecSyncBackend
     ) -> None:
-        ws = _make_workspace(workspace_root, backend, content_backend)
+        ws = _make_workspace(workspace_root, backend)
         ws.start_tracking()
         target = workspace_root / "output" / "a.md"
         target.write_bytes(b"a")
@@ -224,19 +222,19 @@ class TestCommitDeletions:
         manifest = await backend.get_manifest(RUN_ID)
         assert manifest is not None
         assert manifest.artifacts == []
-        assert await content_backend.get_content_file("output/a.md") is None
+        assert await backend.get_content_file("output/a.md") is None
 
     async def test_manual_mark_dirty_on_missing_path_is_a_deletion(
-        self, workspace_root: Path, backend: FsspecSyncBackend, content_backend: FsspecSyncBackend
+        self, workspace_root: Path, backend: FsspecSyncBackend
     ) -> None:
-        await content_backend.put_content_file("output/stale.txt", b"old")
-        ws = _make_workspace(workspace_root, backend, content_backend)
+        await backend.put_content_file("output/stale.txt", b"old")
+        ws = _make_workspace(workspace_root, backend)
         ws.start_tracking()
         # mark_dirty on a path with no local file registers a deletion.
         ws._dirty_tracker.mark_dirty("output/stale.txt")
 
         assert await ws.checkpoint() == 1
-        assert await content_backend.get_content_file("output/stale.txt") is None
+        assert await backend.get_content_file("output/stale.txt") is None
 
 
 # ---------------------------------------------------------------------------
@@ -245,7 +243,7 @@ class TestCommitDeletions:
 
 
 class _MidCommitHookBackend:
-    """Content backend wrapper that performs a write during the commit."""
+    """Backend wrapper that performs a write during the commit."""
 
     def __init__(self, inner: Any, root: Path, tracker: DirtyTracker) -> None:
         self._inner = inner
@@ -267,17 +265,11 @@ class _MidCommitHookBackend:
 
 class TestMidCommitSemantics:
     async def test_mid_commit_write_stays_dirty(
-        self, workspace_root: Path, backend: FsspecSyncBackend, content_backend: FsspecSyncBackend
+        self, workspace_root: Path, backend: FsspecSyncBackend
     ) -> None:
         tracker = DirtyTracker(workspace_root=workspace_root)
-        hooked = _MidCommitHookBackend(content_backend, workspace_root, tracker)
-        ws = Workspace(
-            run_id=RUN_ID,
-            root=workspace_root,
-            backend=backend,
-            content_backend=hooked,
-            dirty_tracker=tracker,
-        )
+        hooked = _MidCommitHookBackend(backend, workspace_root, tracker)
+        ws = _make_workspace(workspace_root, hooked, tracker=tracker)
         ws.start_tracking()
         (workspace_root / "output" / "a.md").write_bytes(b"a")
 
@@ -299,7 +291,7 @@ class TestMidCommitSemantics:
         manifest = await backend.get_manifest(RUN_ID)
         assert manifest is not None
         assert [e.path for e in manifest.artifacts] == ["output/a.md", "output/mid.md"]
-        assert await content_backend.get_content_file("output/mid.md") == b"mid-commit write"
+        assert await backend.get_content_file("output/mid.md") == b"mid-commit write"
 
 
 # ---------------------------------------------------------------------------
@@ -308,7 +300,7 @@ class TestMidCommitSemantics:
 
 
 class _FailingContentBackend:
-    """Content backend wrapper failing one path's uploads."""
+    """Backend wrapper failing one path's uploads."""
 
     def __init__(self, inner: Any, fail_path: str) -> None:
         self._inner = inner
@@ -324,7 +316,7 @@ class _FailingContentBackend:
 
 
 class _FailingManifestBackend:
-    """Manifest backend wrapper whose put_manifest always fails."""
+    """Backend wrapper whose put_manifest always fails."""
 
     def __init__(self, inner: Any) -> None:
         self._inner = inner
@@ -338,10 +330,10 @@ class _FailingManifestBackend:
 
 class TestCommitFailures:
     async def test_upload_failure_partial_commit_and_stays_dirty(
-        self, workspace_root: Path, backend: FsspecSyncBackend, content_backend: FsspecSyncBackend
+        self, workspace_root: Path, backend: FsspecSyncBackend
     ) -> None:
-        hooked = _FailingContentBackend(content_backend, "output/bad.md")
-        ws = _make_workspace(workspace_root, backend, hooked)
+        hooked = _FailingContentBackend(backend, "output/bad.md")
+        ws = _make_workspace(workspace_root, hooked)
         ws.start_tracking()
         (workspace_root / "output" / "ok.md").write_bytes(b"ok")
         (workspace_root / "output" / "bad.md").write_bytes(b"bad")
@@ -351,17 +343,17 @@ class TestCommitFailures:
 
         # The healthy file is committed (per-file atomic state); the
         # failed one stays dirty for the next commit.
-        assert await content_backend.get_content_file("output/ok.md") == b"ok"
+        assert await backend.get_content_file("output/ok.md") == b"ok"
         manifest = await backend.get_manifest(RUN_ID)
         assert manifest is not None
         assert [e.path for e in manifest.artifacts] == ["output/ok.md"]
         assert "output/bad.md" in ws._dirty_tracker.get_dirty()
 
     async def test_manifest_write_failure_leaves_everything_dirty(
-        self, workspace_root: Path, backend: FsspecSyncBackend, content_backend: FsspecSyncBackend
+        self, workspace_root: Path, backend: FsspecSyncBackend
     ) -> None:
         failing = _FailingManifestBackend(backend)
-        ws = _make_workspace(workspace_root, failing, content_backend)
+        ws = _make_workspace(workspace_root, failing)
         ws.start_tracking()
         (workspace_root / "output" / "a.md").write_bytes(b"a")
 
@@ -372,18 +364,17 @@ class TestCommitFailures:
         # never fired: the manifest is unchanged and everything stays
         # dirty for the next commit.
         assert await backend.get_manifest(RUN_ID) is None
-        assert await content_backend.get_content_file("output/a.md") == b"a"
+        assert await backend.get_content_file("output/a.md") == b"a"
         assert "output/a.md" in ws._dirty_tracker.get_dirty()
 
     async def test_version_conflict_propagates_and_stays_dirty(
-        self, workspace_root: Path, backend: FsspecSyncBackend, content_backend: FsspecSyncBackend
+        self, workspace_root: Path, backend: FsspecSyncBackend
     ) -> None:
         # The workspace holds a stale manifest view (version 1) while the
         # backend already advanced to version 5 — a concurrent writer.
         ws = _make_workspace(
             workspace_root,
             backend,
-            content_backend,
             manifest=Manifest(
                 run_id=RUN_ID,
                 version=1,
@@ -411,12 +402,12 @@ class TestCommitFailures:
 
 class TestRecovery:
     async def test_fresh_workspace_rematerializes_committed_state(
-        self, tmp_path: Path, backend: FsspecSyncBackend, content_backend: FsspecSyncBackend
+        self, tmp_path: Path, backend: FsspecSyncBackend
     ) -> None:
         root1 = tmp_path / "ws1"
         for subdir in ("input", "working", "output", ".workspace"):
             (root1 / subdir).mkdir(parents=True)
-        ws = _make_workspace(root1, backend, content_backend)
+        ws = _make_workspace(root1, backend)
         ws.start_tracking()
         (root1 / "output" / "a.md").write_bytes(b"keep")
         (root1 / "output" / "drop.md").write_bytes(b"drop")
@@ -430,7 +421,7 @@ class TestRecovery:
         for subdir in ("input", "working", "output", ".workspace"):
             (root2 / subdir).mkdir(parents=True)
         manifest = await backend.get_manifest(RUN_ID)
-        ws2 = _make_workspace(root2, backend, content_backend, manifest=manifest)
+        ws2 = _make_workspace(root2, backend, manifest=manifest)
         fetched = await ws2.materialize_content()
 
         assert fetched == 1
@@ -443,7 +434,6 @@ class TestRecovery:
         self,
         tmp_path: Path,
         backend: FsspecSyncBackend,
-        content_backend: FsspecSyncBackend,
     ) -> None:
         """Artifacts listed in the manifest are protected at materialize.
 
@@ -459,7 +449,7 @@ class TestRecovery:
             version=1,
             artifacts=[ManifestEntry(path="output/pending.md", sha256="a" * 64, size=1)],
         )
-        ws = _make_workspace(root, backend, content_backend, manifest=manifest)
+        ws = _make_workspace(root, backend, manifest=manifest)
         (root / "output" / "pending.md").write_bytes(b"not yet uploaded")
 
         await ws.materialize_content(reconcile=True)
@@ -474,16 +464,10 @@ class TestRecovery:
 
 class TestDirtyAckContract:
     async def test_commit_acks_only_committed_and_deleted_paths(
-        self, workspace_root: Path, backend: FsspecSyncBackend, content_backend: FsspecSyncBackend
+        self, workspace_root: Path, backend: FsspecSyncBackend
     ) -> None:
         tracker = DirtyTracker(workspace_root=workspace_root)
-        ws = Workspace(
-            run_id=RUN_ID,
-            root=workspace_root,
-            backend=backend,
-            content_backend=content_backend,
-            dirty_tracker=tracker,
-        )
+        ws = _make_workspace(workspace_root, backend, tracker=tracker)
         ws.start_tracking()
         (workspace_root / "output" / "a.md").write_bytes(b"a")
         (workspace_root / "output" / "b.md").write_bytes(b"b")

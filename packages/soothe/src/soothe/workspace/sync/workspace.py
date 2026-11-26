@@ -1,10 +1,11 @@
 """Workspace handle — per-run lifecycle: open, materialize, checkpoint, close.
 
 The `Workspace` is the agent-facing handle to a single run's workspace under
-the content-authoritative representation (IG-CORE-010): the plain content
-tree is the single authoritative file store and the manifest is the atomic
-commit record.  `checkpoint()` hashes dirty files, streams them to the
-content tree, mirrors deletions, and writes the manifest (version+1,
+the single-root content-authoritative representation (IG-CORE-011): the
+per-run backend root holds the plain content tree (the single authoritative
+file store) and the engine-private manifest (the atomic commit record).
+`checkpoint()` hashes dirty files, streams them to the content tree,
+mirrors deletions, and writes the manifest (version+1,
 optimistic-concurrency guard) as the commit point — there is no CAS blob
 duplicate, no checkpoint payload, and no staging state.
 """
@@ -62,12 +63,10 @@ class Workspace:
     Args:
         run_id: Unique run identifier.
         root: Local filesystem root of the workspace.
-        backend: Remote manifest backend (commit records).  `None`
-            disables remote commits.
-        content_backend: Backend addressing the plain content tree —
-            the authoritative file store.  `materialize_content` pulls
-            it into the local workspace at open; `checkpoint` uploads
-            dirty writes and mirrors deletions back.
+        backend: Per-run remote backend — serves both the plain
+            content tree (authoritative file store) and the
+            engine-private manifest (commit record).  `None` disables
+            remote sync entirely (local-only mode).
         dirty_tracker: Dirty file tracker.
         manifest: Manifest loaded from the backend at open (the
             engine-owned artifact set of the last committed turn).
@@ -79,7 +78,6 @@ class Workspace:
         run_id: str,
         root: Path,
         backend: WorkspaceSyncBackend | None,
-        content_backend: WorkspaceSyncBackend | None,
         dirty_tracker: DirtyTracker,
         manifest: Manifest | None = None,
     ) -> None:
@@ -87,7 +85,6 @@ class Workspace:
         self.run_id = run_id
         self.root = root
         self._backend = backend
-        self._content_backend = content_backend
         self._dirty_tracker = dirty_tracker
         self._manifest = manifest
         self._closing = False
@@ -135,11 +132,11 @@ class Workspace:
         Returns:
             Number of files downloaded (unchanged files are skipped).
         """
-        if self._content_backend is None:
+        if self._backend is None:
             return 0
 
         skip_prefixes = (".workspace/", "__pycache__/", ".git/")
-        rel_paths = await self._content_backend.list_content_files()
+        rel_paths = await self._backend.list_content_files()
         downloaded = 0
         for rel in rel_paths:
             if rel.startswith(skip_prefixes):
@@ -191,7 +188,7 @@ class Workspace:
             f.write(chunk)
 
         try:
-            async for chunk in iter_content_chunks(self._content_backend, rel):
+            async for chunk in iter_content_chunks(self._backend, rel):
                 await asyncio.to_thread(_write, chunk)
                 h.update(chunk)
         except KeyError:
@@ -325,14 +322,13 @@ class Workspace:
 
         Returns:
             The new manifest version, or `None` when nothing was dirty
-            or deleted, or the workspace has no content backend /
-            manifest backend.
+            or deleted, or the workspace has no backend (local-only).
         """
         if self._closing:
             logger.warning("Checkpoint skipped — workspace is closing")
             return None
-        if self._content_backend is None or self._backend is None:
-            logger.debug("No content/manifest backend — skipping checkpoint")
+        if self._backend is None:
+            logger.debug("No backend — skipping checkpoint")
             return None
 
         self._dirty_tracker.scan_now()
@@ -376,7 +372,7 @@ class Workspace:
         # that vanished between scan and commit).
         for d in sorted(deleted):
             try:
-                await self._content_backend.delete_content_file(d)
+                await self._backend.delete_content_file(d)
             except Exception:  # noqa: BLE001
                 logger.warning(
                     "Content delete mirror failed for %s (run %s)",
@@ -438,7 +434,7 @@ class Workspace:
 
         sha256 = await asyncio.to_thread(_hash_file, abs_path)
         size = abs_path.stat().st_size
-        await put_content_file_from_file(self._content_backend, rel_path, abs_path)
+        await put_content_file_from_file(self._backend, rel_path, abs_path)
         return ManifestEntry(path=rel_path, sha256=sha256, size=size)
 
     def _advance_manifest(
@@ -479,18 +475,17 @@ class Workspace:
     async def close(self) -> None:
         """Close the workspace.
 
-        Stops the dirty tracker and closes the per-run content backend
-        (its thread pool / fsspec client).  The manifest backend is
-        shared across workspaces (owned by the manager / caller) and is
-        NOT closed here.
+        Stops the dirty tracker and closes the per-run backend (its
+        thread pool / fsspec client — one instance serves both the
+        content tree and the manifest).
         """
         self._closing = True
 
         await self._dirty_tracker.stop()
 
-        if self._content_backend is not None:
+        if self._backend is not None:
             # Duck-typed call: test fakes implement the sync surface only.
-            aclose = getattr(self._content_backend, "aclose", None)
+            aclose = getattr(self._backend, "aclose", None)
             if callable(aclose):
                 await aclose()
 

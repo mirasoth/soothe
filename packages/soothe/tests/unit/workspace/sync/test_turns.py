@@ -1,11 +1,12 @@
 """Tests for the turn-scoped workspace sync facade (``TurnScopedWorkspaces``).
 
-Orchestration tests (shared open, reconcile gating, last-turn-out close,
+Single-writer contract (IG-CORE-011): one in-flight
+``open_turn``/``close_turn`` pair per run id. Orchestration tests
+(reuse-after-failed-commit, TurnCommit reporting, resource release,
 best-effort failure semantics, manifest protection) inject a mocked
-``WorkspaceManager`` with duck-typed workspace fakes — the semantics ported
-from flowjet's resolver tests. The round-trip test uses real
-``MemoryFileSystem`` backends and re-opens with a fresh facade instance to
-pin the crash-recovery contract end to end.
+``WorkspaceManager`` with duck-typed workspace fakes. The round-trip test
+uses real ``MemoryFileSystem`` backends and re-opens with a fresh facade
+instance to pin the crash-recovery contract end to end.
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ from unittest.mock import AsyncMock, MagicMock
 from fsspec.implementations.memory import MemoryFileSystem
 
 from soothe.workspace.sync.backends.fsspec import FsspecSyncBackend
-from soothe.workspace.sync.turns import TurnScopedWorkspaces
+from soothe.workspace.sync.turns import TurnCommit, TurnScopedWorkspaces
 
 # ---------------------------------------------------------------------------
 # Fixtures / helpers
@@ -40,12 +41,19 @@ def _facade_with_manager(
     tmp_path: Path,
     manager: MagicMock,
 ) -> TurnScopedWorkspaces:
-    facade = TurnScopedWorkspaces(
-        workspaces_root=tmp_path / "ws",
-        backend=MagicMock(),
-    )
+    facade = TurnScopedWorkspaces(workspaces_root=tmp_path / "ws")
     facade._manager = manager
     return facade
+
+
+def _closed_manager() -> MagicMock:
+    """Manager mock with no open workspace and async open/close."""
+    manager = MagicMock()
+    manager.get = MagicMock(return_value=None)
+    manager.open = AsyncMock()
+    manager.close = AsyncMock()
+    manager.close_all = AsyncMock()
+    return manager
 
 
 # ---------------------------------------------------------------------------
@@ -58,7 +66,7 @@ class TestOpenCloseTurns:
         root = tmp_path / "ws" / "run-1"
         root.mkdir(parents=True)
         ws = _fake_workspace(root)
-        manager = MagicMock()
+        manager = _closed_manager()
         manager.open = AsyncMock(return_value=ws)
         facade = _facade_with_manager(tmp_path, manager)
 
@@ -68,64 +76,108 @@ class TestOpenCloseTurns:
         ws.materialize_content.assert_awaited_once_with(protected=[], reconcile=True)
         ws.start_tracking.assert_called_once()
 
-    async def test_concurrent_turns_share_one_open_and_skip_reconcile(self, tmp_path: Path) -> None:
-        """Every turn materializes; reconcile only while sole active turn."""
+    async def test_open_turn_reuses_open_workspace(self, tmp_path: Path) -> None:
+        """A workspace kept open (failed prior commit) is reused, not reopened."""
         root = tmp_path / "ws" / "shared"
         root.mkdir(parents=True)
         ws = _fake_workspace(root)
         manager = MagicMock()
-        manager.open = AsyncMock(return_value=ws)
+        manager.get = MagicMock(return_value=ws)
+        manager.open = AsyncMock()
         facade = _facade_with_manager(tmp_path, manager)
 
         await facade.open_turn("shared")
-        assert ws.materialize_content.call_args.kwargs["reconcile"] is True
-
         await facade.open_turn("shared")
-        assert ws.materialize_content.call_args.kwargs["reconcile"] is False
-        # One open per run id, not per turn.
-        assert manager.open.await_count == 1
 
-    async def test_close_turn_checkpoints_and_closes_on_last_turn_out(self, tmp_path: Path) -> None:
-        root = tmp_path / "ws" / "shared"
+        manager.open.assert_not_awaited()
+        assert ws.materialize_content.await_count == 2
+        # Reconcile stays on — single writer, no peer-turn gating.
+        assert all(
+            c.kwargs.get("reconcile") is True for c in ws.materialize_content.await_args_list
+        )
+
+    async def test_close_turn_commits_and_releases(self, tmp_path: Path) -> None:
+        root = tmp_path / "ws" / "run-1"
         root.mkdir(parents=True)
         ws = _fake_workspace(root)
+        ws.checkpoint = AsyncMock(return_value=4)
         manager = MagicMock()
-        manager.open = AsyncMock(return_value=ws)
+        manager.get = MagicMock(return_value=ws)
         manager.close = AsyncMock()
         facade = _facade_with_manager(tmp_path, manager)
 
-        await facade.open_turn("shared")
-        await facade.open_turn("shared")
-        await facade.close_turn("shared")
-        # Peer turn still active: checkpoint runs but the workspace stays open.
-        ws.checkpoint.assert_awaited_once()
-        manager.close.assert_not_awaited()
+        commit = await facade.close_turn("run-1")
 
-        await facade.close_turn("shared")
-        assert ws.checkpoint.await_count == 2
-        manager.close.assert_awaited_once_with("shared")
+        ws.checkpoint.assert_awaited_once()
+        manager.close.assert_awaited_once_with("run-1")
+        assert commit == TurnCommit(persisted=True, version=4, error=None)
 
     async def test_close_turn_without_open_is_noop(self, tmp_path: Path) -> None:
         manager = MagicMock()
+        manager.get = MagicMock(return_value=None)
         manager.close = AsyncMock()
         facade = _facade_with_manager(tmp_path, manager)
 
-        await facade.close_turn("never-opened")
+        commit = await facade.close_turn("never-opened")
         manager.close.assert_not_awaited()
+        assert commit == TurnCommit(persisted=True, version=None, error=None)
 
-    async def test_close_turn_swallows_checkpoint_errors(self, tmp_path: Path) -> None:
+    async def test_failed_commit_reports_not_persisted_and_keeps_open(self, tmp_path: Path) -> None:
+        """A failed checkpoint surfaces in the TurnCommit and the workspace
+        stays open so the dirty set survives to the next commit."""
         root = tmp_path / "ws" / "run-err"
         root.mkdir(parents=True)
         ws = _fake_workspace(root)
         ws.checkpoint = AsyncMock(side_effect=RuntimeError("boom"))
         manager = MagicMock()
-        manager.open = AsyncMock(return_value=ws)
+        manager.get = MagicMock(return_value=ws)
         manager.close = AsyncMock()
         facade = _facade_with_manager(tmp_path, manager)
 
-        await facade.open_turn("run-err")
-        await facade.close_turn("run-err")  # must not raise
-        manager.close.assert_awaited_once_with("run-err")
+        commit = await facade.close_turn("run-err")  # must not raise
+
+        assert commit.persisted is False
+        assert commit.version is None
+        assert "boom" in (commit.error or "")
+        # The workspace is NOT closed — the dirty set survives.
+        manager.close.assert_not_awaited()
+
+    async def test_retry_after_failed_commit_recovers(self, tmp_path: Path) -> None:
+        root = tmp_path / "ws" / "run-retry"
+        root.mkdir(parents=True)
+        ws = _fake_workspace(root)
+        ws.checkpoint = AsyncMock(side_effect=[RuntimeError("transient"), 2])
+        manager = MagicMock()
+        manager.get = MagicMock(return_value=ws)
+        manager.close = AsyncMock()
+        facade = _facade_with_manager(tmp_path, manager)
+
+        failed = await facade.close_turn("run-retry")
+        assert failed.persisted is False
+        assert manager.close.await_count == 0
+
+        # Next turn reuses the still-open workspace and commits cleanly.
+        await facade.open_turn("run-retry")
+        recovered = await facade.close_turn("run-retry")
+        assert recovered == TurnCommit(persisted=True, version=2, error=None)
+        manager.close.assert_awaited_once_with("run-retry")
+
+    async def test_close_failure_after_clean_commit_reports_error(self, tmp_path: Path) -> None:
+        """A commit that landed but whose resource release failed stays persisted."""
+        root = tmp_path / "ws" / "run-close"
+        root.mkdir(parents=True)
+        ws = _fake_workspace(root)
+        ws.checkpoint = AsyncMock(return_value=3)
+        manager = MagicMock()
+        manager.get = MagicMock(return_value=ws)
+        manager.close = AsyncMock(side_effect=RuntimeError("close boom"))
+        facade = _facade_with_manager(tmp_path, manager)
+
+        commit = await facade.close_turn("run-close")
+
+        assert commit.persisted is True
+        assert commit.version == 3
+        assert "close boom" in (commit.error or "")
 
     async def test_close_all_delegates_to_manager(self, tmp_path: Path) -> None:
         manager = MagicMock()
@@ -134,14 +186,13 @@ class TestOpenCloseTurns:
 
         await facade.close_all()
         manager.close_all.assert_awaited_once()
-        assert facade._entries == {}
 
     async def test_content_materialization_failure_is_non_fatal(self, tmp_path: Path) -> None:
         root = tmp_path / "ws" / "run-content"
         root.mkdir(parents=True)
         ws = _fake_workspace(root)
         ws.materialize_content = AsyncMock(side_effect=RuntimeError("content boom"))
-        manager = MagicMock()
+        manager = _closed_manager()
         manager.open = AsyncMock(return_value=ws)
         facade = _facade_with_manager(tmp_path, manager)
 
@@ -163,7 +214,7 @@ class TestManifestProtection:
             artifacts=[SimpleNamespace(path="output/pending.md")],
             version=3,
         )
-        manager = MagicMock()
+        manager = _closed_manager()
         manager.open = AsyncMock(return_value=ws)
         facade = _facade_with_manager(tmp_path, manager)
 
@@ -183,16 +234,15 @@ class TestRoundTrip:
     async def test_turn_round_trip_persists_and_restores(self, tmp_path: Path) -> None:
         fs = MemoryFileSystem()
         try:
-            content_root = FsspecSyncBackend(fs=fs, root="/content")
+            content_root = FsspecSyncBackend(fs=fs, root="/run", max_workers=2)
             await content_root.put_content_file("materials/m1/notes.md", b"material v1")
 
-            def content_factory(run_id: str) -> FsspecSyncBackend:
-                return FsspecSyncBackend(fs=fs, root="/content")
+            def backend_factory(run_id: str) -> FsspecSyncBackend:
+                return FsspecSyncBackend(fs=fs, root="/run", max_workers=2)
 
             engine = TurnScopedWorkspaces(
                 workspaces_root=tmp_path / "ws",
-                backend=FsspecSyncBackend(fs=fs, root="/sync"),
-                content_backend_factory=content_factory,
+                backend_factory=backend_factory,
             )
 
             root = await engine.open_turn("run-1")
@@ -204,20 +254,23 @@ class TestRoundTrip:
             out.parent.mkdir(parents=True, exist_ok=True)
             out.write_bytes(b"agent analysis")
 
-            await engine.close_turn("run-1")
-            # Dirty writes mirrored to the content tree; manifest committed.
+            commit = await engine.close_turn("run-1")
+            assert commit.persisted is True
+            assert commit.version == 1
+            # Dirty writes mirrored to the content tree; manifest committed
+            # under the engine-private key space of the run's own root.
             assert await content_root.get_content_file("output/analysis.md") == b"agent analysis"
-            assert fs.exists("/sync/runs/run-1/manifest.json")
+            assert fs.exists("/run/.workspace/manifest.json")
 
             # A fresh engine (crash/restart) restores both trees.
             engine2 = TurnScopedWorkspaces(
                 workspaces_root=tmp_path / "ws2",
-                backend=FsspecSyncBackend(fs=fs, root="/sync"),
-                content_backend_factory=content_factory,
+                backend_factory=backend_factory,
             )
             root2 = await engine2.open_turn("run-1")
             assert (root2 / "materials" / "m1" / "notes.md").read_bytes() == b"material v1"
             assert (root2 / "output" / "analysis.md").read_bytes() == b"agent analysis"
-            await engine2.close_turn("run-1")
+            commit2 = await engine2.close_turn("run-1")
+            assert commit2 == TurnCommit(persisted=True, version=None, error=None)
         finally:
             fs.store.clear()

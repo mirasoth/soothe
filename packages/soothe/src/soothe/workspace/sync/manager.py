@@ -1,10 +1,10 @@
 """Workspace manager — owns the open-workspace set for a sync root.
 
 The manager creates local workspace directories, wires each run's
-`DirtyTracker`, resolves the per-run content backend, and loads the
-run's manifest (the engine-owned artifact set of the last committed
-turn) from the remote backend at open — a fresh process never resets
-manifest state (F-L2).
+`DirtyTracker`, builds the per-run backend (one instance serving the
+content tree AND the manifest), and loads the run's manifest (the
+engine-owned artifact set of the last committed turn) from it at open —
+a fresh process never resets manifest state (F-L2).
 """
 
 from __future__ import annotations
@@ -60,17 +60,16 @@ def _normalize_watched_subdirs(
 
 
 class WorkspaceManager:
-    """Owns the set of open workspaces for one manifest-sync root.
+    """Owns the set of open workspaces for one sync root.
 
     Args:
         workspaces_root: Local root directory holding per-run
             workspaces.
-        backend: Remote manifest backend (commit records).  `None`
-            opens workspaces in local-only mode (no remote commits).
-        content_backend_factory: Optional callable mapping a run id to
-            the run's content backend (the plain file tree — the
-            authoritative file store).  Returning `None` disables
-            content sync for that run.
+        backend_factory: Callable mapping a run id to the run's
+            backend — one instance per run serving both the plain
+            content tree (authoritative file store) and the
+            engine-private manifest.  Returning `None` (or `None`
+            factory) opens the run local-only (no remote sync).
         watched_subdirs: Additional workspace-relative subtrees tracked
             by the dirty tracker (beyond `input`/`working`/`output`).
     """
@@ -79,14 +78,12 @@ class WorkspaceManager:
         self,
         *,
         workspaces_root: Path,
-        backend: WorkspaceSyncBackend | None = None,
-        content_backend_factory: Callable[[str], WorkspaceSyncBackend | None] | None = None,
+        backend_factory: Callable[[str], WorkspaceSyncBackend | None] | None = None,
         watched_subdirs: Sequence[str] | None = None,
     ) -> None:
-        """Initialize the manager with its root, backend, and factories."""
+        """Initialize the manager with its root and backend factory."""
         self._workspaces_root = Path(workspaces_root)
-        self._backend = backend
-        self._content_backend_factory = content_backend_factory
+        self._backend_factory = backend_factory
         self._watched_subdirs = _normalize_watched_subdirs(watched_subdirs)
         self._workspaces: dict[str, Workspace] = {}
 
@@ -134,12 +131,13 @@ class WorkspaceManager:
         return root
 
     async def open(self, run_id: str) -> Workspace:
-        """Open a workspace for a run using the manager's backend.
+        """Open a workspace for a run using the backend factory.
 
-        Creates the workspace directory structure, wires the dirty
-        tracker and per-run content backend, and loads any existing
-        remote manifest (the last committed artifact set) so a fresh
-        process never resets manifest state.
+        Creates the workspace directory structure, builds the per-run
+        backend (one instance serving content tree + manifest), wires
+        the dirty tracker, and loads any existing remote manifest (the
+        last committed artifact set) so a fresh process never resets
+        manifest state.
 
         Args:
             run_id: Unique run identifier.
@@ -149,23 +147,21 @@ class WorkspaceManager:
         """
         root = self._create_workspace_dirs(run_id)
 
-        if self._backend is None:
-            logger.warning(
-                "Opening workspace %s without a remote backend — remote commits disabled",
-                run_id,
-            )
-
-        content_backend: WorkspaceSyncBackend | None = None
-        if self._content_backend_factory is not None:
+        backend: WorkspaceSyncBackend | None = None
+        if self._backend_factory is not None:
             try:
-                content_backend = self._content_backend_factory(run_id)
+                backend = self._backend_factory(run_id)
             except Exception:  # noqa: BLE001
                 logger.exception(
-                    "Content backend factory failed for run %s — "
-                    "content sync disabled for this run",
+                    "Backend factory failed for run %s — remote sync disabled for this run",
                     run_id,
                 )
-                content_backend = None
+                backend = None
+        if backend is None:
+            logger.warning(
+                "Opening workspace %s without a remote backend — remote sync disabled",
+                run_id,
+            )
 
         dirty_tracker = DirtyTracker(
             workspace_root=root,
@@ -173,8 +169,8 @@ class WorkspaceManager:
         )
 
         manifest: Manifest | None = None
-        if self._backend is not None:
-            manifest = await self._backend.get_manifest(run_id)
+        if backend is not None:
+            manifest = await backend.get_manifest(run_id)
             if manifest is not None:
                 logger.info(
                     "Loaded manifest for run %s at version %d (%d artifacts)",
@@ -186,8 +182,7 @@ class WorkspaceManager:
         ws = Workspace(
             run_id=run_id,
             root=root,
-            backend=self._backend,
-            content_backend=content_backend,
+            backend=backend,
             dirty_tracker=dirty_tracker,
             manifest=manifest,
         )

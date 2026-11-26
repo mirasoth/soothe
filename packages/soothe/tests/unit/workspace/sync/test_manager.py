@@ -5,7 +5,7 @@ Tests verify:
     - get() returns open workspaces.
     - close() cleans up.
     - open() loads the remote manifest (F-L2).
-    - content_backend_factory wiring and failure handling.
+    - backend_factory wiring and failure handling.
     - materialize-content security invariants through the manager path.
 """
 
@@ -27,10 +27,10 @@ def manager(tmp_path: Path) -> WorkspaceManager:
 
 
 @pytest.fixture
-def backend() -> FsspecSyncBackend:
-    """In-memory backend."""
+def backend(tmp_path: Path) -> FsspecSyncBackend:
+    """In-memory backend with a per-test root (fsspec caches fs instances)."""
     fs = MemoryFileSystem()
-    b = FsspecSyncBackend(fs=fs, root="/test", max_workers=2)
+    b = FsspecSyncBackend(fs=fs, root=f"/test-{tmp_path.name}", max_workers=2)
     yield b
     b.close()
 
@@ -140,7 +140,7 @@ class TestLifecycleWiring:
         )
         manager = WorkspaceManager(
             workspaces_root=tmp_path / "workspaces",
-            backend=backend,
+            backend_factory=lambda run_id: backend,
         )
         ws = await manager.open("run-init")
         assert ws.manifest is not None
@@ -154,7 +154,7 @@ class TestLifecycleWiring:
         """A run with no prior commits opens with manifest=None."""
         manager = WorkspaceManager(
             workspaces_root=tmp_path / "workspaces",
-            backend=backend,
+            backend_factory=lambda run_id: backend,
         )
         ws = await manager.open("run-fresh")
         assert ws.manifest is None
@@ -183,7 +183,7 @@ class TestLifecycleWiring:
         content_backend = FsspecSyncBackend(fs=content_fs, root="/ws-symcontent", max_workers=2)
         try:
             await content_backend.put_content_file("output/escape.md", b"safe content")
-            ws._content_backend = content_backend
+            ws._backend = content_backend
             downloaded = await ws.materialize_content(reconcile=False)
             assert downloaded == 1
         finally:
@@ -213,7 +213,7 @@ class TestLifecycleWiring:
             async def get_content_file(self, rel_path):
                 return b"payload" if rel_path == "normal.txt" else None
 
-        ws._content_backend = _HostileBackend()
+        ws._backend = _HostileBackend()
         downloaded = await ws.materialize_content(reconcile=False)
         assert downloaded == 1
         assert (ws.root / "normal.txt").read_bytes() == b"payload"
@@ -228,21 +228,16 @@ class TestConsumerContract:
         """open → materialize_content → track → write → checkpoint → close,
         then a fresh open re-materializes it all from the content tree."""
         fs = MemoryFileSystem()
-        backend = FsspecSyncBackend(fs=fs, root="/ws-sync", max_workers=2)
-        content_fs = MemoryFileSystem()
-        scratch = FsspecSyncBackend(fs=content_fs, root="/ws-content", max_workers=2)
+        backend = FsspecSyncBackend(fs=fs, root="/ws", max_workers=2)
         try:
             # Seed a prior content-tree file (materials).
-            await scratch.put_content_file("input/material.txt", b"prior material")
+            await backend.put_content_file("input/material.txt", b"prior material")
 
             manager = WorkspaceManager(
                 workspaces_root=tmp_path / "workspaces",
-                backend=backend,
-                # Per-open content backend (workspace close releases its
-                # thread pool), all sharing one content filesystem.
-                content_backend_factory=lambda run_id: FsspecSyncBackend(
-                    fs=content_fs, root="/ws-content", max_workers=2
-                ),
+                # Per-open backend over the shared filesystem (workspace
+                # close releases its thread pool).
+                backend_factory=lambda run_id: FsspecSyncBackend(fs=fs, root="/ws", max_workers=2),
             )
 
             # --- first session (the agent turn) ---
@@ -264,7 +259,7 @@ class TestConsumerContract:
             manifest = await backend.get_manifest("run-rt")
             assert manifest is not None
             assert any(e.path == "output/report.md" for e in manifest.artifacts)
-            assert await scratch.get_content_file("output/report.md") == b"final report"
+            assert await backend.get_content_file("output/report.md") == b"final report"
 
             # --- second session (restart) ---
             ws2 = await manager.open("run-rt")
@@ -276,4 +271,3 @@ class TestConsumerContract:
             await manager.close("run-rt")
         finally:
             backend.close()
-            scratch.close()
