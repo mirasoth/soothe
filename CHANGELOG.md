@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- TUI multi-image clipboard paste: `Cmd+V` joins `Ctrl+V` as a clipboard-image paste binding (for terminals that deliver Cmd+V as a key event), and multi-image clipboards (e.g. Finder multi-file copy) attach one `[image N]` placeholder per image instead of only the first.
+
+### Fixed
+
+- Image attachments honor the daemon's per-message limit (8) at attach time — overflow images are skipped with a toast (drag/drop keeps the file path as text) instead of the daemon rejecting the entire message.
+- TIFF/ICO (and any other non wire-safe format) images are re-encoded to PNG on attach; previously `image/tiff`/`image/ico` failed the daemon MIME allowlist and broke the whole turn's image understanding.
+
 ## [v1.3.8] - 2026-11-26
 
 ### Added

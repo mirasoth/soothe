@@ -57,6 +57,31 @@ VIDEO_EXTENSIONS: frozenset[str] = frozenset(
 MAX_MEDIA_BYTES: int = 20 * 1024 * 1024
 """Maximum media file size (20 MB). Keeps base64 payload under ~27 MB."""
 
+MAX_IMAGES_PER_MESSAGE: int = 8
+"""Maximum images attachable per message.
+
+Mirrors `_MAX_IMAGES_PER_MESSAGE` in
+`soothe_daemon/services/image_understanding.py`; the daemon rejects entire
+messages that exceed it, so the TUI must cap attachments before sending.
+Kept as a local constant because `soothe-cli` must not import `soothe-daemon`
+(package boundary).
+"""
+
+_WIRE_SAFE_IMAGE_FORMATS: frozenset[str] = frozenset(
+    {
+        "png",
+        "jpeg",
+        "webp",
+        "gif",
+        "bmp",
+    }
+)
+"""Image formats whose `image/{format}` MIME is accepted by the daemon wire.
+
+Other readable formats (tiff, ico, …) are re-encoded to PNG on attach so the
+vision preflight never sees a MIME outside the daemon allowlist.
+"""
+
 
 def _import_pil() -> tuple[type, type] | None:
     """Import Pillow types when available.
@@ -122,6 +147,14 @@ def image_data_from_bytes(
     try:
         with Image.open(io.BytesIO(image_bytes)) as image:
             image_format = (image.format or "").lower()
+            if image_format not in _WIRE_SAFE_IMAGE_FORMATS:
+                # TIFF/ICO/etc. produce `image/{format}` MIME values outside
+                # the daemon allowlist; re-encode to PNG so the wire payload
+                # is always valid for vision preflight.
+                buf = io.BytesIO()
+                image.save(buf, format="PNG")
+                image_bytes = buf.getvalue()
+                image_format = "png"
     except (UnidentifiedImageError, OSError) as e:
         logger.debug("Failed to decode image bytes: %s", e, exc_info=True)
         return None
@@ -179,88 +212,106 @@ def get_image_from_path(path: pathlib.Path) -> ImageData | None:
     )
 
 
-def get_image_from_clipboard() -> ImageData | None:
-    """Read an image from the OS clipboard when present.
+def get_images_from_clipboard() -> list[ImageData]:
+    """Read images from the OS clipboard when present.
 
     Terminal paste events cannot carry binary image data. This helper reads
     the local OS clipboard via Pillow and/or platform tools.
 
-    Returns:
-    `ImageData` when the clipboard holds a usable image, else `None`.
-    """
-    raw = _read_clipboard_image_bytes()
-    if not raw:
-        return None
-    return image_data_from_bytes(raw, fallback_format="png")
-
-
-def _read_clipboard_image_bytes() -> bytes | None:
-    """Return raw image bytes from the OS clipboard, if any.
+    Multi-image clipboards (e.g. Finder multi-file copy) yield one
+    `ImageData` per image, capped at `MAX_IMAGES_PER_MESSAGE`.
 
     Returns:
-    Encoded image bytes, or `None` when no image is available.
+        List of `ImageData` for each clipboard image, empty when none.
     """
-    readers = (
-        _read_clipboard_image_pillow,
+    images: list[ImageData] = []
+    for raw in _read_clipboard_image_payloads():
+        if len(images) >= MAX_IMAGES_PER_MESSAGE:
+            logger.debug(
+                "Clipboard holds more than %d images; attaching the first %d",
+                MAX_IMAGES_PER_MESSAGE,
+                MAX_IMAGES_PER_MESSAGE,
+            )
+            break
+        data = image_data_from_bytes(raw, fallback_format="png")
+        if data is not None:
+            images.append(data)
+    return images
+
+
+def _read_clipboard_image_payloads() -> list[bytes]:
+    """Return raw image payloads from the OS clipboard, if any.
+
+    Returns:
+        Encoded image payloads (possibly several), empty when no image is
+        available.
+    """
+    payloads = _read_clipboard_images_pillow()
+    if payloads:
+        return payloads
+
+    for reader in (
         _read_clipboard_image_macos,
         _read_clipboard_image_wsl,
         _read_clipboard_image_wayland,
         _read_clipboard_image_x11,
-    )
-    for reader in readers:
+    ):
         try:
             data = reader()
         except Exception:  # noqa: BLE001  # Clipboard helpers must never crash paste
             logger.debug("Clipboard image reader %s failed", reader.__name__, exc_info=True)
             continue
         if data:
-            return data
-    return None
+            return [data]
+    return []
 
 
-def _read_clipboard_image_pillow() -> bytes | None:
+def _read_clipboard_images_pillow() -> list[bytes]:
     """Try Pillow `ImageGrab.grabclipboard()` when available.
 
     Returns:
-    PNG-encoded bytes, a path-backed image payload, or `None`.
+        PNG-encoded payload, path-backed image payloads, or empty list.
     """
     if _import_pil() is None:
-        return None
+        return []
     try:
         from PIL import ImageGrab
     except ModuleNotFoundError:
-        return None
+        return []
 
     try:
         grabbed = ImageGrab.grabclipboard()
     except Exception:  # noqa: BLE001  # Platform ImageGrab support varies
         logger.debug("Pillow ImageGrab.grabclipboard failed", exc_info=True)
-        return None
+        return []
 
     if grabbed is None:
-        return None
+        return []
 
-    # Some platforms return a list of file paths copied to the clipboard.
+    # Some platforms return a list of file paths copied to the clipboard
+    # (e.g. Finder multi-file copy); attach every readable image.
     if isinstance(grabbed, (list, tuple)):
+        payloads: list[bytes] = []
         for item in grabbed:
             path = pathlib.Path(str(item))
             if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS:
                 try:
-                    return path.read_bytes()
+                    payloads.append(path.read_bytes())
                 except OSError:
                     continue
-        return None
+        return payloads
 
     if not hasattr(grabbed, "save"):
-        return None
+        return []
 
     buf = io.BytesIO()
     try:
         grabbed.save(buf, format="PNG")
     except OSError:
         logger.debug("Failed to encode clipboard ImageGrab result as PNG", exc_info=True)
-        return None
-    return buf.getvalue() or None
+        return []
+    value = buf.getvalue()
+    return [value] if value else []
 
 
 def _read_clipboard_image_macos() -> bytes | None:

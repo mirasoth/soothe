@@ -190,7 +190,7 @@ COMMANDS: tuple[SlashCommand, ...] = (
     ),
     SlashCommand(
         name="/paste",
-        description="Attach image from the OS clipboard as [image N]",
+        description="Attach image(s) from the OS clipboard as [image N]",
         bypass_tier=BypassTier.SIDE_EFFECT_FREE,
         hidden_keywords="image clipboard screenshot attach vision",
     ),

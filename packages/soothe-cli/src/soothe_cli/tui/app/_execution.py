@@ -676,7 +676,7 @@ class _ExecutionMixin:
             if self._chat_input is None:
                 await self._mount_message(AppMessage("Chat input is not ready."))
             else:
-                attached = await self._chat_input.attach_clipboard_image(notify_if_empty=True)
+                attached = await self._chat_input.attach_clipboard_images(notify_if_empty=True)
                 if attached:
                     self._chat_input.focus_input()
 

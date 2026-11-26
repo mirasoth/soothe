@@ -334,7 +334,7 @@ class ChatTextArea(TextArea):
             priority=True,
         ),
         Binding(
-            "ctrl+v",
+            "ctrl+v,cmd+v",
             "clipboard_image_paste",
             "Paste clipboard image",
             show=False,
@@ -406,7 +406,7 @@ class ChatTextArea(TextArea):
             super().__init__()
 
     class ClipboardImagePaste(Message):
-        """Request attaching an image from the OS clipboard into the input."""
+        """Request attaching images from the OS clipboard into the input."""
 
         def __init__(self, *, notify_if_empty: bool = True) -> None:
             """Initialize clipboard-image paste request.
@@ -425,7 +425,7 @@ class ChatTextArea(TextArea):
         """
 
     def action_clipboard_image_paste(self) -> None:
-        """Handle Ctrl+V by requesting an OS clipboard image attach."""
+        """Handle Ctrl+V / Cmd+V by requesting an OS clipboard image attach."""
         self.post_message(self.ClipboardImagePaste(notify_if_empty=True))
 
     def __init__(self, **kwargs: Any) -> None:
@@ -1598,17 +1598,20 @@ class ChatInput(Vertical):
     async def on_chat_text_area_clipboard_image_paste(
         self, event: ChatTextArea.ClipboardImagePaste
     ) -> None:
-        """Handle Ctrl+V / empty-paste requests for OS clipboard images."""
-        await self.attach_clipboard_image(notify_if_empty=event.notify_if_empty)
+        """Handle Ctrl+V / Cmd+V / empty-paste requests for OS clipboard images."""
+        await self.attach_clipboard_images(notify_if_empty=event.notify_if_empty)
 
-    async def attach_clipboard_image(self, *, notify_if_empty: bool = True) -> bool:
-        """Attach an image from the OS clipboard as an `[image N]` placeholder.
+    async def attach_clipboard_images(self, *, notify_if_empty: bool = True) -> bool:
+        """Attach images from the OS clipboard as `[image N]` placeholders.
+
+        Multi-image clipboards (e.g. Finder multi-file copy) attach one
+        placeholder per image, capped at `MAX_IMAGES_PER_MESSAGE` per message.
 
         Args:
         notify_if_empty: Whether to show a toast when no image is found.
 
         Returns:
-        `True` when a placeholder was inserted, else `False`.
+        `True` when at least one placeholder was inserted, else `False`.
         """
         if not self._text_area:
             return False
@@ -1622,15 +1625,18 @@ class ChatInput(Vertical):
                 )
             return False
 
-        from soothe_cli.display.media_utils import get_image_from_clipboard
+        from soothe_cli.display.media_utils import (
+            MAX_IMAGES_PER_MESSAGE,
+            get_images_from_clipboard,
+        )
 
         try:
-            media = await asyncio.to_thread(get_image_from_clipboard)
+            media_list = await asyncio.to_thread(get_images_from_clipboard)
         except Exception:  # noqa: BLE001  # Clipboard failures must not crash the TUI
             logger.debug("Clipboard image attach failed", exc_info=True)
-            media = None
+            media_list = []
 
-        if media is None:
+        if not media_list:
             if notify_if_empty:
                 self.app.notify(
                     "No image in clipboard",
@@ -1640,8 +1646,22 @@ class ChatInput(Vertical):
                 )
             return False
 
-        placeholder = self._image_tracker.add_media(media, "image")
-        self._text_area.insert(f"{placeholder} ")
+        room = MAX_IMAGES_PER_MESSAGE - len(self._image_tracker.images)
+        attachable = media_list[: max(room, 0)]
+        skipped = media_list[len(attachable) :]
+        if skipped:
+            self.app.notify(
+                f"Image limit reached ({MAX_IMAGES_PER_MESSAGE} per message); "
+                f"skipped {len(skipped)} clipboard image(s)",
+                severity="warning",
+                timeout=5,
+                markup=False,
+            )
+        if not attachable:
+            return False
+
+        placeholders = [self._image_tracker.add_media(media, "image") for media in attachable]
+        self._text_area.insert(f"{' '.join(placeholders)} ")
         return True
 
     def handle_external_paste(self, pasted: str) -> bool:
@@ -1751,6 +1771,7 @@ class ChatInput(Vertical):
 
         from soothe_cli.display.media_utils import (
             IMAGE_EXTENSIONS,
+            MAX_IMAGES_PER_MESSAGE,
             MAX_MEDIA_BYTES,
             VIDEO_EXTENSIONS,
             ImageData,
@@ -1759,10 +1780,20 @@ class ChatInput(Vertical):
 
         parts: list[str] = []
         attached = False
+        image_room = MAX_IMAGES_PER_MESSAGE - len(self._image_tracker.images)
+        skipped_for_limit = 0
         for path in paths:
             media = get_media_from_path(path)
             if media is not None:
                 kind = "image" if isinstance(media, ImageData) else "video"
+                if kind == "image" and image_room <= 0:
+                    # Keep the path as plain text so the daemon-side limit is
+                    # never exceeded while the file reference stays visible.
+                    skipped_for_limit += 1
+                    parts.append(str(path))
+                    continue
+                if kind == "image":
+                    image_room -= 1
                 parts.append(self._image_tracker.add_media(media, kind))
                 attached = True
                 continue
@@ -1789,6 +1820,15 @@ class ChatInput(Vertical):
             # Not a supported media file, keep as path
             logger.debug("Could not load media from dropped path: %s", path)
             parts.append(str(path))
+
+        if skipped_for_limit:
+            self.app.notify(
+                f"Image limit reached ({MAX_IMAGES_PER_MESSAGE} per message); "
+                f"{skipped_for_limit} file(s) kept as path text",
+                severity="warning",
+                timeout=5,
+                markup=False,
+            )
 
         if not attached:
             return raw_text, False
