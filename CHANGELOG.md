@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.3.8] - 2026-11-26
+
 ### Added
 
 - Turn-scoped workspace sync facade (`soothe.workspace.sync.TurnScopedWorkspaces`): hosts that bracket agent turns with open/close hooks get the full per-turn sequence (manifest load, content-tree materialization, reconcile, dirty tracking, checkpoint commit) from one entry point instead of reimplementing it over `WorkspaceManager`.
@@ -30,10 +32,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Content-tree restore could escape the workspace root through a broken symlink at the destination, and unvalidated remote listing keys reached path joining; both are now rejected/replaced.
 - s3fs streaming against chunked-intolerant S3-compatible stores (e.g. Tencent COS): transfers use known-length multipart parts and ranged reads, and the integration config disables botocore's default request checksums (aws-chunked framing COS rejects).
 - Trivial single-step goals finish with their verified step recap instead of waiting for a separate report generation call (`agent.loop.rules.completion.ledger_direct_passthrough_max_tool_calls`, default 4).
-
-### Fixed
-
 - Goal token totals now include completion-report synthesis tokens and report real provider usage (`soothe-nano>=2.0.14`); estimated totals stay marked as approximate.
+
+[Compare with previous version]: https://github.com/mirasoth/soothe/compare/v1.3.7...v1.3.8
 
 ## [v1.3.7] - 2026-11-25
 
