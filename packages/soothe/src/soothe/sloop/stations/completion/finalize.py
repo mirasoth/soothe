@@ -9,6 +9,7 @@ import logging
 import time
 from typing import Any
 
+from soothe.config.models import CompletionRulesConfig
 from soothe.context.planning_models import CompletionStrategy
 from soothe.sloop.engine.completion.goal_completion_output import (
     reconcile_synthesis_with_step_ledger,
@@ -29,6 +30,7 @@ from soothe.sloop.utils.messages import (
     last_step_output_content,
 )
 from soothe.sloop.utils.stream_normalize import iter_messages_for_act_aggregation
+from soothe.sloop.utils.token_usage_breakdown import TokenUsageAccumulator
 from soothe.utils.goal_completion_stream import (
     GoalCompletionAccumState,
     resolve_goal_completion_text,
@@ -38,6 +40,8 @@ from soothe.utils.goal_completion_stream import (
 logger = logging.getLogger(__name__)
 
 _GOAL_FINALIZE_STATUS_LABEL = "Finalizing goal"
+
+_DEFAULT_COMPLETION_RULES = CompletionRulesConfig()
 
 _GOAL_COMPLETION_LEDGER_HUMAN_BASE = (
     "Produce the final user-facing response summarizing the outcome. "
@@ -516,6 +520,57 @@ def _toolless_single_leaf(nodes: dict[str, Any] | None) -> bool:
     )
 
 
+def _completion_rules_from(strange_loop: Any) -> CompletionRulesConfig:
+    """Return the configured completion rules, or the built-in defaults."""
+    config = getattr(strange_loop, "config", None)
+    loop = getattr(getattr(config, "agent", None), "loop", None)
+    rules = getattr(getattr(loop, "rules", None), "completion", None)
+    return rules if isinstance(rules, CompletionRulesConfig) else _DEFAULT_COMPLETION_RULES
+
+
+def _simple_verified_leaf(
+    nodes: dict[str, Any] | None,
+    rules: CompletionRulesConfig = _DEFAULT_COMPLETION_RULES,
+) -> bool:
+    """True when one tool-backed deliverable step is safe to pass through.
+
+    Report validation rejects a step recap as a goal report. A single completed
+    root leaf without failures, decomposition dependencies or subagent work has
+    no other deliverable text, so the recap is the report and the classifier
+    would only add latency.
+
+    Args:
+        nodes: CE step DAG nodes for the goal.
+        rules: Structural caps shared with the completion strategy.
+
+    Returns:
+        Whether the DAG is a single verified deliverable leaf.
+    """
+    if not nodes:
+        return False
+    if any(getattr(n, "status", None) == "failed" for n in nodes.values()):
+        return False
+    deliverables = [n for n in nodes.values() if getattr(n, "kind", "") != "eval"]
+    if len(deliverables) != 1:
+        return False
+    node = deliverables[0]
+    if getattr(node, "status", None) != "completed" or getattr(node, "parent_step_id", None):
+        return False
+    if getattr(node, "dependencies", None):
+        return False
+    execution = getattr(node, "execution", None)
+    if execution is None or getattr(execution, "subagent_task_completions", 0):
+        return False
+    outcome = getattr(execution, "outcome", None)
+    if isinstance(outcome, dict) and outcome.get("prior_ai_output"):
+        return False
+    tool_calls = int(getattr(execution, "tool_call_count", 0) or 0)
+    max_calls = rules.ledger_direct_passthrough_max_tool_calls
+    if max_calls <= 0 or tool_calls > max_calls:
+        return False
+    return True
+
+
 async def node_goal_completion(
     ctx: LoopRuntimeContext, graph_state: dict[str, Any]
 ) -> dict[str, Any]:
@@ -694,10 +749,12 @@ async def node_goal_completion(
                     if isinstance(_outcome, dict):
                         prior_output = str(_outcome.get("prior_ai_output") or "") or None
 
-            bypass_validation = _toolless_single_leaf(goal_steps)
+            bypass_validation = _toolless_single_leaf(goal_steps) or _simple_verified_leaf(
+                goal_steps, _completion_rules_from(strange_loop)
+            )
             if bypass_validation:
                 logger.info(
-                    "Goal completion: action=ledger_direct passthrough (toolless single leaf) chars=%d",
+                    "Goal completion: action=ledger_direct passthrough (structural leaf) chars=%d",
                     len(final_output),
                 )
             else:
@@ -748,15 +805,33 @@ async def node_goal_completion(
         # Synthesis projection reads state.step_results which queries CE.
         logger.info("Goal completion: action=synthesis starting stream")
         accum = GoalCompletionAccumState()
+        usage_accum = TokenUsageAccumulator()
+        tokens_before_synthesis = state.total_tokens_used
         chunk_count = 0
 
         async for inner in synthesis_gen.generate_synthesis(
             state.goal, state, fallback_text=ledger_fallback_text
         ):
             chunk_count += 1
+            usage_accum.observe(inner)
             for msg in iter_messages_for_act_aggregation(inner):
                 update_goal_completion_from_message(accum, msg)
             await ctx.emit("stream_event", inner)
+
+        # Synthesis is a direct LLM call on an isolated checkpoint thread; its
+        # usage chunk never reaches the execute-wave accumulator.
+        synthesis_usage = usage_accum.snapshot()
+        if synthesis_usage:
+            observed_total = int(synthesis_usage.get("total_tokens") or 0)
+            already_counted = max(0, state.total_tokens_used - tokens_before_synthesis)
+            added = max(0, observed_total - already_counted)
+            state.total_tokens_used += added
+            logger.info(
+                "Synthesis tokens: observed=%d already_counted=%d added=%d",
+                observed_total,
+                already_counted,
+                added,
+            )
 
         final_output = resolve_goal_completion_text(accum)
 

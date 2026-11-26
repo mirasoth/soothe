@@ -6,16 +6,18 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from langchain_core.outputs import LLMResult
-
-from soothe.sloop.utils.token_usage import (
+from soothe_nano.utils.token_usage import (
     DirectLLMTokenTarget,
     accumulate_loop_tokens_from_llm_result,
+    extract_token_usage_from_messages,
+    merge_direct_llm_tokens_into_state,
+)
+
+from soothe.sloop.utils.token_usage import (
     coerce_total_tokens_used,
     direct_llm_token_call_scope,
     estimate_token_usage,
-    extract_token_usage_from_messages,
     loop_token_accumulation_scope,
-    merge_direct_llm_tokens_into_state,
 )
 
 

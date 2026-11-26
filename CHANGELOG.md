@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Trivial single-step goals finish with their verified step recap instead of waiting for a separate report generation call (`agent.loop.rules.completion.ledger_direct_passthrough_max_tool_calls`, default 4).
+
+### Fixed
+
+- Goal token totals now include completion-report synthesis tokens and report real provider usage (`soothe-nano>=2.0.14`); estimated totals stay marked as approximate.
+
 ## [v1.3.7] - 2026-11-25
 
 ### Added
@@ -18,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Goal-completion reports stream with the fast model role by default (`agent.loop.goal_synthesis_model_role: fast`), bounded by `goal_synthesis_idle_seconds` (default 60s, `0` disables).
 - Step-card todo panes render every item with no overflow cap — live progress is always visible instead of hiding the running item behind a `+N more` row (the tools and files panes keep their preview caps).
+- Step-card activity panes stack in a new reading order — todo first (the step's progress readout), then tools, files, thinking — and each pane's `──── title ────` header rule now renders in that pane's own color (label and counter bold), so sections are visually distinct at a glance.
 - Step-card thinking pane is a plain text window (default 10 lines, up from 8): reasoning lines render verbatim with no bullet prefix and no per-line character cap, showing only the latest lines; the pane-width layout bound still clips lines wider than the terminal.
 - The thinking pane no longer styles reasoning as italic: tmux terminals without `sitm` render italic as reverse video, painting a solid background block behind the whole pane. The muted foreground alone distinguishes the pane.
 - Multi-tool approval gates collect one explicit decision per pending tool call, with a per-tool recap before submitting; hydrated transcripts keep the per-tool decisions.

@@ -845,6 +845,14 @@ class CompletionRulesConfig(BaseModel):
             "(0 = no cap; structural gate only)"
         ),
     )
+    ledger_direct_passthrough_max_tool_calls: int = Field(
+        default=4,
+        ge=0,
+        description=(
+            "Max tool calls for a single deliverable leaf to skip report validation "
+            "and pass its step recap straight through (0 disables the passthrough)"
+        ),
+    )
 
 
 class ScenarioRulesConfig(BaseModel):

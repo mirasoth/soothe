@@ -74,6 +74,9 @@ Execution token statistics were wrong across all three layers, observed as a
   (576), runner suite (349+), all green; ruff check/format green.
 - soothe-daemon: `test_acp_channel.py` 171 passed.
 - soothe-cli: tui/runtime token suites 170 passed.
+- Follow-up (IG-SLP-014): synthesis stream usage now folds into
+  `LoopState.total_tokens_used` before the terminal emit, so the goal token
+  refresh persists a real delta instead of the pre-synthesis number.
 
 Not done (deferred): periodic `plan_phase_status` tick during the finalize
 synthesis (counter now updates via stream usage once real usage flows);

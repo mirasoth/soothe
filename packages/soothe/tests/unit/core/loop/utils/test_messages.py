@@ -269,7 +269,7 @@ class TestLoopAIMessageWithExecutor:
 
     def test_token_extraction_logic(self) -> None:
         """Test ``extract_token_usage_from_messages`` sums all AI turns."""
-        from soothe.sloop.utils.token_usage import extract_token_usage_from_messages
+        from soothe_nano.utils.token_usage import extract_token_usage_from_messages
 
         messages = [
             LoopAIMessage(

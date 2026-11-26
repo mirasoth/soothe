@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, AIMessageChunk
 
 from soothe.context import StepPlanManagerAdapter
 from soothe.context.engine import ContextEngine
@@ -1067,3 +1067,129 @@ async def test_plan_mode_approve_skips_summary() -> None:
         "goal_prompt": "count one to five",
         "plan_path": "/ws/.soothe/plans/p.md",
     }
+
+
+@pytest.mark.asyncio
+async def test_ledger_direct_bypasses_validation_for_single_verified_tool_leaf() -> None:
+    """A trivial tool-backed goal keeps its step recap without a synthesis call."""
+    from soothe.context.models import StepExecution, StepNode
+
+    ce = _make_ce()
+    loop_state = LoopState(goal="create a file", thread_id="thr-1")
+    goal = GoalNode(description="create a file")
+    ce._dag.add_goal(goal)
+    loop_state.bind_ce(ce, goal.id)
+    await ce.add_step(goal.id, StepNode(id="S1", description="create a file"))
+    await ce.complete_step(
+        goal.id,
+        "S1",
+        StepExecution(
+            tool_call_count=1,
+            output_messages=[
+                {"role": "assistant", "content": "Created /tmp/appr-1.txt with hello dock"}
+            ],
+        ),
+    )
+    plan_result = PlanResult(status="done", goal_progress="complete", require_goal_completion=False)
+    pm = StepPlanManagerAdapter(subengine=ce.planning.step, goal_id=goal.id)
+    pm.determine_completion_strategy = Mock(return_value=CompletionStrategy.LEDGER_DIRECT)
+
+    strange_loop = Mock()
+    strange_loop.loop_planner = Mock()
+    strange_loop.loop_planner._model = Mock()
+    strange_loop.core_agent = Mock()
+
+    sm = Mock()
+    sm.record_iteration = AsyncMock()
+    sm.finalize_goal = AsyncMock()
+    sm.update_goal_tokens = AsyncMock()
+
+    ctx = _ctx(
+        loop_state=loop_state,
+        plan_manager=pm,
+        strange_loop=strange_loop,
+        state_manager=sm,
+        plan_result=plan_result,
+        ce=ce,
+        goal=goal,
+    )
+
+    validator = AsyncMock(return_value=False)
+    with patch(
+        "soothe.sloop.engine.completion.report_validation_typesafe.validate_report_typesafe",
+        validator,
+    ):
+        await node_goal_completion(ctx, {})
+
+    assert validator.await_count == 0
+    completed_payload = next(
+        (c.args[1] for c in ctx.emit.await_args_list if c.args and c.args[0] == "completed"),
+        None,
+    )
+    assert completed_payload is not None
+    assert completed_payload["result"].full_output == "Created /tmp/appr-1.txt with hello dock"
+    assert completed_payload["skip_goal_completion_wire_duplicate"] is False
+
+
+@pytest.mark.asyncio
+async def test_synthesis_usage_reaches_terminal_token_total() -> None:
+    """Provider usage on the synthesis stream reaches the checkpoint and wire event."""
+    ce = _make_ce()
+    loop_state = LoopState(goal="do thing", thread_id="thr-1")
+    goal = GoalNode(description="do thing")
+    ce._dag.add_goal(goal)
+    loop_state.bind_ce(ce, goal.id)
+    plan_result = PlanResult(status="done", goal_progress="complete", require_goal_completion=True)
+    pm = StepPlanManagerAdapter(subengine=ce.planning.step, goal_id=goal.id)
+    pm.determine_completion_strategy = Mock(return_value=CompletionStrategy.SYNTHESIZE)
+
+    strange_loop = Mock()
+    strange_loop.loop_planner = Mock()
+    strange_loop.loop_planner._model = Mock()
+    strange_loop.core_agent = Mock()
+
+    sm = Mock()
+    sm.record_iteration = AsyncMock()
+    sm.finalize_goal = AsyncMock()
+    sm.update_goal_tokens = AsyncMock()
+
+    async def fake_gen(self, goal, state, *, fallback_text=None):  # noqa: ARG002
+        yield ((), "messages", (AIMessage(content="final synth body"), {}))
+        yield (
+            (),
+            "messages",
+            (
+                AIMessageChunk(
+                    content="",
+                    usage_metadata={
+                        "input_tokens": 1000,
+                        "output_tokens": 200,
+                        "total_tokens": 1200,
+                    },
+                ),
+                {},
+            ),
+        )
+
+    ctx = _ctx(
+        loop_state=loop_state,
+        plan_manager=pm,
+        strange_loop=strange_loop,
+        state_manager=sm,
+        plan_result=plan_result,
+        ce=ce,
+        goal=goal,
+    )
+
+    with patch.object(SynthesisGenerator, "generate_synthesis", fake_gen):
+        await node_goal_completion(ctx, {})
+
+    completed_payload = next(
+        (c.args[1] for c in ctx.emit.await_args_list if c.args and c.args[0] == "completed"),
+        None,
+    )
+    assert completed_payload is not None
+    assert completed_payload["total_tokens_used"] == 1200
+    assert loop_state.total_tokens_used == 1200
+    sm.update_goal_tokens.assert_awaited_once()
+    assert sm.update_goal_tokens.await_args.kwargs["total_tokens"] == 1200

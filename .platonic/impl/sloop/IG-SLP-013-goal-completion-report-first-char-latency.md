@@ -223,5 +223,6 @@ All files listed above.
 - `./scripts/verify_finally.sh` before any commit.
 - Live replay: rerun the a419-style goal ("create a file … containing …")
   and confirm in runner.log either `action=ledger_direct passthrough
-  (validated)` (target, ~0s) or a synthesis stream whose first chunk
-  arrives in seconds (fast model) with the 60s idle budget as backstop.
+  (validated)` or `(structural leaf)` (IG-SLP-014, target ~0s), or a
+  synthesis stream whose first chunk arrives in seconds (fast model) with
+  the 60s idle budget as backstop.

@@ -15,10 +15,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from langchain_core.messages import AIMessage
 
+from soothe.config.models import CompletionRulesConfig
 from soothe.sloop.engine.execute.executor import Executor
 from soothe.sloop.engine.execute.step_wave_types import _StreamCollectChunk
 from soothe.sloop.state.schemas import StepAction, StepExecutionRecord
-from soothe.sloop.stations.completion.finalize import _toolless_single_leaf
+from soothe.sloop.stations.completion.finalize import (
+    _simple_verified_leaf,
+    _toolless_single_leaf,
+)
 
 
 def _make_executor() -> Executor:
@@ -241,3 +245,78 @@ def test_toolless_single_leaf_false_for_multi_node_dag() -> None:
 def test_toolless_single_leaf_false_when_no_execution() -> None:
     node = SimpleNamespace(status="completed", parent_step_id=None, execution=None)
     assert _toolless_single_leaf({"s1": node}) is False
+
+
+def _verified_leaf(
+    *,
+    tool_calls: int = 1,
+    subagent_completions: int = 0,
+    outcome: dict[str, Any] | None = None,
+    dependencies: list[str] | None = None,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        status="completed",
+        parent_step_id=None,
+        dependencies=dependencies or [],
+        kind="action",
+        execution=SimpleNamespace(
+            tool_call_count=tool_calls,
+            subagent_task_completions=subagent_completions,
+            outcome=outcome,
+        ),
+    )
+
+
+def test_simple_verified_leaf_true_for_single_tool_step_with_eval_node() -> None:
+    assert (
+        _simple_verified_leaf(
+            {
+                "s1": _verified_leaf(),
+                "eval": SimpleNamespace(status="completed", kind="eval"),
+            }
+        )
+        is True
+    )
+
+
+def test_simple_verified_leaf_false_for_multi_leaf_or_failed_dag() -> None:
+    assert _simple_verified_leaf({"s1": _verified_leaf(), "s2": _verified_leaf()}) is False
+    assert (
+        _simple_verified_leaf(
+            {
+                "s1": _verified_leaf(),
+                "s2": SimpleNamespace(status="failed", kind="action"),
+            }
+        )
+        is False
+    )
+
+
+def test_simple_verified_leaf_false_for_prior_deliverable_or_subagent() -> None:
+    assert (
+        _simple_verified_leaf(
+            {"s1": _verified_leaf(outcome={"prior_ai_output": "full report earlier"})}
+        )
+        is False
+    )
+    assert _simple_verified_leaf({"s1": _verified_leaf(subagent_completions=1)}) is False
+    assert _simple_verified_leaf({"s1": _verified_leaf(dependencies=["s0"])}) is False
+
+
+def test_simple_verified_leaf_respects_configured_tool_cap() -> None:
+    node = _verified_leaf(tool_calls=5)
+    assert _simple_verified_leaf({"s1": node}) is False
+    assert (
+        _simple_verified_leaf(
+            {"s1": node},
+            CompletionRulesConfig(ledger_direct_passthrough_max_tool_calls=8),
+        )
+        is True
+    )
+    assert (
+        _simple_verified_leaf(
+            {"s1": node},
+            CompletionRulesConfig(ledger_direct_passthrough_max_tool_calls=0),
+        )
+        is False
+    )
