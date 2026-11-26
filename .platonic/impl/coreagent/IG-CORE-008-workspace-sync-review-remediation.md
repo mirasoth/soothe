@@ -431,8 +431,8 @@ Existing `tests/integration/workspace/sync/test_s3_integration.py` (env-gated li
 - [x] §6.1–§6.2 regression tests green (201 workspace unit tests; consumer-contract test in `test_manager.py::TestConsumerContract`)
 - [x] Full unit suites green (3264 passed / 16 skipped); `ruff` clean
 - [x] Live S3 integration green against Tencent COS (24 tests) + 64 MiB streaming smoke (bounded-memory assertions)
-- [ ] Flowjet compatibility confirmed against the §1.1 contract (consumer repo CI or manual pass)
-- [ ] RFC-CORE-010 amendments accepted or deviations recorded
+- [x] Flowjet compatibility confirmed against the §1.1 contract — manual pass: static API comparison (all §1.1 touchpoints preserved, incl. `CheckpointPayload.manifest_snapshot` now always populated by `recover()` even for delta chains) plus flowjet's consumer suites run against this working tree via `PYTHONPATH` injection: `test_workspace_sync.py` 37/37, full `tests/unit/server` 243/243, `test_session_continuity_integration.py` 2/2
+- [x] RFC-CORE-010 amendments accepted or deviations recorded — the five amendments are applied to the RFC text directly (Flow 1 hardlink→reflink/copy, Flow 2 option-A staging, Security S3 fsspec cache semantics, Module Layout actual file set, Non-Goals chunking struck through), with an Amendments section recording the decision history; see `.platonic/specs/coreagent/RFC-CORE-010-workspace-sync-materialization.md`
 - [x] CHANGELOG entry added
 
 ---
@@ -452,6 +452,17 @@ s3fs-specific facts discovered during live COS validation:
 - botocore ≥ 1.36 default request checksums switch bodies to aws-chunked framing, which Tencent COS rejects (`You must provide the Content-Length HTTP header`); COS configs must set `request_checksum_calculation="when_required"` (end-to-end integrity is provided by the CAS sha256 layer). Recorded in `test_s3_integration.py::_factory_config`.
 
 Deviations from the plan as written: §4.11 replaced by D-S above; `_DIR_BEARING_PROTOCOLS` gating and debouncer wake cadence (0.5 s) as planned; `Workspace.materialize` keeps no resource-list overload per §4.10.
+
+### 8.1 Flowjet compatibility pass (2026-11-26)
+
+Verified against `../flowjet/src/flowjet/core/runtime/isolation/workspace.py` (consumer, `SyncAwareWorkspaceResolver`):
+
+- **Constructor / lifecycle surface unchanged**: `WorkspaceManager(workspaces_root, cas_root, backend, state_store_factory, content_backend_factory, watched_subdirs)`, `open`/`close`/`close_all`, `ws.start_tracking()`, `ws.checkpoint()` (return value unused by flowjet), `ws.root`, `ws.run_id`, `construct_sync_backend(uri, config)`, `CASCache(cache_root=…)` + positional `fetch_and_cache(sha, backend)` — all preserved.
+- **`recover()` contract strengthened**: flowjet reads `payload.manifest_snapshot`; the rewritten `recover()` always populates it (remote manifest authoritative, delta chain replayed) instead of returning `None` for DELTA payloads.
+- **`materialize(manifest)` now actually works** — flowjet's `_restore_prior_state` call at `workspace.py:431` was previously crashing at the logging line after completing the work (F-C1).
+- **flowjet's defensive probes are obsolete but harmless**: the `protected`/`reconcile` signature probe now always passes, and the `_sqlite_state_store_factory` docstring's "uploader is None → start_tracking crashes" rationale is stale (fixed by F-L3). Both cleanups are flowjet-repo follow-ups, not blockers. *(Done 2026-11-26: the probe + degrade branch was removed from flowjet — dead code since the `soothe>=1.3.7` floor ships both kwargs — and the docstring now describes the pending-row staging role; flowjet's suites pass 243/243 against both the installed 1.3.7 floor and this working tree.)*
+
+**Evidence (manual pass, this working tree via `PYTHONPATH` injection):** `tests/unit/server/test_workspace_sync.py` 37/37 (resolver semantics, lifecycle, artifact restore, checkpoint-on-close, shared-run refcounting, shutdown); full `tests/unit/server` 243/243; `tests/integration/test_session_continuity_integration.py` 2/2 (restart recovery chain — the F-C3 live data-loss path). flowjet CI has not been run in its own repo; the verification is a local manual pass.
 
 ---
 

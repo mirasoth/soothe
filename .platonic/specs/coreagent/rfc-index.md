@@ -1,6 +1,6 @@
 # coreagent RFC Index (CORE)
 
-**Last Updated**: 2026-11-23  |  **RFCs**: 11
+**Last Updated**: 2026-11-26  |  **RFCs**: 11
 
 | ID | Title | Kind | Status |
 |----|-------|------|--------|

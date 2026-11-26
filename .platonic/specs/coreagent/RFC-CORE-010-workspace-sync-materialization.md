@@ -2,7 +2,7 @@
 
 **RFC**: 906
 **Title**: Workspace Sync — Materialization and Incremental Persistence
-**Status**: Implemented
+**Status**: Implemented (amended 2026-11-26, see Amendments)
 **Kind**: Architecture Design
 **Created**: 2026-09-01
 **Authors**: Xiaming Chen
@@ -80,7 +80,7 @@ Agent Workspace (input/ working/ output/)
 
 ### WorkspaceStateStore (soothe — host)
 
-**Purpose**: Per-workspace runtime cache tracking dirty files, blob cache index, and checkpoint references.
+**Purpose**: Per-workspace runtime cache tracking dirty files, blob cache index, and checkpoint references; stages `pending_upload` rows for crash-safe checkpoint persistence (payload bytes land locally before any remote write, and are cleared once uploaded).
 
 **Capabilities**: SQLite (workspace-local) or PostgreSQL (shared pool) following `persistence.default_backend`.
 
@@ -91,16 +91,16 @@ Agent Workspace (input/ working/ output/)
 ### Flow 1: Materialization
 
 1. Fetch manifest from storage backend.
-2. For each resource: check local CAS → hardlink/reflink to workspace, or download → verify SHA-256 → store in CAS → materialize.
-3. Repeated materialization of unchanged resources = zero object-data bandwidth.
+2. For each resource: check local CAS → reflink (or copy) to workspace, or download → verify SHA-256 → store in CAS → materialize. **Hardlinks are never handed out** — an in-place edit through a shared inode would mutate the immutable cache blob (contradicts Core Invariant 1); the link strategy enum keeps hardlink only as a probed capability marker.
+3. Repeated materialization of unchanged resources = zero object-data bandwidth. Unchanged files are detected by (size, sha) comparison — the content tree is never re-downloaded just to compare.
 
 ### Flow 2: Checkpoint
 
 1. Agent writes files → dirty tracker records events.
 2. Debounce window expires → checkpoint triggered.
 3. Hash dirty files → CAS lookup → upload new blobs → update manifest.
-4. Write checkpoint payload (snapshot or delta) to state store + storage backend.
-5. Background uploader persists asynchronously.
+4. Write the checkpoint payload (snapshot or delta) to the state store as a `pending_upload` row **before** any remote call (local durability first); deletions are carried as tombstones (`deleted_files`) so replay can never resurrect them. The dirty tracker acknowledges **only** the paths captured in the payload — mid-checkpoint writes survive for the next checkpoint.
+5. Background uploader persists asynchronously and clears the staged bytes on success; the remote manifest is the authoritative artifact state on recovery.
 
 ### Flow 3: Publish
 
@@ -120,7 +120,7 @@ Agent Workspace (input/ working/ output/)
 
 1. **Path traversal protection (S1)**: All path construction methods validate inputs — `_validate_path_component()` rejects non-alphanumeric IDs; `_validate_relative_path()` rejects `..`, absolute paths, null bytes.
 2. **Symlink escape prevention (S2)**: Dirty tracker uses `os.lstat()`; checkpoint rejects symlinks escaping workspace root.
-3. **Credential leakage prevention (S3)**: `fs.use_cache = False`; clear `storage_options` after construction; prefer env vars / IAM roles.
+3. **Credential leakage prevention (S3)**: fsspec's instance cache is keyed on the resolved storage options — credentials are never keyed by URI or shared across backends; per-call isolation uses the `skip_instance_cache` storage option. Prefer env vars / IAM roles.
 4. **SSRF prevention (S8)**: Explicit scheme allowlist `{"s3", "gs", "az"}` — `file://`, `sftp://`, `http://` rejected.
 5. **Blob integrity (S7)**: Hash verification on write; `.sha256` sidecar on CAS cache hit.
 6. **Cleanup race prevention (S10)**: Multi-step cleanup with `closing` state flag.
@@ -180,10 +180,17 @@ soothe/workspace/
 │   ├── __init__.py
 │   ├── manager.py                 ← WorkspaceManager
 │   ├── workspace.py               ← Workspace (per-run handle)
-│   ├── cas.py                     ← Local CAS cache
-│   ├── dirty_tracker.py           ← Hybrid FS watcher
+│   ├── workspace_sync.py          ← protocol + data models (Manifest, CheckpointPayload)
+│   ├── checkpoint.py              ← CheckpointManager (snapshot/delta, tombstones, recovery)
+│   ├── cas.py                     ← Local CAS cache (single-pass hash + copy, streamed fetch)
+│   ├── dirty_tracker.py           ← Hybrid FS watcher (stat-scan off the event loop)
 │   ├── debouncer.py               ← Debounced checkpoint trigger
-│   ├── manifest_synth.py          ← Manifest synthesis from prefix listing
+│   ├── materializer.py            ← Manifest resource materialization
+│   ├── uploader.py                ← Background uploader (drains pending_upload rows)
+│   ├── streaming.py               ← Chunked-transfer capability dispatch
+│   ├── factory.py                 ← construct_sync_backend() (scheme allowlist)
+│   ├── paths.py                   ← Path layout + validation
+│   ├── errors.py
 │   └── backends/
 │       ├── __init__.py
 │       └── fsspec.py              ← FsspecSyncBackend
@@ -202,7 +209,7 @@ soothe/workspace/
 - Agent identity (separate RFC).
 - Continuous bidirectional sync (materialization is one-way).
 - Lazy materialization in MVP (eager + CAS is the MVP).
-- Chunking in MVP (file-level CAS is sufficient).
+- ~~Chunking in MVP (file-level CAS is sufficient).~~ — superseded 2026-11-26: chunked transfers are implemented (bounded-memory multipart uploads, ranged-GET reads) because consumers handle MB–GB files; file-level CAS addressing is unchanged.
 - Patch journals in MVP (snapshot + delta is the MVP).
 - Replacing StrangeLoop checkpoint system (RFC-PERS-003) — workspace checkpoints are a distinct, lower-layer concept.
 
@@ -220,4 +227,15 @@ soothe/workspace/
 
 - Design draft: `.platonic/drafts/2026-09-01-workspace-sync-final-design.md` (v2.1, 53 sections)
 - Implementation guide: `.platonic/impl/../../impl/coreagent/IG-CORE-004-workspace-sync-implementation.md`
+- Remediation guide: `.platonic/impl/coreagent/IG-CORE-008-workspace-sync-review-remediation.md`
 - Protocol source: `packages/soothe-sdk/src/soothe_sdk/protocols/workspace_sync.py`
+
+## Amendments (2026-11-26)
+
+Post-implementation review (IG-CORE-008) found the delivered code diverging from this RFC in ways the text itself had wrong or stale. The RFC now matches the remediated implementation:
+
+1. **Flow 1** drops hardlink materialization (Core Invariant 1 wins; the "hardlink" wording contradicted both invariant 1 and architectural constraint 3) and states the sha-skip rule for unchanged content-tree files.
+2. **Flow 2** specifies the option-A staging semantics: `pending_upload` rows written before any remote call, tombstones in payloads, snapshot-ack dirty clearing, remote manifest as recovery authority, staged bytes cleared on upload.
+3. **Security S3** replaces the no-op `fs.use_cache = False` with the real fsspec instance-cache semantics (`skip_instance_cache` storage option).
+4. **Module Layout** lists the actual module set (checkpoint/materializer/uploader/streaming/factory/paths/errors; no `manifest_synth.py` was ever delivered).
+5. **Non-Goals**: chunking was a non-goal "for MVP"; it has since been implemented for MB–GB consumer files (bounded-memory multipart uploads, ranged reads) — the non-goal line is struck through, not deleted, to keep the decision history.
