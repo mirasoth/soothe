@@ -86,7 +86,9 @@ def validate_and_normalize_image_attachments(raw: Any) -> tuple[list[dict[str, s
 _VISION_INSTRUCTION_SINGLE = (
     "Describe this image concisely for another assistant that will handle the user's "
     "request. Focus on: visible objects, text content, charts/diagrams, and the likely "
-    "user intent. Be specific about any text, numbers, or labels visible in the image."
+    "user intent. Be specific about any text, numbers, or labels visible in the image. "
+    "The image is attached inline to this message; it is NOT a file on the user's disk, "
+    "so never suggest or attempt to locate it in the workspace."
 )
 
 _VISION_INSTRUCTION_MULTI = (

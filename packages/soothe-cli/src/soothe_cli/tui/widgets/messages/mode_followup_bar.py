@@ -23,6 +23,7 @@ on mount (IG-CLNT-005); keyboard mode starts after a click on the card.
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from textual import on
 from textual.binding import Binding
@@ -128,7 +129,7 @@ class ModeFollowUpBar(Vertical):
     }
     """
 
-    def __init__(self, **kwargs) -> None:  # noqa: ANN003
+    def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._highlighted = 0
         self._applied = False
@@ -143,7 +144,7 @@ class ModeFollowUpBar(Vertical):
             colors = theme.DARK_COLORS
         return _assemble_card_header(self, "Next step", status="pending", accent=colors.warning)
 
-    def compose(self):
+    def compose(self) -> Any:
         yield Static("─" * 60, classes="mfb-separator", markup=False)
         yield Static(self._title_content(), classes="mfb-title", markup=False)
         for j, (row_id, _mode, label, desc) in enumerate(_OPTIONS):

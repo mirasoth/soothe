@@ -69,3 +69,10 @@ async def test_enrich_user_text_with_vision_invokes_image_model() -> None:
     assert "Vision summary" in out
     cfg.create_chat_model.assert_called_once_with("image")
     fake_model.ainvoke.assert_awaited_once()
+
+    # The prompt tells the model the image is inline, so the downstream agent
+    # does not go hunting for a file named like the attachment on disk.
+    prompt_text = fake_model.ainvoke.await_args.args[0][0].content
+    instruction = prompt_text[0]["text"]
+    assert "attached inline" in instruction
+    assert "NOT a file on the user's disk" in instruction
