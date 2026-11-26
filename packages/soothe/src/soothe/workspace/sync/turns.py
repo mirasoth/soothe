@@ -1,31 +1,19 @@
 """Turn-scoped workspace sync facade for host orchestrators.
 
-Hosts that bracket agent turns (one open before the agent runs, one close
-after it finishes — flowjet's per-prompt lifecycle) map their session
-identity to a run id and call ``open_turn`` / ``close_turn``.  Under the
-single-root content-authoritative representation (IG-CORE-011):
+Hosts that bracket agent turns with open/close hooks map their session
+identity to a run id and call `open_turn` / `close_turn`:
 
-* ``open_turn`` opens the workspace (the manager loads the last
-  committed manifest), materializes the content tree — the
-  authoritative file store — into the local workspace, reconciles
-  deletions, and starts dirty tracking;
-* ``close_turn`` commits the dirty state (hash + upload to the content
-  tree, mirror deletions, write the manifest — the atomic commit
-  point), then closes the workspace and releases its resources.  The
-  result is reported as a :class:`TurnCommit` — persistence failures
-  are visible to the caller, not just logged.
+* `open_turn` opens the workspace, loads the last committed manifest,
+  materializes the content tree, reconciles deletions, and starts dirty
+  tracking.
+* `close_turn` commits the dirty state to the content tree, writes the
+  manifest (the atomic commit point), and closes the workspace. The
+  result is a `TurnCommit` report so persistence failures reach the caller.
 
-**Single-writer contract**: hosts must serialize turns per run id
-(one in-flight ``open_turn``/``close_turn`` pair at a time per
-workspace).  The engine keeps no concurrent-turn bookkeeping — hosts
-that cannot guarantee serialization (e.g. agentspace) enforce it at
-their own prompt gate.
-
-Failed commits keep the workspace open: the dirty set survives in the
-live tracker so the next turn's commit retries it (a fresh tracker
-would baseline uncommitted files as clean and reconcile could delete
-them).  A workspace with a clean commit is closed immediately, so the
-open set — and its per-run resources — is empty between turns.
+Hosts must serialize turns per run id (one in-flight open/close pair per
+workspace); the engine keeps no concurrent-turn bookkeeping. A failed
+commit leaves the workspace open so its dirty set survives to the next
+turn's commit; a clean commit closes it and releases its per-run backend.
 """
 
 from __future__ import annotations
@@ -79,7 +67,7 @@ def _artifact_paths(manifest: Manifest | None) -> list[str]:
 
 
 class TurnScopedWorkspaces:
-    """Turn-scoped facade over :class:`WorkspaceManager`.
+    """Turn-scoped facade over `WorkspaceManager`.
 
     Args:
         workspaces_root: Root directory holding per-run workspaces.
@@ -126,13 +114,9 @@ class TurnScopedWorkspaces:
         if ws is None:
             ws = await self._manager.open(run_id)
 
-        # Read path: materialize the authoritative content tree (e.g.
-        # host-uploaded materials + prior agent outputs) into the
-        # workspace BEFORE the agent runs.  Manifest artifacts are
-        # protected — a mid-commit crash may have left engine-owned
-        # files in the workspace but not yet in the content tree.  The
-        # dirty tracker only watches the configured subtrees + root
-        # files, so content-tree writes never pollute the dirty set.
+        # Materialize before the agent runs: manifest artifacts are
+        # protected because a mid-commit crash can leave them local but
+        # not yet stored in the content tree.
         try:
             await ws.materialize_content(
                 protected=_artifact_paths(ws.manifest),
@@ -154,19 +138,17 @@ class TurnScopedWorkspaces:
 
         The commit runs first (turn completion = persisted); on success
         the workspace is closed and its backend released.  A failed
-        commit returns ``persisted=False`` and KEEPS the workspace open
+        commit returns `persisted=False` and keeps the workspace open
         so the dirty set survives to the next turn's commit.
 
         Args:
             run_id: Unique run identifier (the workspace directory name).
 
         Returns:
-            The :class:`TurnCommit` result for the turn.
+            The `TurnCommit` result for the turn.
         """
         ws = self._manager.get(run_id)
         if ws is None:
-            # Nothing open (e.g. close after a failed open, or a double
-            # close) — nothing pending, nothing to report.
             return TurnCommit(persisted=True)
 
         try:
@@ -181,8 +163,6 @@ class TurnScopedWorkspaces:
             await self._manager.close(run_id)
         except Exception as exc:  # noqa: BLE001
             logger.warning("Workspace close failed for run %s", run_id, exc_info=True)
-            # The commit itself succeeded — the data is durable; only
-            # resource release failed.
             return TurnCommit(
                 persisted=True, version=version, error=f"workspace close failed: {exc}"
             )

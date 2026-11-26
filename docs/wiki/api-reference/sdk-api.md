@@ -15,7 +15,7 @@ description: >-
 > |---|---|
 > | `soothe_sdk.plugin` (plugin author API) | `soothe_nano.plugin` (soothe-nano ≥ 1.4) |
 > | `soothe_sdk.core` (events · registry · verbosity) | `soothe_nano.core` |
-> | `soothe_sdk.protocols` (except `workspace_sync`) | `soothe_nano.protocols` |
+> | `soothe_sdk.protocols` | `soothe_nano.protocols` |
 > | `soothe_sdk.paths` · `intention` · `observability.langfuse` | `soothe_nano.*` |
 > | `soothe_sdk.wire` · `display` · host-side `ux` helpers | `soothe.wire` / `soothe.display` / `soothe.ux` (host copies, daemon consumes via `soothe`) |
 > | Everything the CLI / Python client uses | `soothe_client.*` (soothe-client-python ≥ 1.1) |

@@ -5,8 +5,8 @@
 **Owned**: `soothe`, `soothe-daemon`, `soothe-cli`. **Submodules** (`client/*`): consumed as code — do **not** format/lint/test/release them here. **PyPI-only**: `soothe-deepagents`, `soothe-client-python`, `soothe-nano` (maintain/release in their own repos). `soothe-nano` is published to PyPI from its own repo and is **independent of the soothe project** — see the soothe-nano Independence rule below.
 
 > **soothe-sdk was dissolved (2026-10-13).** Contracts now live with their axis:
-> - **Agent axis (canonical)**: `soothe-nano` ≥1.4 — plugin decorator API, `core` events/registry/verbosity, `protocols` (except `workspace_sync`), `paths`, `intention`, `observability.langfuse`, `ux.stream_tool_wire`, `tools` security metadata, `utils.serde`.
-> - **Host axis (server copies)**: `soothe` — wire codec/protocol, display binder/ledger/wire, ux task/classification helpers, `workspace_sync`, `identity.errors`, `skillify` models. `soothe-daemon` imports these from `soothe`.
+> - **Agent axis (canonical)**: `soothe-nano` ≥1.4 — plugin decorator API, `core` events/registry/verbosity, `protocols`, `paths`, `intention`, `observability.langfuse`, `ux.stream_tool_wire`, `tools` security metadata, `utils.serde`.
+> - **Host axis (server copies)**: `soothe` — wire codec/protocol, display binder/ledger/wire, ux task/classification helpers, `workspace_sync` (the agent-plane sync engine — consumed by external host applications; `soothe-daemon` does **not** wire it), `identity.errors`, `skillify` models. `soothe-daemon` imports these from `soothe`.
 > - **Client axis (client copies)**: `soothe-client-python` ≥1.1 — wire codec/protocol, core event constants, display parse side, ux render helpers, tools display metadata, utils, paths. `soothe-cli` consumes these and depends on nothing else first-party.
 > - The two axes couple **only via the wire protocol** (RFC-450) — the same model as the Go/Rust clients. Cross-axis copies are kept aligned by contract tests, not shared code.
 >

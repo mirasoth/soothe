@@ -3,11 +3,11 @@
 **Guide**: IG-CORE-009
 **Title**: Turn-Scoped Workspace Sync Facade and Engine Simplification
 **Created**: 2026-11-26
-**Related RFCs**: RFC-CORE-010 (Workspace Sync Architecture), RFC-002/RFC-003 (flowjet), RFC-AGSP-001 (agentspace 执行面接线)
+**Related RFCs**: RFC-CORE-010 (Workspace Sync Architecture), host workspace specs, host execution-plane spec
 
 ## Overview
 
-flowjet (and any host that brackets agent turns with open/close hooks) currently
+A host that brackets agent turns with open/close hooks currently
 reimplements the same per-turn sequence on top of `WorkspaceManager`: recover the
 manifest snapshot, materialize the content tree with reconcile gating, restore prior
 artifacts from CAS, start dirty tracking, then checkpoint and close on the last turn
@@ -16,7 +16,7 @@ out — plus concurrent-turn bookkeeping (`active_runs`, shared-open entries). T
 
 This guide consolidates the sequence into a single soothe-owned facade
 (`TurnScopedWorkspaces`) and records the staged plan to simplify the whole
-agentspace → flowjet → soothe → S3 chain while preserving its functional contract.
+orchestrator → host → soothe → S3 chain while preserving its functional contract.
 
 ## Functional contract (must not regress)
 
@@ -40,7 +40,7 @@ only session→run_id mapping and backend construction.
 **Tasks**:
 - [x] New `packages/soothe/src/soothe/workspace/sync/turns.py` —
       `TurnScopedWorkspaces` with `open_turn` / `close_turn` / `close_all` /
-      `workspace_root`, porting flowjet's inbound sequence (recover →
+      `workspace_root`, porting the host's inbound sequence (recover →
       `materialize_content(protected=artifact paths, reconcile=sole turn)` →
       artifact CAS restore → `start_tracking`) and outbound sequence
       (checkpoint → last-turn-out `manager.close`), including shared-open
@@ -52,8 +52,8 @@ only session→run_id mapping and backend construction.
       error swallowing, artifact restore with missing-blob skip) plus an
       end-to-end MemoryFileSystem round trip (content materialize → dirty write →
       checkpoint mirror → fresh-engine reopen restores both trees).
-- [x] flowjet switches `SyncAwareWorkspaceResolver` to the facade and deletes its
-      duplicated lifecycle/restore/bookkeeping code (flowjet repo, unreleased).
+- [x] The host switches `SyncAwareWorkspaceResolver` to the facade and deletes its
+      duplicated lifecycle/restore/bookkeeping code (host repo, unreleased).
 - [x] CHANGELOG entries in both repos.
 
 ### Stage B: single storage representation (turn-scoped checkpoint)
@@ -76,7 +76,7 @@ the manifest is the atomic commit record.
 - Merge `system/engine` and `workspaces/<wsId>` into one root (`.engine/` prefix
   inside the workspace tree, or one root with two derived prefixes); delete the
   `{workspace}` template machinery.
-- agentspace gains a per-workspace single-flight gate for prompts; flowjet/soothe
+- The orchestrator gains a per-workspace single-flight gate for prompts; host/soothe
   delete concurrent-turn bookkeeping and reconcile gating.
 - Persistence failure becomes observable to the host turn result
   (`persisted: true/false` + checkpoint id) instead of log-only.
@@ -98,7 +98,7 @@ packages/soothe/tests/unit/workspace/sync/
 ## Testing Strategy
 
 Orchestration tests inject a mocked `WorkspaceManager` (duck-typed `Workspace`
-fakes) exactly like the flowjet tests they replace; the round-trip test uses
+fakes) exactly like the host tests they replace; the round-trip test uses
 `MemoryFileSystem` backends (zero network, zero credentials) and re-opens with a
 fresh facade instance to pin the crash-recovery contract.
 
@@ -107,11 +107,11 @@ fresh facade instance to pin the crash-recovery contract.
 - [x] `pytest packages/soothe/tests/unit/workspace/sync/test_turns.py` green
 - [x] ruff check/format clean on changed modules
 - [x] mypy clean on changed modules
-- [x] flowjet `tests/unit/server/test_workspace_sync.py` green against local soothe
+- [x] host workspace-sync suite green against local soothe
 
 ## Related Documents
 
 - RFC-CORE-010: `.platonic/specs/coreagent/RFC-CORE-010-workspace-sync-materialization.md`
 - IG-CORE-004 / IG-CORE-008: workspace sync implementation and review remediation
-- flowjet RFC-002/RFC-003 (`.platonic/specs/` in the flowjet repo)
-- agentspace RFC-AGSP-001 §7 (miracloud repo)
+- Host workspace specs (`.platonic/specs/` in the host repo)
+- Host execution-plane spec §7 (miracloud repo)

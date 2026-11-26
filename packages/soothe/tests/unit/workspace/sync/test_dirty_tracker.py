@@ -118,7 +118,7 @@ class TestDirtyTracker:
     async def test_clear_acked_paths_keeps_unacked(
         self, tracker: DirtyTracker, workspace_dir: Path
     ) -> None:
-        """F-C2: ack-clear acknowledges only the paths the checkpoint captured."""
+        """Ack-clear acknowledges only the paths the checkpoint captured."""
         tracker.start()
         (workspace_dir / "output" / "a.txt").write_text("a")
         (workspace_dir / "output" / "b.txt").write_text("b")
@@ -141,7 +141,7 @@ class TestDirtyTracker:
     async def test_excluded_dirs_not_watched(
         self, tracker: DirtyTracker, workspace_dir: Path
     ) -> None:
-        """``.workspace/`` directory is excluded from tracking."""
+        """`.workspace/` directory is excluded from tracking."""
         (workspace_dir / ".workspace").mkdir()
         (workspace_dir / ".workspace" / "state.db").write_text("state")
         tracker.start()

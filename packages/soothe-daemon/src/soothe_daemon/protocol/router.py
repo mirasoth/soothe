@@ -51,7 +51,7 @@ def _redact_secret_values(value: Any) -> Any:
 
     Keys whose name contains ``api_key``, ``secret``, ``password``, or
     ``token`` (case-insensitive) are replaced with ``***``; the whole
-    ``storage_options`` mapping (workspace-sync credentials) is masked too.
+    ``storage_options`` mapping (object-store credentials) is masked too.
     """
     if isinstance(value, dict):
         redacted: dict[str, Any] = {}
@@ -1958,10 +1958,8 @@ class MessageRouter:
         # Generate new loop_id
         loop_id = str(uuid7())
 
-        # --- Workspace resolution (RFC-621; sync NOT supported) ---
-        # Workspace sync is an agent-plane capability (flowjet via
-        # soothe TurnScopedWorkspaces); the daemon does not wire it
-        # (IG-CORE-010). Requests asking for it fail loud.
+        # Workspace sync is a host-side capability driven through
+        # TurnScopedWorkspaces; the daemon does not wire it.
         raw_workspace = msg.get("client_workspace") or msg.get("workspace")
         sync_source = msg.get("workspace_sync_source")
 
@@ -1970,8 +1968,7 @@ class MessageRouter:
                 client_id,
                 build_error_response(
                     ErrorCode.WORKSPACE_RESOLUTION_FAILED,
-                    "workspace sync is not supported by the daemon "
-                    "(agent-plane capability; RFC-CORE-010 / IG-CORE-010)",
+                    "workspace sync is not supported by the daemon (host-side capability)",
                     request_id=request_id,
                 ),
             )

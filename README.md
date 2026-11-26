@@ -135,12 +135,6 @@ Soothe is the center of a small, focused ecosystem. Each project has one job:
 | `soothe-cli` | [`soothe-cli`](https://pypi.org/project/soothe-cli/) | `soothe` command — Typer CLI + Textual TUI |
 | `soothe-daemon` | [`soothe-daemon`](https://pypi.org/project/soothe-daemon/) | `soothed` command — WebSocket/HTTP server, cron, Autopilot dispatch |
 
-### Companion projects
-
-| Project | What it is |
-|---------|------------|
-| [**FlowJet**](https://github.com/mirasoth/flowjet) | A coding-agent host that runs Soothe's StrangeLoop stream in-process — no daemon required. Optimized for direct stream consumption and server sessions. |
-
 
 ---
 

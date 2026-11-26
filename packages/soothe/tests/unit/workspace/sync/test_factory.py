@@ -1,49 +1,16 @@
-"""Tests for the URI classifier and factory security (S8: SSRF prevention)."""
+"""Tests for the sync backend factory security (SSRF prevention).
+
+The scheme allowlist lives in `soothe.workspace.sync.factory` —
+`construct_sync_backend` is the only URI entry point for sync sources.
+"""
 
 from __future__ import annotations
 
 import pytest
 
-from soothe.workspace.resolution import is_remote_workspace_uri
-
-
-class TestIsRemoteWorkspaceUri:
-    """S8: explicit scheme allowlist, not substring check."""
-
-    @pytest.mark.parametrize(
-        "uri",
-        [
-            "s3://bucket/prefix",
-            "gs://bucket/prefix",
-            "az://container/prefix",
-            "S3://bucket/prefix",  # case-insensitive
-            "GS://bucket/prefix",
-        ],
-    )
-    def test_allowed_schemes(self, uri: str) -> None:
-        assert is_remote_workspace_uri(uri) is True
-
-    @pytest.mark.parametrize(
-        "uri",
-        [
-            "file:///etc/passwd",  # SSRF
-            "sftp://host/path",  # SSRF
-            "http://localhost:8080/",  # SSRF
-            "https://example.com/",  # SSRF
-            "ftp://host/file",  # SSRF
-            "memory://test/",  # test-only
-            "/local/path",  # local path
-            "relative/path",  # not a URI
-            "",  # empty
-            "s3",  # no scheme separator
-        ],
-    )
-    def test_rejected_schemes(self, uri: str) -> None:
-        assert is_remote_workspace_uri(uri) is False
-
 
 class TestConstructSyncBackend:
-    """S8: factory rejects disallowed schemes."""
+    """Factory rejects disallowed URI schemes."""
 
     def test_rejects_file_scheme(self) -> None:
         from soothe.workspace.sync.factory import construct_sync_backend

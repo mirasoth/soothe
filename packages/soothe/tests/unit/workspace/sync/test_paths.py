@@ -8,7 +8,7 @@ from soothe.workspace.sync.paths import validate_path_component, validate_relati
 
 
 class TestValidatePathComponent:
-    """Tests for ``validate_path_component`` — server-generated IDs."""
+    """Tests for `validate_path_component` — server-generated IDs."""
 
     @pytest.mark.parametrize(
         "value",
@@ -46,7 +46,7 @@ class TestValidatePathComponent:
 
 
 class TestValidateRelativePath:
-    """Tests for ``validate_relative_path`` — artifact paths."""
+    """Tests for `validate_relative_path` — artifact paths."""
 
     @pytest.mark.parametrize(
         "value",

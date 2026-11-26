@@ -5,11 +5,10 @@ workspace sync backend from a user-supplied URI (e.g.
 `s3://bucket/pfx`).  Only remote object-store schemes (`s3`, `gs`,
 `az`) are permitted from user input to prevent SSRF / local file read.
 
-Storage credentials live only in this process (config dict / env vars
-resolved by the concrete filesystem); the agent never sees them.
-Filesystem instances are shared through fsspec's instance cache keyed
-on the resolved storage options — use `skip_instance_cache=True` in
-the storage options if per-call isolation is required.
+Storage credentials come from the environment or the config dict and
+never reach the agent. Only allowlisted storage options are passed to
+fsspec; filesystem instances are shared through its instance cache keyed
+on those options.
 """
 
 from __future__ import annotations
@@ -103,8 +102,7 @@ def _resolve_storage_options(
     fsspec to prevent injection of unexpected options.
 
     Args:
-        uri: The storage URI (unused, reserved for future
-            scheme-specific resolution).
+        uri: Accepted for call-site compatibility; ignored.
         config: Optional configuration dict.
 
     Returns:

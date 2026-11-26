@@ -751,7 +751,7 @@ class OutputStreamingConfig(BaseModel):
         description=(
             "Skip the daemon-batch redundancy filter and emit "
             "soothe.stream.tool_call.update events with complete args "
-            "(enable for direct stream consumers without the daemon, e.g. flowjet)"
+            "(enable for direct stream consumers without the daemon)"
         ),
     )
     skip_redundant_tool_message_wire: bool = Field(

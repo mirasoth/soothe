@@ -390,7 +390,7 @@ class Executor:
         """Whether complete-args wire updates bypass the redundancy filter.
 
         The filter drops them because the daemon batch re-carries the same
-        kwargs; direct consumers without the daemon (flowjet) opt in here.
+        kwargs; direct stream consumers without the daemon opt in here.
         """
         if self._config is None:
             return False

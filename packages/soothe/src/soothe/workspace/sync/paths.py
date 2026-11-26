@@ -15,7 +15,7 @@ _MAX_PATH_LENGTH = 4096
 
 
 def validate_path_component(component: str, *, name: str) -> str:
-    """Validate a single path component (run_id, checkpoint_id, sha256).
+    """Validate a single path component (run_id, sha256).
 
     Rejects empty strings, null bytes, path separators, and characters
     outside the safe set (alphanumeric + hyphens + underscores + dots).
@@ -47,7 +47,7 @@ def validate_path_component(component: str, *, name: str) -> str:
 
 
 def validate_relative_path(path: str, *, name: str = "path") -> str:
-    """Validate a relative path (artifact_path) and reject traversal.
+    """Validate a workspace-relative path and reject traversal.
 
     Rejects empty paths, absolute paths, null bytes, and `..` segments
     that would escape the intended storage prefix after normalization.

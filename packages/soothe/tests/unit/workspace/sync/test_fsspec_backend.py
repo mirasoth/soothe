@@ -1,8 +1,8 @@
-"""Tests for the ``FsspecSyncBackend`` using ``MemoryFileSystem``.
+"""Tests for the `FsspecSyncBackend` using `MemoryFileSystem`.
 
 These tests verify the backend's correctness without requiring an actual
-S3/MinIO/GCS endpoint.  ``MemoryFileSystem`` provides a zero-I/O in-process
-filesystem that implements the full fsspec ``AbstractFileSystem`` interface.
+S3/MinIO/GCS endpoint.  `MemoryFileSystem` provides a zero-I/O in-process
+filesystem that implements the full fsspec `AbstractFileSystem` interface.
 """
 
 from __future__ import annotations

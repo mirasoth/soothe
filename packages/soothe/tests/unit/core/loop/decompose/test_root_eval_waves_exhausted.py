@@ -52,8 +52,8 @@ def _ctx_with_ce(
         SimpleNamespace(task_complexity=task_complexity) if task_complexity is not None else None
     )
     loop_state = SimpleNamespace(
-        goal="deploy agentspace stack",
-        goal_user_submission="deploy agentspace stack",
+        goal="deploy service stack",
+        goal_user_submission="deploy service stack",
         iteration=iteration,
         max_iterations=99,
         current_decision=None,
@@ -100,7 +100,7 @@ async def test_waves_not_exhausted_routes_to_dispatch_no_eval() -> None:
     """When waves remain, a pending action step routes to DISPATCH and no Eval
     is inserted — the existing claim-and-execute flow."""
     ce = ContextEngine()
-    goal = await ce.create_goal("deploy agentspace stack", loop_id="L1")
+    goal = await ce.create_goal("deploy service stack", loop_id="L1")
     await ce.add_step(
         goal.id,
         StepNode(id="ROOT", description="deploy", status="pending"),
@@ -123,7 +123,7 @@ async def test_waves_exhausted_inserts_eval_instead_of_cycling() -> None:
     to coverage Eval insertion so the goal is assessed from work done so far.
     """
     ce = ContextEngine()
-    goal = await ce.create_goal("deploy agentspace stack", loop_id="L1")
+    goal = await ce.create_goal("deploy service stack", loop_id="L1")
     await ce.add_step(
         goal.id,
         StepNode(id="ROOT", description="deploy", status="pending"),
@@ -156,7 +156,7 @@ async def test_waves_exhausted_skips_dag_idle_when_tree_not_green() -> None:
     """dag_idle must not fire when the action tree isn't green — otherwise rail
     rules could trigger a false complete_job on incomplete work."""
     ce = ContextEngine()
-    goal = await ce.create_goal("deploy agentspace stack", loop_id="L1")
+    goal = await ce.create_goal("deploy service stack", loop_id="L1")
     await ce.add_step(
         goal.id,
         StepNode(id="ROOT", description="deploy", status="pending"),
@@ -182,7 +182,7 @@ async def test_waves_exhausted_completed_eval_finalizes() -> None:
     from soothe.context.models import StepExecution
 
     ce = ContextEngine()
-    goal = await ce.create_goal("deploy agentspace stack", loop_id="L1")
+    goal = await ce.create_goal("deploy service stack", loop_id="L1")
     await ce.add_step(
         goal.id,
         StepNode(id="ROOT", description="deploy", status="pending"),
@@ -213,7 +213,7 @@ async def test_waves_exhausted_max_eval_rounds_fatal() -> None:
     """When eval rounds are also exhausted, ROOT_EVAL goes fatal (→ FINALIZE)
     rather than cycling."""
     ce = ContextEngine()
-    goal = await ce.create_goal("deploy agentspace stack", loop_id="L1")
+    goal = await ce.create_goal("deploy service stack", loop_id="L1")
     await ce.add_step(
         goal.id,
         StepNode(id="ROOT", description="deploy", status="pending"),

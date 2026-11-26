@@ -1,8 +1,8 @@
-"""Tests for ``Workspace.checkpoint`` — content-authoritative commit semantics.
+"""Tests for `Workspace.checkpoint` — content-authoritative commit semantics.
 
-Under IG-CORE-011 one per-run backend root holds the plain content tree
+One per-run backend root holds the plain content tree
 (the authoritative file store) and the engine-private manifest
-(``.workspace/manifest.json`` — the atomic commit point).  These tests
+(`.workspace/manifest.json` — the atomic commit point).  These tests
 pin:
 
     - First commit creates the manifest at version 1; commits increment.
@@ -10,7 +10,7 @@ pin:
       artifacts (path → sha256/size).
     - Deletions leave the manifest and mirror to the content tree;
       dirty paths vanishing before the commit count as deletions.
-    - Mid-commit writes stay dirty (F-C2).
+    - Mid-commit writes stay dirty.
     - Per-file upload failures produce a partial commit + RuntimeError.
     - Manifest write failure (incl. version conflict) leaves everything
       dirty — the commit point never fired.
@@ -114,7 +114,7 @@ class TestCommitBasics:
     async def test_manifest_lives_in_the_engine_key_space(
         self, workspace_root: Path, backend: FsspecSyncBackend, sync_fs: MemoryFileSystem
     ) -> None:
-        """The manifest lands under ``.workspace/`` — not the content tree."""
+        """The manifest lands under `.workspace/` — not the content tree."""
         ws = _make_workspace(workspace_root, backend)
         ws.start_tracking()
         (workspace_root / "output" / "a.md").write_bytes(b"a")

@@ -1,15 +1,9 @@
-"""WorkspaceSyncBackend protocol — async workspace-to-storage abstraction.
+"""Data models and the async workspace-to-storage backend protocol.
 
-Defines the data models and abstract protocol used to synchronize agent
-workspaces with durable object-storage backends (S3-compatible, MinIO, GCS,
-local filesystem, etc.) under the single-root content-authoritative
-representation (IG-CORE-011): one per-run backend root holds the plain
-content tree (the single authoritative file store) and the engine-private
-commit record (``.workspace/manifest.json``).
-
-The protocol lives in soothe so host consumers can construct
-``Manifest`` objects without importing host code, while concrete backend
-implementations live in the host package (soothe).
+One per-run backend root holds the plain content tree (the authoritative
+file store) and the engine-private commit record at
+`.workspace/manifest.json`. Concrete transports implement
+`WorkspaceSyncBackend`; the workspace and turn facades stay transport-agnostic.
 """
 
 from __future__ import annotations
@@ -22,13 +16,9 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
     from pathlib import Path
 
-# ---------------------------------------------------------------------------
-# Data models (wire contracts)
-# ---------------------------------------------------------------------------
-
 
 class ManifestEntry(BaseModel):
-    """Single entry inside a :class:`Manifest` referencing one file.
+    """Single entry inside a `Manifest` referencing one file.
 
     Args:
         path: Relative workspace path.
@@ -67,11 +57,6 @@ class Manifest(BaseModel):
     )
 
 
-# ---------------------------------------------------------------------------
-# Protocol (abstract storage-backend interface)
-# ---------------------------------------------------------------------------
-
-
 @runtime_checkable
 class WorkspaceSyncBackend(Protocol):
     """Async protocol for workspace-to-storage synchronization.
@@ -79,20 +64,18 @@ class WorkspaceSyncBackend(Protocol):
     Implementations provide the concrete transport (S3, GCS, local FS, ...)
     while keeping the workspace manager's dirty-tracking / commit algorithm
     backend-agnostic.  One backend instance serves one per-run root with
-    two key spaces (IG-CORE-011):
+    two key spaces:
 
     * the *content tree* — a plain file tree addressed by relative
       workspace path, holding the authoritative file bytes;
-    * the *engine-private* ``.workspace/`` key space holding
-      ``manifest.json`` — the commit record.
+    * the *engine-private* `.workspace/` key space holding
+      `manifest.json` — the commit record.
 
     Every method is async and idempotent.
     """
 
-    # -- manifest operations (commit records) ------------------------------
-
     async def get_manifest(self, run_id: str) -> Manifest | None:
-        """Fetch the latest manifest for *run_id*.
+        """Fetch the latest manifest for `run_id`.
 
         Args:
             run_id: Target run identifier.
@@ -109,11 +92,11 @@ class WorkspaceSyncBackend(Protocol):
         *,
         if_match: str | None = None,
     ) -> Manifest:
-        """Write or update the manifest for *run_id* (the commit point).
+        """Write or update the manifest for `run_id` (the commit point).
 
         Args:
             run_id: Target run identifier.
-            manifest: The manifest to write.  Its ``version`` field
+            manifest: The manifest to write.  Its `version` field
                 controls optimistic concurrency.
             if_match: If provided, the backend MUST reject the write
                 when the stored manifest version does not match, or
@@ -124,8 +107,6 @@ class WorkspaceSyncBackend(Protocol):
             The written manifest.
         """
         ...
-
-    # -- content-tree operations (authoritative file bytes) -----------------
 
     async def list_content_files(self) -> list[str]:
         """List all files in the content tree as relative workspace paths.
@@ -159,9 +140,9 @@ class WorkspaceSyncBackend(Protocol):
     async def put_content_file_from_file(self, rel_path: str, src: Path) -> None:
         """Write a content-tree file by streaming a local file.
 
-        Streaming counterpart of :meth:`put_content_file`; callers
+        Streaming counterpart of `put_content_file`; callers
         dispatch via
-        :func:`soothe.workspace.sync.streaming.put_content_file_from_file`.
+        `soothe.workspace.sync.streaming.put_content_file_from_file`.
 
         Args:
             rel_path: Relative workspace path.
@@ -177,15 +158,13 @@ class WorkspaceSyncBackend(Protocol):
         """
         ...
 
-    # -- optional streaming (default impls buffer fully) ---------------------
-
     async def stream_content_file(self, rel_path: str) -> AsyncIterator[bytes]:
         """Yield chunks of a content-tree file.
 
-        Default implementation delegates to :meth:`get_content_file`
+        Default implementation delegates to `get_content_file`
         and yields the full payload in one chunk.  Raise `KeyError`
         when the path is absent.  Callers dispatch via
-        :func:`soothe.workspace.sync.streaming.iter_content_chunks`.
+        `soothe.workspace.sync.streaming.iter_content_chunks`.
 
         Args:
             rel_path: Relative workspace path.
@@ -197,8 +176,6 @@ class WorkspaceSyncBackend(Protocol):
         if data is None:
             raise KeyError(f"Content file {rel_path!r} not found")
         yield data
-
-    # -- lifecycle ------------------------------------------------------------
 
     async def aclose(self) -> None:
         """Release backend resources (threads, connections).

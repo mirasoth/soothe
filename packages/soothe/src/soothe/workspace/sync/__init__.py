@@ -1,13 +1,9 @@
-"""Workspace sync subsystem — single-root content-authoritative sync.
+"""Content-authoritative workspace sync with one backend root per run.
 
-Host-side workspace sync layer (IG-CORE-011): one per-run backend root
-holds the plain content tree (the authoritative file store) and the
-engine-private manifest (the atomic commit record).  The
-`WorkspaceSyncBackend` protocol and data models live in
-`soothe.workspace.sync.workspace_sync`; this package provides the concrete
-`FsspecSyncBackend` adapter, dirty tracker, workspace manager, and the
-turn-scoped `TurnScopedWorkspaces` facade for hosts that bracket agent
-turns with open/close lifecycle hooks.
+One per-run root holds the plain content tree (the authoritative file
+store) and the engine-private manifest (the atomic commit record). This
+package provides the backend protocol and data models, the fsspec adapter,
+the dirty tracker, and the workspace/turn lifecycle facades.
 """
 
 from soothe.workspace.sync.backends.fsspec import FsspecSyncBackend

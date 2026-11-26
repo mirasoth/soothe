@@ -113,7 +113,7 @@ async def _drive_with_recursion_error() -> tuple[list[tuple[str, object]], Magic
         runtime_ctx_cls.return_value = runtime_ctx
 
         gen: AsyncIterator[tuple[str, object]] = sl.run_with_progress(
-            goal="deploy agentspace",
+            goal="deploy service",
             thread_id="L1",
             workspace=None,
             max_iterations=99,

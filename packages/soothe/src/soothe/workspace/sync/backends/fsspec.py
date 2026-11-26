@@ -1,14 +1,10 @@
 """Concrete `WorkspaceSyncBackend` backed by any fsspec filesystem.
 
 One adapter supports S3 (`s3fs`), GCS (`gcsfs`), Azure Blob (`adlfs`),
-local, and memory filesystems.  All fsspec calls are offloaded to a
-dedicated thread pool via `asyncio.to_thread()`.
-
-Under the single-root representation (IG-CORE-011) one backend instance
-serves ONE per-run root (``<base>/<run_id>``) and addresses both key
-spaces within it: the plain content tree (``<root>/<relative workspace
-path>`` — authoritative file bytes) and the engine-private commit record
-(``<root>/.workspace/manifest.json``).
+local, and memory filesystems. All fsspec calls run in a dedicated thread
+pool. One instance serves one per-run root: the plain content tree at
+`<root>/<relative workspace path>` and the commit record at
+`<root>/.workspace/manifest.json`.
 """
 
 from __future__ import annotations
@@ -29,24 +25,24 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _DEFAULT_MAX_WORKERS = 8
-_STREAM_CHUNK_SIZE = 65536  # 64 KiB
+_STREAM_CHUNK_SIZE = 65536
 
 # s3fs's default put chunksize (50 MiB) makes it whole-buffer any file
 # smaller than 100 MiB; an explicit 8 MiB chunksize switches to
 # multipart (each part a known-length bytes buffer — required by S3
 # compatible stores like Tencent COS that reject chunked
 # Transfer-Encoding) and caps per-part memory.
-_S3_PUT_CHUNK_SIZE = 8 * 1024 * 1024  # 8 MiB
+_S3_PUT_CHUNK_SIZE = 8 * 1024 * 1024
 # s3fs defaults to max_concurrency=10 upload parts in flight; with the
 # 8 MiB chunk size that is 80 MiB of raw chunk buffers plus serializer
 # copies. 2 keeps the in-flight window at ~16 MiB.
 _S3_PUT_MAX_CONCURRENCY = 2
 # Range-GET size for streaming reads from s3 (same sizing rationale).
-_S3_RANGE_CHUNK_SIZE = 8 * 1024 * 1024  # 8 MiB
+_S3_RANGE_CHUNK_SIZE = 8 * 1024 * 1024
 
 # Filesystems whose writes require the parent directory to exist.
 # Object stores (s3/gs/az) create keys under implicit prefixes — calling
-# ``makedirs`` there only costs a bucket probe per write.
+# `makedirs` there only costs a bucket probe per write.
 _DIR_BEARING_PROTOCOLS = frozenset({"local", "file", "memory", "dir"})
 
 
@@ -58,7 +54,7 @@ class FsspecSyncBackend:
             `S3FileSystem`, `LocalFileSystem`).
         root: Per-run root path within the filesystem — everything the
             engine addresses for that run lives under it (content tree +
-            ``.workspace/`` commit records).
+            `.workspace/` commit records).
         max_workers: Thread pool size for I/O offloading.
     """
 
@@ -87,17 +83,12 @@ class FsspecSyncBackend:
             max_workers,
         )
 
-    # ------------------------------------------------------------------
-    # Path-layout mapper
-    # ------------------------------------------------------------------
-
     def _manifest_path(self, run_id: str) -> str:
         """Map a run ID to its manifest storage path.
 
-        The backend is per-run rooted (IG-CORE-011), so the manifest
-        lives under the engine-private ``.workspace/`` key space of the
-        run's own root — the ``run_id`` argument is validated for misuse
-        defense but not part of the path.
+        The backend is per-run rooted, so the manifest lives under the
+        engine-private `.workspace/` key space of the run's own root —
+        `run_id` is validated for misuse defense but not part of the path.
 
         Args:
             run_id: Run identifier (validated, unused for pathing).
@@ -114,7 +105,7 @@ class FsspecSyncBackend:
         return f"{self._root}/{validated}"
 
     def _ensure_parent_dir(self, path: str) -> None:
-        """Create the parent directory for ``path`` when required.
+        """Create the parent directory for `path` when required.
 
         Object stores (s3/gs/az) create keys implicitly; directory-
         bearing filesystems (local/memory) need explicit parents.
@@ -126,17 +117,17 @@ class FsspecSyncBackend:
             self._fs.makedirs(parent, exist_ok=True)
 
     def _write_bytes(self, path: str, data: bytes) -> None:
-        """Write bytes to ``path``, creating parents when required."""
+        """Write bytes to `path`, creating parents when required."""
         self._ensure_parent_dir(path)
         self._fs.pipe(path, data)
 
     def _stream_from_file(self, dest: str, src: Path) -> None:
-        """Copy a local file to ``dest`` with bounded memory.
+        """Copy a local file to `dest` with bounded memory.
 
         Runs as a single thread job.  The transfer uses
-        ``fs.put(src, dest)`` — the source size is known up front, so
+        `fs.put(src, dest)` — the source size is known up front, so
         object stores can set Content-Length and use multipart upload
-        (s3fs's ``open('wb')`` incremental writes send chunked
+        (s3fs's `open('wb')` incremental writes send chunked
         Transfer-Encoding, which S3-compatible stores like Tencent COS
         reject).
 
@@ -153,19 +144,11 @@ class FsspecSyncBackend:
             put_kwargs["max_concurrency"] = _S3_PUT_MAX_CONCURRENCY
         self._fs.put(str(src), dest, **put_kwargs)
 
-    # ------------------------------------------------------------------
-    # Thread-pool helper
-    # ------------------------------------------------------------------
-
     async def _to_thread(self, fn: Any, *args: Any, **kwargs: Any) -> Any:
         """Run a sync function in the dedicated thread pool."""
         return await asyncio.get_running_loop().run_in_executor(
             self._executor, lambda: fn(*args, **kwargs)
         )
-
-    # ------------------------------------------------------------------
-    # Manifest operations (commit records, optimistic concurrency)
-    # ------------------------------------------------------------------
 
     async def get_manifest(self, run_id: str) -> Manifest | None:
         """Fetch the latest manifest for `run_id`, or `None` if none exists."""
@@ -217,10 +200,6 @@ class FsspecSyncBackend:
         await self._to_thread(self._write_bytes, path, data)
         return manifest
 
-    # ------------------------------------------------------------------
-    # Optional streaming (true chunked transfer)
-    # ------------------------------------------------------------------
-
     def _read_chunk(self, f: Any) -> bytes:
         """Read one chunk from an open remote file handle."""
         return f.read(_STREAM_CHUNK_SIZE)
@@ -230,7 +209,7 @@ class FsspecSyncBackend:
 
         Each chunk read runs in the backend's thread pool so the event
         loop is never blocked.  For s3 filesystems, ranged reads
-        (``cat_file(start, end)``) are used — s3fs's ``open``+``read``
+        (`cat_file(start, end)`) are used — s3fs's `open`+`read`
         read-ahead caches the whole remaining object in memory; range
         GETs keep the working set at one chunk.  Memory stays bounded
         at one chunk regardless of object size.
@@ -289,21 +268,11 @@ class FsspecSyncBackend:
         async for chunk in self._stream_path(self._content_path(rel_path)):
             yield chunk
 
-    # ------------------------------------------------------------------
-    # Flat content-tree operations (authoritative file bytes)
-    # ------------------------------------------------------------------
-    #
-    # These address a PLAIN file tree rooted at `root` (e.g.
-    # s3://<bucket>/workspaces/<wsId>/): paths map 1:1 to relative
-    # workspace paths.  The materialize half of content sync restores
-    # these into the workspace at open; the commit half uploads dirty
-    # file writes/deletes back at checkpoint time.
-
     async def list_content_files(self) -> list[str]:
         """List all files in the content tree as relative workspace paths.
 
         Returns an empty list when the tree does not exist yet.  The
-        engine-private ``.workspace/`` key space (commit records) is not
+        engine-private `.workspace/` key space (commit records) is not
         part of the content tree and is excluded.
         """
         try:
@@ -318,11 +287,11 @@ class FsspecSyncBackend:
             if not name:
                 continue
             if name.endswith("/"):
-                continue  # directory entries (some filesystems emit them)
+                continue
             if not name.startswith(prefix):
                 continue
             if name.startswith(engine_prefix):
-                continue  # engine-private commit records, not content
+                continue
             rel = name[len(prefix) :]
             if rel:
                 rel_paths.append(rel)
@@ -355,10 +324,10 @@ class FsspecSyncBackend:
     async def delete_content_file(self, rel_path: str) -> None:
         """Delete the content-tree object, if present (idempotent).
 
-        Uses ``rm_file`` (single-object ``DeleteObject``) rather than
-        ``rm`` (bulk ``DeleteObjects``) because some S3-compatible
-        services (e.g. Tencent COS) reject ``DeleteObjects`` without a
-        ``Content-MD5`` header that s3fs does not send.
+        Uses `rm_file` (single-object `DeleteObject`) rather than
+        `rm` (bulk `DeleteObjects`) because some S3-compatible
+        services (e.g. Tencent COS) reject `DeleteObjects` without a
+        `Content-MD5` header that s3fs does not send.
         """
         path = self._content_path(rel_path)
         try:
@@ -366,16 +335,11 @@ class FsspecSyncBackend:
         except FileNotFoundError:
             pass
 
-    # ------------------------------------------------------------------
-    # Lifecycle
-    # ------------------------------------------------------------------
-
     def close(self) -> None:
-        """Shut down the dedicated thread pool.
+        """Shut down the dedicated thread pool (idempotent).
 
-        Queued-but-unstarted work is dropped; the workspace close
-        sequence commits BEFORE closing the backend, so in-flight
-        uploads have already completed. Idempotent.
+        Queued-but-unstarted work is dropped. The workspace commits before
+        closing the backend, so in-flight uploads have already completed.
         """
         self._executor.shutdown(wait=False, cancel_futures=True)
 
@@ -384,7 +348,9 @@ class FsspecSyncBackend:
         self.close()
 
     async def __aenter__(self) -> FsspecSyncBackend:
+        """Return this backend as the async context manager value."""
         return self
 
     async def __aexit__(self, *args: object) -> None:
+        """Close the backend on context exit."""
         self.close()

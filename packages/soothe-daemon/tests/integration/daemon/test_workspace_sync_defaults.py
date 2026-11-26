@@ -1,8 +1,8 @@
-"""Integration tests for daemon workspace-sync de-wiring (IG-CORE-010).
+"""Integration tests for daemon workspace-sync de-wiring.
 
-Workspace sync is an agent-plane capability (flowjet via soothe
-``TurnScopedWorkspaces``); the daemon does NOT wire it. These tests start a
-real ``SootheDaemon`` and exercise the full ``loop_new`` RPC path through a
+Workspace sync is a host-side capability driven through
+`TurnScopedWorkspaces`; the daemon does not wire it. These tests start a
+real `SootheDaemon` and exercise the full `loop_new` RPC path through a
 WebSocket client, verifying that sync requests fail loud and that the sync
 subsystem is never constructed.
 """
@@ -49,7 +49,7 @@ class TestWorkspaceSyncDeWiring:
     """Verify the daemon rejects workspace-sync requests over the real RPC path."""
 
     async def test_config_has_no_workspace_sync_block(self, tmp_path: Path) -> None:
-        """The daemon config surface has no ``workspace_sync`` key at all."""
+        """The daemon config surface has no `workspace_sync` key at all."""
         from soothe.config import SootheConfig
 
         config = SootheConfig()
@@ -78,7 +78,7 @@ class TestWorkspaceSyncDeWiring:
             await stop_daemon_safely(daemon)
 
     async def test_loop_new_with_sync_source_fails_loud(self, tmp_path: Path) -> None:
-        """A ``workspace_sync_source`` in ``loop_new`` gets a fail-loud error response."""
+        """A `workspace_sync_source` in `loop_new` gets a fail-loud error response."""
         force_isolated_home(tmp_path / "soothe-home")
         ws_port = alloc_ephemeral_port()
         config, daemon_cfg = build_daemon_config(tmp_path, websocket_port=ws_port)

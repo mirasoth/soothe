@@ -1,13 +1,9 @@
-"""Workspace handle — per-run lifecycle: open, materialize, checkpoint, close.
+"""Per-run workspace handle for content-authoritative sync.
 
-The `Workspace` is the agent-facing handle to a single run's workspace under
-the single-root content-authoritative representation (IG-CORE-011): the
-per-run backend root holds the plain content tree (the single authoritative
-file store) and the engine-private manifest (the atomic commit record).
 `checkpoint()` hashes dirty files, streams them to the content tree,
-mirrors deletions, and writes the manifest (version+1,
-optimistic-concurrency guard) as the commit point — there is no CAS blob
-duplicate, no checkpoint payload, and no staging state.
+mirrors deletions, and writes the manifest (version + optimistic
+concurrency guard) as the atomic commit point. Obtain handles through
+`WorkspaceManager.open`.
 """
 
 from __future__ import annotations
@@ -31,8 +27,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_FILE_COPY_CHUNK = 1024 * 1024  # 1 MiB
-_MAX_CONCURRENT_FILES = 8  # per-commit hashing/upload concurrency bound
+_FILE_COPY_CHUNK = 1024 * 1024
+_MAX_CONCURRENT_FILES = 8
 
 
 def _hash_file(path: str | Path) -> str:
@@ -99,10 +95,6 @@ class Workspace:
         """Return the current manifest, or `None` if none was loaded."""
         return self._manifest
 
-    # ------------------------------------------------------------------
-    # Read path — materialize the content tree into the workspace
-    # ------------------------------------------------------------------
-
     async def materialize_content(
         self,
         *,
@@ -150,7 +142,7 @@ class Workspace:
                 continue
             dest = self.root / rel
             if dest.exists() and not dest.is_file():
-                continue  # symlink, directory, or special file — leave it alone
+                continue
             downloaded += await self._stream_content_file(rel, dest)
         if rel_paths:
             logger.info(
@@ -166,9 +158,6 @@ class Workspace:
 
     async def _stream_content_file(self, rel: str, dest: Path) -> int:
         """Stream one content-tree file to its local destination.
-
-        Returns 1 when the local file was replaced (or created), 0 when
-        the local content already matches (temp discarded).
 
         Args:
             rel: Validated relative path.
@@ -289,10 +278,6 @@ class Workspace:
         """Return all regular files under the workspace root (sync)."""
         return [p for p in self.root.rglob("*") if p.is_file()]
 
-    # ------------------------------------------------------------------
-    # Write path — turn commit
-    # ------------------------------------------------------------------
-
     def start_tracking(self) -> None:
         """Start dirty tracking.
 
@@ -302,23 +287,13 @@ class Workspace:
         logger.info("Started tracking for run %s", self.run_id)
 
     async def checkpoint(self) -> int | None:
-        """Commit the current dirty state to the content tree.
+        """Commit dirty state to the content tree.
 
-        Content-authoritative commit sequence:
-
-        1. Hash dirty files (streaming, bounded concurrency) and upload
-           them to the content tree at their relative paths.
-        2. Mirror deletions to the content tree (dirty paths that
-           vanished between scan and commit count as deletions).
-        3. Advance the manifest (fold entries + tombstones, version+1)
-           and write it to the manifest backend — **the manifest write
-           is the commit point**; a crash before it leaves per-file
-           atomic state that the next open re-materializes.
-        4. Acknowledge exactly the committed paths in the dirty
-           tracker — writes that arrived mid-commit stay dirty (F-C2).
-
-        Per-file failures produce a partial commit (failed paths stay
-        dirty for the next one) and a final `RuntimeError`.
+        Dirty files are hashed and streamed to the content tree, deletions
+        are mirrored, then the manifest is advanced and written as the
+        commit point. Only committed paths are acknowledged, so writes
+        arriving mid-commit stay dirty. Failed uploads produce a partial
+        commit and a final `RuntimeError`.
 
         Returns:
             The new manifest version, or `None` when nothing was dirty
@@ -336,8 +311,6 @@ class Workspace:
         dirty = self._dirty_tracker.get_dirty()
         deleted = set(self._dirty_tracker.deleted_files)
 
-        # Dirty paths that vanished between scan and commit are
-        # deletions, not writes.
         for rel_path in dirty:
             if not (self.root / rel_path).exists():
                 deleted.add(rel_path)
@@ -368,8 +341,6 @@ class Workspace:
 
         await asyncio.gather(*(_commit_file(rel_path) for rel_path in sorted(dirty)))
 
-        # Mirror deletions to the content tree (also covers dirty paths
-        # that vanished between scan and commit).
         for d in sorted(deleted):
             try:
                 await self._backend.delete_content_file(d)
@@ -395,8 +366,6 @@ class Workspace:
             len(deleted),
         )
 
-        # Acknowledge ONLY the paths committed here — writes that
-        # arrived mid-commit stay dirty (F-C2).
         self._dirty_tracker.clear(acked_paths=[e.path for e in committed] + sorted(deleted))
 
         if failures:
@@ -468,23 +437,14 @@ class Workspace:
             artifacts=sorted(artifacts.values(), key=lambda e: e.path),
         )
 
-    # ------------------------------------------------------------------
-    # Lifecycle
-    # ------------------------------------------------------------------
-
     async def close(self) -> None:
-        """Close the workspace.
-
-        Stops the dirty tracker and closes the per-run backend (its
-        thread pool / fsspec client — one instance serves both the
-        content tree and the manifest).
-        """
+        """Stop dirty tracking and release the per-run backend."""
         self._closing = True
 
         await self._dirty_tracker.stop()
 
         if self._backend is not None:
-            # Duck-typed call: test fakes implement the sync surface only.
+            # Duck-typed backends may not implement `aclose`.
             aclose = getattr(self._backend, "aclose", None)
             if callable(aclose):
                 await aclose()

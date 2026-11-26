@@ -192,7 +192,9 @@ async def test_config_get_masks_secret_bearing_values() -> None:
             "identity": {"jwt_secret": "s3cret"},
             "database": {"password": "hunter2"},
             "refresh_token_ttl_seconds": 3600,
-            "workspace_sync": {"source_uri": "s3://bucket/x", "storage_options": {"k": "v"}},
+            # Synthetic section: no live config key carries storage_options
+            # anymore, but the redactor must still mask any such mapping.
+            "object_store": {"source_uri": "s3://bucket/x", "storage_options": {"k": "v"}},
             "loop": {"output_streaming": {"streaming_interval_ms": 100}},
         }
     )
@@ -211,7 +213,7 @@ async def test_config_get_masks_secret_bearing_values() -> None:
     assert dumped["anthropic_api_key"] == "***"
     assert dumped["identity"]["jwt_secret"] == "***"
     assert dumped["database"]["password"] == "***"
-    assert dumped["workspace_sync"]["storage_options"] == "***"
+    assert dumped["object_store"]["storage_options"] == "***"
     # Non-secret values pass through untouched (and are never masked by
     # coincidence — `refresh_token_ttl_seconds` is a duration, not a secret,
     # but substring matching intentionally masks it too).

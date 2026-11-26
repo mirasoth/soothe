@@ -1,10 +1,10 @@
 """Tests for single-root sync — the per-run backend's content tree.
 
-Covers the read path (``Workspace.materialize_content`` restores the
+Covers the read path (`Workspace.materialize_content` restores the
 plain content tree into the workspace) and the write path
-(``Workspace.checkpoint`` mirrors dirty-file writes and deletions back to
+(`Workspace.checkpoint` mirrors dirty-file writes and deletions back to
 the content tree and commits the manifest), plus the flat content-tree
-primitives on ``FsspecSyncBackend``.
+primitives on `FsspecSyncBackend`.
 """
 
 from __future__ import annotations
@@ -364,7 +364,7 @@ class TestManagerContentWiring:
         """Materials materialize in; agent outputs mirror out; reopen restores both.
 
         A local-dir recycle (server restart / VM recycle) re-opens the same
-        workspace root: the manifest loads from ``.workspace/manifest.json``
+        workspace root: the manifest loads from `.workspace/manifest.json`
         and the content tree re-materializes.
         """
         # Backend uploads a material to the run's content root.

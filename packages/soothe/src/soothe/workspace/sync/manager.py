@@ -1,10 +1,8 @@
 """Workspace manager — owns the open-workspace set for a sync root.
 
-The manager creates local workspace directories, wires each run's
-`DirtyTracker`, builds the per-run backend (one instance serving the
-content tree AND the manifest), and loads the run's manifest (the
-engine-owned artifact set of the last committed turn) from it at open —
-a fresh process never resets manifest state (F-L2).
+Creates workspace directories, wires each run's `DirtyTracker`, builds the
+per-run backend, and loads the last committed manifest at open so a fresh
+process never resets manifest state.
 """
 
 from __future__ import annotations
@@ -25,14 +23,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Workspace directory names double as sync run IDs: a single safe path
-# component (mirrored by hosts mapping their session/workspace ids to
-# run ids).
+# Run IDs double as workspace directory names, so they must be one safe
+# path component.
 _RUN_ID_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$")
 
-# Subtrees pre-created at workspace open; the dirty tracker watches
-# these plus root-level files.  Additional subtrees (e.g.
-# "deliverables") come from the manager's `watched_subdirs`.
+# Default subtrees pre-created at open and watched by the dirty tracker.
 _DEFAULT_WATCHED_SUBDIRS = ("input", "working", "output")
 
 
@@ -60,18 +55,19 @@ def _normalize_watched_subdirs(
 
 
 class WorkspaceManager:
-    """Owns the set of open workspaces for one sync root.
+    """Owns the open workspaces for one sync root.
+
+    `open` builds per-run resources; `close` and `close_all` release them.
+    Hosts obtain `Workspace` handles from `open` and serialize turns per
+    run id.
 
     Args:
-        workspaces_root: Local root directory holding per-run
-            workspaces.
-        backend_factory: Callable mapping a run id to the run's
-            backend — one instance per run serving both the plain
-            content tree (authoritative file store) and the
-            engine-private manifest.  Returning `None` (or `None`
-            factory) opens the run local-only (no remote sync).
+        workspaces_root: Local root directory holding per-run workspaces.
+        backend_factory: Maps a run id to its backend — one instance per
+            run serving both the content tree and the manifest. `None`
+            opens the run local-only.
         watched_subdirs: Additional workspace-relative subtrees tracked
-            by the dirty tracker (beyond `input`/`working`/`output`).
+            by the dirty tracker beyond `input`/`working`/`output`.
     """
 
     def __init__(
@@ -123,21 +119,12 @@ class WorkspaceManager:
         (root / "working").mkdir(parents=True, exist_ok=True)
         (root / "output").mkdir(parents=True, exist_ok=True)
         (root / ".workspace").mkdir(parents=True, exist_ok=True)
-        # Configured extra subtrees (e.g. "deliverables") are pre-created so
-        # agents can rely on them and the dirty tracker walks them from the
-        # first scan. Unsafe entries fail loud here (ValueError).
         for subdir in _normalize_watched_subdirs(self._watched_subdirs):
             (root / subdir).mkdir(parents=True, exist_ok=True)
         return root
 
     async def open(self, run_id: str) -> Workspace:
-        """Open a workspace for a run using the backend factory.
-
-        Creates the workspace directory structure, builds the per-run
-        backend (one instance serving content tree + manifest), wires
-        the dirty tracker, and loads any existing remote manifest (the
-        last committed artifact set) so a fresh process never resets
-        manifest state.
+        """Open a workspace and load its last committed manifest.
 
         Args:
             run_id: Unique run identifier.

@@ -1,11 +1,11 @@
-"""Tests for the turn-scoped workspace sync facade (``TurnScopedWorkspaces``).
+"""Tests for the turn-scoped workspace sync facade (`TurnScopedWorkspaces`).
 
-Single-writer contract (IG-CORE-011): one in-flight
-``open_turn``/``close_turn`` pair per run id. Orchestration tests
+Single-writer contract: one in-flight
+`open_turn`/`close_turn` pair per run id. Orchestration tests
 (reuse-after-failed-commit, TurnCommit reporting, resource release,
 best-effort failure semantics, manifest protection) inject a mocked
-``WorkspaceManager`` with duck-typed workspace fakes. The round-trip test
-uses real ``MemoryFileSystem`` backends and re-opens with a fresh facade
+`WorkspaceManager` with duck-typed workspace fakes. The round-trip test
+uses real `MemoryFileSystem` backends and re-opens with a fresh facade
 instance to pin the crash-recovery contract end to end.
 """
 

@@ -1,4 +1,4 @@
-"""Integration tests for ``FsspecSyncBackend`` against a real S3-compatible endpoint.
+"""Integration tests for `FsspecSyncBackend` against a real S3-compatible endpoint.
 
 These tests exercise the content-authoritative workspace-sync backend
 (manifest optimistic concurrency, content-tree ops, streaming) against a
@@ -55,16 +55,16 @@ _REGION = os.environ.get("SOOTHE_TEST_S3_REGION", "auto")
 
 
 def _factory_config() -> dict[str, object]:
-    """Storage options compatible with ``construct_sync_backend``'s allowlist.
+    """Storage options compatible with `construct_sync_backend`'s allowlist.
 
-    Includes ``config_kwargs`` and ``client_kwargs`` so the factory can
+    Includes `config_kwargs` and `client_kwargs` so the factory can
     configure virtual-hosted-style addressing and region for S3-compatible
     services like Tencent COS.
 
-    ``request_checksum_calculation="when_required"`` disables botocore's
+    `request_checksum_calculation="when_required"` disables botocore's
     default integrity checksums (1.36+): those switch request bodies to
-    aws-chunked framing, which Tencent COS rejects with ``You must
-    provide the Content-Length HTTP header``.  End-to-end integrity is
+    aws-chunked framing, which Tencent COS rejects with `You must
+    provide the Content-Length HTTP header`.  End-to-end integrity is
     provided by the content-tree manifest (sha256 on every artifact
     entry), not transport checksums.
     """
@@ -85,11 +85,11 @@ def _is_configured() -> bool:
 
 
 def _cleanup_prefix(fs: Any, root: str) -> None:
-    """Best-effort cleanup of all objects under ``root``.
+    """Best-effort cleanup of all objects under `root`.
 
-    Tencent COS rejects ``DeleteObjects`` (bulk delete) because s3fs does
-    not send ``Content-MD5``.  We fall back to individual ``rm`` calls
-    which use ``DeleteObject`` (no MD5 required).
+    Tencent COS rejects `DeleteObjects` (bulk delete) because s3fs does
+    not send `Content-MD5`.  We fall back to individual `rm` calls
+    which use `DeleteObject` (no MD5 required).
     """
     try:
         entries = fs.find(root)
@@ -110,14 +110,14 @@ def _sha256(data: bytes) -> str:
 
 
 def _make_s3_fs() -> Any:
-    """Construct a real ``S3FileSystem`` configured for Tencent COS.
+    """Construct a real `S3FileSystem` configured for Tencent COS.
 
     Tencent COS requires:
-    - Virtual-hosted-style addressing (``addressing_style='virtual'``)
+    - Virtual-hosted-style addressing (`addressing_style='virtual'`)
       so the bucket name becomes a subdomain of the regional endpoint.
-    - ``Content-MD5`` on ``DeleteObjects`` (bulk delete); s3fs does not
-      send it, so recursive ``rm`` fails.  Cleanup uses individual
-      ``rm_file`` calls instead.
+    - `Content-MD5` on `DeleteObjects` (bulk delete); s3fs does not
+      send it, so recursive `rm` fails.  Cleanup uses individual
+      `rm_file` calls instead.
     """
     import s3fs  # type: ignore[import-untyped]
 
@@ -149,9 +149,9 @@ def s3_uri() -> str:
 
 @pytest.fixture
 def s3_root(s3_uri: str) -> str:
-    """Root path within the S3 filesystem (``<bucket>/<prefix>``).
+    """Root path within the S3 filesystem (`<bucket>/<prefix>`).
 
-    For S3, the root passed to ``FsspecSyncBackend`` must include the
+    For S3, the root passed to `FsspecSyncBackend` must include the
     bucket name so that fsspec path operations resolve correctly.
     """
     return s3_uri[len("s3://") :]
@@ -159,11 +159,11 @@ def s3_root(s3_uri: str) -> str:
 
 @pytest.fixture
 def backend(s3_root: str) -> FsspecSyncBackend:
-    """Construct a real ``FsspecSyncBackend`` connected to the live endpoint.
+    """Construct a real `FsspecSyncBackend` connected to the live endpoint.
 
-    Constructs ``S3FileSystem`` directly so ``region_name`` can be passed
-    via ``client_kwargs`` (the factory's allowlist does not include
-    ``client_kwargs``).  Skips when env vars are not set.
+    Constructs `S3FileSystem` directly so `region_name` can be passed
+    via `client_kwargs` (the factory's allowlist does not include
+    `client_kwargs`).  Skips when env vars are not set.
     """
     if not _is_configured():
         pytest.skip(
@@ -320,7 +320,7 @@ class TestS3Streaming:
 
 
 class TestS3Factory:
-    """Verify ``construct_sync_backend`` produces a working backend from a URI."""
+    """Verify `construct_sync_backend` produces a working backend from a URI."""
 
     @pytest.mark.asyncio
     async def test_factory_construct_and_roundtrip(

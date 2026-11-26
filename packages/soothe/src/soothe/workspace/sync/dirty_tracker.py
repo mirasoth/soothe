@@ -1,9 +1,7 @@
 """Dirty file tracking for workspace incremental persistence.
 
-Hybrid platform-adaptive tracker: uses native OS watchers (inotify on
-Linux, FSEvents on macOS) when available, falls back to stat-scan
-polling otherwise.  Detects escaping symlinks via `os.lstat()` and
-excludes them from checkpointing.
+Tracks configured subtrees and workspace-root files by stat-scan polling,
+and rejects escaping symlinks via `os.lstat()` so they never reach a commit.
 """
 
 from __future__ import annotations
@@ -23,20 +21,20 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_POLL_INTERVAL = 2.0  # seconds
+_DEFAULT_POLL_INTERVAL = 2.0
 
 _EXCLUDED_DIRS = frozenset({".workspace", "__pycache__", ".git"})
 
 
 def _is_symlink_escaping(symlink: Path, root: Path) -> bool:
-    """Return whether a symlink's resolved target escapes ``root``.
+    """Return whether a symlink's resolved target escapes `root`.
 
     Args:
         symlink: The symlink path (not followed).
         root: The workspace root (already resolved).
 
     Returns:
-        `True` when the target resolves outside ``root`` or cannot be
+        `True` when the target resolves outside `root` or cannot be
         resolved at all (broken / permission-denied).
     """
     try:
@@ -47,7 +45,6 @@ def _is_symlink_escaping(symlink: Path, root: Path) -> bool:
     return False
 
 
-# Engine default tracked subtrees (workspace root files are always tracked).
 _DEFAULT_WATCHED_SUBDIRS = ("input", "working", "output")
 
 
@@ -56,7 +53,7 @@ def _normalize_watched_subdirs(
 ) -> tuple[str, ...]:
     """Normalize configured watched subdirs; `None` keeps the engine defaults.
 
-    Entries are slash-separated workspace-relative paths (e.g. ``deliverables``).
+    Entries are slash-separated workspace-relative paths (e.g. `deliverables`).
     Blank entries are dropped and duplicates removed (order preserved). Unsafe
     entries — absolute paths, backslashes, or traversal segments — raise
     `ValueError` so a bad deployment config fails loud at workspace open.
@@ -134,6 +131,7 @@ class FileEvent:
         self.status = status
 
     def __repr__(self) -> str:
+        """Return a debug representation."""
         return (
             f"FileEvent(kind={self.kind.value!r}, mtime={self.mtime:.1f}, "
             f"size={self.size}, status={self.status!r})"
@@ -141,22 +139,19 @@ class FileEvent:
 
 
 class DirtyTracker:
-    """Hybrid platform-adaptive dirty file tracker.
+    """Stat-scan dirty file tracker for one workspace.
 
-    Watches the configured subdirectories (engine defaults: `input/`,
-    `working/`, and `output/`) plus workspace-root files under
-    `workspace_root`.  On platforms with native watchers, uses them;
-    otherwise falls back to stat-scan polling.
+    Watches the configured subtrees (`input`, `working`, and `output` by
+    default) plus workspace-root files. A baseline snapshot is taken at
+    start; each poll diffs mtime and size against it. Escaping symlinks
+    are tracked but excluded from commits.
 
     Args:
         workspace_root: The agent workspace root directory.
-        poll_interval: Stat-scan poll interval in seconds (fallback
-            mode).  Must be ≤ the debounce window.
+        poll_interval: Stat-scan poll interval in seconds.
         on_dirty: Optional callback invoked when the dirty set changes.
-            Called with no arguments.
         watched_subdirs: Workspace-relative subtrees to track instead of
-            the engine defaults (`input`, `working`, `output`). `None`
-            keeps the defaults; unsafe entries raise `ValueError`.
+            the engine defaults. Unsafe entries raise `ValueError`.
 
     Example:
         >>> tracker = DirtyTracker(workspace_root="/ws/run-1")
@@ -206,11 +201,7 @@ class DirtyTracker:
         return self._native_available
 
     def start(self) -> None:
-        """Start tracking filesystem mutations.
-
-        Takes a baseline snapshot of the workspace, then begins polling
-        (or native watching if available).
-        """
+        """Take a baseline snapshot and start the stat-scan poll loop."""
         if self._running:
             return
         self._running = True
@@ -250,7 +241,6 @@ class DirtyTracker:
         """
         full_path = self._root / relative_path
 
-        # Use lstat to detect symlinks without following them.
         try:
             st = os.lstat(full_path)
         except FileNotFoundError:
@@ -294,7 +284,7 @@ class DirtyTracker:
 
         Called after a checkpoint with the exact paths that checkpoint
         captured; paths marked dirty *during* the checkpoint upload
-        survive for the next one.  ``None`` clears everything (used on
+        survive for the next one.  `None` clears everything (used on
         workspace reset).
 
         Args:
@@ -326,16 +316,11 @@ class DirtyTracker:
     def scan_now(self) -> None:
         """Force an immediate stat-scan diff.
 
-        In stat-scan polling mode this catches writes that happened after
-        the last poll tick (e.g. right before a final checkpoint).  No-op
-        when a native watcher is active (events are already live).
+        Catches writes made after the last poll tick, e.g. right before a
+        final checkpoint. No-op when a native watcher is active.
         """
         if not self.is_native:
             self._scan_and_diff()
-
-    # ------------------------------------------------------------------
-    # Stat-scan polling
-    # ------------------------------------------------------------------
 
     async def _poll_loop(self) -> None:
         """Background poll loop for stat-scan mode.
@@ -425,28 +410,20 @@ class DirtyTracker:
         return snapshot
 
 
-# ---------------------------------------------------------------------------
-# Platform detection
-# ---------------------------------------------------------------------------
-
-
 def _detect_native_watcher() -> bool:
-    """Detect whether a native OS filesystem watcher is available.
+    """Return whether a native OS filesystem watcher is available.
 
     Returns:
-        `True` if inotify (Linux) or FSEvents (macOS) is available.
-        Currently returns `False` — the stat-scan poller is the MVP
-        implementation.  Native watcher integration is a future
-        optimization.
+        `False`: stat-scan polling is the only implemented tracker.
     """
     if sys.platform == "linux":
         try:
             import ctypes.util
 
             if ctypes.util.find_library("c"):
-                return False  # MVP: don't use inotify yet
+                return False
         except Exception:
             pass
     elif sys.platform == "darwin":
-        return False  # MVP: don't use FSEvents yet
+        return False
     return False

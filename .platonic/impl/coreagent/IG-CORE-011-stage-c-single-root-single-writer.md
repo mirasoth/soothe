@@ -3,7 +3,7 @@
 **Guide**: IG-CORE-011
 **Title**: Stage C — 单根（single root）与单写者（single writer）
 **Created**: 2026-11-26
-**Related RFCs**: RFC-CORE-010 (Workspace Sync Architecture), RFC-AGSP-001 §7 (agentspace 执行面), RFC-002 (flowjet)
+**Related RFCs**: RFC-CORE-010 (Workspace Sync Architecture), host execution-plane spec §7, host workspace spec
 
 ## Overview
 
@@ -15,7 +15,7 @@ decisions land together:
    `system/engine` root and the `{workspace}` URI-template mechanism are
    deleted. One source URI (`s3://<bucket>/workspaces`), one per-run
    backend, one credential/config surface.
-2. **单写者（single writer）** — agentspace adds a per-workspace
+2. **单写者（single writer）** — the orchestrator adds a per-workspace
    single-flight prompt gate (409 on a second in-flight turn for the same
    workspace, chat turns AND one-shot tasks); the engine deletes the
    concurrent-turn bookkeeping (`_OpenTurnEntry.active_turns` refcounting,
@@ -24,7 +24,7 @@ decisions land together:
    are undefined.
 3. **persisted 可见（commit failures surface in the turn result）** —
    `close_turn` returns a `TurnCommit(persisted, version, error)` result;
-   flowjet's runtime backend commits BEFORE surfacing the terminal event
+   the host's runtime backend commits BEFORE surfacing the terminal event
    and converts a failed commit of an otherwise-successful run into
    `RunFailed(code="workspace_persist_failed")`. "Turn completion =
    persisted" is now observable, not just logged.
@@ -44,7 +44,7 @@ manifest at version 1. Per-host concrete notes:
 
 * the reserved `.workspace/` key prefix is engine-private: the soothe
   materialize/reconcile passes skip it, the dirty tracker excludes it, and
-  the agentspace file API hides it from listings and rejects reads/writes
+  the orchestrator file API hides it from listings and rejects reads/writes
   into it;
 * local `.workspace/` dir creation in the manager stays (engine marker).
 
@@ -93,7 +93,7 @@ manifest at version 1. Per-host concrete notes:
       suite (single-backend construction), content-mirror (single-root
       round trip incl. local recycle).
 
-### Task 2 — flowjet
+### Task 2 — host
 
 - [x] Resolver: `sync_source` becomes the single root; `content_source`
       (the `{workspace}` template) is deleted; the per-run backend factory
@@ -105,7 +105,7 @@ manifest at version 1. Per-host concrete notes:
 - [x] Sandbox resolver wrapper: threads the `close_session` result through.
 - [x] Tests + CHANGELOG.
 
-### Task 3 — agentspace (Go)
+### Task 3 — orchestrator (Go)
 
 - [x] Per-workspace single-flight: chat `StartTurn` acquires the workspace
       key (new `ErrWorkspaceBusy`, 409); the task executor leaves tasks
@@ -123,23 +123,23 @@ manifest at version 1. Per-host concrete notes:
 
 ### Task 4 — miracloud (deploy + specs)
 
-- [x] Helm values: `FLOWJET_WORKSPACE_SYNC_SOURCE` →
-      `s3://mirasoth-agentspace/workspaces`; delete
-      `FLOWJET_WORKSPACE_CONTENT_SOURCE`.
-- [x] RFC-AGSP-001 §7: layout tree, env block, single-writer + persisted
+- [x] Helm values: `WORKSPACE_SYNC_SOURCE` →
+      `s3://<bucket>/workspaces`; delete
+      `WORKSPACE_CONTENT_SOURCE`.
+- [x] Host execution-plane spec §7: layout tree, env block, single-writer + persisted
       semantics, purge, Stage C landed; rfc-history Revision 110;
       RFC-AGL-001 §5.3.6 env enumeration updated.
 
 ## Verification
 
 - [x] soothe: 153 sync tests + full unit suite (3216) green
-- [x] flowjet: 689 unit tests green against the local Stage C soothe tree
+- [x] host suite: 689 unit tests green against the local Stage C soothe tree
       (`PYTHONPATH=packages/soothe/src`); backend-level
       persisted-visibility tests; ruff + mypy clean
-- [x] agentspace: go build/vet/gofmt/golangci-lint (incl.
+- [x] orchestrator: go build/vet/gofmt/golangci-lint (incl.
       `--build-tags integration`) clean; unit tests green (one
       pre-existing `TestVarsMatchNamingConvention` failure —
-      `AGENTSPACE_S3_BUCKET_LOOKUP` vocabulary gap, reproduces on the
+      `S3_BUCKET_LOOKUP` vocabulary gap, reproduces on the
       clean tree); engine-dir integration tests added (env-gated)
 - [x] Existing deployments: clean cutover — old `system/engine/` prefix
       becomes an inert orphan; the first turn after upgrade re-materializes
@@ -148,4 +148,4 @@ manifest at version 1. Per-host concrete notes:
 ## Related Documents
 
 - IG-CORE-009 (Stage A facade), IG-CORE-010 (Stage B content-authoritative)
-- RFC-AGSP-001 §7: `.platonic/specs/agentspace/RFC-AGSP-001-agentspace.md`
+- Host execution-plane spec §7 (in the miracloud repo)

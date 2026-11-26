@@ -14,14 +14,14 @@
 
 ### 1.1 Purpose and consumer model
 
-**This subsystem is a library for downstream host apps, not a soothe-daemon feature.** The reference consumer is flowjet's `SyncAwareWorkspaceResolver` (`../flowjet/src/flowjet/core/runtime/isolation/workspace.py`), which owns the full lifecycle. soothe-daemon's sync wiring is intentionally absent; findings premised on "the daemon never drives the lifecycle" were retracted in this re-scope (see §3.1).
+**This subsystem is a library for downstream host apps, not a soothe-daemon feature.** The reference consumer is the host's `SyncAwareWorkspaceResolver`, which owns the full lifecycle. soothe-daemon's sync wiring is intentionally absent; findings premised on "the daemon never drives the lifecycle" were retracted in this re-scope (see §3.1).
 
-The consumer contract, extracted from flowjet (the shape this guide must keep working):
+The consumer contract, extracted from the host (the shape this guide must keep working):
 
 ```text
 manager = WorkspaceManager(workspaces_root, cas_root, backend,
                            state_store_factory, content_backend_factory,
-                           watched_subdirs)          # flowjet workspace.py:202-209
+                           watched_subdirs)          # host workspace.py:202-209
 ws = await manager.open(run_id)                     # one per run_id, refcounted by consumer
 payload = await ws.recover()                        # every open — manifest recovery
 await ws.materialize_content(protected=...,         # every turn — content tree
@@ -34,13 +34,13 @@ await manager.close(run_id)                         # last concurrent run out
 await manager.close_all()                           # process shutdown
 ```
 
-A full audit of the subsystem against this contract found library-level defects — including one **live data-loss chain** exercised by flowjet's restart path — plus resource leaks and performance problems in the hot paths. This guide turns the verified findings into an ordered remediation plan with paired regression tests.
+A full audit of the subsystem against this contract found library-level defects — including one **live data-loss chain** exercised by the host's restart path — plus resource leaks and performance problems in the hot paths. This guide turns the verified findings into an ordered remediation plan with paired regression tests.
 
 ### 1.2 Evidence Base
 
-Findings were verified by static call-site tracing plus runtime reproductions, then re-validated against the flowjet consumer code. Four defects have hard reproductions (marked **[REPRO]** in §3); live-impact findings are marked **[LIVE]** (reachable through the flowjet call sequence above).
+Findings were verified by static call-site tracing plus runtime reproductions, then re-validated against the host consumer code. Four defects have hard reproductions (marked **[REPRO]** in §3); live-impact findings are marked **[LIVE]** (reachable through the host call sequence above).
 
-1. `Workspace.materialize` is broken in both directions (**[REPRO]**): passing the documented `list[Resource]` crashes in `Materializer.materialize` (`AttributeError: 'list' object has no attribute 'resources'`); passing the `Manifest` that flowjet actually passes (flowjet `workspace.py:431`) completes materialization then raises `TypeError` at the `len(resources)` logging line (`workspace.py:111`).
+1. `Workspace.materialize` is broken in both directions (**[REPRO]**): passing the documented `list[Resource]` crashes in `Materializer.materialize` (`AttributeError: 'list' object has no attribute 'resources'`); passing the `Manifest` that the host actually passes (host `workspace.py:431`) completes materialization then raises `TypeError` at the `len(resources)` logging line (`workspace.py:111`).
 2. Mid-checkpoint writes lost (**[REPRO]**): a file written during a slow checkpoint upload never appears in any manifest; the dirty set is empty afterwards.
 3. CAS blob corruption via hardlink in-place edit (**[REPRO]**): `CAS blob after in-place agent edit: b'MUTATED'`.
 4. Broken-symlink arbitrary write in `materialize_content` (**[REPRO]**): remote content written outside the workspace root.
@@ -51,12 +51,12 @@ Environment facts pinned during verification: `fsspec 2026.9.0`, `s3fs` (0 refer
 
 **In Scope**:
 - Library-level defects in `packages/soothe/src/soothe/workspace/sync/` and `workspace/state/` — everything reachable through the §1.1 consumer contract.
-- Performance remediation for the checkpoint and materialization hot paths (both run per turn in flowjet).
-- Regression tests for every fix, including a soothe-side consumer-contract test that mirrors the flowjet sequence.
+- Performance remediation for the checkpoint and materialization hot paths (both run per turn in the host).
+- Regression tests for every fix, including a soothe-side consumer-contract test that mirrors the host sequence.
 - RFC text amendments where the audit found the RFC wrong or stale (§5 Task D2).
 
 **Out of Scope**:
-- **soothe-daemon wiring** — the daemon is not a consumer by design; the router/core wiring gaps are not defects (retracted findings, §3.1). Flowjet-side changes live in the flowjet repo.
+- **soothe-daemon wiring** — the daemon is not a consumer by design; the router/core wiring gaps are not defects (retracted findings, §3.1). Host-side changes live in the host repo.
 - `(mtime, size)` dirty-detection granularity — full hashing is a design-draft non-goal (§20); the real detection hole is the clear-after-snapshot window (F-C2, in scope).
 - Native watcher (inotify/FSEvents) enablement — `watchdog` stays unused; stat-scan remains, only moved off the event loop.
 - True ETag-conditional manifest writes — RFC constraint 4 sanctions read-then-write fallback; we harden the fallback and align docs.
@@ -66,11 +66,11 @@ Environment facts pinned during verification: `fsspec 2026.9.0`, `s3fs` (0 refer
 
 ## 2. Architectural Position
 
-No new modules. The remediation keeps the RFC-CORE-010 component set (`WorkspaceManager`, `Workspace`, CAS, dirty tracker, debouncer, uploader, `FsspecSyncBackend`, `WorkspaceStateStore`) and the library boundary: `soothe.workspace.sync` is consumed by downstream hosts (flowjet today) via `WorkspaceManager`/`Workspace`.
+No new modules. The remediation keeps the RFC-CORE-010 component set (`WorkspaceManager`, `Workspace`, CAS, dirty tracker, debouncer, uploader, `FsspecSyncBackend`, `WorkspaceStateStore`) and the library boundary: `soothe.workspace.sync` is consumed by downstream hosts via `WorkspaceManager`/`Workspace`.
 
 Three RFC text amendments are *proposed* (task D2); until accepted, the guide records them as declared deviations — no behavior contradicts the RFC's normative requirements:
 
-1. RFC Package Placement lists "Workspace lifecycle RPCs | soothe-daemon" — stale; the lifecycle is owned by downstream host apps (flowjet). 
+1. RFC Package Placement lists "Workspace lifecycle RPCs | soothe-daemon" — stale; the lifecycle is owned by downstream host apps. 
 2. RFC Security S3 names `fs.use_cache = False` as the credential-isolation mechanism — verified no-op (F-C8).
 3. RFC Flow 1 step 2 names "hardlink" as a materialization mechanism — conflicts with invariant 1 (blob immutability); this guide resolves in favor of the invariant (F-C5, §4.6).
 
@@ -84,42 +84,42 @@ Dependency direction is unchanged; `fsspec` stays a `soothe` (host) dependency.
 
 | Retracted claim | Reason |
 |-----------------|--------|
-| "Daemon never drives the workspace lifecycle — pipeline inert" | By design: the subsystem targets downstream host apps. flowjet drives the full lifecycle (§1.1). The daemon's `_open_sync_workspace` constructing a manager is an unused-but-harmless vestige; not remediated here. |
+| "Daemon never drives the workspace lifecycle — pipeline inert" | By design: the subsystem targets downstream host apps. The host drives the full lifecycle (§1.1). The daemon's `_open_sync_workspace` constructing a manager is an unused-but-harmless vestige; not remediated here. |
 | "Per-loop opt-in broken in soothe-daemon (`_get_workspace_manager` RuntimeError with `enabled: false`)" | Daemon-specific; the daemon is not a consumer. The README text describing per-loop daemon opt-in is stale docs (folded into D2's amendment list). |
 
 ### 3.2 Library lifecycle (P0)
 
 | ID | Sev | Finding | Evidence (file:line @ `454c8d995`) | Fixed by |
 |----|-----|---------|--------------------------------------|----------|
-| F-L1 | P0 | Debounced auto-checkpointing is inert for **every** consumer: `manager.open()` constructs `DirtyTracker` without `on_dirty` (never calls `debouncer.notify_dirty()`), so `_dirty_since_last` stays `False` — no debounced checkpoint ever fires and `flush()` at close is a no-op. flowjet compensates with a synchronous `ws.checkpoint()` at turn close → **zero crash protection mid-turn** (a long agent turn that dies loses all its writes). Backpressure wiring (`set_pending_count`/`on_backpressure`) equally dead. | `manager.py:132-135`, `manager.py:168-179`, `debouncer.py:88-99`, flowjet `workspace.py:469` | A1 |
-| F-L2 | P0 | `manager.open()` never calls `CheckpointManager.initialize()`; manifest state depends on the consumer calling `recover()`. Without recover: first checkpoint builds `Manifest(version=1, artifacts=<this checkpoint's dirty only>)` — drops all prior artifacts (`checkpoint.py:196-202`). flowjet calls `recover()` every open, which instead activates F-C3's snapshot staleness. Either way, restart loses manifest state. | `checkpoint.py:98-127`, `:196-202`, flowjet `workspace.py:389` | A1, B3 |
-| F-L3 | P0 | `BackgroundUploader` is dead **and** contract-incompatible: `insert_checkpoint` has no production caller, so the loop polls an empty table every 2 s per open workspace; and the state rows are `{id, timestamp, manifest_hash, status}` with no payload, while `_upload_one` reads `item["checkpoint_id"]`/`item["data"]` → `KeyError` → logged-and-retried forever. flowjet was forced to supply a state-store factory purely because `Workspace.start_tracking()` crashes without one (their comment: `workspace.py:54-58`). | `uploader.py:140-160` vs `sqlite.py:192-197` | A2 |
+| F-L1 | P0 | Debounced auto-checkpointing is inert for **every** consumer: `manager.open()` constructs `DirtyTracker` without `on_dirty` (never calls `debouncer.notify_dirty()`), so `_dirty_since_last` stays `False` — no debounced checkpoint ever fires and `flush()` at close is a no-op. The host compensates with a synchronous `ws.checkpoint()` at turn close → **zero crash protection mid-turn** (a long agent turn that dies loses all its writes). Backpressure wiring (`set_pending_count`/`on_backpressure`) equally dead. | `manager.py:132-135`, `manager.py:168-179`, `debouncer.py:88-99`, host `workspace.py:469` | A1 |
+| F-L2 | P0 | `manager.open()` never calls `CheckpointManager.initialize()`; manifest state depends on the consumer calling `recover()`. Without recover: first checkpoint builds `Manifest(version=1, artifacts=<this checkpoint's dirty only>)` — drops all prior artifacts (`checkpoint.py:196-202`). The host calls `recover()` every open, which instead activates F-C3's snapshot staleness. Either way, restart loses manifest state. | `checkpoint.py:98-127`, `:196-202`, host `workspace.py:389` | A1, B3 |
+| F-L3 | P0 | `BackgroundUploader` is dead **and** contract-incompatible: `insert_checkpoint` has no production caller, so the loop polls an empty table every 2 s per open workspace; and the state rows are `{id, timestamp, manifest_hash, status}` with no payload, while `_upload_one` reads `item["checkpoint_id"]`/`item["data"]` → `KeyError` → logged-and-retried forever. The host was forced to supply a state-store factory purely because `Workspace.start_tracking()` crashes without one (their comment: `workspace.py:54-58`). | `uploader.py:140-160` vs `sqlite.py:192-197` | A2 |
 
 ### 3.3 Correctness (P1)
 
 | ID | Sev | Finding | Evidence | Fixed by |
 |----|-----|---------|----------|----------|
-| F-C1 | P1 | **[REPRO]** `Workspace.materialize` broken in both directions: signature documents `list[Resource]` but `Materializer.materialize` requires a `Manifest`; flowjet passes a `Manifest` (works until the `len(resources)` logging line raises `TypeError`, after files are materialized). | `workspace.py:96-111`, `materializer.py:49-80`, flowjet `workspace.py:431` | B1 |
-| F-C2 | P1 | **[REPRO]** Mid-checkpoint writes lost: the stat-scan poll runs during the checkpoint's awaits, marks new writes dirty and advances `_baseline`; `create_checkpoint()` then `clear()`s the whole dirty set; `_baseline` already includes them so they are never re-detected. `Workspace.checkpoint()` double-clears. Currently dormant in flowjet (turns end before checkpointing) but becomes **live data loss the moment F-L1 is fixed** — the two must co-land. | `checkpoint.py:263`, `workspace.py:267-268`, `dirty_tracker.py:317-343` | B2 |
-| F-C3 | P1 | **[LIVE]** Restart data loss via snapshot-stale manifest: `recover()` sets `_manifest` from the SNAPSHOT payload only — post-snapshot DELTA artifacts are absent (up to the last `_max_deltas`-1 turns). DELTA payloads carry no tombstones, so deletions resurrect. **Compounding**: flowjet passes `protected=<snapshot artifacts>` to `materialize_content(reconcile=True)` — the newer (unlisted) artifacts are deleted locally by `_reconcile_content` before `_restore_prior_state` runs. Net effect: after a flowjet restart, the last `N mod 10` turns' artifacts vanish (blobs remain, nothing references them). | `workspace_sync.py:217-252`, `checkpoint.py:236-247`, `:309-350`, `workspace.py:175-176`, flowjet `workspace.py:326-344`, `:358-360` | B3, B13 |
-| F-C4 | P1 | `put_manifest` read-then-write guard: when `existing is None` the `if_match` check is skipped entirely (a missing manifest is silently overwritten); protocol docstring says "MUST reject … (conditional write)" while the impl is a TOCTOU. Latent today (single writer per run in flowjet); live with multi-replica hosts. | `fsspec.py:179-213`, `workspace_sync.py:329-349` | B4 |
-| F-C5 | P1 | **[REPRO]** CAS `HARDLINK` strategy shares the inode between workspace file and CAS blob — an in-place agent edit corrupts the "immutable" cache; `has_blob` still `True`; later materializations serve corrupted content with no hash check. Violates RFC invariant 1. Live in flowjet whenever `manifest.resources` are materialized and the agent edits `input/` in place. | `cas.py:172-180`, `materializer.py:107-121` | B5 |
+| F-C1 | P1 | **[REPRO]** `Workspace.materialize` broken in both directions: signature documents `list[Resource]` but `Materializer.materialize` requires a `Manifest`; the host passes a `Manifest` (works until the `len(resources)` logging line raises `TypeError`, after files are materialized). | `workspace.py:96-111`, `materializer.py:49-80`, host `workspace.py:431` | B1 |
+| F-C2 | P1 | **[REPRO]** Mid-checkpoint writes lost: the stat-scan poll runs during the checkpoint's awaits, marks new writes dirty and advances `_baseline`; `create_checkpoint()` then `clear()`s the whole dirty set; `_baseline` already includes them so they are never re-detected. `Workspace.checkpoint()` double-clears. Currently dormant in the host (turns end before checkpointing) but becomes **live data loss the moment F-L1 is fixed** — the two must co-land. | `checkpoint.py:263`, `workspace.py:267-268`, `dirty_tracker.py:317-343` | B2 |
+| F-C3 | P1 | **[LIVE]** Restart data loss via snapshot-stale manifest: `recover()` sets `_manifest` from the SNAPSHOT payload only — post-snapshot DELTA artifacts are absent (up to the last `_max_deltas`-1 turns). DELTA payloads carry no tombstones, so deletions resurrect. **Compounding**: the host passes `protected=<snapshot artifacts>` to `materialize_content(reconcile=True)` — the newer (unlisted) artifacts are deleted locally by `_reconcile_content` before `_restore_prior_state` runs. Net effect: after a host restart, the last `N mod 10` turns' artifacts vanish (blobs remain, nothing references them). | `workspace_sync.py:217-252`, `checkpoint.py:236-247`, `:309-350`, `workspace.py:175-176`, host `workspace.py:326-344`, `:358-360` | B3, B13 |
+| F-C4 | P1 | `put_manifest` read-then-write guard: when `existing is None` the `if_match` check is skipped entirely (a missing manifest is silently overwritten); protocol docstring says "MUST reject … (conditional write)" while the impl is a TOCTOU. Latent today (single writer per run in the host); live with multi-replica hosts. | `fsspec.py:179-213`, `workspace_sync.py:329-349` | B4 |
+| F-C5 | P1 | **[REPRO]** CAS `HARDLINK` strategy shares the inode between workspace file and CAS blob — an in-place agent edit corrupts the "immutable" cache; `has_blob` still `True`; later materializations serve corrupted content with no hash check. Violates RFC invariant 1. Live in the host whenever `manifest.resources` are materialized and the agent edits `input/` in place. | `cas.py:172-180`, `materializer.py:107-121` | B5 |
 | F-C6 | P1 | `CASCache.store_blob` writes a deterministic `<hash>.tmp` → concurrent same-hash stores interleave and one `os.replace` fails; also unsafe across processes sharing the CAS root. | `cas.py:130-136` | B6 |
-| F-C7 | P1 | **[REPRO] [LIVE]** `materialize_content` writes via `dest.write_bytes(data)` with no symlink check; a **dangling** symlink in the workspace makes `is_file()`/`exists()` both false and the write follows the link outside the workspace root. Called every turn by flowjet. Violates RFC S2. | `workspace.py:148-166` | B7 |
+| F-C7 | P1 | **[REPRO] [LIVE]** `materialize_content` writes via `dest.write_bytes(data)` with no symlink check; a **dangling** symlink in the workspace makes `is_file()`/`exists()` both false and the write follows the link outside the workspace root. Called every turn by the host. Violates RFC S2. | `workspace.py:148-166` | B7 |
 | F-C8 | P1 | `fs.use_cache = False` is a no-op (s3fs has zero `use_cache` references; fsspec's real switch is `skip_instance_cache`, never passed); `url_to_fs` returns the globally cached instance. RFC S3's mechanism text is ineffective — the intent (credentials never reach the agent process) still holds. | `factory.py:58-63` | B8 |
-| F-C9 | P1 | **[LIVE]** Checkpoint identity/growth: stored IDs are `{run_id}-c001` but `_last_checkpoint_id`/`parent_checkpoint_id` use bare `c001`; `list_checkpoints` sorts lexicographically (`c1000` < `c999`); nothing ever prunes checkpoints; `_checkpoint_seq = len(checkpoints)` assumes contiguity. flowjet creates one checkpoint per turn — a long-lived workspace accumulates thousands of objects with O(all) listing per open. | `checkpoint.py:216-261`, `:284-350`, `fsspec.py:219-234` | B9 |
-| F-C10 | P1 | **[LIVE, leak half]** Lifecycle hygiene: `Workspace.close()` never calls `debouncer.stop()` → the 20 Hz `_max_interval_loop` task leaks per `manager.close(run_id)` — one leaked task per turn until process exit. `start_tracking`/`checkpoint`/`publish` deref possibly-`None` components (flowjet documented the `start_tracking` crash workaround). `open_from_uri` mutates the singleton manager's `_backend` (latent — flowjet uses `manager.open`). | `manager.py:197-212`, `workspace.py:240-247`, `:267`, `:289`, `:296-327` | A3, B10 |
+| F-C9 | P1 | **[LIVE]** Checkpoint identity/growth: stored IDs are `{run_id}-c001` but `_last_checkpoint_id`/`parent_checkpoint_id` use bare `c001`; `list_checkpoints` sorts lexicographically (`c1000` < `c999`); nothing ever prunes checkpoints; `_checkpoint_seq = len(checkpoints)` assumes contiguity. The host creates one checkpoint per turn — a long-lived workspace accumulates thousands of objects with O(all) listing per open. | `checkpoint.py:216-261`, `:284-350`, `fsspec.py:219-234` | B9 |
+| F-C10 | P1 | **[LIVE, leak half]** Lifecycle hygiene: `Workspace.close()` never calls `debouncer.stop()` → the 20 Hz `_max_interval_loop` task leaks per `manager.close(run_id)` — one leaked task per turn until process exit. `start_tracking`/`checkpoint`/`publish` deref possibly-`None` components (the host documented the `start_tracking` crash workaround). `open_from_uri` mutates the singleton manager's `_backend` (latent — the host uses `manager.open`). | `manager.py:197-212`, `workspace.py:240-247`, `:267`, `:289`, `:296-327` | A3, B10 |
 | F-C11 | P1 | `SqliteWorkspaceStateStore` shares one connection across `asyncio.to_thread` workers (`check_same_thread=False`, no lock) — `sqlite3.threadsafety == 1` forbids connection sharing by contract. Low exposure today (per-workspace DB, effectively serialized polling). | `sqlite.py:63-83` | B11 |
 | F-C12 | P1 | `stream_blob`/`stream_checkpoint` claim 64 KiB streaming but `cat_file` the whole object then slice; missing objects `return` silently while the protocol default raises `KeyError`. No production caller. | `fsspec.py:297-319` | B12 |
-| F-C13 | P1 | Reconcile protection is consumer-supplied only: `_reconcile_content` deletes every local file absent from the remote content tree; `protected` defaults to `()`. flowjet mitigates — but passes the stale snapshot's artifacts (compounding F-C3). `publish_artifact` ignores `content_type` and always overwrites despite the idempotency contract. | `workspace.py:175-176`, `:193-217`, `fsspec.py:263-291` | B13 |
+| F-C13 | P1 | Reconcile protection is consumer-supplied only: `_reconcile_content` deletes every local file absent from the remote content tree; `protected` defaults to `()`. The host mitigates — but passes the stale snapshot's artifacts (compounding F-C3). `publish_artifact` ignores `content_type` and always overwrites despite the idempotency contract. | `workspace.py:175-176`, `:193-217`, `fsspec.py:263-291` | B13 |
 
 ### 3.4 Performance (P2)
 
 | ID | Sev | Finding | Evidence | Fixed by |
 |----|-----|---------|----------|----------|
-| F-P1 | P2 | `create_checkpoint` strictly sequential: per new file ~2 HEAD + 2 PUT + bucket probes; `read_bytes`/SHA-256/CAS writes run on the event loop; full bytes resident in memory. Runs at every turn close in flowjet. | `checkpoint.py:139-195` | C2 |
+| F-P1 | P2 | `create_checkpoint` strictly sequential: per new file ~2 HEAD + 2 PUT + bucket probes; `read_bytes`/SHA-256/CAS writes run on the event loop; full bytes resident in memory. Runs at every turn close in the host. | `checkpoint.py:139-195` | C2 |
 | F-P2 | P2 | `put_blob` does an internal `exists` HEAD duplicating the caller's `head_blob`; `_ensure_parent_dir` calls `makedirs` on every write (cloud prefixes are implicit; s3fs `_mkdir` cold-probes the bucket and can even attempt `create_bucket`). | `fsspec.py:104-113`, `:137-159` | C1 |
-| F-P3 | P2 | **[LIVE]** `materialize_content`: full GET per file *including unchanged ones* (downloads remote bytes just to hash-compare), second GET for changed files, sequential loop, blocking `read_bytes`/`write_bytes` on the event loop, full `rglob` reconcile. Flowjet's docstring expects "sha-skip keeps repeat turns cheap" — the implementation downloads the entire content tree every turn. | `workspace.py:143-177`, `:203-238`, flowjet `workspace.py:299-306` | C3 |
+| F-P3 | P2 | **[LIVE]** `materialize_content`: full GET per file *including unchanged ones* (downloads remote bytes just to hash-compare), second GET for changed files, sequential loop, blocking `read_bytes`/`write_bytes` on the event loop, full `rglob` reconcile. The host's docstring expects "sha-skip keeps repeat turns cheap" — the implementation downloads the entire content tree every turn. | `workspace.py:143-177`, `:203-238`, host `workspace.py:299-306` | C3 |
 | F-P4 | P2 | Deletions cost 2 sequential RTTs each (`exists` + `rm_file`). | `fsspec.py:375-386` | C1 |
 | F-P5 | P2 | `Materializer`: one task per manifest entry (unbounded), full-file hash on every materialize, `gather` without `return_exceptions`, synchronous `os.walk` symlink scan on the event loop. | `materializer.py:49-80`, `:92-95`, `:125-139` | C4 |
 | F-P6 | P2 | `initialize`/`recover` each do a full `ls` + one GET per checkpoint until the snapshot (done twice, no pruning → O(all checkpoints ever)). | `checkpoint.py:98-127`, `:284-350` | B9, C5 |
@@ -136,7 +136,7 @@ Dependency direction is unchanged; `fsspec` stays a `soothe` (host) dependency.
 
 - Constructs `DirtyTracker(on_dirty=debouncer.notify_dirty, watched_subdirs=…)` and `BackgroundUploader(on_backpressure=debouncer.set_pending_count)`.
 - Calls `await checkpoint_mgr.initialize()` after construction (loads remote manifest + counters; cheap, idempotent).
-- `Workspace.start_tracking()` null-guards optional components so a state-store-less consumer no longer crashes (flowjet's workaround becomes unnecessary).
+- `Workspace.start_tracking()` null-guards optional components so a state-store-less consumer no longer crashes (the host's workaround becomes unnecessary).
 
 **Co-landing rule**: F-L1 makes the debouncer fire mid-turn, which activates F-C2's lost-write window. B2 must land in the same change or before.
 
@@ -176,7 +176,7 @@ The uploader stays (RFC Flow 2 step 5 requires asynchronous persistence) and its
 
 ### 4.10 `Workspace.materialize` signature (F-C1)
 
-Change the signature to `materialize(manifest: Manifest)` — the shape the only real caller (flowjet) already passes — and fix the logging line accordingly. The `list[Resource]` form has no caller and never worked; it is not kept as an overload.
+Change the signature to `materialize(manifest: Manifest)` — the shape the only real caller (the host) already passes — and fix the logging line accordingly. The `list[Resource]` form has no caller and never worked; it is not kept as an overload.
 
 ### 4.11 Streaming (F-C12)
 
@@ -222,7 +222,7 @@ Remove the fake-streaming overrides from `FsspecSyncBackend` so the protocol def
 **Action**: Modify
 **File(s)**: `packages/soothe/src/soothe/workspace/sync/workspace.py`
 **Guide Section**: §4.10
-**Description**: Accept a `Manifest` (flowjet's actual call shape); fix the logging line; no `list[Resource]` overload.
+**Description**: Accept a `Manifest` (the host's actual call shape); fix the logging line; no `list[Resource]` overload.
 **Dependencies**: none.
 
 #### Task B2: Snapshot-ack dirty clear **[REPRO-backed]**
@@ -317,7 +317,7 @@ Remove the fake-streaming overrides from `FsspecSyncBackend` so the protocol def
 **Action**: Modify
 **File(s)**: `packages/soothe/src/soothe/workspace/sync/workspace.py`
 **Guide Section**: §3.3 F-C13
-**Description**: `materialize_content` internally extends `protected` with the current dirty set and the in-memory manifest artifact paths (callers may add more — flowjet's stale-snapshot protection stops being the only line of defense). `publish_artifact` records the `content_type` deviation in its docstring.
+**Description**: `materialize_content` internally extends `protected` with the current dirty set and the in-memory manifest artifact paths (callers may add more — the host's stale-snapshot protection stops being the only line of defense). `publish_artifact` records the `content_type` deviation in its docstring.
 **Deliverables**: compounding leg of the F-C3 chain closed even when consumers pass stale protection.
 **Dependencies**: A1 (dirty set available), B3.
 
@@ -386,7 +386,7 @@ Remove the fake-streaming overrides from `FsspecSyncBackend` so the protocol def
 **Action**: Modify
 **File(s)**: `.platonic/specs/coreagent/RFC-CORE-010-workspace-sync-materialization.md` (via specs-refine), `CHANGELOG.md`
 **Guide Section**: §2, §4.5–§4.7
-**Description**: Amend: (a) Package Placement row "Workspace lifecycle RPCs | soothe-daemon" → downstream host apps (flowjet) + drop the stale per-loop daemon opt-in docs; (b) S3 mechanism text (`fs.use_cache` → skip_instance_cache/shared-instance statement); (c) constraint-4 fallback wording; (d) Flow 1 step 2's "hardlink/reflink" wording (§4.6 declared deviation). CHANGELOG entry per release-and-governance rules (no AI co-authors).
+**Description**: Amend: (a) Package Placement row "Workspace lifecycle RPCs | soothe-daemon" → downstream host apps (the host) + drop the stale per-loop daemon opt-in docs; (b) S3 mechanism text (`fs.use_cache` → skip_instance_cache/shared-instance statement); (c) constraint-4 fallback wording; (d) Flow 1 step 2's "hardlink/reflink" wording (§4.6 declared deviation). CHANGELOG entry per release-and-governance rules (no AI co-authors).
 **Dependencies**: D1.
 
 ---
@@ -411,9 +411,9 @@ Remove the fake-streaming overrides from `FsspecSyncBackend` so the protocol def
 | F-C10 debouncer leak | open → start_tracking → `manager.close(run_id)` → assert no pending tasks (`asyncio.all_tasks()` diff) | `test_manager.py` |
 | F-C11 sqlite | concurrent upserts via `asyncio.gather` → no exceptions | `test_sqlite_state.py` |
 
-### 6.2 Consumer-contract integration test (mirrors flowjet)
+### 6.2 Consumer-contract integration test (mirrors the host)
 
-A soothe-side test drives the exact §1.1 sequence against `MemoryFileSystem`: `WorkspaceManager(state_store_factory, content_backend_factory, watched_subdirs)` → `open` → `recover` → `materialize_content(protected, reconcile)` → `materialize(manifest)` → `start_tracking` → agent writes → `checkpoint` → `manager.close` → re-`open` → verify artifacts survive. This pins the API shape flowjet depends on (including the kwargs flowjet signature-probes at `workspace.py:366-379`).
+A soothe-side test drives the exact §1.1 sequence against `MemoryFileSystem`: `WorkspaceManager(state_store_factory, content_backend_factory, watched_subdirs)` → `open` → `recover` → `materialize_content(protected, reconcile)` → `materialize(manifest)` → `start_tracking` → agent writes → `checkpoint` → `manager.close` → re-`open` → verify artifacts survive. This pins the API shape the host depends on (including the kwargs probed at `workspace.py:366-379`).
 
 ### 6.3 Call-count instrumentation (performance assertions)
 
@@ -431,7 +431,7 @@ Existing `tests/integration/workspace/sync/test_s3_integration.py` (env-gated li
 - [x] §6.1–§6.2 regression tests green (201 workspace unit tests; consumer-contract test in `test_manager.py::TestConsumerContract`)
 - [x] Full unit suites green (3264 passed / 16 skipped); `ruff` clean
 - [x] Live S3 integration green against Tencent COS (24 tests) + 64 MiB streaming smoke (bounded-memory assertions)
-- [x] Flowjet compatibility confirmed against the §1.1 contract — manual pass: static API comparison (all §1.1 touchpoints preserved, incl. `CheckpointPayload.manifest_snapshot` now always populated by `recover()` even for delta chains) plus flowjet's consumer suites run against this working tree via `PYTHONPATH` injection: `test_workspace_sync.py` 37/37, full `tests/unit/server` 243/243, `test_session_continuity_integration.py` 2/2
+- [x] Host compatibility confirmed against the §1.1 contract — manual pass: static API comparison (all §1.1 touchpoints preserved, incl. `CheckpointPayload.manifest_snapshot` now always populated by `recover()` even for delta chains) plus the host's consumer suites run against this working tree via `PYTHONPATH` injection: `test_workspace_sync.py` 37/37, full `tests/unit/server` 243/243, `test_session_continuity_integration.py` 2/2
 - [x] RFC-CORE-010 amendments accepted or deviations recorded — the five amendments are applied to the RFC text directly (Flow 1 hardlink→reflink/copy, Flow 2 option-A staging, Security S3 fsspec cache semantics, Module Layout actual file set, Non-Goals chunking struck through), with an Amendments section recording the decision history; see `.platonic/specs/coreagent/RFC-CORE-010-workspace-sync-materialization.md`
 - [x] CHANGELOG entry added
 
@@ -453,16 +453,16 @@ s3fs-specific facts discovered during live COS validation:
 
 Deviations from the plan as written: §4.11 replaced by D-S above; `_DIR_BEARING_PROTOCOLS` gating and debouncer wake cadence (0.5 s) as planned; `Workspace.materialize` keeps no resource-list overload per §4.10.
 
-### 8.1 Flowjet compatibility pass (2026-11-26)
+### 8.1 Host compatibility pass (2026-11-26)
 
-Verified against `../flowjet/src/flowjet/core/runtime/isolation/workspace.py` (consumer, `SyncAwareWorkspaceResolver`):
+Verified against the host's workspace resolver (`SyncAwareWorkspaceResolver`):
 
-- **Constructor / lifecycle surface unchanged**: `WorkspaceManager(workspaces_root, cas_root, backend, state_store_factory, content_backend_factory, watched_subdirs)`, `open`/`close`/`close_all`, `ws.start_tracking()`, `ws.checkpoint()` (return value unused by flowjet), `ws.root`, `ws.run_id`, `construct_sync_backend(uri, config)`, `CASCache(cache_root=…)` + positional `fetch_and_cache(sha, backend)` — all preserved.
-- **`recover()` contract strengthened**: flowjet reads `payload.manifest_snapshot`; the rewritten `recover()` always populates it (remote manifest authoritative, delta chain replayed) instead of returning `None` for DELTA payloads.
-- **`materialize(manifest)` now actually works** — flowjet's `_restore_prior_state` call at `workspace.py:431` was previously crashing at the logging line after completing the work (F-C1).
-- **flowjet's defensive probes are obsolete but harmless**: the `protected`/`reconcile` signature probe now always passes, and the `_sqlite_state_store_factory` docstring's "uploader is None → start_tracking crashes" rationale is stale (fixed by F-L3). Both cleanups are flowjet-repo follow-ups, not blockers. *(Done 2026-11-26: the probe + degrade branch was removed from flowjet — dead code since the `soothe>=1.3.7` floor ships both kwargs — and the docstring now describes the pending-row staging role; flowjet's suites pass 243/243 against both the installed 1.3.7 floor and this working tree.)*
+- **Constructor / lifecycle surface unchanged**: `WorkspaceManager(workspaces_root, cas_root, backend, state_store_factory, content_backend_factory, watched_subdirs)`, `open`/`close`/`close_all`, `ws.start_tracking()`, `ws.checkpoint()` (return value unused by the host), `ws.root`, `ws.run_id`, `construct_sync_backend(uri, config)`, `CASCache(cache_root=…)` + positional `fetch_and_cache(sha, backend)` — all preserved.
+- **`recover()` contract strengthened**: the host reads `payload.manifest_snapshot`; the rewritten `recover()` always populates it (remote manifest authoritative, delta chain replayed) instead of returning `None` for DELTA payloads.
+- **`materialize(manifest)` now actually works** — the host's `_restore_prior_state` call at `workspace.py:431` was previously crashing at the logging line after completing the work (F-C1).
+- **The host's defensive probes are obsolete but harmless**: the `protected`/`reconcile` signature probe now always passes, and the `_sqlite_state_store_factory` docstring's "uploader is None → start_tracking crashes" rationale is stale (fixed by F-L3). Both cleanups are host-repo follow-ups, not blockers. *(Done 2026-11-26: the probe + degrade branch was removed from the host — dead code since the `soothe>=1.3.7` floor ships both kwargs — and the docstring now describes the pending-row staging role; the host's suites pass 243/243 against both the installed 1.3.7 floor and this working tree.)*
 
-**Evidence (manual pass, this working tree via `PYTHONPATH` injection):** `tests/unit/server/test_workspace_sync.py` 37/37 (resolver semantics, lifecycle, artifact restore, checkpoint-on-close, shared-run refcounting, shutdown); full `tests/unit/server` 243/243; `tests/integration/test_session_continuity_integration.py` 2/2 (restart recovery chain — the F-C3 live data-loss path). flowjet CI has not been run in its own repo; the verification is a local manual pass.
+**Evidence (manual pass, this working tree via `PYTHONPATH` injection):** `tests/unit/server/test_workspace_sync.py` 37/37 (resolver semantics, lifecycle, artifact restore, checkpoint-on-close, shared-run refcounting, shutdown); full `tests/unit/server` 243/243; `tests/integration/test_session_continuity_integration.py` 2/2 (restart recovery chain — the F-C3 live data-loss path). The host's CI has not been run in its own repo; the verification is a local manual pass.
 
 ---
 
@@ -488,4 +488,4 @@ Verified against `../flowjet/src/flowjet/core/runtime/isolation/workspace.py` (c
 | Date | Guide Version | Changes |
 |------|---------------|---------|
 | 2026-11-26 | IG-CORE-008 Draft | Initial guide from the workspace-sync audit (4 runtime reproductions, environment-pinned verification) |
-| 2026-11-26 | IG-CORE-008 Draft (re-scoped) | Consumer clarification: subsystem targets downstream hosts (flowjet), not soothe-daemon. Retracted F-W1/F-W5 (daemon wiring); reframed lifecycle findings as library defects (F-L1–L3); F-C3 upgraded to live restart data-loss chain (snapshot-stale manifest + reconcile compounding); F-C1 fix direction inverted (accept `Manifest`); F-C10 leak half upgraded to live per-turn; F-P3 upgraded to live per-turn full-tree download; added consumer-contract integration test and RFC Package Placement amendment |
+| 2026-11-26 | IG-CORE-008 Draft (re-scoped) | Consumer clarification: subsystem targets downstream hosts, not soothe-daemon. Retracted F-W1/F-W5 (daemon wiring); reframed lifecycle findings as library defects (F-L1–L3); F-C3 upgraded to live restart data-loss chain (snapshot-stale manifest + reconcile compounding); F-C1 fix direction inverted (accept `Manifest`); F-C10 leak half upgraded to live per-turn; F-P3 upgraded to live per-turn full-tree download; added consumer-contract integration test and RFC Package Placement amendment |

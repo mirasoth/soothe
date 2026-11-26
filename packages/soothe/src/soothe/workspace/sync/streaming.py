@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_STREAM_READ_CHUNK = 1024 * 1024  # 1 MiB
+_STREAM_READ_CHUNK = 1024 * 1024
 
 
 async def put_content_file_from_file(

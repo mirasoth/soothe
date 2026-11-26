@@ -24,8 +24,8 @@ Required: `DASHSCOPE_BASE_URL`, `DASHSCOPE_API_KEY`, `DS1`..`DS16` `_BASE_URL`/`
 Optional: `TAVILY_API_KEY`, `SOOTHE_WORKSPACE_HOST_ROOT`, `SOOTHE_DEBUG`
 
 > Workspace sync (S3-backed workspaces) is **not wired into the daemon** —
-> it is an agent-plane capability (flowjet via soothe
-> `TurnScopedWorkspaces`, IG-CORE-010). `loop_new` requests carrying an
+> it is a host-side capability driven through
+> `soothe.workspace.sync.TurnScopedWorkspaces`. `loop_new` requests carrying an
 > `s3://` workspace or `workspace_sync_source` are rejected with
 > `WORKSPACE_RESOLUTION_FAILED`.
 

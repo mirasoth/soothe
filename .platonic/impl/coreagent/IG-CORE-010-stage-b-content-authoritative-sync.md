@@ -3,7 +3,7 @@
 **Guide**: IG-CORE-010
 **Title**: Stage B — Content-Authoritative Representation and Daemon De-Wiring
 **Created**: 2026-11-26
-**Related RFCs**: RFC-CORE-010 (Workspace Sync Architecture), RFC-AGSP-001 (agentspace 执行面), RFC-002 (flowjet)
+**Related RFCs**: RFC-CORE-010 (Workspace Sync Architecture), host execution-plane spec, host workspace spec
 
 ## Overview
 
@@ -13,7 +13,7 @@ together:
 1. **Daemon de-wiring** — soothe-daemon no longer wires workspace sync at all.
    The daemon-side integration was half-wired (sync source detection on
    `loop_new`, a manager singleton, sync-out only via debounced auto
-   checkpoints, no read path) and the agent plane (flowjet via
+   checkpoints, no read path) and the agent plane (host via
    `TurnScopedWorkspaces`) is the only supported sync surface. `loop_new`
    requests carrying a `workspace_sync_source` or a URI-shaped workspace are
    rejected fail-loud.
@@ -94,17 +94,17 @@ manifests written by Stage A validate unchanged (unknown fields ignored).
       `open_turn` = manager.open (manifest load) → materialize_content →
       start_tracking; CAS artifact-restore path deleted.
 
-### Task 3 — flowjet
+### Task 3 — host
 
 - [x] Resolver: sync now REQUIRES a content source (fail loud at engine
       construction — dual-source is the contract); `cas_root` setting and the
       SQLite state-store factory deleted.
 - [x] Tests + CHANGELOG.
 
-### Task 4 — miracloud (agentspace plane)
+### Task 4 — miracloud (orchestrator plane)
 
-- [x] Helm values / flowjet-agentspace template: drop `FLOWJET_WORKSPACE_CAS_ROOT`.
-- [x] RFC-AGSP-001 §7: layout tree (`runs/<wsId>/manifest.json` only),
+- [x] Helm values / host deployment template: drop `WORKSPACE_CAS_ROOT`.
+- [x] Host execution-plane spec §7: layout tree (`runs/<wsId>/manifest.json` only),
       purge semantics (two prefixes — content tree + runs — no shared-CAS
       carve-out), rfc-history Revision 109.
 
@@ -115,7 +115,7 @@ manifests written by Stage A validate unchanged (unknown fields ignored).
       test rewritten to the new contract (env-gated)
 - [x] soothe-daemon: 1522 tests green incl. fail-loud loop_new + de-wiring
       integration tests
-- [x] flowjet: 689 unit tests green against the local Stage B soothe tree
+- [x] host suite: 689 unit tests green against the local Stage B soothe tree
       (`PYTHONPATH=packages/soothe/src`); ruff + mypy clean
 - [x] ruff/format clean on all touched packages; vulture dead-code gate green;
       dependency boundary validation green

@@ -45,7 +45,7 @@ Goals (operator decisions, all settled):
 - Jev is inherited *into* veritas as a built-in fast path: Jev first, LLM
   second; when Jev is inapplicable or unusable, fall straight to the LLM.
 - nano defaults to critical-only hard denies — uniformly for **all**
-  downstream consumers (soothe, flowjet, agentspace, miracloud images).
+  downstream consumers (soothe, host, orchestrator, miracloud images).
 
 ## Solution
 
@@ -79,7 +79,7 @@ set:
   the match reason
 
 **Default: `hard_deny_severities = {"critical"}`** for every consumer.
-Downstream consumers without a judgment layer (flowjet, agentspace) treat
+Downstream consumers without a judgment layer (host, orchestrator) treat
 `risk_hint` as **allow-with-audit**: the action executes, but the decision
 carries the rule id / severity and emits a warning-level log line, so the
 posture change is observable and attributable. Hosts that want to tighten
@@ -319,7 +319,7 @@ from IG-LOOP-009 — cleared when the loop ends):
 - Regressions: existing clarification suite (`tests/unit/core/loop/clarification/`,
   `tests/unit/sloop/middleware/`), veritas suite
   (`tests/unit/subagents/veritas/`), tool approval bridge tests.
-- Cross-repo: nano unit suite; flowjet / agentspace behavior regression
+- Cross-repo: nano unit suite; host / orchestrator behavior regression
   (see Release).
 
 ## Release and regression
@@ -328,10 +328,10 @@ from IG-LOOP-009 — cleared when the loop ends):
    `hard_deny_severities={"critical"}` is a **behavior change** for every
    consumer — CHANGELOG `Changed` entry, version bump on the next release
    train.
-2. flowjet / agentspace regression: previously hard-denied actions
+2. Host / orchestrator regression: previously hard-denied actions
    (`git push -f`, `chmod -R`, package installs, `.env`/`.git` component
    writes) become allow-with-audit on their execution planes. Run
-   agentspace unit tests + miracloud e2e (workspace fence assertions are
+   the orchestrator unit tests + miracloud e2e (workspace fence assertions are
    unaffected — the write boundary stays critical).
 3. soothe floor bump lands in the same train; soothe deletes its built-in
    rules only against the new nano floor.

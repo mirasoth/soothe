@@ -1,9 +1,9 @@
-"""Tests for client workspace propagation through ``loop_new``.
+"""Tests for client workspace propagation through `loop_new`.
 
 The CLI passes the user's CWD on bootstrap so the agent's filesystem tools default
-to the user's project directory. ``_handle_loop_new`` must validate the value and
-persist it in the database; ``bind_execution_thread_for_loop`` must prefer
-``current_workspace`` (or mapped ``client_workspace``) over the persisted ``ws_*`` layout.
+to the user's project directory. `_handle_loop_new` must validate the value and
+persist it in the database; `bind_execution_thread_for_loop` must prefer
+`current_workspace` (or mapped `client_workspace`) over the persisted `ws_*` layout.
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ async def _read_metadata(loop_id: str, config: Any) -> dict[str, Any]:
 
 
 class _CapturingDaemon:
-    """Minimal daemon double recording the response sent for ``loop_new``."""
+    """Minimal daemon double recording the response sent for `loop_new`."""
 
     def __init__(self, config: Any = None) -> None:
         self.sent: list[dict[str, Any]] = []
@@ -70,7 +70,7 @@ def _make_daemon_with_pm(config: Any) -> _CapturingDaemon:
 async def test_loop_new_persists_client_workspace(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A valid client workspace on ``loop_new`` is written into the database."""
+    """A valid client workspace on `loop_new` is written into the database."""
     monkeypatch.setattr("soothe.config.SOOTHE_HOME", str(tmp_path / "soothe-home"))
 
     project = tmp_path / "myproject"
@@ -104,7 +104,7 @@ async def test_loop_new_persists_client_workspace(
 async def test_loop_new_persists_is_ephemeral(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """``is_ephemeral`` on loop_new is stored in loop metadata."""
+    """`is_ephemeral` on loop_new is stored in loop metadata."""
     monkeypatch.setattr("soothe.config.SOOTHE_HOME", str(tmp_path / "soothe-home"))
 
     from soothe.config import SootheConfig
@@ -169,7 +169,7 @@ async def test_loop_new_omits_client_workspace_when_not_on_daemon_host(
 async def test_loop_new_maps_client_workspace_under_host_root(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """RFC-621: host paths under ``workspace_mount.host_root`` map without existing literally."""
+    """Host paths under `workspace_mount.host_root` map without existing literally."""
     monkeypatch.setattr("soothe.config.SOOTHE_HOME", str(tmp_path / "soothe-home"))
 
     host_root = tmp_path / "host"
@@ -238,7 +238,7 @@ async def test_loop_new_omits_client_workspace_when_invalid(
 async def test_loop_new_omits_client_workspace_when_missing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Without a ``workspace`` field the loop falls back to per-loop daemon dir."""
+    """Without a `workspace` field the loop falls back to per-loop daemon dir."""
     monkeypatch.setattr("soothe.config.SOOTHE_HOME", str(tmp_path / "soothe-home"))
 
     from soothe.config import SootheConfig
@@ -265,7 +265,7 @@ async def test_loop_new_omits_client_workspace_when_missing(
 async def test_bind_execution_thread_prefers_client_workspace(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """``bind_execution_thread_for_loop`` registers the client_workspace, not the per-loop dir."""
+    """`bind_execution_thread_for_loop` registers the client_workspace, not the per-loop dir."""
     monkeypatch.setattr("soothe.config.SOOTHE_HOME", str(tmp_path / "soothe-home"))
 
     project = tmp_path / "myproject"
@@ -323,7 +323,7 @@ async def test_bind_execution_thread_prefers_client_workspace(
 async def test_bind_execution_thread_uses_loop_id_as_checkpoint_thread(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """RFC-223: the main StrangeLoop checkpoint thread id equals the loop id."""
+    """The main StrangeLoop checkpoint thread id equals the loop id."""
     monkeypatch.setattr("soothe.config.SOOTHE_HOME", str(tmp_path / "soothe-home"))
 
     from soothe.config import SootheConfig
@@ -371,7 +371,7 @@ async def test_bind_execution_thread_uses_loop_id_as_checkpoint_thread(
 async def test_bind_execution_thread_preserves_existing_loop_id_binding(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """RFC-223: a stored ``current_thread_id == loop_id`` is the bound state, not a stale alias.
+    """A stored `current_thread_id == loop_id` is the bound state, not a stale alias.
 
     Earlier code treated this as a legacy alias and minted a fresh thread,
     which silently abandoned the loop's checkpoint and conversation history
@@ -479,11 +479,11 @@ async def test_bind_execution_thread_falls_back_when_client_workspace_missing(
 
 @pytest.mark.asyncio
 async def test_checkpoint_thread_id_overrides_stale_runner_for_workspace_resolution() -> None:
-    """``bind`` sets registry workspace on the loop checkpoint; ``run_query`` must use that id.
+    """`bind` sets registry workspace on the loop checkpoint; `run_query` must use that id.
 
-    RFC-221 stopped mutating ``runner.current_thread_id`` inside ``bind_execution_thread_for_loop``.
-    Without passing the bound checkpoint into ``run_query``, workspace resolution could read
-    a stale singleton id and pass the wrong directory into ``LoopRunRequest``.
+    Binding no longer mutates `runner.current_thread_id` inside `bind_execution_thread_for_loop`.
+    Without passing the bound checkpoint into `run_query`, workspace resolution could read
+    a stale singleton id and pass the wrong directory into `LoopRunRequest`.
     """
     from soothe_daemon.query import QueryEngine
 
@@ -506,20 +506,15 @@ async def test_checkpoint_thread_id_overrides_stale_runner_for_workspace_resolut
     assert qe._daemon._runner.current_thread_id == "bound-loop-thread"
 
 
-# ---------------------------------------------------------------------------
-# Workspace sync — daemon de-wiring (IG-CORE-010)
-#
-# Workspace sync is an agent-plane capability (flowjet via soothe
-# ``TurnScopedWorkspaces``); the daemon does NOT wire it. Requests asking
-# for it fail loud with WORKSPACE_RESOLUTION_FAILED.
-# ---------------------------------------------------------------------------
+# Workspace sync is a host-side capability driven through
+# `TurnScopedWorkspaces`; the daemon does not wire it.
 
 
 @pytest.mark.asyncio
 async def test_loop_new_rejects_non_allowlisted_uri_scheme(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """S8: ``file://`` URI in ``client_workspace`` is rejected (SSRF prevention)."""
+    """A `file://` URI in `client_workspace` is rejected (SSRF prevention)."""
     monkeypatch.setattr("soothe.config.SOOTHE_HOME", str(tmp_path / "soothe-home"))
 
     from soothe.config import SootheConfig
@@ -548,7 +543,7 @@ async def test_loop_new_rejects_non_allowlisted_uri_scheme(
 
 @pytest.mark.asyncio
 async def test_loop_new_s3_uri_is_rejected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """An ``s3://`` URI in ``client_workspace`` fails loud — the daemon has no sync path."""
+    """An `s3://` URI in `client_workspace` fails loud — the daemon has no sync path."""
     monkeypatch.setattr("soothe.config.SOOTHE_HOME", str(tmp_path / "soothe-home"))
 
     from soothe.config import SootheConfig
@@ -579,7 +574,7 @@ async def test_loop_new_s3_uri_is_rejected(tmp_path: Path, monkeypatch: pytest.M
 async def test_loop_new_workspace_field_uri_is_rejected(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A URI in the legacy ``workspace`` field fails loud too (no sync wiring)."""
+    """A URI in the legacy `workspace` field fails loud too (no sync wiring)."""
     monkeypatch.setattr("soothe.config.SOOTHE_HOME", str(tmp_path / "soothe-home"))
 
     from soothe.config import SootheConfig
@@ -610,7 +605,7 @@ async def test_loop_new_workspace_field_uri_is_rejected(
 async def test_loop_new_sync_source_field_is_rejected(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A non-empty ``workspace_sync_source`` fails loud (agent-plane capability)."""
+    """A non-empty `workspace_sync_source` is rejected (host-side capability)."""
     monkeypatch.setattr("soothe.config.SOOTHE_HOME", str(tmp_path / "soothe-home"))
 
     from soothe.config import SootheConfig

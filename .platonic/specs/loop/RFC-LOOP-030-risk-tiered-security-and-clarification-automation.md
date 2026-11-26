@@ -73,7 +73,7 @@ confidence vocabularies, no shared fast path.
 5. Jev is inherited into veritas: Jev first, LLM second; when Jev is
    inapplicable or unusable, fall straight to the LLM.
 6. nano defaults to critical-only hard denies, uniformly for **all**
-   downstream consumers (soothe, flowjet, agentspace).
+   downstream consumers (soothe, host, orchestrator).
 
 ---
 
@@ -137,7 +137,7 @@ IG-LOOP-014 Part 1.
 ### 4.3 `risk_hint` verdict and the downstream default
 
 **Default: `hard_deny_severities = {"critical"}` for every consumer.**
-Consumers without a judgment layer (flowjet, agentspace) treat `risk_hint`
+Consumers without a judgment layer (host, orchestrator) treat `risk_hint`
 as **allow-with-audit**: the action executes, the decision carries rule id +
 severity, and a warning-level log line is emitted at the enforcement points.
 The posture change is observable and attributable; hosts that want to tighten
@@ -300,7 +300,7 @@ nano `SecurityConfig` gains `hard_deny_severities` (default
 1. nano ships first — severity registry + `risk_hint` + default
    `hard_deny_severities={"critical"}` is a behavior change for every
    consumer (CHANGELOG `Changed`, next release train).
-2. flowjet / agentspace regression: previously hard-denied actions (`git
+2. Host / orchestrator regression: previously hard-denied actions (`git
    push -f`, `chmod -R`, package installs, `.env`/`.git` component writes)
    become allow-with-audit on their execution planes. Workspace fence
    assertions are unaffected (write boundary stays critical).

@@ -4,7 +4,7 @@ Tests verify:
     - open() creates workspace directories and components.
     - get() returns open workspaces.
     - close() cleans up.
-    - open() loads the remote manifest (F-L2).
+    - open() loads the remote manifest.
     - backend_factory wiring and failure handling.
     - materialize-content security invariants through the manager path.
 """
@@ -118,16 +118,14 @@ class TestWorkspaceManager:
             )
 
 
-# ---------------------------------------------------------------------------
-# F-L2 wiring + consumer contract (flowjet call sequence)
-# ---------------------------------------------------------------------------
+# Manifest-load wiring and full turn contract
 
 
 class TestLifecycleWiring:
     async def test_open_initializes_manifest_state(
         self, tmp_path: Path, backend: FsspecSyncBackend
     ) -> None:
-        """F-L2: open() loads the remote manifest — no consumer recover() glue."""
+        """Open loads the remote manifest without consumer-side recovery glue."""
         from soothe.workspace.sync.workspace_sync import Manifest, ManifestEntry
 
         await backend.put_manifest(
@@ -161,7 +159,7 @@ class TestLifecycleWiring:
         await ws.close()
 
     async def test_materialize_content_breaks_escaping_broken_symlink(self, tmp_path: Path) -> None:
-        """F-C14: a broken symlink pointing outside cannot escape the root.
+        """A broken symlink pointing outside cannot escape the root.
 
         The old buffered write followed the symlink target and created a
         file OUTSIDE the workspace; the streaming restore replaces the
@@ -222,7 +220,7 @@ class TestLifecycleWiring:
 
 
 class TestConsumerContract:
-    """The flowjet call sequence against the full component stack."""
+    """Full turn contract against the complete component stack."""
 
     async def test_full_turn_round_trip(self, tmp_path: Path) -> None:
         """open → materialize_content → track → write → checkpoint → close,
