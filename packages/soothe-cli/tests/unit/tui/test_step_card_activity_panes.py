@@ -188,8 +188,8 @@ def test_panes_stack_in_one_column_at_every_width(cols: int | None) -> None:
     ]
     # Four panes, four header lines, each on its own row (never side by side).
     assert len(header_lines) == 4
-    assert TOOLS_HEADER in lines[header_lines[0]]
-    assert TODO_HEADER in lines[header_lines[1]]
+    assert TODO_HEADER in lines[header_lines[0]]
+    assert TOOLS_HEADER in lines[header_lines[1]]
     assert FILES_HEADER in lines[header_lines[2]]
     assert THINKING_HEADER in lines[header_lines[3]]
 

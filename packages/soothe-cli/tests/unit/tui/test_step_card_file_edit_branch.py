@@ -259,7 +259,7 @@ def test_section_order_todo_tools_fileedit() -> None:
     todo_idx = text.index("──── todo")
     tools_idx = text.index("──── tools")
     file_edit_idx = text.index("──── files")
-    assert tools_idx < todo_idx < file_edit_idx
+    assert todo_idx < tools_idx < file_edit_idx
 
 
 def test_file_edit_capped_to_latest_five() -> None:

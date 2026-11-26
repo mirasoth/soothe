@@ -119,6 +119,7 @@ def test_step_activity_tree_shows_collapsed_tool_overflow() -> None:
         muted="m",
         foreground="f",
         accent="a",
+        success="s",
         warning="w",
         card_border="b",
     )

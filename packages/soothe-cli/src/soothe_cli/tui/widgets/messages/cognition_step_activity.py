@@ -922,17 +922,19 @@ def _pane_header_line(
 ) -> PaneLine:
     """Header line: a rule with the label and right-aligned counters on it.
 
-    `──── tools ──────────────────────────────── 22 · ⚠1 ────`
+    `──── todo ──────────────────────────────── 3/7 ────`
+
+    The whole rule renders in the pane's own color (lead/fill regular, label
+    and counter bold) so each section title is visually distinct at a glance.
     """
-    colors = _safe_colors(colors)
     rule = g.box_horizontal
     lead = f"{rule * STEP_CARD_PANE_LEAD_RULE_CHARS} "
     counter_w = display_width(counter) if counter else 0
     fill = max(0, width - display_width(lead) - display_width(label) - 1 - counter_w - 1)
     segs = [
-        (lead, colors.card_border),
+        (lead, color),
         (f"{label} ", _bold(color)),
-        (rule * fill, colors.card_border),
+        (rule * fill, color),
     ]
     meta = [(counter, _bold(color))] if counter else []
     return PaneLine(segs=segs, meta=meta)
@@ -1070,7 +1072,7 @@ class StepActivityTree:
     ) -> Content:
         """Render the step card activity body as one vertical column of panes.
 
-        Panes always stack in reading order (tools → todo → files → thinking)
+        Panes always stack in reading order (todo → tools → files → thinking)
         at every terminal width; `max_cols` only bounds line width (rows are
         truncated, never wrapped) and falls back to a 100-column budget when
         `None` (pure-render tests / unmounted widgets). A single column keeps
@@ -1111,10 +1113,50 @@ class StepActivityTree:
             return Content("")
 
         panes: list[ActivityPane] = []
+        animate_tools = step_status == "running"
+
+        # --- todo pane (first: the step's progress readout) -----------------
+        if todo_items:
+            todo_lines: list[PaneLine] = []
+            # No cap: every todo item renders (unlike tools/files previews).
+            # The pane is the step's progress readout — a live item hidden
+            # behind an overflow row would misrepresent current progress.
+            for item in todo_items:
+                content = str(item.get("content") or "").strip()
+                if not content:
+                    continue
+                phase = todo_status_phase(str(item.get("status") or "pending"))
+                icon = phase_icon(
+                    phase,
+                    g,
+                    spinner_position=spinner_position,
+                    animate_running=phase == "running" and animate_tools,
+                )
+                tone = task_tool_row_tone_for_phase(phase, colors)
+                meta = "live" if phase == "running" else ""
+                todo_lines.append(
+                    PaneLine(
+                        segs=[("  ", tone), (icon, tone), (" ", tone), (content, tone)],
+                        meta=[(meta, tone)] if meta else [],
+                    )
+                )
+            if todo_lines:
+                done = sum(
+                    1
+                    for item in todo_items
+                    if todo_status_phase(str(item.get("status") or "pending")) == "success"
+                )
+                panes.append(
+                    ActivityPane(
+                        label="todo",
+                        color=colors.cognition,
+                        lines=todo_lines,
+                        counter=f"{done}/{len(todo_items)}",
+                    )
+                )
 
         # --- tools pane ----------------------------------------------------
         tool_lines: list[PaneLine] = []
-        animate_tools = step_status == "running"
         failure_phases = ("error", "rejected", "failed")
 
         # Collapse historical (overflow) tool calls at the top of the tools pane,
@@ -1224,49 +1266,11 @@ class StepActivityTree:
             counter = format_tool_count_label(tool_total, singular="tool", plural="tools")
             if tool_failures:
                 counter = f"{counter}, {tool_failures} failed"
+            # Success green for the header: calm next to the other panes and
+            # it ties to the ✓ row icons below (accent/tool amber is loud).
             panes.append(
-                ActivityPane(label="tools", color=colors.accent, lines=tool_lines, counter=counter)
+                ActivityPane(label="tools", color=colors.success, lines=tool_lines, counter=counter)
             )
-
-        # --- todo pane -----------------------------------------------------
-        if todo_items:
-            todo_lines: list[PaneLine] = []
-            # No cap: every todo item renders (unlike tools/files previews).
-            # The pane is the step's progress readout — a live item hidden
-            # behind an overflow row would misrepresent current progress.
-            for item in todo_items:
-                content = str(item.get("content") or "").strip()
-                if not content:
-                    continue
-                phase = todo_status_phase(str(item.get("status") or "pending"))
-                icon = phase_icon(
-                    phase,
-                    g,
-                    spinner_position=spinner_position,
-                    animate_running=phase == "running" and animate_tools,
-                )
-                tone = task_tool_row_tone_for_phase(phase, colors)
-                meta = "live" if phase == "running" else ""
-                todo_lines.append(
-                    PaneLine(
-                        segs=[("  ", tone), (icon, tone), (" ", tone), (content, tone)],
-                        meta=[(meta, tone)] if meta else [],
-                    )
-                )
-            if todo_lines:
-                done = sum(
-                    1
-                    for item in todo_items
-                    if todo_status_phase(str(item.get("status") or "pending")) == "success"
-                )
-                panes.append(
-                    ActivityPane(
-                        label="todo",
-                        color=colors.cognition,
-                        lines=todo_lines,
-                        counter=f"{done}/{len(todo_items)}",
-                    )
-                )
 
         # --- files pane ----------------------------------------------------
         files_lines: list[PaneLine] = []

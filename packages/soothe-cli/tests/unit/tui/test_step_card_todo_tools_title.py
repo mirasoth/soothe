@@ -172,7 +172,7 @@ def test_normalize_todo_items() -> None:
     ]
 
 
-def test_activity_tree_tools_above_todo() -> None:
+def test_activity_tree_todo_above_tools() -> None:
     card = CognitionStepMessage("TD-01", "Scan Frontend and Backend", id="stp-todo")
     card._status = "running"
     card.set_todos(
@@ -193,7 +193,7 @@ def test_activity_tree_tools_above_todo() -> None:
     assert "ListFiles" in text
     todo_idx = text.index("──── todo")
     tools_idx = text.index("──── tools")
-    assert tools_idx < todo_idx
+    assert todo_idx < tools_idx
     assert tools_idx < text.index("ListFiles")
 
 

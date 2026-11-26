@@ -47,7 +47,7 @@ def test_has_task_activity_body_false_with_whitespace_reasoning() -> None:
 def test_render_reasoning_section_appears_after_todo() -> None:
     """The thinking pane header appears after the todo pane header.
 
-    Pane order follows information value: tools, todo, files, thinking — the
+    Pane order follows information value: todo, tools, files, thinking — the
     reasoning draft is last because it is the lowest-density pane.
     """
     content = StepActivityTree.render(

@@ -20,7 +20,7 @@ STEP_CARD_FILE_EDIT_PREVIEW_COUNT: Final[int] = 5
 STEP_CARD_REASONING_PREVIEW_LINES: Final[int] = 10
 
 # --- Step card activity panes (embedded windows, not a nested tree) ---
-# Panes always stack vertically in one column (tools → todo → files →
+# Panes always stack vertically in one column (todo → tools → files →
 # thinking) at every terminal width: a single column keeps the reading order
 # stable and avoids re-flowing the card when the terminal is resized.
 
