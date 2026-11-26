@@ -22,6 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Daemon vision preflight instructions now state that attached images are inline to the message and not files on disk (single- and multi-image variants), so the agent no longer wastes tool calls globbing the workspace for a file named like the attachment.
+
 - TUI plan-review card in the approval dock: the plan-body preview is now a bounded, internally scrollable region (visible scrollbar) instead of growing with the plan, which used to push the Approve/Reject/Refine option rows below the dock's visible region where they were unreachable (global stylesheet hides scrollbars). The approval dock also caps itself in absolute rows with a live viewport clamp (`on_resize` + card push) instead of `max-height: 40vh` — vh caps do not resolve while the auto-height docked bottom container measures its children, which inflated the container by the card's unclamped height and left the chat input floating above dead space instead of sticking to the screen bottom. Card chrome margins tightened so the full interactive card fits typical terminals.
 - Ask-mode prompt addendum no longer advertises a conditional `decompose_task` escape hatch — the tool is stripped and hard-blocked in ask mode, so the addendum now states it is unavailable outright.
 - `route_after_root_eval` checks plan mode before a dispatch route, so a plan-mode goal can never reach mutating DISPATCH through the root-eval edge (plan review remains the only gate to execution).

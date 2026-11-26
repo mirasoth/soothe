@@ -97,7 +97,9 @@ _VISION_INSTRUCTION_MULTI = (
     "For each image, focus on: visible objects, text content, charts/diagrams, and "
     "labels. Be specific about any text, numbers, or distinguishing features. "
     "If the images appear related (e.g., before/after, comparison, sequence), "
-    "note the relationship in a final **Relationship:** section."
+    "note the relationship in a final **Relationship:** section. "
+    "The images are attached inline to this message; they are NOT files on the user's "
+    "disk, so never suggest or attempt to locate them in the workspace."
 )
 
 
