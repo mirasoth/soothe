@@ -42,19 +42,24 @@ def command_token_span(line: str) -> tuple[int, int]:
 MediaKind = Literal["image", "video"]
 """Accepted values for the `kind` parameter in `MediaTracker` methods."""
 
-IMAGE_PLACEHOLDER_PATTERN = re.compile(r"\[image (?P<id>\d+)\]")
+IMAGE_PLACEHOLDER_PATTERN = re.compile(r"\[image (?P<id>\d+)(?:: (?P<name>[^\][]*))?\]")
 """Pattern for image placeholders with a named `id` capture group.
 
-Used to extract numeric IDs from placeholder tokens so the tracker can prune
-stale entries and compute the next available ID.
+The optional `name` group carries a human-readable source label such as the
+attachment filename (`[image 1: photo.jpg]`) or `clipboard`. Used to extract
+numeric IDs from placeholder tokens so the tracker can prune stale entries and
+compute the next available ID.
 """
 
-VIDEO_PLACEHOLDER_PATTERN = re.compile(r"\[video (?P<id>\d+)\]")
+VIDEO_PLACEHOLDER_PATTERN = re.compile(r"\[video (?P<id>\d+)(?:: (?P<name>[^\][]*))?\]")
 """Pattern for video placeholders with a named `id` capture group.
 
-Used to extract numeric IDs from placeholder tokens so the tracker can prune
-stale entries and compute the next available ID.
+The optional `name` group mirrors the image placeholder format (e.g.
+`[video 1: clip.mp4]`).
 """
+
+PLACEHOLDER_NAME_MAX_LEN = 48
+"""Maximum length of the source label embedded in a placeholder."""
 
 _UNICODE_SPACE_EQUIVALENTS = str.maketrans(
     {
@@ -102,27 +107,51 @@ class MediaTracker:
         self.next_image_id: int = 1
         self.next_video_id: int = 1
 
-    def add_media(self, data: ImageData | VideoData, kind: MediaKind) -> str:
+    def add_media(
+        self, data: ImageData | VideoData, kind: MediaKind, source_name: str | None = None
+    ) -> str:
         """Add a media item and return its placeholder text.
 
         Args:
         data: The image or video data to track.
         kind: Media type key.
+        source_name: Optional human-readable source label (e.g. attachment
+        filename or "clipboard") embedded in the placeholder.
 
         Returns:
-        Placeholder string like "[image 1]" or "[video 1]".
+        Placeholder string like "[image 1]", "[image 1: photo.jpg]", or
+        "[video 1]".
         """
         if kind == "image":
-            placeholder = f"[image {self.next_image_id}]"
+            placeholder = self._format_placeholder("image", self.next_image_id, source_name)
             data.placeholder = placeholder
             self.images.append(data)  # type: ignore[arg-type]
             self.next_image_id += 1
         else:
-            placeholder = f"[video {self.next_video_id}]"
+            placeholder = self._format_placeholder("video", self.next_video_id, source_name)
             data.placeholder = placeholder
             self.videos.append(data)  # type: ignore[arg-type]
             self.next_video_id += 1
         return placeholder
+
+    @staticmethod
+    def _format_placeholder(kind: str, media_id: int, source_name: str | None) -> str:
+        """Build a placeholder string with optional sanitized source label.
+
+        Args:
+        kind: "image" or "video".
+        media_id: Numeric placeholder id.
+        source_name: Optional source label, sanitized and truncated.
+
+        Returns:
+        Placeholder string.
+        """
+        if not source_name:
+            return f"[{kind} {media_id}]"
+        name = " ".join(str(source_name).replace("[", "(").replace("]", ")").split())
+        if len(name) > PLACEHOLDER_NAME_MAX_LEN:
+            name = name[: PLACEHOLDER_NAME_MAX_LEN - 1] + "…"
+        return f"[{kind} {media_id}: {name}]"
 
     def get_images(self) -> list[ImageData]:
         """Get all tracked images.
@@ -131,6 +160,14 @@ class MediaTracker:
         Copy of the list of tracked images.
         """
         return list(self.images)
+
+    def get_videos(self) -> list[VideoData]:
+        """Get all tracked videos.
+
+        Returns:
+        Copy of the list of tracked videos.
+        """
+        return list(self.videos)
 
     def clear(self) -> None:
         """Clear all tracked media and reset counters."""

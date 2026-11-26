@@ -227,11 +227,16 @@ async def handle_routing_command(
         console.print("[red]Error: No active loop for routing command[/red]")
         return
     stripped = cmd_input.strip()
-    # /plan sets interaction_mode=plan (goal-scoped plan mode, not subagent routing).
-    if stripped.lower().startswith("/plan") and (len(stripped) == 5 or stripped[5].isspace()):
-        text = stripped[5:].strip()
-        await client.send_input(loop_id, text, interaction_mode="plan")
-        return
+    # /plan and /ask set interaction_mode (goal-scoped read-only modes, not
+    # subagent routing). The token must be the whole first word so
+    # `/plans` does not match `/plan`.
+    for token, mode in (("/plan", "plan"), ("/ask", "ask")):
+        if stripped.lower().startswith(token) and (
+            len(stripped) == len(token) or stripped[len(token)].isspace()
+        ):
+            text = stripped[len(token) :].strip()
+            await client.send_input(loop_id, text, interaction_mode=mode)
+            return
     subagent_name, text = parse_subagent_from_input(stripped)
     await client.send_input(loop_id, text, preferred_subagent=subagent_name)
 

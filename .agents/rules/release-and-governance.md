@@ -31,6 +31,14 @@ Keep changelogs **brief and sharp**, written for end users and operators — not
 Good: `Add \`persistence.default_backend\` validation that rejects mixed sqlite/postgres in one process.`
 Bad: `This PR updates the persistence layer to add a check for the default backend config so that users don't accidentally mix backends. (#1234, authored by...)`
 
+### Release-time rewrite (MUST)
+
+When cutting a new version, do not promote the `[Unreleased]` block verbatim. **Rewrite the release section from scratch** against the rules above:
+- Re-read everything accumulated under `[Unreleased]` and re-draft each entry: one scannable line, user-facing effect first, imperative mood, concrete names, grouped under `Added` / `Changed` / `Fixed` / `Removed` (most impactful first; empty sections omitted).
+- Drop anything that fails the bar: internal refactors, test-only changes, doc chores, CI/workflow fixes, version-bump boilerplate. If a change isn't user-visible, it stays out.
+- Merge or split entries so the section reads as an operator-facing summary, not a commit log. Never rewrite released version boundaries, dates, or `[Compare with previous version]` links — rewrite only the prose being released.
+- The release notes file passed to `gh release create` (`--notes-file`) is derived from this rewritten section, not pasted from the raw `[Unreleased]` dump.
+
 ## Release (MUST)
 A **release** = cutting a new version across the monorepo-owned packages and publishing to PyPI + the container registry **via the GitHub release workflows** — not by manual `twine upload`, `docker push`, or local builds. The trigger is a **GitHub Release object** on a version tag, not a bare git tag.
 
@@ -42,7 +50,7 @@ A **release** = cutting a new version across the monorepo-owned packages and pub
 
 ### Version bump + changelog
 5. **Bump the root `VERSION` file** — `soothe`, `soothe-daemon`, and `soothe-cli` all read from the root `VERSION` (via `tool.hatch.version` → `../../VERSION`). `soothe-sdk` keeps its own `packages/soothe-sdk/VERSION` on an independent 1.x line and is **not** touched by monorepo releases unless the SDK itself is being released. (`soothe-autopilot` is no longer a separate package — see [IG-779](../../.platonic/impl/IG-779-rfc-autopilot-cleansing-and-mode-alignment.md).)
-6. **Promote the `[Unreleased]` block** in `CHANGELOG.md` into a dated `## [vX.Y.Z] - YYYY-MM-DD` entry with a `[Compare with previous version]` link, and reset `[Unreleased]` to empty. Follow the Keep a Changelog format.
+6. **Rewrite and promote the `[Unreleased]` block** in `CHANGELOG.md` into a dated `## [vX.Y.Z] - YYYY-MM-DD` entry with a `[Compare with previous version]` link, and reset `[Unreleased]` to empty. Follow the Keep a Changelog format and the release-time rewrite rules above — do not promote the block verbatim.
 7. **Commit the bump** — e.g. `chore(release): bump to X.Y.Z` touching only `VERSION` + `CHANGELOG.md`.
 
 ### Tag + GitHub Release (the trigger)

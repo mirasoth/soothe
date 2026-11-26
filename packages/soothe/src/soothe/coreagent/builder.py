@@ -157,7 +157,12 @@ class AgentBuilder(nano_builder.AgentBuilder):
         )
 
         extra_tools = list(kwargs.get("tools") or [])
-        extra_tools.append(build_request_plan_mode_tool())
+        # request_plan_mode is an agent-mode affordance ("switch to plan for
+        # the next goal") — meaningless on the ask/plan graphs, which are
+        # already read-only, and its description would duplicate the
+        # read-only tool list there.
+        if kwargs.get("interaction_mode") not in ("ask", "plan"):
+            extra_tools.append(build_request_plan_mode_tool())
         extra_tools.append(build_ask_user_tool())
         kwargs["tools"] = extra_tools
 

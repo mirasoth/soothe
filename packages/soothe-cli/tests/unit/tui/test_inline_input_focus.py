@@ -288,7 +288,10 @@ async def test_arrow_to_approve_reject_does_not_scroll_to_plan_header() -> None:
     class _ScrollApp(App[None]):
         def compose(self) -> ComposeResult:
             with VerticalScroll(id="chat"):
-                yield Static("transcript above\n" * 10, id="above")
+                # 30 lines: enough that the card's bottom (options) requires
+                # scrolling even after the plan-body preview was capped at
+                # 10 rows (test_plan_review_body_preview_is_bounded_and_...).
+                yield Static("transcript above\n" * 30, id="above")
                 yield StructuredAskUserWidget(
                     step_id="plan_mode_review",
                     questions=[_PLAN_REVIEW_Q],

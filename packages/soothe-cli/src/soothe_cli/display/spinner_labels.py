@@ -56,6 +56,49 @@ def map_plan_phase_spinner_label(label: str) -> str:
     return SPINNER_LABEL_THINKING
 
 
+# ---------------------------------------------------------------------------
+# Interaction-mode-aware labels (plan / ask turns)
+#
+# A read-only plan/ask turn must not look like a mutating agent turn:
+# agent-flavored execution words (Executing / Tools / Writing) are replaced
+# with research-flavored words carrying a "(read-only)" suffix. Turn-lifecycle
+# words (Submitting / Finalizing / Retrying / Waiting / Connecting /
+# Offloading / Synthesizing / Delegating) pass through unchanged — they
+# describe the turn machinery, not the tool surface.
+# ---------------------------------------------------------------------------
+
+_MODE_SPINNER_WORD: dict[str, str] = {
+    "plan": "Planning",
+    "ask": "Researching",
+}
+
+_MODE_SPINNER_OVERRIDDEN: frozenset[str] = frozenset(
+    {
+        SPINNER_LABEL_THINKING,
+        SPINNER_LABEL_INTERPRETING,
+        SPINNER_LABEL_ASSESSING,
+        SPINNER_LABEL_PLANNING,
+        SPINNER_LABEL_EXECUTING,
+        SPINNER_LABEL_TOOLS,
+        SPINNER_LABEL_WRITING,
+        SPINNER_LABEL_INPUT,
+    }
+)
+
+
+def mode_aware_spinner_label(label: str | None, interaction_mode: str | None) -> str | None:
+    """Adapt a spinner label to the turn's interaction mode.
+
+    On plan/ask turns, execution-flavored labels become "Planning (read-only)"
+    / "Researching (read-only)"; anything else (including `None` and unknown
+    modes) passes through unchanged.
+    """
+    word = _MODE_SPINNER_WORD.get(interaction_mode or "")
+    if word is None or label not in _MODE_SPINNER_OVERRIDDEN:
+        return label
+    return f"{word} (read-only)"
+
+
 def daemon_connect_hint_extra(*, attempt: int, max_attempts: int) -> str | None:
     """Hint suffix for daemon connect retries, e.g. `attempt 2/3`."""
     if max_attempts <= 1 or attempt <= 1:

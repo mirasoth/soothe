@@ -22,7 +22,8 @@ Core Soothe ships four built-in subagents: **planner**, **deep_research**, **bro
 | Subagent | Slash Command | Best For |
 |----------|---------------|----------|
 | Deep Research | `/deep_research <query>` | Public web research, comparisons, how-tos, academic literature |
-| Planner | `/plan` or `/plan <prompt>` | Plan-mode routing |
+| Planner | `/plan` or `/plan <prompt>` | Plan-mode routing (read-only plan → human review) |
+| Ask | `/ask` or `/ask <question>` | Ask-mode routing (read-only, answer-only) |
 | Browser Use | `/browser_use <url>` | Browser automation and web interaction |
 | Veritas | (auto-invoked) | Clarification auto-answerer in autonomous mode |
 

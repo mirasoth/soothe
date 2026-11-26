@@ -85,15 +85,20 @@ def route_after_root_eval(state: dict[str, Any]) -> str:
 
     Fatal outcomes route to FINALIZE so the goal produces a completion
     report from finished steps instead of silently ending the stream.
+    Plan mode takes precedence over a dispatch route: plan review is the
+    only gate from a plan-mode goal to mutating execution, so a plan goal
+    can never reach DISPATCH through this edge (root_eval currently
+    short-circuits to `finalize` for read-only modes, but this ordering
+    keeps the invariant true even if that ever changes).
     """
     if state.get("root_eval_route") == "fatal" or state.get("last_outcome") == "fatal":
         logger.debug("[routing] route_after_root_eval → finalize (root_eval fatal)")
         return FINALIZE
-    if state.get("root_eval_route") == "dispatch":
-        return DISPATCH
     if state.get("interaction_mode") == "plan":
         logger.debug("[routing] route_after_root_eval → plan_review (plan mode)")
         return PLAN_REVIEW
+    if state.get("root_eval_route") == "dispatch":
+        return DISPATCH
     return FINALIZE
 
 

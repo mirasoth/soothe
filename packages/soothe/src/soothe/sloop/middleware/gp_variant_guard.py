@@ -58,10 +58,12 @@ class GeneralPurposeVariantGuardMiddleware(AgentMiddleware):
     `subagent_type` is rewritten to `general-purpose-readonly` before the
     task tool resolves the subagent, so the read-only variant runs instead.
 
-    If the read-only variant is not registered (per-step GP disabled), the
-    rewrite is skipped and the call proceeds unchanged — this makes the
-    middleware safe to install unconditionally; it only acts when both the
-    step mode and the variant are in play.
+    The rewrite is unconditional for plan/ask steps: if the read-only
+    variant is not registered (e.g. `general_purpose_subagent="full"`,
+    which registers only the full variant), the redirected call fails to
+    resolve at the task tool with a loud subagent error — it never falls
+    through to full GP on a read-only step. Configure `per_step` (both
+    variants) or `readonly` when plan/ask steps should delegate to GP.
     """
 
     async def awrap_tool_call(

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import re
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
@@ -21,6 +22,7 @@ from textual.widgets import Static, TextArea
 
 from soothe_cli.commands.command_registry import SLASH_COMMANDS
 from soothe_cli.display import theme
+from soothe_cli.display.media_utils import ImageData, VideoData
 from soothe_cli.settings import (
     MODE_DISPLAY_GLYPHS,
     MODE_PREFIXES,
@@ -54,6 +56,23 @@ def _default_history_path() -> Path:
     corpus. Extracted as a function so tests can monkeypatch it to a temp path.
     """
     return Path(SOOTHE_DATA_DIR) / "history.jsonl"
+
+
+def _media_size_label(data: ImageData | VideoData) -> str:
+    """Return a human-readable approximate size for a media payload.
+
+    Args:
+    data: Tracked image or video payload.
+
+    Returns:
+    Size label like "512 B", "800 KB", or "1.3 MB" (decoded estimate).
+    """
+    approx_bytes = max(len(data.base64_data) * 3 // 4, 0)
+    if approx_bytes < 1024:
+        return f"{approx_bytes} B"
+    if approx_bytes < 1024 * 1024:
+        return f"{approx_bytes / 1024:.0f} KB"
+    return f"{approx_bytes / (1024 * 1024):.1f} MB"
 
 
 _PASTE_BURST_CHAR_GAP_SECONDS = 0.03
@@ -1636,6 +1655,15 @@ class ChatInput(Vertical):
             logger.debug("Clipboard image attach failed", exc_info=True)
             media_list = []
 
+        if media_list:
+            logger.info(
+                "Clipboard attach: %d image(s) (%s)",
+                len(media_list),
+                ", ".join(f"{m.format}, ~{_media_size_label(m)}" for m in media_list),
+            )
+        else:
+            logger.info("Clipboard attach: no image found in OS clipboard")
+
         if not media_list:
             if notify_if_empty:
                 self.app.notify(
@@ -1650,6 +1678,11 @@ class ChatInput(Vertical):
         attachable = media_list[: max(room, 0)]
         skipped = media_list[len(attachable) :]
         if skipped:
+            logger.info(
+                "Clipboard attach: skipped %d image(s) over the %d-per-message limit",
+                len(skipped),
+                MAX_IMAGES_PER_MESSAGE,
+            )
             self.app.notify(
                 f"Image limit reached ({MAX_IMAGES_PER_MESSAGE} per message); "
                 f"skipped {len(skipped)} clipboard image(s)",
@@ -1660,9 +1693,52 @@ class ChatInput(Vertical):
         if not attachable:
             return False
 
-        placeholders = [self._image_tracker.add_media(media, "image") for media in attachable]
+        placeholders = [
+            self._image_tracker.add_media(media, "image", source_name="clipboard")
+            for media in attachable
+        ]
         self._text_area.insert(f"{' '.join(placeholders)} ")
         return True
+
+    def attachment_summary_lines(self) -> list[str]:
+        """Return one human-readable line per media item attached to the input.
+
+        Returns:
+        Lines like `[image 1: photo.jpg] (png, ~1.2 MB)`; empty when nothing
+        is attached.
+        """
+        if not self._image_tracker:
+            return []
+        lines = [
+            f"{image.placeholder} ({image.format}, ~{_media_size_label(image)})"
+            for image in self._image_tracker.get_images()
+        ]
+        lines.extend(
+            f"{video.placeholder} ({video.format}, ~{_media_size_label(video)})"
+            for video in self._image_tracker.get_videos()
+        )
+        return lines
+
+    def clear_attachments(self) -> int:
+        """Remove every attached media item and its placeholder from the input.
+
+        Returns:
+        Number of removed media items.
+        """
+        if not self._image_tracker or not self._text_area:
+            return 0
+        removed = len(self._image_tracker.images) + len(self._image_tracker.videos)
+        self._image_tracker.clear()
+        text = self._text_area.text
+        for pattern in (IMAGE_PLACEHOLDER_PATTERN, VIDEO_PLACEHOLDER_PATTERN):
+            text = pattern.sub("", text)
+        text = "\n".join(
+            re.sub(r"  +", " ", re.sub(r"[ \t]+", " ", line)).strip(" \t")
+            for line in text.split("\n")
+        )
+        self._text_area.load_text(text)
+        logger.info("Cleared %d attached media item(s) from the input", removed)
+        return removed
 
     def handle_external_paste(self, pasted: str) -> bool:
         """Handle paste text from app-level routing when input is not focused.
@@ -1794,7 +1870,11 @@ class ChatInput(Vertical):
                     continue
                 if kind == "image":
                     image_room -= 1
-                parts.append(self._image_tracker.add_media(media, kind))
+                source_name = Path(str(path)).name
+                logger.info(
+                    "Path attach: %s (%s, ~%s)", source_name, kind, _media_size_label(media)
+                )
+                parts.append(self._image_tracker.add_media(media, kind, source_name=source_name))
                 attached = True
                 continue
 
@@ -1822,6 +1902,11 @@ class ChatInput(Vertical):
             parts.append(str(path))
 
         if skipped_for_limit:
+            logger.info(
+                "Path attach: skipped %d file(s) over the %d-per-message image limit",
+                skipped_for_limit,
+                MAX_IMAGES_PER_MESSAGE,
+            )
             self.app.notify(
                 f"Image limit reached ({MAX_IMAGES_PER_MESSAGE} per message); "
                 f"{skipped_for_limit} file(s) kept as path text",

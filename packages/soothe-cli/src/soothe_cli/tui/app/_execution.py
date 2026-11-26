@@ -349,6 +349,11 @@ class _ExecutionMixin:
             self._composer_mode = mode
             if self._status_bar is not None:
                 self._status_bar.set_clarification_mode(mode)
+            self.notify(
+                "Plan approved — the execution goal follows in agent mode.",
+                severity="information",
+                timeout=4,
+            )
 
         # Send the answers as a structured list so the daemon resumes the
         # graph with one answer per question instead of broadcasting a single
@@ -679,6 +684,38 @@ class _ExecutionMixin:
                 attached = await self._chat_input.attach_clipboard_images(notify_if_empty=True)
                 if attached:
                     self._chat_input.focus_input()
+
+        elif cmd == "/attachments":
+            await self._mount_message(UserMessage(command))
+            if self._chat_input is None:
+                await self._mount_message(AppMessage("Chat input is not ready."))
+            else:
+                arg = (query or "").strip().lower()
+                if arg == "clear":
+                    removed = self._chat_input.clear_attachments()
+                    summary = (
+                        "Input has no attachments."
+                        if removed == 0
+                        else f"Removed {removed} attachment(s) from the input."
+                    )
+                    await self._mount_message(AppMessage(summary))
+                else:
+                    lines = self._chat_input.attachment_summary_lines()
+                    if lines:
+                        body = (
+                            "Media attached to the input:\n"
+                            + "\n".join(f"  {line}" for line in lines)
+                            + "\n\nDelete the placeholder token in the input, or run "
+                            "`/attachments clear` to remove all of them."
+                        )
+                        await self._mount_message(AppMessage(body))
+                    else:
+                        await self._mount_message(
+                            AppMessage(
+                                "Input has no attachments. Paste with Ctrl+V / Cmd+V, "
+                                "or drop media files into the input."
+                            )
+                        )
 
         elif cmd == "/goals":
             await self._mount_message(UserMessage(command))

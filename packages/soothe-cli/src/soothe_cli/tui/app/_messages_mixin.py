@@ -1163,25 +1163,26 @@ class _MessagesMixin:
             return
         self.cycle_composer_mode()
 
-    def cycle_composer_mode(self) -> None:
-        """Advance composer mode and refresh the status-bar badge.
+    def apply_composer_mode(self, mode: str, *, notify_message: str | None = None) -> None:
+        """Set the sticky composer mode and refresh the status-bar badge.
 
-        Cycle: Auto → Bypass → Manual → Plan → Ask → Auto. For agent
-        sub-modes (auto/bypass/manual) hot-swap the running goal's agent mode
-        via `loop_set_clarification_mode`; Plan/Ask take effect on the next
-        turn.
+        Shared by the Shift+Tab cycle and the ask-answer follow-up bar.
+        Agent sub-modes (auto/bypass/manual) additionally hot-swap the
+        running goal's agent mode via `loop_set_clarification_mode`; Plan/Ask
+        stay next-turn-only (goal-scoped graphs are picked at loop start).
         """
         from soothe_cli.tui.composer_mode import (
             AGENT_SUB_MODES,
-            next_composer_mode,
+            normalize_composer_mode,
             resolve_composer_wire_fields,
         )
 
-        current = getattr(self, "_composer_mode", "auto")
-        new_mode = next_composer_mode(current)
+        new_mode = normalize_composer_mode(mode)
         self._composer_mode = new_mode
         if self._status_bar is not None:
             self._status_bar.set_clarification_mode(new_mode)
+        if notify_message:
+            self.notify(notify_message, severity="information", timeout=4)
 
         # Bypass carries an `interaction_mode` wire field; Plan/Ask stay
         # next-turn-only.
@@ -1190,6 +1191,31 @@ class _MessagesMixin:
             self._push_clarification_mode_to_running_loop(
                 wire.clarification_mode,
                 interaction_mode=wire.interaction_mode,
+            )
+
+    def cycle_composer_mode(self) -> None:
+        """Advance composer mode and refresh the status-bar badge.
+
+        Cycle: Auto → Bypass → Manual → Plan → Ask → Auto. For agent
+        sub-modes (auto/bypass/manual) hot-swap the running goal's agent mode
+        via `loop_set_clarification_mode`; Plan/Ask take effect on the next
+        turn.
+        """
+        from soothe_cli.tui.composer_mode import AGENT_SUB_MODES, next_composer_mode
+
+        current = getattr(self, "_composer_mode", "auto")
+        new_mode = next_composer_mode(current)
+        self.apply_composer_mode(new_mode)
+
+        if new_mode not in AGENT_SUB_MODES and getattr(self, "_agent_running", False):
+            # Plan/Ask are goal-scoped graphs picked at loop start; make the
+            # next-turn-only semantics explicit instead of a silent no-op on
+            # the running goal.
+            label = "Plan" if new_mode == "plan" else "Ask"
+            self.notify(
+                f"{label} mode applies to the next turn — the running goal keeps its current mode.",
+                severity="information",
+                timeout=4,
             )
 
     def _push_clarification_mode_to_running_loop(

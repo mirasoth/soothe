@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 from textual.containers import Container, VerticalScroll
 from textual.css.query import NoMatches
 
-from soothe_cli.display.spinner_labels import SPINNER_LABEL_INPUT
+from soothe_cli.display.spinner_labels import SPINNER_LABEL_INPUT, mode_aware_spinner_label
 from soothe_cli.runtime.state.session_stats import SpinnerStatus
 from soothe_cli.runtime.token_events_debug import TokenEventTrace
 from soothe_cli.tui.widgets.approval_dock import ApprovalDockBar
@@ -390,6 +390,14 @@ class _UIMixin:
             if turn_start_mono is not None and self._loading_widget is not None:
                 self._loading_widget.reset_turn_start_mono(turn_start_mono)
             return
+
+        # Mode-aware phase labels: on plan/ask turns execution-flavored words
+        # become "Planning/Researching (read-only)" so a read-only turn never
+        # looks like a mutating agent turn. The adapter's interaction_mode is
+        # set per turn before the first spinner update.
+        adapter = getattr(self, "_ui_adapter", None)
+        if adapter is not None:
+            status = mode_aware_spinner_label(status, getattr(adapter, "interaction_mode", None))
 
         if status is None:
             # Hide

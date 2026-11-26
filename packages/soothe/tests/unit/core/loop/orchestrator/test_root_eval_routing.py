@@ -46,3 +46,16 @@ def test_root_eval_plan_mode_routes_to_plan_review() -> None:
 def test_root_eval_plan_mode_takes_precedence_over_default() -> None:
     """Plan mode routes to PLAN_REVIEW even without explicit root_eval_route."""
     assert route_after_root_eval({"interaction_mode": "plan"}) == "plan_review"
+
+
+def test_root_eval_plan_mode_takes_precedence_over_dispatch() -> None:
+    """Plan mode never routes to mutating DISPATCH via root_eval.
+
+    Plan review is the only gate from a plan-mode goal to mutating
+    execution; a dispatch route (e.g. from a checkpoint replayed across a
+    mode change) must not bypass it.
+    """
+    assert (
+        route_after_root_eval({"interaction_mode": "plan", "root_eval_route": "dispatch"})
+        == "plan_review"
+    )

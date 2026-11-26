@@ -14,6 +14,7 @@ from soothe_cli.tui.composer_mode import (
     ComposerWireFields,
     next_composer_mode,
     normalize_composer_mode,
+    parse_mode_prefix_from_input,
     resolve_composer_wire_fields,
 )
 
@@ -87,3 +88,45 @@ def test_explicit_slash_route_wins_over_sticky_plan() -> None:
     subagent = parsed or sticky
     assert subagent == "deep_research"
     assert cleaned == "find sources"
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected_mode", "expected_text"),
+    [
+        ("/plan", "plan", ""),
+        ("/plan refactor auth", "plan", "refactor auth"),
+        ("/PLAN refactor auth", "plan", "refactor auth"),
+        ("/ask", "ask", ""),
+        ("/ask why is X slow?", "ask", "why is X slow?"),
+        ("  /ask why?", "ask", "why?"),
+    ],
+)
+def test_parse_mode_prefix_from_input(
+    raw: str, expected_mode: str | None, expected_text: str
+) -> None:
+    assert parse_mode_prefix_from_input(raw) == (expected_mode, expected_text)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "/plans refactor auth",
+        "see /plan below",
+        "please /ask this",
+        "/planx",
+        "plain text",
+        "",
+    ],
+)
+def test_parse_mode_prefix_requires_leading_token(raw: str) -> None:
+    assert parse_mode_prefix_from_input(raw) == (None, raw)
+
+
+def test_mode_prefix_overrides_sticky_composer_mode() -> None:
+    """A leading mode token wins over the sticky composer mode for one turn."""
+    mode, text = parse_mode_prefix_from_input("/plan draft the migration")
+    wire = resolve_composer_wire_fields("auto")  # sticky badge on Auto
+    assert mode == "plan"
+    assert text == "draft the migration"
+    # The effective turn mode is the prefix, not the sticky badge.
+    assert (mode or wire.interaction_mode) == "plan"

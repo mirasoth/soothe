@@ -111,6 +111,15 @@ Screen {
     padding: 0;
 }
 
+/* The approval dock and the plan-review body preview scroll internally; the
+   global hidden-scrollbar rule must not hide that (users otherwise see a
+   clipped card with no affordance). App-level rules beat widget DEFAULT_CSS. */
+ApprovalDockBar,
+StructuredAskUserWidget .saq-body-box {
+    scrollbar-visibility: visible;
+    scrollbar-size-vertical: 1;
+}
+
 #status-bar ClarificationModeBadge {
     margin-left: 1;
     margin-right: 1;

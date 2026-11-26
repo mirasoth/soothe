@@ -135,7 +135,7 @@ class StructuredAskUserWidget(Vertical):
         color: $warning;
         text-style: bold;
         padding: 0;
-        margin: 0 0 1 0;
+        margin: 0;
     }
 
     StructuredAskUserWidget .saq-tab-bar {
@@ -262,7 +262,7 @@ class StructuredAskUserWidget(Vertical):
 
     StructuredAskUserWidget .saq-footer {
         height: 1;
-        margin: 1 0 0 0;
+        margin: 0;
     }
 
     StructuredAskUserWidget .saq-count {
@@ -334,12 +334,14 @@ class StructuredAskUserWidget(Vertical):
 
     /* ── Separator ──────────────────────────────────────────────── */
 
-    /* Horizontal rule separating the QA widget from surrounding transcript. */
+    /* Horizontal rule separating the QA widget from surrounding transcript.
+    Zero margins keep the card compact so the full interactive card (options
+    + footer) fits the approval dock's height budget on small terminals. */
     StructuredAskUserWidget .saq-separator {
         height: 1;
         color: $text-muted 30%;
         padding: 0;
-        margin: 1 0 1 0;
+        margin: 0;
     }
 
     StructuredAskUserWidget .saq-hint {
@@ -395,11 +397,20 @@ class StructuredAskUserWidget(Vertical):
 
     StructuredAskUserWidget .saq-body-box {
         height: auto;
+        /* Bounded, scrollable plan preview. Without a cap the card's natural
+        height grows with the plan body, pushing the option rows below the
+        approval dock's visible region (options become unreachable) and
+        inflating the docked bottom container. The cap uses absolute rows —
+        vh/% do not resolve during the parent's auto-height measurement. */
+        max-height: 10;
         padding: 0 1;
         margin: 0 0 1 0;
         border: solid $primary 40%;
         background: $surface;
-        overflow: hidden;
+        overflow-y: auto;
+        overflow-x: hidden;
+        scrollbar-visibility: visible;
+        scrollbar-size-vertical: 1;
     }
 
     StructuredAskUserWidget .saq-body {
@@ -413,7 +424,7 @@ class StructuredAskUserWidget(Vertical):
     StructuredAskUserWidget .saq-body-path {
         height: auto;
         padding: 0;
-        margin: 0 0 1 0;
+        margin: 0;
         color: $text-muted;
         text-style: italic;
     }

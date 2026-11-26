@@ -48,7 +48,8 @@ Route queries to specialized subagents:
 | Command | Subagent | Use Case |
 |---------|----------|----------|
 | `/deep_research <query>` | Deep Research | Public web research |
-| `/plan` | Plan | Plan-mode routing |
+| `/plan <prompt>` | Plan | Plan-mode routing (read-only research → plan review) |
+| `/ask <question>` | Ask | Ask-mode routing (read-only, answer-only) |
 | `/«id» <query>` | Configured id | Optional plugins from soothe-plugins (see that repo for ids) |
 
 ## Keyboard Shortcuts
@@ -61,9 +62,16 @@ Route queries to specialized subagents:
 | `Ctrl+E` | Focus chat input |
 | `Ctrl+Y` | Copy last message to clipboard |
 | `Ctrl+T` | Toggle plan panel visibility |
+| `Shift+Tab` | Cycle composer mode (Auto → Bypass → Manual → Plan → Ask) |
 | `Shift+Enter` | Insert newline in chat input |
 | `Enter` | Submit message |
 | `Up/Down` | Navigate input history |
+
+Composer modes apply to the next turn (a leading `/plan `/`/ask ` token in the
+message overrides the sticky mode for that turn); Auto/Bypass/Manual hot-swap
+the running goal. On plan/ask turns the thinking row shows read-only phase
+labels ("Planning (read-only)" / "Researching (read-only)"), and a completed
+ask answer offers a one-click follow-up bar to switch to Plan or agent mode.
 
 ## Routing to Specialized Subagents
 

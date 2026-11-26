@@ -1060,7 +1060,10 @@ class StrangeLoopConfig(BaseModel):
             "grep) with write-deny permissions (research-only delegation; mutations happen "
             "via DISPATCH→EXECUTE); `per_step` registers both variants and a host "
             "middleware routes full GP on agent-mode steps (incl. Eval) and read-only GP "
-            "on plan/ask steps. Propagated to nano `agent.runtime.general_purpose_subagent`."
+            "on plan/ask steps. `full` registers only the full variant, so the plan/ask "
+            "redirect has no target (the redirected call fails to resolve); use `per_step` "
+            "or `readonly` when plan/ask steps should delegate to GP. Propagated to nano "
+            "`agent.runtime.general_purpose_subagent`."
         ),
     )
 

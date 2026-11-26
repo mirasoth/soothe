@@ -9,8 +9,11 @@ from __future__ import annotations
 
 import pytest
 from textual.app import App, ComposeResult
+from textual.containers import Container, Vertical, VerticalScroll
+from textual.widgets import Static
 
 from soothe_cli.commands.binding import message_from_widget
+from soothe_cli.tui.widgets.approval_dock import ApprovalDockBar
 from soothe_cli.tui.widgets.messages.structured_ask_user import (
     StructuredAskUserWidget,
     _strip_plan_frontmatter,
@@ -340,8 +343,23 @@ async def test_comment_input_inline_beside_refine_option() -> None:
 
 
 @pytest.mark.asyncio
-async def test_plan_review_body_shows_full_content_without_inner_scroll() -> None:
-    from textual.containers import VerticalScroll
+async def test_plan_review_body_preview_is_bounded_and_scrollable() -> None:
+    """The plan body preview is a bounded, internally scrollable region.
+
+    Historical bug: the preview grew with the plan body, pushing the option
+    rows below the approval dock's visible region (options unreachable —
+    the global stylesheet hides scrollbars) and inflating the docked bottom
+    container so the chat input drifted off the screen bottom.
+    """
+    css = StructuredAskUserWidget.DEFAULT_CSS
+    block = css.split("StructuredAskUserWidget .saq-body-box {")[1].split("}")[0]
+    decls = [line.strip() for line in block.splitlines() if ";" in line]
+    assert "max-height: 10;" in decls
+    assert "overflow-y: auto;" in decls
+    # vh units must not appear in declarations: they do not resolve while the
+    # auto-height docked container measures its children (inflates it).
+    # (Percentages in colour alphas are fine.)
+    assert all("vh" not in d for d in decls)
 
     long_plan = "# Solution\n\n" + "\n".join(f"- step {i}" for i in range(60))
     widget = _make_plan_review_widget(
@@ -356,6 +374,138 @@ async def test_plan_review_body_shows_full_content_without_inner_scroll() -> Non
         body = w.query_one(".saq-body")
         rendered = str(getattr(body, "renderable", "") or "")
         assert "step 0" in rendered or "step 59" in rendered or body.display
+
+
+def test_approval_dock_css_has_no_viewport_relative_caps() -> None:
+    """The dock must cap itself in absolute rows, never vh/%.
+
+    vh caps do not resolve while #bottom-app-container measures its
+    auto-height children: the container is sized by the card's unclamped
+    height and the chat input ends up floating above dead space instead of
+    sticking to the screen bottom (plus the 40vh cap clipped the option rows
+    out of the dock's visible region).
+    """
+    from soothe_cli.tui.widgets.approval_dock import ApprovalDockBar
+
+    css = ApprovalDockBar.DEFAULT_CSS
+    block = css.split("ApprovalDockBar {")[1].split("}")[0]
+    decls = [line.strip() for line in block.splitlines() if ";" in line]
+    assert "max-height: 30;" in decls
+    assert "overflow-y: auto;" in decls
+    assert "scrollbar-visibility: visible;" in decls
+    assert all("vh" not in d and "%" not in d for d in decls)
+
+
+def test_app_css_keeps_dock_and_plan_preview_scrollbars_visible() -> None:
+    """The global hidden-scrollbar rule must not hide the dock/preview scroll."""
+    from pathlib import Path
+
+    css = (Path(__file__).resolve().parents[3] / "src/soothe_cli/tui/app/app.tcss").read_text(
+        encoding="utf-8"
+    )
+    assert "ApprovalDockBar," in css
+    assert "StructuredAskUserWidget .saq-body-box {" in css
+    block = css.split("ApprovalDockBar,")[1].split("}")[0]
+    assert "scrollbar-visibility: visible" in block
+
+
+class _DockLayoutApp(App[None]):
+    """Harness mirroring the real screen layout: chat + docked bottom chrome."""
+
+    def __init__(self, widget: StructuredAskUserWidget) -> None:
+        super().__init__()
+        self.card = widget
+        self.dock = ApprovalDockBar(id="approval-dock")
+
+    CSS = """
+    Screen { layout: vertical; }
+    #chat { height: 1fr; }
+    #bottom-app-container {
+        dock: bottom; height: auto; width: 100%; max-height: 100%;
+        margin-bottom: 1;
+    }
+    #thinking-status { height: auto; }
+    #input-area { height: 3; }
+    #status-bar { height: 1; }
+    ApprovalDockBar,
+    StructuredAskUserWidget .saq-body-box {
+        scrollbar-visibility: visible;
+        scrollbar-size-vertical: 1;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        with VerticalScroll(id="chat"):
+            yield Static("transcript")
+        with Container(id="bottom-app-container"):
+            yield self.dock
+            with Container(id="thinking-status"):
+                yield Static("tip")
+            yield Static("input", id="input-area")
+            yield Static("status", id="status-bar")
+
+
+@pytest.mark.asyncio
+async def test_plan_review_card_keeps_options_visible_in_dock() -> None:
+    """Regression: docked plan-review card keeps options + footer visible.
+
+    The dock clamps itself to the live viewport so the card's interactive
+    rows are inside the dock's visible region (or scroll-reachable on very
+    small terminals) and the status bar stays flush with the screen bottom.
+    """
+
+    long_plan = "\n".join(f"- plan step {i}: do something useful" for i in range(20))
+    widget = _make_plan_review_widget(
+        body_path="/ws/.soothe/plans/demo.md",
+        body_markdown=long_plan,
+        id="clarify-dock-geometry",
+    )
+    app = _DockLayoutApp(widget)
+    async with app.run_test(size=(80, 34)) as pilot:
+        await pilot.pause()
+        await app.dock.push_card(app.card)
+        await pilot.pause()
+        await pilot.pause()
+        dock = app.dock
+        status = app.query_one("#status-bar")
+        screen_h = app.screen.size.height
+        dock_region = dock.region
+        dock_visible_bottom = dock_region.y + dock_region.height
+        for sel in ("#saq-opt-0", "#saq-opt-2", ".saq-footer"):
+            row = app.query_one(sel)
+            assert dock_region.y <= row.region.y, f"{sel} above the dock"
+            assert row.region.y + row.region.height <= dock_visible_bottom, (
+                f"{sel} clipped below the dock's visible region"
+            )
+        assert status.region.y + status.region.height == screen_h - 1
+        body_box = app.query_one(".saq-body-box", Vertical)
+        assert body_box.region.height <= 11
+
+
+@pytest.mark.asyncio
+async def test_plan_review_card_scroll_reachable_on_small_terminal() -> None:
+    """On a 24-row terminal the dock scrolls (visible scrollbar) instead of
+    silently clipping the interactive rows."""
+    long_plan = "\n".join(f"- plan step {i}: do something useful" for i in range(20))
+    widget = _make_plan_review_widget(
+        body_path="/ws/.soothe/plans/demo.md",
+        body_markdown=long_plan,
+        id="clarify-dock-small",
+    )
+    app = _DockLayoutApp(widget)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        await app.dock.push_card(app.card)
+        await pilot.pause()
+        await pilot.pause()
+        dock = app.dock
+        assert dock.max_scroll_y > 0
+        footer = app.query_one(".saq-footer")
+        # Scrolling to the bottom brings the footer inside the visible region.
+        dock.scroll_end(animate=False)
+        await pilot.pause()
+        region = dock.region
+        assert region.y <= footer.region.y < region.y + region.height
 
 
 @pytest.mark.asyncio

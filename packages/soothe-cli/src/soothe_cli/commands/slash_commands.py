@@ -262,6 +262,7 @@ COMMANDS: dict[str, dict[str, Any]] = {
     },
     # Daemon routing commands
     "/plan": {"location": "daemon", "type": "routing", "description": "Trigger plan mode"},
+    "/ask": {"location": "daemon", "type": "routing", "description": "Trigger ask mode"},
     "/deep_research": {
         "location": "daemon",
         "type": "routing",

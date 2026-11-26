@@ -9,10 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `/ask` slash command (headless CLI and TUI), symmetric with `/plan`: sends the input in ask mode (read-only, answer-only).
+- TUI: one-shot mode prefix — a leading `/plan `/`/ask ` token in the composer now overrides the sticky composer mode for that turn and is stripped from the wire text (`composer_mode.parse_mode_prefix_from_input`); previously the literal `/plan …` text reached the daemon as a regular agent-mode turn.
+- TUI: Shift+Tab toggling to Plan/Ask while a goal is running now shows a "applies to the next turn" notice; approving a plan review shows an "executing in agent mode" notice.
+- TUI: plan/ask turns get mode-aware spinner labels — execution-flavored phase words become "Planning (read-only)" / "Researching (read-only)" so a read-only turn no longer looks like a mutating agent turn.
+- TUI: completed ask-mode turns surface an inline follow-up bar under the answer ("Draft a plan" / "Execute in agent mode") — one-click transitions that set the sticky composer mode instead of requiring a manual Shift+Tab.
+- Contract test pinning the repo-side plan/ask declarations (decompose addenda, `request_plan_mode` description, policy profiles, subagent allowlists) to the installed soothe-nano read-only surface, so prompt/allowlist drift fails loudly.
+- TUI `/attachments` slash command: lists media attached to the composer with source, format and approximate size (`/attachments`), and removes them all (`/attachments clear`); deleting a placeholder token in the input also removes that attachment as before.
+- TUI attach observability: clipboard and drag/drop path attaches now log source name, format, approximate size and per-message-limit skips at INFO level in the TUI log, so wrong-image diagnoses no longer require daemon-side inference.
+- TUI media placeholders now show their source: drag/drop attachments render as `[image 1: photo.jpg]` / `[video 1: clip.mp4]` and clipboard pastes as `[image 1: clipboard]`, so wrong-source mistakes (e.g. a stale clipboard bitmap attached instead of the intended file) are visible before submit. Legacy `[image N]` placeholders remain supported everywhere.
 - TUI multi-image clipboard paste: `Cmd+V` joins `Ctrl+V` as a clipboard-image paste binding (for terminals that deliver Cmd+V as a key event), and multi-image clipboards (e.g. Finder multi-file copy) attach one `[image N]` placeholder per image instead of only the first.
 
 ### Fixed
 
+- TUI plan-review card in the approval dock: the plan-body preview is now a bounded, internally scrollable region (visible scrollbar) instead of growing with the plan, which used to push the Approve/Reject/Refine option rows below the dock's visible region where they were unreachable (global stylesheet hides scrollbars). The approval dock also caps itself in absolute rows with a live viewport clamp (`on_resize` + card push) instead of `max-height: 40vh` — vh caps do not resolve while the auto-height docked bottom container measures its children, which inflated the container by the card's unclamped height and left the chat input floating above dead space instead of sticking to the screen bottom. Card chrome margins tightened so the full interactive card fits typical terminals.
+- Ask-mode prompt addendum no longer advertises a conditional `decompose_task` escape hatch — the tool is stripped and hard-blocked in ask mode, so the addendum now states it is unavailable outright.
+- `route_after_root_eval` checks plan mode before a dispatch route, so a plan-mode goal can never reach mutating DISPATCH through the root-eval edge (plan review remains the only gate to execution).
+- `request_plan_mode` is no longer injected into the ask/plan graphs — the tool is an agent-mode affordance and was meaningless (and duplicative of the read-only tool list) in read-only modes.
 - Image attachments honor the daemon's per-message limit (8) at attach time — overflow images are skipped with a toast (drag/drop keeps the file path as text) instead of the daemon rejecting the entire message.
 - TIFF/ICO (and any other non wire-safe format) images are re-encoded to PNG on attach; previously `image/tiff`/`image/ico` failed the daemon MIME allowlist and broke the whole turn's image understanding.
 

@@ -146,6 +146,12 @@ COMMANDS: tuple[SlashCommand, ...] = (
         enter_action=EnterAction.COMPLETE,
     ),
     SlashCommand(
+        name="/ask",
+        description="Send input in ask mode (usage: /ask or /ask <question>)",
+        bypass_tier=BypassTier.QUEUED,
+        enter_action=EnterAction.COMPLETE,
+    ),
+    SlashCommand(
         name="/reload",
         description="Reload config from environment variables and .env",
         bypass_tier=BypassTier.QUEUED,
@@ -193,6 +199,12 @@ COMMANDS: tuple[SlashCommand, ...] = (
         description="Attach image(s) from the OS clipboard as [image N]",
         bypass_tier=BypassTier.SIDE_EFFECT_FREE,
         hidden_keywords="image clipboard screenshot attach vision",
+    ),
+    SlashCommand(
+        name="/attachments",
+        description="List media attached to the input (usage: /attachments [clear])",
+        bypass_tier=BypassTier.SIDE_EFFECT_FREE,
+        hidden_keywords="image video media attach clear list remove",
     ),
     SlashCommand(
         name="/help",

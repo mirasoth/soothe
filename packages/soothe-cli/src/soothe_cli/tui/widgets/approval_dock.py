@@ -16,10 +16,17 @@ from __future__ import annotations
 from contextlib import suppress
 from typing import Any
 
+from textual import events
 from textual.containers import Vertical
 from textual.widgets import Static
 
 __all__ = ["ApprovalDockBar"]
+
+_MIN_DOCK_ROWS = 8
+"""Lower bound for the dock's viewport clamp (interactive card must stay usable)."""
+
+_DEFAULT_CHROME_RESERVE_ROWS = 10
+"""Reserve used when sibling chrome heights are not yet measurable."""
 
 
 class _WaitingRow(Static):
@@ -64,7 +71,14 @@ class ApprovalDockBar(Vertical):
     DEFAULT_CSS = """
     ApprovalDockBar {
         height: auto;
-        max-height: 40vh;
+        /* Absolute row cap — vh/% units do not resolve while the auto-height
+        parent (#bottom-app-container) measures its children, so a vh cap
+        inflates the docked container by the card's unclamped height and
+        pushes the chat input off the screen bottom. */
+        max-height: 30;
+        overflow-y: auto;
+        scrollbar-visibility: visible;
+        scrollbar-size-vertical: 1;
         display: none;
         border-top: solid $border-blurred;
         background: $surface;
@@ -193,6 +207,47 @@ class ApprovalDockBar(Vertical):
 
     # ── Internals ────────────────────────────────────────────────────
 
+    def on_resize(self, event: events.Resize) -> None:
+        """Keep the dock within the viewport whenever its size is recomputed."""
+        self._clamp_to_viewport()
+
+    def _clamp_to_viewport(self) -> None:
+        """Cap the dock so the dock plus the bottom chrome fit the screen.
+
+        CSS-only caps cannot express "dock + input + status bar ≤ screen":
+        vh/% units do not resolve while the auto-height docked container
+        measures its children (they inflate the container by the card's
+        unclamped height, pushing the chat input off the screen bottom), and
+        absolute caps clip on small terminals. The cap is therefore computed
+        from the live screen height minus the heights of the sibling chrome
+        rows that share ``#bottom-app-container`` with the dock.
+
+        A second pass runs after refresh because sibling heights may be
+        stale during the first layout pass. Converges: the style is only
+        written when the cap actually changes.
+        """
+        try:
+            screen_h = self.screen.size.height
+            reserve = 1  # #bottom-app-container's bottom margin
+            parent = self.parent
+            if parent is not None:
+                for sibling in parent.children:
+                    if sibling is self:
+                        continue
+                    reserve += sibling.size.height or 1
+            else:
+                reserve += _DEFAULT_CHROME_RESERVE_ROWS
+        except Exception:  # noqa: BLE001
+            return
+        cap = max(_MIN_DOCK_ROWS, screen_h - reserve)
+        if self.styles.max_height != cap:
+            self.styles.max_height = cap
+            # Sibling heights may have been stale during the first layout
+            # pass; recompute once layout settles (only after a change, so
+            # this converges instead of rescheduling every refresh).
+            with suppress(Exception):
+                self.call_after_refresh(self._clamp_to_viewport)
+
     def _autofocus_head(self) -> None:
         """Focus the head card for manual-mode tool approvals.
 
@@ -214,6 +269,7 @@ class ApprovalDockBar(Vertical):
 
     def _sync(self) -> None:
         """Refresh the header label and empty-state visibility."""
+        self._clamp_to_viewport()
         with suppress(Exception):
             if not self._cards:
                 self.display = False

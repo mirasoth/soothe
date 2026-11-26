@@ -153,6 +153,7 @@ from soothe_cli.runtime.turn.prepare import (
 )
 from soothe_cli.runtime.wire.messages import normalize_lc_stream_message
 from soothe_cli.settings import build_stream_config
+from soothe_cli.tui.composer_mode import parse_mode_prefix_from_input
 from soothe_cli.tui.file_change_notify import (
     complete_file_change_preview,
     handle_file_change_result_without_active_track,
@@ -175,6 +176,7 @@ from soothe_cli.tui.widgets.messages.cognition_goal_tree import (
     _normalize_step_dependencies,
     collect_running_step_stats,
 )
+from soothe_cli.tui.widgets.messages.mode_followup_bar import ModeFollowUpBar
 from soothe_cli.ux.subagent_wire_display import (
     SubagentWireRenderKind,
     classify_subagent_wire_render,
@@ -3251,6 +3253,11 @@ async def execute_task_textual(
             pending_clarification_answers = list(raw_answers)
         adapter._clarification_answers_pending = None
 
+    # Store interaction mode on the adapter BEFORE the first spinner update so
+    # mode-aware labels ("Planning (read-only)") apply from turn start; step
+    # card titles also read it for [Plan]/[Ask] prefixes.
+    adapter.interaction_mode = interaction_mode
+
     # Show spinner — but don't clobber the "Submitting" label the caller set
     # when this turn is a clarification answer (plan-review resume).
     if adapter._set_spinner and not sending_clarification_answer:
@@ -3299,8 +3306,6 @@ async def execute_task_textual(
     # persisted flag was snapshotted to ``sending_clarification_answer``
     # above (before the spinner show) and cleared there.
     clarification_pending = False
-    # Store interaction mode on the adapter so step card titles can show [Plan]/[Ask].
-    adapter.interaction_mode = interaction_mode
 
     try:
         if skip_daemon_send_turn:
@@ -3311,6 +3316,17 @@ async def execute_task_textual(
             subagent_name, routed_text = parse_subagent_from_input(final_input)
             if subagent_name is None and sticky_preferred_subagent:
                 subagent_name = sticky_preferred_subagent
+            # One-shot mode prefix (composer_mode.parse_mode_prefix_from_input):
+            # a leading `/plan`/`/ask` token overrides the sticky composer
+            # mode for this turn and is stripped from the wire text. Without
+            # this, `/plan <prompt>` reached the daemon as literal text in
+            # agent mode (the headless command_router path stripped it, the
+            # TUI path did not).
+            prefix_mode, prefix_text = parse_mode_prefix_from_input(routed_text)
+            if prefix_mode is not None:
+                interaction_mode = prefix_mode
+                routed_text = prefix_text
+                adapter.interaction_mode = interaction_mode
             ctx_model = context.get("model") if context else None
             raw_mp = context.get("model_params") if context else None
             mp = raw_mp if isinstance(raw_mp, dict) else None
@@ -4949,6 +4965,20 @@ async def execute_task_textual(
                 _clear_adapter_step_tool_registry(adapter)
             if adapter._set_spinner and not clarification_pending:
                 await adapter._set_spinner(None)
+
+        # Ask-mode follow-up: after a completed ask turn (answer card
+        # mounted, loop not suspended), offer one-click transitions to Plan
+        # or agent mode instead of leaving the user to Shift+Tab manually.
+        if (
+            adapter.interaction_mode == "ask"
+            and not skip_safety_net
+            and not getattr(adapter, "_clarification_pending", False)
+            and adapter._goal_completion_mounted_this_turn
+        ):
+            try:
+                await adapter._mount_message(ModeFollowUpBar())
+            except Exception:  # noqa: BLE001 — resilient adapter error handling
+                logger.debug("Failed to mount ask-mode follow-up bar", exc_info=True)
 
     except (asyncio.CancelledError, KeyboardInterrupt):
         app_exiting = bool(is_shutting_down()) if is_shutting_down is not None else False

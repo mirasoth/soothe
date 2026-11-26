@@ -143,8 +143,8 @@ async def test_attach_clipboard_images_inserts_single_placeholder() -> None:
         ok = await chat.attach_clipboard_images(notify_if_empty=True)
 
     assert ok is True
-    assert [img.placeholder for img in tracker.get_images()] == ["[image 1]"]
-    text_area.insert.assert_called_once_with("[image 1] ")
+    assert [img.placeholder for img in tracker.get_images()] == ["[image 1: clipboard]"]
+    text_area.insert.assert_called_once_with("[image 1: clipboard] ")
     app.notify.assert_not_called()
 
 
@@ -172,11 +172,13 @@ async def test_attach_clipboard_images_inserts_multiple_placeholders() -> None:
 
     assert ok is True
     assert [img.placeholder for img in tracker.get_images()] == [
-        "[image 1]",
-        "[image 2]",
-        "[image 3]",
+        "[image 1: clipboard]",
+        "[image 2: clipboard]",
+        "[image 3: clipboard]",
     ]
-    text_area.insert.assert_called_once_with("[image 1] [image 2] [image 3] ")
+    text_area.insert.assert_called_once_with(
+        "[image 1: clipboard] [image 2: clipboard] [image 3: clipboard] "
+    )
     app.notify.assert_not_called()
 
 
@@ -231,7 +233,7 @@ async def test_attach_clipboard_images_caps_when_tracker_near_limit() -> None:
 
     assert ok is True
     assert len(tracker.get_images()) == MAX_IMAGES_PER_MESSAGE
-    text_area.insert.assert_called_once_with("[image 8] ")
+    text_area.insert.assert_called_once_with("[image 8: clipboard] ")
     app.notify.assert_called_once()
     assert "Image limit reached" in app.notify.call_args.args[0]
 
@@ -290,7 +292,9 @@ def test_build_path_replacement_attaches_all_under_limit(tmp_path: Path) -> None
 
     assert attached is True
     assert len(tracker.get_images()) == 3
-    assert replacement == "[image 1]\n[image 2]\n[image 3]"
+    assert replacement == (
+        f"[image 1: {paths[0].name}]\n[image 2: {paths[1].name}]\n[image 3: {paths[2].name}]"
+    )
     app.notify.assert_not_called()
 
 
@@ -300,3 +304,122 @@ def test_paste_command_registered() -> None:
     names = {cmd.name for cmd in COMMANDS}
     assert "/paste" in names
     assert "/paste" in SIDE_EFFECT_FREE
+
+
+def test_named_placeholder_retained_and_pruned_by_sync() -> None:
+    from soothe_cli.tui.input import MediaTracker
+
+    tracker = MediaTracker()
+    placeholder = tracker.add_media(_make_image_data(1), "image", source_name="photo.jpg")
+    assert placeholder == "[image 1: photo.jpg]"
+
+    tracker.sync_to_text(f"look at {placeholder} please")
+    assert len(tracker.get_images()) == 1
+
+    tracker.sync_to_text("placeholder deleted")
+    assert tracker.get_images() == []
+    assert tracker.next_image_id == 1
+
+
+def test_named_placeholder_sanitizes_and_truncates() -> None:
+    from soothe_cli.tui.input import PLACEHOLDER_NAME_MAX_LEN, MediaTracker
+
+    tracker = MediaTracker()
+    long_name = "x" * 120
+    placeholder = tracker.add_media(_make_image_data(1), "image", source_name=long_name)
+    assert len(placeholder) <= len("[image 1: ") + PLACEHOLDER_NAME_MAX_LEN + len("]")
+    assert placeholder.endswith("…]")
+
+    bracketed = tracker.add_media(_make_image_data(2), "image", source_name="a]b[ c")
+    assert bracketed == "[image 2: a)b( c]"
+
+
+def test_placeholder_pattern_matches_named_token() -> None:
+    from soothe_cli.tui.input import IMAGE_PLACEHOLDER_PATTERN
+
+    match = IMAGE_PLACEHOLDER_PATTERN.search("text [image 3: 安全交底.jpg] end")
+    assert match is not None
+    assert match.group("id") == "3"
+    assert match.group("name") == "安全交底.jpg"
+    # Legacy format without a name still parses.
+    match = IMAGE_PLACEHOLDER_PATTERN.search("text [image 3] end")
+    assert match is not None
+    assert match.group("id") == "3"
+    assert match.group("name") is None
+
+
+def test_attachments_command_registered() -> None:
+    from soothe_cli.commands.command_registry import COMMANDS, SIDE_EFFECT_FREE
+
+    names = {cmd.name for cmd in COMMANDS}
+    assert "/attachments" in names
+    assert "/attachments" in SIDE_EFFECT_FREE
+
+
+def test_attachment_summary_lines_and_clear(tmp_path: Path) -> None:
+    from soothe_cli.display.media_utils import VideoData
+    from soothe_cli.tui.widgets.chat_input import ChatInput
+
+    tracker = MediaTracker()
+    image_path = tmp_path / "photo.jpg"
+    image_path.write_bytes(_tiny_png_bytes())
+    media = image_data_from_bytes(image_path.read_bytes(), fallback_format="jpg")
+    assert media is not None
+    image_placeholder = tracker.add_media(media, "image", source_name=image_path.name)
+    video_b64 = base64.b64encode(b"0123456789abcdef").decode()
+    video_placeholder = tracker.add_media(
+        VideoData(base64_data=video_b64, format="mp4", placeholder="[video]"),
+        "video",
+        source_name="clip.mp4",
+    )
+
+    chat = ChatInput.__new__(ChatInput)
+    chat._image_tracker = tracker
+    lines = chat.attachment_summary_lines()
+    assert lines[0] == f"{image_placeholder} ({media.format}, ~{_b64_size(media.base64_data)})"
+    assert lines[1] == f"{video_placeholder} (mp4, ~{_b64_size(video_b64)})"
+
+    text_area = MagicMock()
+    text_area.text = f"{image_placeholder} analyze and {video_placeholder}"
+    chat._text_area = text_area
+    removed = chat.clear_attachments()
+
+    assert removed == 2
+    assert tracker.get_images() == []
+    assert tracker.get_videos() == []
+    text_area.load_text.assert_called_once_with("analyze and")
+
+
+def _b64_size(base64_data: str) -> str:
+    """Human size label mirroring `_media_size_label` for test expectations."""
+    approx = max(len(base64_data) * 3 // 4, 0)
+    if approx < 1024:
+        return f"{approx} B"
+    if approx < 1024 * 1024:
+        return f"{approx / 1024:.0f} KB"
+    return f"{approx / (1024 * 1024):.1f} MB"
+
+
+@pytest.mark.asyncio
+async def test_clipboard_attach_logs_event(caplog: pytest.LogCaptureFixture) -> None:
+    import logging
+
+    from soothe_cli.tui.widgets.chat_input import ChatInput
+
+    chat = ChatInput.__new__(ChatInput)
+    chat._image_tracker = MediaTracker()
+    chat._text_area = MagicMock()
+
+    with (
+        patch.object(ChatInput, "app", new_callable=PropertyMock) as mock_app,
+        patch(
+            "soothe_cli.display.media_utils.get_images_from_clipboard",
+            return_value=[_make_image_data(1)],
+        ),
+        caplog.at_level(logging.INFO, logger="soothe_cli.tui.widgets.chat_input"),
+    ):
+        mock_app.return_value = MagicMock()
+        await chat.attach_clipboard_images(notify_if_empty=False)
+
+    assert "Clipboard attach: 1 image(s)" in caplog.text
+    assert "png" in caplog.text

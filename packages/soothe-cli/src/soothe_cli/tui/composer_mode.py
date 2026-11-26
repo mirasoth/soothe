@@ -62,6 +62,31 @@ def next_composer_mode(current: str) -> str:
     return COMPOSER_MODE_ORDER[(idx + 1) % len(COMPOSER_MODE_ORDER)]
 
 
+def parse_mode_prefix_from_input(user_input: str) -> tuple[str | None, str]:
+    """Detect a leading `/plan` or `/ask` slash token in user input.
+
+    One-shot mode override: a leading mode token wins over the sticky
+    composer mode for the current turn only (the badge is unchanged).
+    Returns `(interaction_mode, cleaned_text)` where `interaction_mode` is
+    `"plan"`/`"ask"` and `cleaned_text` has the token stripped; `(None,
+    user_input)` unchanged when no mode token is present. The token must
+    be at the start of the input and followed by whitespace or end of
+    string, so `/plans` or `see /plan` do not match. Leading whitespace is
+    tolerated before the token.
+    """
+    candidate = user_input.lstrip()
+    lowered = candidate.lower()
+    for token, mode in (
+        ("/plan", COMPOSER_MODE_PLAN),
+        ("/ask", COMPOSER_MODE_ASK),
+    ):
+        if lowered.startswith(token) and (
+            len(candidate) == len(token) or candidate[len(token)].isspace()
+        ):
+            return (mode, candidate[len(token) :].strip())
+    return (None, user_input)
+
+
 def resolve_composer_wire_fields(mode: str) -> ComposerWireFields:
     """Map composer mode to wire fields.
 

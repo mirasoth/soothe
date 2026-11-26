@@ -64,6 +64,7 @@ def test_enter_action_for_classification(command: str, expected: EnterAction) ->
 def test_static_complete_commands_are_explicit() -> None:
     complete = {cmd.name for cmd in COMMANDS if cmd.enter_action == EnterAction.COMPLETE}
     assert complete == {
+        "/ask",
         "/browser_use",
         "/cron",
         "/deep_research",
