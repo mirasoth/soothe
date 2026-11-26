@@ -53,10 +53,10 @@ A **release** = cutting a new version across the monorepo-owned packages and pub
 
 ### What the workflows do (do not replicate manually)
 12. **`release.yml`** ("Release Soothe Packages") fires on `release: published`. Builds each owned package, runs tests, publishes to PyPI via trusted publishing. Each job is **idempotent** — checks `pip index versions <pkg>` and skips publishing if the version already exists. Do not pre-publish manually; if you do, the workflow will skip the upload.
-13. **`release-docker.yml`** ("Release Docker Image") fires on `workflow_run` of "Release Soothe Packages" completing successfully. Waits for `soothe==X.Y.Z` and `soothe-daemon==X.Y.Z` on PyPI, resolves them together, then builds and pushes the multi-arch `soothed` image to the container registry. Does not run if the PyPI workflow failed.
+13. **`release-docker.yml`** ("Release Docker Image") is **manually triggered only** (`workflow_dispatch` with a `version` input); it does **not** fire automatically on a GitHub release or after the PyPI workflow. Waits for `soothe==X.Y.Z` and `soothe-daemon==X.Y.Z` on PyPI, resolves them together, then builds and pushes the multi-arch `soothed` image to the container registry.
 14. **Do not publish to PyPI or the registry by hand.** The only exception is recovering from a transient PyPI 500/timeout on a package the workflow skipped or failed to upload — in that case, `uv build` + `uv publish dist/* --system-certs` for the affected package only, then re-trigger or let the next release confirm.
 
 ### Verify the release landed
 15. **Confirm on PyPI** — `curl -sL https://pypi.org/pypi/<pkg>/json` shows `X.Y.Z` as latest for `soothe`, `soothe-daemon`, `soothe-cli`. PyPI's JSON API can lag ~60s behind upload confirmations.
-16. **Confirm the workflows ran green** — `gh run list --repo mirasoth/soothe --limit 5`; both "Release Soothe Packages" and "Release Docker Image" must show `success`.
+16. **Confirm the workflows ran green** — `gh run list --repo mirasoth/soothe --limit 5`; "Release Soothe Packages" must show `success`. Then trigger "Release Docker Image" manually with `version=X.Y.Z` (`gh workflow run release-docker.yml -f version=X.Y.Z`) and confirm it shows `success` — the Docker image is not built automatically.
 17. **Confirm the GitHub Release** — `gh release view vX.Y.Z` shows `published` and `isLatest: true`.
