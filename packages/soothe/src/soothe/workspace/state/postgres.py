@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS ws_checkpoints (
     timestamp      REAL NOT NULL,
     manifest_hash  TEXT,
     status         TEXT NOT NULL DEFAULT 'pending_upload',
+    data           BYTEA,
     PRIMARY KEY (loop_id, id)
 );
 CREATE INDEX IF NOT EXISTS idx_ws_checkpoints_status ON ws_checkpoints(loop_id, status);
@@ -123,6 +124,7 @@ class PostgresWorkspaceStateStore:
             with conn.cursor() as cur:
                 for statement in (s.strip() for s in _SCHEMA.split(";") if s.strip()):
                     cur.execute(statement)
+                cur.execute("ALTER TABLE ws_checkpoints ADD COLUMN IF NOT EXISTS data BYTEA")
             conn.commit()
         self._pool = pool
         self._schema_ready = True
@@ -244,26 +246,29 @@ class PostgresWorkspaceStateStore:
         *,
         manifest_hash: str | None,
         status: str,
+        data: bytes | None = None,
     ) -> None:
-        """Insert a checkpoint reference."""
+        """Insert a checkpoint reference with its serialized payload."""
         await asyncio.to_thread(
             self._execute_sync,
             """
-            INSERT INTO ws_checkpoints (loop_id, id, timestamp, manifest_hash, status)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO ws_checkpoints (loop_id, id, timestamp, manifest_hash, status, data)
+            VALUES (%s, %s, %s, %s, %s, %s)
             ON CONFLICT (loop_id, id) DO UPDATE SET
                 timestamp = EXCLUDED.timestamp,
                 manifest_hash = EXCLUDED.manifest_hash,
-                status = EXCLUDED.status
+                status = EXCLUDED.status,
+                data = EXCLUDED.data
             """,
-            (self._loop_id, checkpoint_id, time.time(), manifest_hash, status),
+            (self._loop_id, checkpoint_id, time.time(), manifest_hash, status, data),
         )
 
     async def list_pending_checkpoints(self) -> list[dict[str, Any]]:
         """Return all checkpoints with status='pending_upload' in FIFO order."""
         return await asyncio.to_thread(
             self._execute_sync,
-            "SELECT id, timestamp, manifest_hash, status FROM ws_checkpoints "
+            "SELECT id AS checkpoint_id, timestamp, manifest_hash, status, data "
+            "FROM ws_checkpoints "
             "WHERE loop_id = %s AND status = 'pending_upload' "
             "ORDER BY timestamp ASC",
             (self._loop_id,),
@@ -279,6 +284,15 @@ class PostgresWorkspaceStateStore:
             self._execute_sync,
             "UPDATE ws_checkpoints SET status = %s WHERE loop_id = %s AND id = %s",
             (status, self._loop_id, checkpoint_id),
+        )
+
+    async def mark_checkpoint_uploaded(self, checkpoint_id: str) -> None:
+        """Mark a checkpoint uploaded and clear its payload bytes."""
+        await asyncio.to_thread(
+            self._execute_sync,
+            "UPDATE ws_checkpoints SET status = 'uploaded', data = NULL "
+            "WHERE loop_id = %s AND id = %s",
+            (self._loop_id, checkpoint_id),
         )
 
     # ------------------------------------------------------------------

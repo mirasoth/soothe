@@ -2,15 +2,20 @@
 
 Stores immutable blobs keyed by SHA-256.  Shared across runs on the same
 host so repeated materialization of the same blob requires zero object-
-data bandwidth.  Materialization uses reflink → hardlink → copy fallback.
+data bandwidth.  Materialization uses reflink → copy (hardlink is probed
+for capability reporting but never used — sharing the inode would let
+in-place workspace edits corrupt the immutable cache).
 """
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import os
 import stat
+import threading
+import uuid
 from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -31,9 +36,11 @@ class LinkStrategy(StrEnum):
     Attributes:
         REFLINK: Copy-on-write reflink.  Preferred when source and
             destination are on the same filesystem.
-        HARDLINK: Hard link.  Shares the same inode; the workspace copy
-            is the working copy (the CAS blob is immutable).
-        COPY: Full byte copy.  Always works, but wastes disk space.
+        HARDLINK: Hard link capability marker only — never used for
+            materialization.  A hardlink shares the inode with the CAS
+            blob, so an in-place edit of the workspace file would
+            silently corrupt the immutable cache.
+        COPY: Full byte copy.  Always works, but costs disk space.
     """
 
     REFLINK = "reflink"
@@ -127,7 +134,12 @@ class CASCache:
 
         path.parent.mkdir(parents=True, exist_ok=True)
 
-        tmp_path = path.with_suffix(".tmp")
+        # Unique temp name: concurrent same-hash stores (multiple threads
+        # or processes sharing the CAS root) must not interleave writes
+        # or race on the rename.
+        tmp_path = path.parent / (
+            f"{path.name}.tmp-{os.getpid()}-{threading.get_ident():x}-{uuid.uuid4().hex[:8]}"
+        )
         try:
             tmp_path.write_bytes(data)
             os.replace(tmp_path, path)
@@ -145,8 +157,11 @@ class CASCache:
     ) -> Path:
         """Materialize a CAS blob to a workspace path.
 
-        Uses the probed link strategy (reflink → hardlink → copy).
-        Creates the destination's parent directory if needed.
+        Uses reflink when the filesystem supports it, otherwise a full
+        copy.  Hardlink is never used: the workspace file and the CAS
+        blob would share an inode, and an in-place edit of the workspace
+        file would corrupt the immutable cache.  Creates the
+        destination's parent directory if needed.
 
         Args:
             sha256: Content hash of the blob to materialize.
@@ -171,11 +186,6 @@ class CASCache:
 
         if self._link_strategy is LinkStrategy.REFLINK:
             _reflink_or_copy(src, dest_path)
-        elif self._link_strategy is LinkStrategy.HARDLINK:
-            try:
-                os.link(src, dest_path)
-            except OSError:
-                _copy_file(src, dest_path)
         else:
             _copy_file(src, dest_path)
 
@@ -194,8 +204,10 @@ class CASCache:
     ) -> Path | None:
         """Download a blob from the remote backend and cache it locally.
 
-        Cache hit returns immediately.  On miss, downloads, verifies hash,
-        and stores in the CAS cache.
+        Cache hit returns immediately.  On miss, streams the blob chunk
+        by chunk into the cache (running hash verified on the way),
+        so memory stays bounded for large blobs; backends without a
+        streaming capability fall back to the buffered read.
 
         Args:
             sha256: Content hash to fetch.
@@ -209,11 +221,89 @@ class CASCache:
             logger.debug("CAS cache hit: %s", sha256[:12])
             return self.blob_path(sha256)
 
-        data = await backend.get_blob(sha256)
-        if data is None:
-            return None
+        from soothe.workspace.sync.streaming import iter_blob_chunks
 
-        return self.store_blob(sha256, data)
+        path = self.blob_path(sha256)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = path.parent / f"{path.name}.tmp-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+        h = hashlib.sha256()
+        # Chunks are awaited sequentially, so sequential writes through
+        # one handle are race-free while staying off the event loop.
+        f = await asyncio.to_thread(open, tmp_path, "wb")
+
+        def _write(chunk: bytes) -> None:
+            f.write(chunk)
+
+        try:
+            async for chunk in iter_blob_chunks(backend, sha256):
+                await asyncio.to_thread(_write, chunk)
+                h.update(chunk)
+        except KeyError:
+            await asyncio.to_thread(f.close)
+            tmp_path.unlink(missing_ok=True)
+            return None
+        except Exception:
+            await asyncio.to_thread(f.close)
+            tmp_path.unlink(missing_ok=True)
+            raise
+        await asyncio.to_thread(f.close)
+
+        if h.hexdigest() != sha256:
+            tmp_path.unlink(missing_ok=True)
+            from soothe.workspace.sync.errors import IntegrityError
+
+            raise IntegrityError(
+                f"CAS fetch hash mismatch for {sha256[:16]}: got {h.hexdigest()[:16]}..."
+            )
+
+        await asyncio.to_thread(os.replace, tmp_path, path)
+        logger.debug("CAS streamed blob into cache: %s", sha256[:12])
+        return path
+
+    def cache_file(self, src: str | Path) -> tuple[str, Path]:
+        """Cache a local file into CAS by streaming (single read pass).
+
+        Copies the content to a temp file while hashing it, then moves
+        the temp file to its content-addressed location.  When the blob
+        already exists the temp copy is discarded — the hash still had
+        to be computed to know the address, so one full read is the
+        floor either way.
+
+        Args:
+            src: Local source file path.
+
+        Returns:
+            Tuple of (sha256 hexdigest, cached blob path).
+
+        Raises:
+            FileNotFoundError: If ``src`` does not exist.
+        """
+        src_path = Path(src)
+        if not src_path.is_file():
+            raise FileNotFoundError(f"cannot cache non-file: {src}")
+
+        tmp_path = self._blobs_dir / f".tmp-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+        h = hashlib.sha256()
+        try:
+            with open(tmp_path, "wb") as fdst, open(src_path, "rb") as fsrc:
+                while True:
+                    chunk = fsrc.read(_COPY_CHUNK_SIZE)
+                    if not chunk:
+                        break
+                    fdst.write(chunk)
+                    h.update(chunk)
+            sha256 = h.hexdigest()
+            path = self.blob_path(sha256)
+            if path.exists():
+                tmp_path.unlink(missing_ok=True)
+                return sha256, path
+            path.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(tmp_path, path)
+        except Exception:
+            tmp_path.unlink(missing_ok=True)
+            raise
+        logger.debug("CAS cached file: %s → %s", src_path, sha256[:12])
+        return sha256, path
 
     def remove_blob(self, sha256: str) -> None:
         """Remove a blob from the CAS cache."""

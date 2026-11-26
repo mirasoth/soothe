@@ -121,3 +121,238 @@ class TestWorkspaceManager:
         )
         with pytest.raises(ValueError, match="unsafe watched subdir"):
             await manager.open("run-001")
+
+
+# ---------------------------------------------------------------------------
+# F-L1 wiring + consumer contract (flowjet call sequence)
+# ---------------------------------------------------------------------------
+
+
+class TestLifecycleWiring:
+    """F-L1 regression: dirty events reach the debouncer via the tracker."""
+
+    async def test_dirty_event_fires_debounced_checkpoint(
+        self, tmp_path: Path, backend: FsspecSyncBackend
+    ) -> None:
+        """A tracked write produces a checkpoint without consumer glue."""
+        manager = WorkspaceManager(
+            workspaces_root=tmp_path / "workspaces",
+            cas_root=tmp_path / "cas",
+            backend=backend,
+        )
+        ws = await manager.open("run-wire")
+        await ws.start_tracking()
+
+        (ws.root / "output" / "note.md").write_text("written mid-turn")
+        ws._dirty_tracker.mark_dirty("output/note.md")
+
+        # Debounce window (5 s default) — wait past it.
+        import asyncio
+
+        for _ in range(200):
+            if await backend.get_manifest("run-wire") is not None:
+                break
+            await asyncio.sleep(0.05)
+        await ws.close()
+
+        manifest = await backend.get_manifest("run-wire")
+        assert manifest is not None
+        assert any(e.path == "output/note.md" for e in manifest.artifacts)
+
+    async def test_open_initializes_manifest_state(
+        self, tmp_path: Path, backend: FsspecSyncBackend
+    ) -> None:
+        """F-L2: open() loads the remote manifest — no consumer recover() glue."""
+        from soothe.workspace.sync.workspace_sync import Manifest, ManifestEntry
+
+        await backend.put_manifest(
+            "run-init",
+            Manifest(
+                run_id="run-init",
+                version=7,
+                artifacts=[ManifestEntry(path="output/old.md", sha256="a" * 64, size=1)],
+            ),
+        )
+        manager = WorkspaceManager(
+            workspaces_root=tmp_path / "workspaces",
+            cas_root=tmp_path / "cas",
+            backend=backend,
+        )
+        ws = await manager.open("run-init")
+        assert ws._checkpoint_mgr is not None
+        assert ws._checkpoint_mgr.manifest is not None
+        assert ws._checkpoint_mgr.manifest.version == 7
+        await ws.close()
+
+    async def test_open_from_uri_does_not_mutate_default_backend(
+        self, tmp_path: Path, backend: FsspecSyncBackend
+    ) -> None:
+        """F-C10: open_from_uri keeps the manager's default backend intact."""
+        manager = WorkspaceManager(
+            workspaces_root=tmp_path / "workspaces",
+            cas_root=tmp_path / "cas",
+        )
+        assert manager._backend is None
+        await manager.open_from_uri("run-uri", backend=backend)
+        assert manager._backend is None
+        await manager.close("run-uri")
+
+    async def test_materialize_content_breaks_escaping_broken_symlink(self, tmp_path: Path) -> None:
+        """F-C14: a broken symlink pointing outside cannot escape the root.
+
+        The old buffered write followed the symlink target and created a
+        file OUTSIDE the workspace; the streaming restore replaces the
+        symlink itself (os.replace never follows a symlink target).
+        """
+        outside = tmp_path / "outside.md"
+        assert not outside.exists()
+
+        manager = WorkspaceManager(
+            workspaces_root=tmp_path / "workspaces",
+            cas_root=tmp_path / "cas",
+        )
+        ws = await manager.open("run-sym")
+
+        target_dir = ws.root / "output"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        (target_dir / "escape.md").symlink_to(outside)
+
+        content_fs = MemoryFileSystem()
+        # Distinct root: MemoryFileSystem instances are cached per storage
+        # options in-process, so a shared root leaks state across tests.
+        content_backend = FsspecSyncBackend(fs=content_fs, root="/ws-symcontent", max_workers=2)
+        try:
+            await content_backend.put_content_file("output/escape.md", b"safe content")
+            ws._content_backend = content_backend
+            downloaded = await ws.materialize_content(reconcile=False)
+            assert downloaded == 1
+        finally:
+            content_backend.close()
+
+        # Nothing escaped the workspace root.
+        assert not outside.exists()
+        # The symlink was replaced by a regular file with the content.
+        restored = ws.root / "output" / "escape.md"
+        assert restored.is_file()
+        assert not restored.is_symlink()
+        assert restored.read_bytes() == b"safe content"
+        await ws.close()
+
+    async def test_materialize_content_skips_invalid_remote_keys(self, tmp_path: Path) -> None:
+        """Remote listings with traversal keys never reach path joining."""
+        manager = WorkspaceManager(
+            workspaces_root=tmp_path / "workspaces",
+            cas_root=tmp_path / "cas",
+        )
+        ws = await manager.open("run-badkey")
+
+        escaped = tmp_path / "escaped.txt"
+        assert not escaped.exists()
+
+        class _HostileBackend:
+            async def list_content_files(self):
+                return ["../../escaped.txt", "normal.txt"]
+
+            async def get_content_file(self, rel_path):
+                return b"payload" if rel_path == "normal.txt" else None
+
+        ws._content_backend = _HostileBackend()
+        downloaded = await ws.materialize_content(reconcile=False)
+        assert downloaded == 1
+        assert (ws.root / "normal.txt").read_bytes() == b"payload"
+        assert not escaped.exists()
+        await ws.close()
+
+
+class TestConsumerContract:
+    """The flowjet call sequence against the full component stack."""
+
+    async def test_full_turn_round_trip(self, tmp_path: Path) -> None:
+        """open → recover → materialize_content → materialize → track →
+        write → checkpoint → close, then a fresh open recovers it all."""
+        import hashlib
+
+        from soothe.workspace.state.sqlite import SqliteWorkspaceStateStore
+        from soothe.workspace.sync.workspace_sync import Manifest, ManifestEntry
+
+        fs = MemoryFileSystem()
+        backend = FsspecSyncBackend(fs=fs, root="/ws-sync", max_workers=2)
+        content_fs = MemoryFileSystem()
+        scratch = FsspecSyncBackend(fs=content_fs, root="/ws-content", max_workers=2)
+        try:
+            # Seed a prior content-tree file (materials) and a resource blob.
+            await scratch.put_content_file("input/material.txt", b"prior material")
+            await backend.put_blob(hashlib.sha256(b"brief").hexdigest(), b"brief")
+
+            def _state_store_factory(loop_id: str, workspace_dir: Path):
+                return SqliteWorkspaceStateStore(
+                    db_path=workspace_dir / ".workspace" / "state.db", loop_id=loop_id
+                )
+
+            manager = WorkspaceManager(
+                workspaces_root=tmp_path / "workspaces",
+                cas_root=tmp_path / "cas",
+                backend=backend,
+                state_store_factory=_state_store_factory,
+                # Per-open content backend (workspace close releases its
+                # thread pool), all sharing one content filesystem.
+                content_backend_factory=lambda run_id: FsspecSyncBackend(
+                    fs=content_fs, root="/ws-content", max_workers=2
+                ),
+            )
+
+            # --- first session (the agent turn) ---
+            ws = await manager.open("run-rt")
+            payload = await ws.recover()
+            assert payload is None  # fresh run
+
+            fetched = await ws.materialize_content(reconcile=True)
+            assert fetched == 1
+            assert (ws.root / "input" / "material.txt").read_bytes() == b"prior material"
+
+            await ws.materialize(
+                Manifest(
+                    run_id="run-rt",
+                    resources=[
+                        ManifestEntry(
+                            path="brief.txt",
+                            sha256=hashlib.sha256(b"brief").hexdigest(),
+                            size=5,
+                        )
+                    ],
+                )
+            )
+            assert (ws.root / "input" / "brief.txt").read_bytes() == b"brief"
+
+            await ws.start_tracking()
+            (ws.root / "output" / "report.md").write_text("final report")
+            ws._dirty_tracker.mark_dirty("output/report.md")
+
+            ckpt = await ws.checkpoint()
+            assert ckpt == "run-rt-c000001"
+            await manager.close("run-rt")
+
+            # Remote state: manifest + blob + payload (drained at close).
+            manifest = await backend.get_manifest("run-rt")
+            assert manifest is not None
+            assert any(e.path == "output/report.md" for e in manifest.artifacts)
+            assert await backend.get_checkpoint("run-rt-c000001") is not None
+            data = await backend.get_blob(hashlib.sha256(b"final report").hexdigest())
+            assert data == b"final report"
+
+            # Content mirror carries the write.
+            mirrored = await scratch.get_content_file("output/report.md")
+            assert mirrored == b"final report"
+
+            # --- second session (restart) ---
+            ws2 = await manager.open("run-rt")
+            payload2 = await ws2.recover()
+            assert payload2 is not None
+            assert "output/report.md" in {e.path for e in payload2.dirty_files}
+            await ws2.materialize_content(reconcile=True)
+            assert (ws2.root / "input" / "material.txt").read_bytes() == b"prior material"
+            assert (ws2.root / "output" / "report.md").read_bytes() == b"final report"
+            await manager.close("run-rt")
+        finally:
+            backend.close()
+            scratch.close()

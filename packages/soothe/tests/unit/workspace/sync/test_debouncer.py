@@ -109,7 +109,9 @@ class TestDebouncer:
         debouncer.notify_dirty()  # mark dirty
 
         try:
-            await asyncio.sleep(0.5)
+            # The max-interval loop ticks every 0.5 s; 0.2 s interval
+            # guarantees the first tick after startup fires the trigger.
+            await asyncio.sleep(0.8)
             assert call_count >= 1
         finally:
             await debouncer.stop()

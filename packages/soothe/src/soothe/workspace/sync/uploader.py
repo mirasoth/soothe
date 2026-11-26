@@ -2,10 +2,17 @@
 
 Drains pending checkpoints from the state store and pushes them to the
 remote backend.  Checkpoints are written to the state DB with
-`status='pending_upload'` before the uploader attempts the push (local
-durability).  FIFO ordering; backpressure feedback to the debouncer when
-pending count exceeds the threshold.  On startup, scans for pending
-rows and re-attempts (crash recovery).
+`status='pending_upload'` and their serialized payload **before** the
+uploader attempts the push (local durability first — option A: the
+object store is the durable source of truth, the state DB stages the
+payload until the push lands).  FIFO ordering; backpressure feedback
+to the debouncer when the pending count exceeds the threshold.  On
+startup, scans for pending rows and re-attempts (crash recovery).
+
+After a SNAPSHOT payload is successfully pushed, checkpoints older
+than it are pruned from the remote (compaction garbage collection) —
+they are unreachable from recovery, which always anchors on the
+latest snapshot.
 """
 
 from __future__ import annotations
@@ -13,6 +20,8 @@ from __future__ import annotations
 import asyncio
 import logging
 from typing import TYPE_CHECKING, Any, Protocol
+
+from soothe.workspace.sync.workspace_sync import CheckpointPayload
 
 if TYPE_CHECKING:
     from soothe.workspace.sync.workspace_sync import WorkspaceSyncBackend
@@ -27,9 +36,21 @@ class PendingCheckpointStore(Protocol):
         """Return pending checkpoints in FIFO order."""
         ...
 
+    async def mark_checkpoint_uploaded(self, checkpoint_id: str) -> None:
+        """Mark a checkpoint uploaded and drop its staged payload bytes."""
+        ...
+
     async def update_checkpoint_status(self, checkpoint_id: str, status: str) -> None:
         """Update the status of a checkpoint."""
         ...
+
+
+def _seq_of(checkpoint_id: str) -> int:
+    """Best-effort numeric sequence of a checkpoint ID (0 when unparsable)."""
+    seq = checkpoint_id.rsplit("-", 1)[-1]
+    if seq.startswith("c") and seq[1:].isdigit():
+        return int(seq[1:])
+    return 0
 
 
 class BackgroundUploader:
@@ -38,6 +59,8 @@ class BackgroundUploader:
     Args:
         backend: Remote storage backend.
         store: State store for pending checkpoint queries.
+        run_id: Run identifier owning the checkpoints (used for
+            compaction pruning after snapshot uploads).
         max_pending: Backpressure threshold.  When exceeded, the
             `on_backpressure` callback is invoked.
         poll_interval: Seconds between drain cycles.
@@ -51,6 +74,7 @@ class BackgroundUploader:
         *,
         backend: WorkspaceSyncBackend,
         store: PendingCheckpointStore,
+        run_id: str,
         max_pending: int = 20,
         poll_interval: float = 2.0,
         on_backpressure: Any = None,
@@ -58,6 +82,7 @@ class BackgroundUploader:
         """Initialize the uploader with backend, checkpoint store, and thresholds."""
         self._backend = backend
         self._store = store
+        self._run_id = run_id
         self._max_pending = max_pending
         self._poll_interval = poll_interval
         self._on_backpressure = on_backpressure
@@ -141,20 +166,81 @@ class BackgroundUploader:
         """Upload a single pending checkpoint.
 
         Args:
-            item: Pending checkpoint dict with keys like `checkpoint_id`,
-                `data`.
+            item: Pending checkpoint dict with `checkpoint_id` and
+                `data` keys (the serialized payload bytes).
 
         Returns:
-            `True` if the upload succeeded, `False` on failure.
+            `True` if the upload succeeded (or the row is unrecoverable
+            and was moved out of the queue), `False` on a retryable
+            failure.
         """
         checkpoint_id: str = item["checkpoint_id"]
-        data: bytes = item["data"]
+        data: bytes | None = item.get("data")
+
+        if not data:
+            # A pending row without payload bytes can never be pushed.
+            # Mark it failed so the drain loop does not spin on it
+            # forever; the object store remains authoritative.
+            logger.error(
+                "Pending checkpoint %s has no payload data — marking failed",
+                checkpoint_id,
+            )
+            try:
+                await self._store.update_checkpoint_status(checkpoint_id, "failed")
+            except Exception:  # noqa: BLE001
+                logger.exception("Failed to mark payload-less checkpoint %s", checkpoint_id)
+            return True
 
         try:
             await self._backend.put_checkpoint(checkpoint_id, data)
-            await self._store.update_checkpoint_status(checkpoint_id, "uploaded")
-            logger.debug("Uploaded checkpoint %s", checkpoint_id)
-            return True
         except Exception:
             logger.exception("Failed to upload checkpoint %s; will retry", checkpoint_id)
             return False
+
+        try:
+            await self._store.mark_checkpoint_uploaded(checkpoint_id)
+        except Exception:  # noqa: BLE001
+            # The remote object exists; the row transition is a cache
+            # bookkeeping step. Log and continue — a re-push of an
+            # already-stored payload is idempotent.
+            logger.exception("Failed to mark checkpoint %s uploaded", checkpoint_id)
+
+        logger.debug("Uploaded checkpoint %s", checkpoint_id)
+        await self._prune_after_snapshot(checkpoint_id, data)
+        return True
+
+    async def _prune_after_snapshot(self, checkpoint_id: str, data: bytes) -> None:
+        """Prune remote checkpoints superseded by a pushed SNAPSHOT.
+
+        Runs only when the just-pushed payload is a SNAPSHOT: every
+        checkpoint with a strictly smaller sequence is unreachable from
+        recovery (which anchors on the latest snapshot) and is deleted.
+        Pruning failures are logged, not fatal — stale objects are
+        harmless beyond storage cost.
+
+        Args:
+            checkpoint_id: The just-uploaded checkpoint ID.
+            data: The serialized payload that was uploaded.
+        """
+        try:
+            payload = CheckpointPayload.model_validate_json(data)
+            if not payload.is_snapshot():
+                return
+            delete = getattr(self._backend, "delete_checkpoint", None)
+            if delete is None:
+                return
+            snapshot_seq = _seq_of(checkpoint_id)
+            if snapshot_seq <= 0:
+                return
+            siblings = await self._backend.list_checkpoints(self._run_id)
+            stale = [c for c in siblings if 0 < _seq_of(c) < snapshot_seq]
+            for ckpt_id in stale:
+                await delete(ckpt_id)
+            if stale:
+                logger.info(
+                    "Pruned %d checkpoint(s) superseded by snapshot %s",
+                    len(stale),
+                    checkpoint_id,
+                )
+        except Exception:  # noqa: BLE001
+            logger.warning("Checkpoint pruning failed after %s", checkpoint_id, exc_info=True)

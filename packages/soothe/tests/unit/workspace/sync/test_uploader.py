@@ -25,16 +25,24 @@ class FakeStore:
     def __init__(self) -> None:
         self._pending: list[dict[str, Any]] = []
         self._statuses: dict[str, str] = {}
+        self._data: dict[str, bytes | None] = {}
 
     async def list_pending_checkpoints(self) -> list[dict[str, Any]]:
         return list(self._pending)
 
     async def update_checkpoint_status(self, checkpoint_id: str, status: str) -> None:
         self._statuses[checkpoint_id] = status
+        if status != "pending_upload":
+            self._pending = [p for p in self._pending if p["checkpoint_id"] != checkpoint_id]
+
+    async def mark_checkpoint_uploaded(self, checkpoint_id: str) -> None:
+        self._statuses[checkpoint_id] = "uploaded"
+        self._data[checkpoint_id] = None
         self._pending = [p for p in self._pending if p["checkpoint_id"] != checkpoint_id]
 
     def add_pending(self, checkpoint_id: str, data: bytes = b"{}") -> None:
         self._pending.append({"checkpoint_id": checkpoint_id, "data": data, "manifest": None})
+        self._data[checkpoint_id] = data
 
     @property
     def statuses(self) -> dict[str, str]:
@@ -66,6 +74,7 @@ def uploader(backend: FakeBackend, store: FakeStore) -> BackgroundUploader:
     return BackgroundUploader(
         backend=backend,
         store=store,
+        run_id="run-up",
         max_pending=3,
         poll_interval=0.05,
     )
@@ -104,6 +113,7 @@ class TestBackgroundUploader:
         uploader = BackgroundUploader(
             backend=backend,
             store=store,
+            run_id="run-up",
             max_pending=2,
             poll_interval=0.05,
             on_backpressure=lambda count: calls.append(count),
@@ -157,6 +167,7 @@ class TestBackgroundUploader:
         uploader = BackgroundUploader(
             backend=FailingBackend(),
             store=store,
+            run_id="run-up",
             max_pending=10,
             poll_interval=0.05,
         )
@@ -169,3 +180,25 @@ class TestBackgroundUploader:
         # Checkpoint should still be pending.
         assert len(store._pending) == 1
         assert store._pending[0]["checkpoint_id"] == "c001"
+
+    @pytest.mark.asyncio
+    async def test_payloadless_row_is_failed_not_looped(self, store: FakeStore) -> None:
+        """A pending row without payload bytes is marked failed, not retried."""
+        uploader_fixture = BackgroundUploader(
+            backend=FakeBackend(),
+            store=store,
+            run_id="run-up",
+            max_pending=10,
+            poll_interval=0.05,
+        )
+        store.add_pending("run-up-c000001", data=b"{}")
+        # Simulate a corrupted row: pending with no payload bytes.
+        store._pending.append({"checkpoint_id": "run-up-c000002", "data": None})
+        store._data["run-up-c000002"] = None
+
+        uploader_fixture.start()
+        await asyncio.sleep(0.3)
+        await uploader_fixture.stop()
+
+        assert store.statuses.get("run-up-c000002") == "failed"
+        assert "run-up-c000002" not in [p["checkpoint_id"] for p in store._pending]

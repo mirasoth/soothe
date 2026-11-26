@@ -105,6 +105,7 @@ class WorkspaceStateStore(Protocol):
         *,
         manifest_hash: str | None,
         status: str,
+        data: bytes | None = None,
     ) -> None:
         """Insert a checkpoint reference.
 
@@ -112,6 +113,9 @@ class WorkspaceStateStore(Protocol):
             checkpoint_id: Unique checkpoint identifier.
             manifest_hash: Hash of the manifest at checkpoint time.
             status: `'pending_upload'` or `'uploaded'`.
+            data: Serialized checkpoint payload; written before the
+                remote upload so a crash between write and upload leaves
+                a pending row the background uploader can drain.
         """
         ...
 
@@ -119,7 +123,8 @@ class WorkspaceStateStore(Protocol):
         """Return checkpoints with `status='pending_upload'` in FIFO order.
 
         Returns:
-            List of checkpoint record dicts.
+            List of checkpoint record dicts with at least `checkpoint_id`
+            and `data` (the serialized payload bytes).
         """
         ...
 
@@ -133,6 +138,21 @@ class WorkspaceStateStore(Protocol):
         Args:
             checkpoint_id: Checkpoint identifier.
             status: New status (`'uploaded'`, `'pending_upload'`).
+        """
+        ...
+
+    async def mark_checkpoint_uploaded(self, checkpoint_id: str) -> None:
+        """Mark a checkpoint uploaded and drop its payload bytes.
+
+        Atomic single-statement transition: sets ``status='uploaded'``
+        and clears the ``data`` column.  The pending-row payload is a
+        crash-recovery staging copy only — once the remote object
+        store holds the checkpoint, the row's payload bytes have no
+        further use and are released (option A: object store is the
+        durable source of truth, the state DB a runtime cache).
+
+        Args:
+            checkpoint_id: Checkpoint identifier.
         """
         ...
 

@@ -257,10 +257,9 @@ class TestStreaming:
         backend: FsspecSyncBackend,
     ) -> None:
         h = _sha256(b"missing")
-        chunks: list[bytes] = []
-        async for chunk in backend.stream_blob(h):
-            chunks.append(chunk)
-        assert chunks == []
+        with pytest.raises(KeyError):
+            async for _chunk in backend.stream_blob(h):
+                pass
 
 
 # ---------------------------------------------------------------------------

@@ -146,7 +146,7 @@ class CheckpointDebouncer:
     async def _max_interval_loop(self) -> None:
         """Guarantee periodic checkpoints even under continuous activity."""
         while self._running:
-            await asyncio.sleep(0.05)
+            await asyncio.sleep(0.5)
             elapsed = time.monotonic() - self._last_trigger
             if elapsed >= self._max_interval and self._dirty_since_last:
                 logger.debug("Max-interval checkpoint trigger")

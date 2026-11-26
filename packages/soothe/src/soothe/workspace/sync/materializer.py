@@ -53,7 +53,12 @@ class Materializer:
         1. Validate the path.
         2. Skip if the workspace file already has the correct hash.
         3. Link from CAS if the blob is cached.
-        4. Download from backend, verify hash, store in CAS, materialize.
+        4. Download from backend (streamed), verify hash, store in CAS,
+           materialize.
+
+        Per-entry failures abort the materialization with an aggregate
+        error naming the failed paths — a partially materialized
+        resource set must not look successful.
 
         Args:
             manifest: The resource manifest to materialize.
@@ -61,21 +66,41 @@ class Materializer:
         Returns:
             List of resource paths that were materialized (downloaded or
             linked).  Skipped resources are not included.
-        """
-        self._remove_escaping_symlinks()
 
-        materialized: list[str] = []
+        Raises:
+            RuntimeError: When one or more entries failed to
+                materialize (including the underlying causes).
+        """
+        await asyncio.to_thread(self._remove_escaping_symlinks)
+
         semaphore = asyncio.Semaphore(_MAX_CONCURRENT_DOWNLOADS)
 
-        async def _materialize_one(entry: ManifestEntry) -> str | None:
+        async def _materialize_one(
+            entry: ManifestEntry,
+        ) -> tuple[ManifestEntry, BaseException | None]:
             async with semaphore:
-                return await self._materialize_entry(entry)
+                try:
+                    return entry, await self._materialize_entry(entry)
+                except Exception as exc:  # noqa: BLE001
+                    return entry, exc
 
-        tasks = [_materialize_one(entry) for entry in manifest.resources]
-        results = await asyncio.gather(*tasks)
-        for path, was_materialized in zip(manifest.resources, results, strict=True):
-            if was_materialized:
-                materialized.append(path.path)
+        results = await asyncio.gather(*(_materialize_one(entry) for entry in manifest.resources))
+
+        materialized: list[str] = []
+        failures: list[tuple[str, BaseException]] = []
+        for entry, outcome in results:
+            if isinstance(outcome, BaseException):
+                failures.append((entry.path, outcome))
+            elif outcome:
+                materialized.append(entry.path)
+
+        if failures:
+            if len(failures) == 1:
+                # Preserve the single-failure exception type (e.g.
+                # FileNotFoundError for missing resources).
+                raise failures[0][1]
+            detail = "; ".join(f"{path}: {exc!r}" for path, exc in failures)
+            raise RuntimeError(f"materialization failed for {len(failures)} resource(s): {detail}")
 
         return materialized
 
@@ -106,11 +131,11 @@ class Materializer:
 
         # Check CAS cache.
         if self._cas.has_blob(entry.sha256):
-            self._cas.materialize(entry.sha256, dest)
+            await asyncio.to_thread(self._cas.materialize, entry.sha256, dest)
             logger.debug("Materialized from CAS: %s", entry.path)
             return True
 
-        # Download from backend.
+        # Download from backend (streamed into the CAS cache).
         blob_path = await self._cas.fetch_and_cache(entry.sha256, self._backend)
         if blob_path is None:
             logger.error("Resource not found in backend: %s (%s)", entry.path, entry.sha256[:12])
@@ -118,7 +143,7 @@ class Materializer:
                 f"Resource {entry.path!r} (hash {entry.sha256[:12]}...) not found in backend"
             )
 
-        self._cas.materialize(entry.sha256, dest)
+        await asyncio.to_thread(self._cas.materialize, entry.sha256, dest)
         logger.info("Materialized from backend: %s (%d bytes)", entry.path, entry.size)
         return True
 

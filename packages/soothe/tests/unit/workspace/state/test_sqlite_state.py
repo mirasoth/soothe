@@ -107,21 +107,43 @@ class TestCheckpointRefs:
     """Tests for insert_checkpoint, list_pending_checkpoints, update_checkpoint_status."""
 
     async def test_insert_and_list_pending(self, store: SqliteWorkspaceStateStore) -> None:
-        await store.insert_checkpoint("c001", manifest_hash="hash1", status="pending_upload")
-        await store.insert_checkpoint("c002", manifest_hash="hash2", status="pending_upload")
+        await store.insert_checkpoint(
+            "c001", manifest_hash="hash1", status="pending_upload", data=b"payload1"
+        )
+        await store.insert_checkpoint(
+            "c002", manifest_hash="hash2", status="pending_upload", data=b"payload2"
+        )
         await store.insert_checkpoint("c003", manifest_hash="hash3", status="uploaded")
 
         pending = await store.list_pending_checkpoints()
         assert len(pending) == 2
-        ids = {p["id"] for p in pending}
+        ids = {p["checkpoint_id"] for p in pending}
         assert ids == {"c001", "c002"}
+        by_id = {p["checkpoint_id"]: p for p in pending}
+        assert by_id["c001"]["data"] == b"payload1"
 
     async def test_update_checkpoint_status(self, store: SqliteWorkspaceStateStore) -> None:
-        await store.insert_checkpoint("c001", manifest_hash="hash1", status="pending_upload")
+        await store.insert_checkpoint(
+            "c001", manifest_hash="hash1", status="pending_upload", data=b"payload1"
+        )
         await store.update_checkpoint_status("c001", "uploaded")
 
         pending = await store.list_pending_checkpoints()
         assert len(pending) == 0
+
+    async def test_mark_checkpoint_uploaded_clears_payload(
+        self, store: SqliteWorkspaceStateStore
+    ) -> None:
+        await store.insert_checkpoint(
+            "c001", manifest_hash="hash1", status="pending_upload", data=b"payload1"
+        )
+        await store.mark_checkpoint_uploaded("c001")
+
+        pending = await store.list_pending_checkpoints()
+        assert len(pending) == 0
+        rows = store._execute("SELECT status, data FROM checkpoints WHERE id = ?", ("c001",))
+        assert rows[0]["status"] == "uploaded"
+        assert rows[0]["data"] is None
 
     async def test_list_pending_empty(self, store: SqliteWorkspaceStateStore) -> None:
         pending = await store.list_pending_checkpoints()

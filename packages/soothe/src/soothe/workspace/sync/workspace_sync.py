@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
+    from pathlib import Path
 
 from pydantic import BaseModel, Field
 
@@ -207,6 +208,8 @@ class CheckpointPayload(BaseModel):
         dirty_files: Files that changed since the previous checkpoint
             (for ``DELTA``) or since the last snapshot (for the first
             ``SNAPSHOT`` of a run).  Each entry is content-addressed.
+        deleted_files: Files deleted since the previous checkpoint
+            (tombstones).  Replay applies them after ``dirty_files``.
         manifest_snapshot: Full manifest snapshot.  Required for
             ``SNAPSHOT`` payloads; omitted for ``DELTA`` payloads
             (they reference the nearest preceding snapshot).
@@ -225,6 +228,15 @@ class CheckpointPayload(BaseModel):
             "Files that changed since the previous checkpoint (for "
             "``DELTA``) or since the last snapshot (for the first "
             "``SNAPSHOT``).  Each entry is content-addressed."
+        ),
+    )
+    deleted_files: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Relative paths deleted since the previous checkpoint "
+            "(tombstones).  Replay applies them after ``dirty_files`` so "
+            "recovery and manifest reconstruction do not resurrect "
+            "removed paths."
         ),
     )
     manifest_snapshot: Manifest | None = Field(
@@ -340,8 +352,9 @@ class WorkspaceSyncBackend(Protocol):
             manifest: The manifest to write.  Its ``version`` field
                 controls optimistic concurrency.
             if_match: If provided, the backend MUST reject the write
-                when the stored manifest version does not match
-                (conditional write).
+                when the stored manifest version does not match, or
+                when a manifest was expected but none exists (version
+                guard).
 
         Returns:
             The written manifest with updated metadata.
@@ -393,6 +406,49 @@ class WorkspaceSyncBackend(Protocol):
         Args:
             checkpoint_id: Unique checkpoint identifier (e.g. ``c001``).
             data: Serialized :class:`CheckpointPayload`.
+        """
+        ...
+
+    async def delete_checkpoint(self, checkpoint_id: str) -> None:
+        """Delete a stored checkpoint payload (idempotent).
+
+        Used by compaction pruning: once a fresh ``SNAPSHOT`` is durably
+        stored, checkpoints older than it are unreachable from recovery
+        and may be removed.  Missing objects are not an error.
+
+        Args:
+            checkpoint_id: Unique checkpoint identifier.
+        """
+        ...
+
+    async def put_blob_from_file(self, sha256: str, src: Path) -> None:
+        """Store a blob by streaming a local file (optional capability).
+
+        Backends that support chunked writes MUST verify the content
+        hash before the transfer and raise on mismatch — a blob stored
+        under a wrong hash key would poison every future read of that
+        key.  Backends without streaming can fall back to
+        ``put_blob`` with the fully-buffered content — callers go
+        through :func:`soothe.workspace.sync.streaming.put_blob_from_file`
+        which performs that dispatch, so duck-typed backends without
+        this method keep working.
+
+        Args:
+            sha256: Expected content hash.
+            src: Local source file path.
+        """
+        ...
+
+    async def put_content_file_from_file(self, rel_path: str, src: Path) -> None:
+        """Write a content-tree file by streaming a local file (optional).
+
+        Streaming counterpart of :meth:`put_content_file`; callers
+        dispatch via
+        :func:`soothe.workspace.sync.streaming.put_content_file_from_file`.
+
+        Args:
+            rel_path: Relative workspace path.
+            src: Local source file path.
         """
         ...
 
@@ -456,6 +512,25 @@ class WorkspaceSyncBackend(Protocol):
         data = await self.get_checkpoint(checkpoint_id)
         if data is None:
             raise KeyError(f"Checkpoint {checkpoint_id!r} not found")
+        yield data
+
+    async def stream_content_file(self, rel_path: str) -> AsyncIterator[bytes]:
+        """Yield chunks of a content-tree file (optional capability).
+
+        Default implementation delegates to :meth:`get_content_file`
+        and yields the full payload in one chunk.  Raise `KeyError`
+        when the path is absent.  Callers dispatch via
+        :func:`soothe.workspace.sync.streaming.iter_content_chunks`.
+
+        Args:
+            rel_path: Relative workspace path.
+
+        Yields:
+            Chunks of file content.
+        """
+        data = await self.get_content_file(rel_path)
+        if data is None:
+            raise KeyError(f"Content file {rel_path!r} not found")
         yield data
 
     # -- lifecycle ----------------------------------------------------------

@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import sqlite3
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -37,7 +38,8 @@ CREATE TABLE IF NOT EXISTS checkpoints (
     id             TEXT PRIMARY KEY,
     timestamp      REAL NOT NULL,
     manifest_hash  TEXT,
-    status         TEXT NOT NULL DEFAULT 'pending_upload'
+    status         TEXT NOT NULL DEFAULT 'pending_upload',
+    data           BLOB
 );
 
 CREATE TABLE IF NOT EXISTS artifacts (
@@ -52,6 +54,18 @@ CREATE INDEX IF NOT EXISTS idx_checkpoints_status ON checkpoints(status);
 """
 
 
+def _migrate_checkpoints_data_column(conn: sqlite3.Connection) -> None:
+    """Add the ``data`` column to pre-existing ``checkpoints`` tables.
+
+    ``CREATE TABLE IF NOT EXISTS`` cannot evolve an older on-disk state DB;
+    the state DB is a runtime cache, so a plain ``ALTER TABLE`` suffices.
+    """
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(checkpoints)")}
+    if "data" not in columns:
+        conn.execute("ALTER TABLE checkpoints ADD COLUMN data BLOB")
+        conn.commit()
+
+
 class SqliteWorkspaceStateStore:
     """SQLite implementation of `WorkspaceStateStore`.
 
@@ -64,11 +78,13 @@ class SqliteWorkspaceStateStore:
         """Initialize the SQLite connection and create the workspace schema."""
         self._db_path = db_path
         self._loop_id = loop_id
+        self._lock = threading.Lock()
         db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(_SCHEMA)
         self._conn.commit()
+        _migrate_checkpoints_data_column(self._conn)
         logger.debug("SqliteWorkspaceStateStore initialized: db=%s, loop=%s", db_path, loop_id)
 
     def _execute(
@@ -76,10 +92,16 @@ class SqliteWorkspaceStateStore:
         sql: str,
         params: tuple[Any, ...] = (),
     ) -> list[dict[str, Any]]:
-        """Execute a query and return rows as dicts."""
-        cursor = self._conn.execute(sql, params)
-        rows = cursor.fetchall()
-        self._conn.commit()
+        """Execute a query and return rows as dicts.
+
+        Serialized with a lock: the connection is shared across
+        ``asyncio.to_thread`` worker threads and ``sqlite3.threadsafety``
+        forbids concurrent connection use.
+        """
+        with self._lock:
+            cursor = self._conn.execute(sql, params)
+            rows = cursor.fetchall()
+            self._conn.commit()
         return [dict(row) for row in rows]
 
     # ------------------------------------------------------------------
@@ -174,26 +196,29 @@ class SqliteWorkspaceStateStore:
         self,
         checkpoint_id: str,
         *,
-        manifest_hash: str,
+        manifest_hash: str | None,
         status: str,
+        data: bytes | None = None,
     ) -> None:
-        """Insert a checkpoint reference."""
+        """Insert a checkpoint reference with its serialized payload."""
         await asyncio.to_thread(
             self._execute,
-            """INSERT INTO checkpoints (id, timestamp, manifest_hash, status)
-               VALUES (?, ?, ?, ?)
+            """INSERT INTO checkpoints (id, timestamp, manifest_hash, status, data)
+               VALUES (?, ?, ?, ?, ?)
                ON CONFLICT(id) DO UPDATE SET
                    timestamp=excluded.timestamp,
                    manifest_hash=excluded.manifest_hash,
-                   status=excluded.status""",
-            (checkpoint_id, time.time(), manifest_hash, status),
+                   status=excluded.status,
+                   data=excluded.data""",
+            (checkpoint_id, time.time(), manifest_hash, status, data),
         )
 
     async def list_pending_checkpoints(self) -> list[dict[str, Any]]:
         """Return all checkpoints with status='pending_upload' in FIFO order."""
         return await asyncio.to_thread(
             self._execute,
-            "SELECT * FROM checkpoints WHERE status = 'pending_upload' ORDER BY timestamp ASC",
+            "SELECT id AS checkpoint_id, timestamp, manifest_hash, status, data "
+            "FROM checkpoints WHERE status = 'pending_upload' ORDER BY timestamp ASC",
         )
 
     async def update_checkpoint_status(
@@ -206,6 +231,14 @@ class SqliteWorkspaceStateStore:
             self._execute,
             "UPDATE checkpoints SET status = ? WHERE id = ?",
             (status, checkpoint_id),
+        )
+
+    async def mark_checkpoint_uploaded(self, checkpoint_id: str) -> None:
+        """Mark a checkpoint uploaded and clear its payload bytes."""
+        await asyncio.to_thread(
+            self._execute,
+            "UPDATE checkpoints SET status = 'uploaded', data = NULL WHERE id = ?",
+            (checkpoint_id,),
         )
 
     # ------------------------------------------------------------------
@@ -238,19 +271,24 @@ class SqliteWorkspaceStateStore:
 
     async def close(self) -> None:
         """Close the database connection."""
-        await asyncio.to_thread(self._conn.close)
+        await asyncio.to_thread(self._close_sync)
+
+    def _close_sync(self) -> None:
+        with self._lock:
+            self._conn.close()
 
     async def cleanup(self) -> None:
         """Remove all state for this run."""
 
         def _cleanup() -> None:
-            self._conn.executescript(
-                "DELETE FROM files;"
-                " DELETE FROM blobs;"
-                " DELETE FROM checkpoints;"
-                " DELETE FROM artifacts;"
-            )
-            self._conn.commit()
+            with self._lock:
+                self._conn.executescript(
+                    "DELETE FROM files;"
+                    " DELETE FROM blobs;"
+                    " DELETE FROM checkpoints;"
+                    " DELETE FROM artifacts;"
+                )
+                self._conn.commit()
 
         await asyncio.to_thread(_cleanup)
         logger.debug("State store cleaned up for loop %s", self._loop_id)

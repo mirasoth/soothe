@@ -108,13 +108,46 @@ class WorkspaceManager:
         return root
 
     async def open(self, run_id: str) -> Workspace:
-        """Open a workspace for a run.
-
-        Creates the workspace directory structure, initializes all sync
-        components, and returns a `Workspace` handle.
+        """Open a workspace for a run using the manager's backend.
 
         Args:
             run_id: Unique run identifier.
+
+        Returns:
+            A `Workspace` handle ready for materialization.
+        """
+        return await self._open(run_id, self._backend)
+
+    async def open_from_uri(
+        self,
+        run_id: str,
+        backend: WorkspaceSyncBackend,
+    ) -> Workspace:
+        """Open a workspace with a specific backend (e.g. from a URI).
+
+        The supplied backend is used for THIS run only — the manager's
+        default backend is not mutated (F-C10).
+
+        Args:
+            run_id: Unique run identifier.
+            backend: Remote storage backend to use for this run.
+
+        Returns:
+            A `Workspace` handle.
+        """
+        return await self._open(run_id, backend)
+
+    async def _open(self, run_id: str, backend: WorkspaceSyncBackend | None) -> Workspace:
+        """Open a workspace with an explicit backend.
+
+        Creates the workspace directory structure, initializes all sync
+        components (wiring the debouncer into the dirty tracker and the
+        uploader's backpressure into the debouncer), loads any existing
+        remote manifest state, and returns a `Workspace` handle.
+
+        Args:
+            run_id: Unique run identifier.
+            backend: Remote storage backend (or `None` for local-only).
 
         Returns:
             A `Workspace` handle ready for materialization.
@@ -129,12 +162,6 @@ class WorkspaceManager:
                 workspace_dir=root,
             )
 
-        dirty_tracker = DirtyTracker(
-            workspace_root=root,
-            watched_subdirs=self._watched_subdirs,
-        )
-
-        backend = self._backend
         if backend is None:
             logger.warning(
                 "Opening workspace %s without a remote backend — "
@@ -154,7 +181,24 @@ class WorkspaceManager:
                 )
                 content_backend = None
 
+        # Late-bound debouncer wiring: the dirty tracker needs
+        # `debouncer.notify_dirty` and the debouncer needs the
+        # checkpoint manager's `create_checkpoint`, but the manager
+        # needs the tracker — the closure resolves the cycle.
+        debouncer_ref: list[CheckpointDebouncer] = []
+
+        def _on_dirty() -> None:
+            if debouncer_ref:
+                debouncer_ref[0].notify_dirty()
+
+        dirty_tracker = DirtyTracker(
+            workspace_root=root,
+            watched_subdirs=self._watched_subdirs,
+            on_dirty=_on_dirty,
+        )
+
         checkpoint_mgr: CheckpointManager | None = None
+        debouncer: CheckpointDebouncer | None = None
         if backend is not None:
             checkpoint_mgr = CheckpointManager(
                 run_id=run_id,
@@ -162,21 +206,27 @@ class WorkspaceManager:
                 cas=cas,
                 dirty_tracker=dirty_tracker,
                 workspace_root=root,
+                state_store=state_store,
                 content_backend=content_backend,
             )
-
-        debouncer: CheckpointDebouncer | None = None
-        if checkpoint_mgr is not None:
             debouncer = CheckpointDebouncer(
                 trigger=checkpoint_mgr.create_checkpoint,
             )
+            debouncer_ref.append(debouncer)
 
         uploader: BackgroundUploader | None = None
         if backend is not None and state_store is not None:
             uploader = BackgroundUploader(
                 backend=backend,
                 store=state_store,
+                run_id=run_id,
+                on_backpressure=debouncer.set_pending_count if debouncer else None,
             )
+
+        if checkpoint_mgr is not None:
+            # One-stop lifecycle (F-L2): load the remote manifest and
+            # counters so a fresh process never resets manifest state.
+            await checkpoint_mgr.initialize()
 
         ws = Workspace(
             run_id=run_id,
@@ -193,23 +243,6 @@ class WorkspaceManager:
         self._workspaces[run_id] = ws
         logger.info("Opened workspace for run %s at %s", run_id, root)
         return ws
-
-    async def open_from_uri(
-        self,
-        run_id: str,
-        backend: WorkspaceSyncBackend,
-    ) -> Workspace:
-        """Open a workspace with a specific backend (e.g. from a URI).
-
-        Args:
-            run_id: Unique run identifier.
-            backend: Remote storage backend to use for this run.
-
-        Returns:
-            A `Workspace` handle.
-        """
-        self._backend = backend
-        return await self.open(run_id)
 
     def get(self, run_id: str) -> Workspace | None:
         """Get an already-open workspace by run ID.
@@ -233,7 +266,17 @@ class WorkspaceManager:
             await ws.close()
 
     async def close_all(self) -> None:
-        """Close all open workspaces."""
+        """Close all open workspaces.
+
+        One failing close is logged and the loop continues — a single
+        bad workspace must not block the shutdown of the rest (F-C10).
+        """
         run_ids = list(self._workspaces.keys())
         for run_id in run_ids:
-            await self.close(run_id)
+            ws = self._workspaces.pop(run_id, None)
+            if ws is None:
+                continue
+            try:
+                await ws.close()
+            except Exception:  # noqa: BLE001
+                logger.exception("Failed to close workspace %s", run_id)

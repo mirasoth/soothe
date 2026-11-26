@@ -4,8 +4,12 @@ The `construct_sync_backend` factory is the entry point for creating a
 workspace sync backend from a user-supplied URI (e.g.
 `s3://bucket/pfx`).  Only remote object-store schemes (`s3`, `gs`,
 `az`) are permitted from user input to prevent SSRF / local file read.
-The fsspec global filesystem cache is disabled to prevent credential
-leakage to the agent process.
+
+Storage credentials live only in this process (config dict / env vars
+resolved by the concrete filesystem); the agent never sees them.
+Filesystem instances are shared through fsspec's instance cache keyed
+on the resolved storage options — use `skip_instance_cache=True` in
+the storage options if per-call isolation is required.
 """
 
 from __future__ import annotations
@@ -60,7 +64,6 @@ def construct_sync_backend(
     storage_options = _resolve_storage_options(uri, config)
 
     fs, root = fsspec.url_to_fs(uri, **storage_options)
-    fs.use_cache = False
 
     logger.info(
         "Constructed FsspecSyncBackend: scheme=%s, root=%s, fs=%s",

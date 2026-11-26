@@ -66,12 +66,22 @@ def _factory_config() -> dict[str, object]:
     Includes ``config_kwargs`` and ``client_kwargs`` so the factory can
     configure virtual-hosted-style addressing and region for S3-compatible
     services like Tencent COS.
+
+    ``request_checksum_calculation="when_required"`` disables botocore's
+    default integrity checksums (1.36+): those switch request bodies to
+    aws-chunked framing, which Tencent COS rejects with ``You must
+    provide the Content-Length HTTP header``.  End-to-end integrity is
+    provided by the workspace-sync CAS layer (sha256 on every blob
+    path), not transport checksums.
     """
     return {
         "endpoint_url": _ENDPOINT,
         "key": _KEY,
         "secret": _SECRET,
-        "config_kwargs": {"s3": {"addressing_style": "virtual"}},
+        "config_kwargs": {
+            "s3": {"addressing_style": "virtual"},
+            "request_checksum_calculation": "when_required",
+        },
         "client_kwargs": {"region_name": _REGION},
     }
 
@@ -396,10 +406,9 @@ class TestS3Streaming:
     @pytest.mark.asyncio
     async def test_stream_blob_missing(self, backend: FsspecSyncBackend) -> None:
         h = _sha256(b"missing-stream")
-        chunks: list[bytes] = []
-        async for chunk in backend.stream_blob(h):
-            chunks.append(chunk)
-        assert chunks == []
+        with pytest.raises(KeyError):
+            async for _chunk in backend.stream_blob(h):
+                pass
 
     @pytest.mark.asyncio
     async def test_stream_checkpoint(

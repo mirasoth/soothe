@@ -7,8 +7,12 @@ manager, and background uploader to provide a simple async lifecycle API.
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import logging
-from collections.abc import Iterable
+import os
+import uuid
+from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -17,12 +21,13 @@ from soothe.workspace.sync.checkpoint import CheckpointManager
 from soothe.workspace.sync.debouncer import CheckpointDebouncer
 from soothe.workspace.sync.dirty_tracker import DirtyTracker
 from soothe.workspace.sync.materializer import Materializer
+from soothe.workspace.sync.paths import validate_relative_path
+from soothe.workspace.sync.streaming import iter_content_chunks
 from soothe.workspace.sync.uploader import BackgroundUploader
 from soothe.workspace.sync.workspace_sync import (
     Artifact,
     ArtifactSpec,
     Manifest,
-    Resource,
 )
 
 if TYPE_CHECKING:
@@ -30,6 +35,8 @@ if TYPE_CHECKING:
     from soothe.workspace.sync.workspace_sync import CheckpointPayload, WorkspaceSyncBackend
 
 logger = logging.getLogger(__name__)
+
+_FILE_COPY_CHUNK = 1024 * 1024  # 1 MiB
 
 
 class Workspace:
@@ -93,22 +100,33 @@ class Workspace:
         """Return the current manifest, or `None` if not yet loaded."""
         return self._manifest
 
-    async def materialize(self, resources: list[Resource]) -> None:
-        """Materialize resources into the local workspace.
+    async def materialize(self, manifest: Manifest) -> None:
+        """Materialize a resource manifest into the local workspace.
 
         Downloads missing blobs from the backend, stores them in CAS,
-        and creates local file representations (reflink/hardlink/copy).
+        and creates local file representations (reflink/copy).
 
         Args:
-            resources: List of resources to materialize.
+            manifest: The manifest whose `resources` are materialized
+                (under `<root>/input/`).  Callers holding bare
+                :class:`Resource` lists can wrap them in a `Manifest`.
         """
+        if self._backend is None:
+            logger.warning("Materialize called without a remote backend — nothing to fetch")
+            return
         materializer = Materializer(
             backend=self._backend,
             cas=self._cas,
             workspace_root=self.root,
         )
-        await materializer.materialize(resources)
-        logger.info("Materialized %d resources for run %s", len(resources), self.run_id)
+        materialized = await materializer.materialize(manifest)
+        self._manifest = manifest
+        logger.info(
+            "Materialized %d/%d resources for run %s",
+            len(materialized),
+            len(manifest.resources),
+            self.run_id,
+        )
 
     async def materialize_content(
         self,
@@ -119,16 +137,21 @@ class Workspace:
         """Materialize the content tree (dual-source sync) into the workspace.
 
         Lists every file under the content backend's root and restores it at
-        the same relative path locally, skipping engine directories and files
-        whose local content already matches. This is the "read path" half of
-        content mirroring — the write half happens at checkpoint time (dirty
-        files/deletions are mirrored back by the checkpoint manager).
+        the same relative path locally, skipping engine directories, paths
+        that fail relative-path validation, and files whose local content
+        already matches. Downloads stream chunk-by-chunk into a temp file
+        (running hash), so memory stays bounded for large content; an
+        unchanged file costs one streamed read, not a rewrite. This is the
+        "read path" half of content mirroring — the write half happens at
+        checkpoint time (dirty files/deletions are mirrored back by the
+        checkpoint manager).
 
         Args:
             protected: Relative paths that must never be reconciled away
                 (e.g. engine manifest artifact paths — agent outputs that
                 live in the workspace but not necessarily in the content
-                tree).
+                tree).  The current dirty set and the in-memory manifest
+                artifact paths are ALWAYS protected implicitly (F-C13).
             reconcile: When true, after the restore pass delete local files
                 that no longer exist in the content tree and are not
                 `protected` (the delete half of the read path — backend-side
@@ -140,31 +163,23 @@ class Workspace:
         if self._content_backend is None:
             return 0
 
-        import hashlib as _hashlib
-
         skip_prefixes = (".workspace/", "__pycache__/", ".git/")
         rel_paths = await self._content_backend.list_content_files()
         downloaded = 0
         for rel in rel_paths:
             if rel.startswith(skip_prefixes):
                 continue
-            dest = self.root / rel
-            if dest.is_file() and not dest.is_symlink():
-                existing = dest.read_bytes()
-                remote = await self._content_backend.get_content_file(rel)
-                if (
-                    remote is not None
-                    and _hashlib.sha256(existing).hexdigest() == _hashlib.sha256(remote).hexdigest()
-                ):
-                    continue
-            elif dest.exists():
-                continue  # symlink or special file — leave it alone
-            data = await self._content_backend.get_content_file(rel)
-            if data is None:
+            # Remote listings are untrusted input — a key containing
+            # traversal segments must never reach path joining.
+            try:
+                validate_relative_path(rel, name="content_path")
+            except ValueError:
+                logger.warning("Skipping invalid content path from backend: %r", rel)
                 continue
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_bytes(data)
-            downloaded += 1
+            dest = self.root / rel
+            if dest.exists() and not dest.is_file():
+                continue  # symlink, directory, or special file — leave it alone
+            downloaded += await self._stream_content_file(rel, dest)
         if rel_paths:
             logger.info(
                 "Content materialization for run %s: %d/%d files fetched",
@@ -173,13 +188,77 @@ class Workspace:
                 len(rel_paths),
             )
         if reconcile:
-            await self._reconcile_content(rel_paths, protected, skip_prefixes)
+            protected_set = self._implicit_protected(protected)
+            await self._reconcile_content(rel_paths, protected_set, skip_prefixes)
         return downloaded
+
+    async def _stream_content_file(self, rel: str, dest: Path) -> int:
+        """Stream one content-tree file to its local destination.
+
+        Returns 1 when the local file was replaced (or created), 0 when
+        the local content already matches (temp discarded).
+
+        Args:
+            rel: Validated relative path.
+            dest: Local destination path.
+
+        Returns:
+            1 if downloaded, 0 if skipped.
+        """
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        tmp = dest.parent / f".{dest.name}.tmp-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+        h = hashlib.sha256()
+        # Chunks are awaited sequentially, so sequential writes through
+        # one handle are race-free while staying off the event loop.
+        f = await asyncio.to_thread(open, tmp, "wb")
+
+        def _write(chunk: bytes) -> None:
+            f.write(chunk)
+
+        try:
+            async for chunk in iter_content_chunks(self._content_backend, rel):
+                await asyncio.to_thread(_write, chunk)
+                h.update(chunk)
+        except KeyError:
+            await asyncio.to_thread(f.close)
+            tmp.unlink(missing_ok=True)
+            return 0
+        except Exception:
+            await asyncio.to_thread(f.close)
+            tmp.unlink(missing_ok=True)
+            raise
+        await asyncio.to_thread(f.close)
+
+        if dest.is_file() and not dest.is_symlink():
+            local_hash = await asyncio.to_thread(_hash_file, dest)
+            if local_hash == h.hexdigest():
+                tmp.unlink(missing_ok=True)
+                return 0
+        await asyncio.to_thread(os.replace, tmp, dest)
+        return 1
+
+    def _implicit_protected(self, protected: Iterable[str]) -> set[str]:
+        """Extend caller protection with dirty set and manifest artifacts.
+
+        Args:
+            protected: Caller-supplied protected relative paths.
+
+        Returns:
+            The extended protection set.
+        """
+        keep = {p.strip("/") for p in protected if p}
+        keep.update(self._dirty_tracker.get_dirty().keys())
+        keep.update(self._dirty_tracker.deleted_files)
+        manifest = self._checkpoint_mgr.manifest if self._checkpoint_mgr else None
+        if manifest is not None:
+            keep.update(e.path for e in manifest.artifacts)
+            keep.update(e.path for e in manifest.resources)
+        return keep
 
     async def _reconcile_content(
         self,
-        remote_rel_paths: list[str],
-        protected: Iterable[str],
+        remote_rel_paths: Sequence[str],
+        protected: set[str],
         skip_prefixes: tuple[str, ...],
     ) -> None:
         """Delete local files that no longer exist in the content tree.
@@ -190,8 +269,8 @@ class Workspace:
         except the root and the engine-created top-level dirs
         (`.workspace`/`input`/`working`/`output`).
         """
-        keep = {rel for rel in remote_rel_paths}
-        keep.update(p.strip("/") for p in protected if p)
+        keep = set(remote_rel_paths)
+        keep.update(protected)
         keep_roots = {"input", "working", "output", ".workspace"}
         # Configured watched subtrees (e.g. "deliverables") are engine-managed
         # roots too — an empty one must survive reconcile pruning.
@@ -200,7 +279,7 @@ class Workspace:
             keep_roots.update(watched)
         removed: list[Path] = []
 
-        for path in sorted(self.root.rglob("*")):
+        for path in await asyncio.to_thread(self._scan_local_files):
             if not path.is_file() or path.is_symlink():
                 continue
             rel = path.relative_to(self.root).as_posix()
@@ -237,36 +316,44 @@ class Workspace:
                             "Content reconcile: rmdir failed for %s", parent, exc_info=True
                         )
 
+    def _scan_local_files(self) -> list[Path]:
+        """Return all regular files under the workspace root (sync)."""
+        return [p for p in self.root.rglob("*") if p.is_file()]
+
     async def start_tracking(self) -> None:
         """Start dirty tracking and background uploader.
 
         Call after materialization, before the agent begins work.
+        Every component is optional — a workspace opened without a
+        remote backend or state store starts the pieces it has.
         """
         self._dirty_tracker.start()
-        self._uploader.start()
-        self._debouncer.start()
+        if self._uploader is not None:
+            self._uploader.start()
+        if self._debouncer is not None:
+            self._debouncer.start()
         logger.info("Started tracking for run %s", self.run_id)
 
     async def checkpoint(self) -> str | None:
         """Create a checkpoint of the current dirty state.
 
         Returns:
-            Checkpoint ID, or `None` if nothing was dirty.
+            Checkpoint ID, or `None` if nothing was dirty or the
+            workspace has no checkpoint manager.
         """
         if self._closing:
             logger.warning("Checkpoint skipped — workspace is closing")
             return None
 
-        self._dirty_tracker.scan_now()
-        dirty = self._dirty_tracker.get_dirty()
-        deleted = self._dirty_tracker.deleted_files
-        if not dirty and not deleted:
-            logger.debug("No dirty files — skipping checkpoint")
+        if self._checkpoint_mgr is None:
+            logger.debug("No checkpoint manager — skipping checkpoint")
             return None
 
-        checkpoint_id = await self._checkpoint_mgr.create_checkpoint()
-        self._dirty_tracker.clear()
-        return checkpoint_id
+        self._dirty_tracker.scan_now()
+        # Ack-clearing is the checkpoint manager's job (snapshot-ack
+        # semantics, F-C2) — a full clear here would drop mid-checkpoint
+        # writes.
+        return await self._checkpoint_mgr.create_checkpoint()
 
     async def publish(self, artifacts: list[ArtifactSpec]) -> list[Artifact]:
         """Publish artifacts to the durable store.
@@ -277,6 +364,9 @@ class Workspace:
         Returns:
             List of published artifact metadata.
         """
+        if self._backend is None:
+            logger.warning("Publish called without a remote backend — nothing to publish")
+            return []
         published: list[Artifact] = []
         for spec in artifacts:
             if not spec.publish:
@@ -285,7 +375,7 @@ class Workspace:
             if not file_path.exists():
                 logger.warning("Artifact not found for publish: %s", spec.path)
                 continue
-            data = file_path.read_bytes()
+            data = await asyncio.to_thread(file_path.read_bytes)
             artifact = await self._backend.publish_artifact(
                 spec.path, data, content_type=spec.content_type
             )
@@ -298,8 +388,9 @@ class Workspace:
 
         Sequence:
             1. Stop dirty tracker (no new events).
-            2. Flush debouncer (force final checkpoint).
-            3. Wait for uploader to drain.
+            2. Flush debouncer (force final checkpoint), then stop its
+               timers.
+            3. Wait for uploader to drain (pending rows pushed remote).
             4. Close state store.
             5. Close the per-run content backend (its thread pool / fsspec
                client). The primary `backend` is shared across workspaces
@@ -311,6 +402,7 @@ class Workspace:
 
         if self._debouncer is not None:
             await self._debouncer.flush()
+            await self._debouncer.stop()
 
         if self._uploader is not None:
             await self._uploader.stop()
@@ -347,3 +439,22 @@ class Workspace:
         if self._checkpoint_mgr is None:
             return None
         return await self._checkpoint_mgr.recover()
+
+
+def _hash_file(path: str | Path) -> str:
+    """Compute SHA-256 hex digest of a file's contents (chunked).
+
+    Args:
+        path: File path.
+
+    Returns:
+        Hex-encoded SHA-256 digest.
+    """
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        while True:
+            chunk = f.read(_FILE_COPY_CHUNK)
+            if not chunk:
+                break
+            h.update(chunk)
+    return h.hexdigest()

@@ -115,6 +115,29 @@ class TestDirtyTracker:
         await tracker.stop()
 
     @pytest.mark.asyncio
+    async def test_clear_acked_paths_keeps_unacked(
+        self, tracker: DirtyTracker, workspace_dir: Path
+    ) -> None:
+        """F-C2: ack-clear acknowledges only the paths the checkpoint captured."""
+        tracker.start()
+        (workspace_dir / "output" / "a.txt").write_text("a")
+        (workspace_dir / "output" / "b.txt").write_text("b")
+        (workspace_dir / "output" / "gone.txt").write_text("g")
+        tracker.mark_dirty("output/a.txt")
+        tracker.mark_dirty("output/b.txt")
+        # mark_dirty on a vanished path registers the deletion tombstone.
+        (workspace_dir / "output" / "gone.txt").unlink()
+        tracker.mark_dirty("output/gone.txt")
+
+        # Only a.txt and the tombstone were captured by the checkpoint.
+        tracker.clear(acked_paths=["output/a.txt", "output/gone.txt"])
+
+        assert "output/a.txt" not in tracker.dirty_files
+        assert "output/b.txt" in tracker.dirty_files
+        assert "output/gone.txt" not in tracker.deleted_files
+        await tracker.stop()
+
+    @pytest.mark.asyncio
     async def test_excluded_dirs_not_watched(
         self, tracker: DirtyTracker, workspace_dir: Path
     ) -> None:

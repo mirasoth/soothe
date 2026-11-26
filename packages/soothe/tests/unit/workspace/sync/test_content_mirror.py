@@ -332,7 +332,7 @@ class TestCheckpointContentMirror:
 
         # Must not raise — CAS/manifest remain the source of truth.
         checkpoint_id = await mgr.create_checkpoint()
-        assert checkpoint_id == "c001"
+        assert checkpoint_id == "run-001-c000001"
 
 
 # ---------------------------------------------------------------------------

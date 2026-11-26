@@ -271,10 +271,25 @@ class DirtyTracker:
         if self._on_dirty:
             self._on_dirty()
 
-    def clear(self) -> None:
-        """Clear all dirty and deleted state (after a checkpoint)."""
-        self._dirty_files.clear()
-        self._deleted_files.clear()
+    def clear(self, acked_paths: Sequence[str] | None = None) -> None:
+        """Clear dirty and deleted state for acknowledged paths.
+
+        Called after a checkpoint with the exact paths that checkpoint
+        captured; paths marked dirty *during* the checkpoint upload
+        survive for the next one.  ``None`` clears everything (used on
+        workspace reset).
+
+        Args:
+            acked_paths: Paths included in the completed checkpoint
+                (dirty and deleted), or `None` to clear all state.
+        """
+        if acked_paths is None:
+            self._dirty_files.clear()
+            self._deleted_files.clear()
+            return
+        for path in acked_paths:
+            self._dirty_files.pop(path, None)
+            self._deleted_files.discard(path)
 
     def get_dirty(self) -> dict[str, FileEvent]:
         """Return dirty files that are not rejected symlinks."""
@@ -305,18 +320,31 @@ class DirtyTracker:
     # ------------------------------------------------------------------
 
     async def _poll_loop(self) -> None:
-        """Background poll loop for stat-scan mode."""
+        """Background poll loop for stat-scan mode.
+
+        The filesystem walk runs off the event loop — a full
+        `os.walk` + `lstat` pass is disk-bound and would otherwise
+        stall every coroutine sharing the loop.
+        """
         logger.info("DirtyTracker stat-scan polling started (interval=%ss)", self._poll_interval)
         while self._running:
             try:
-                self._scan_and_diff()
+                current = await asyncio.to_thread(self._scan_workspace)
+                self._diff(current)
             except Exception:
                 logger.exception("Error in dirty tracker poll loop")
             await asyncio.sleep(self._poll_interval)
 
     def _scan_and_diff(self) -> None:
-        """Scan workspace and diff against baseline/last scan."""
-        current = self._scan_workspace()
+        """Scan the workspace synchronously and diff against the baseline."""
+        self._diff(self._scan_workspace())
+
+    def _diff(self, current: dict[str, tuple[float, int]]) -> None:
+        """Diff a workspace snapshot against the baseline and update dirty state.
+
+        Args:
+            current: Fresh snapshot of relative path → (mtime, size).
+        """
         changed = False
 
         for path, (mtime, size) in current.items():
