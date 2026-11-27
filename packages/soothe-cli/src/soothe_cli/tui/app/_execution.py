@@ -712,7 +712,7 @@ class _ExecutionMixin:
                     else:
                         await self._mount_message(
                             AppMessage(
-                                "Input has no attachments. Paste with Ctrl+V / Cmd+V, "
+                                "Input has no attachments. Paste with Ctrl+V, "
                                 "or drop media files into the input."
                             )
                         )

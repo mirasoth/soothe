@@ -19,6 +19,7 @@ from soothe_cli.settings.glyphs import (
     get_glyphs,
     is_ascii_mode,
     newline_shortcut,
+    paste_image_shortcut,
 )
 from soothe_cli.settings.shell_allow import parse_shell_allow_list
 from soothe_cli.settings.stream_config import build_stream_config
@@ -50,6 +51,7 @@ __all__ = [
     "is_ascii_mode",
     "newline_shortcut",
     "parse_shell_allow_list",
+    "paste_image_shortcut",
 ]
 
 

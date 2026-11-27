@@ -29,6 +29,7 @@ from soothe_cli.settings import (
     PREFIX_TO_MODE,
     is_ascii_mode,
     newline_shortcut,
+    paste_image_shortcut,
 )
 from soothe_cli.tui.focus import FocusPriority
 from soothe_cli.tui.input import (
@@ -354,7 +355,7 @@ class ChatTextArea(TextArea):
             priority=True,
         ),
         Binding(
-            "ctrl+v,cmd+v,super+v",
+            "ctrl+v,super+v",
             "clipboard_paste",
             "Paste from clipboard",
             show=False,
@@ -429,9 +430,11 @@ class ChatTextArea(TextArea):
         """Request pasting the OS clipboard into the input.
 
         Images are attached as placeholders first; when the clipboard holds
-        no image, its plain text is pasted instead. Terminals that do not
-        support bracketed paste deliver Cmd/Ctrl+V as a key event, which is
-        the only signal this request can be built from.
+        no image, its plain text is pasted instead. On macOS every terminal
+        intercepts Cmd+V as its own paste action, and an image-only clipboard
+        produces no paste payload, so the key event never reaches the TUI —
+        Ctrl+V (and super+v on terminals configured to forward it via the
+        kitty keyboard protocol) is the only reachable trigger.
         """
 
         def __init__(self, *, notify_if_empty: bool = True, fallback_to_text: bool = False) -> None:
@@ -455,7 +458,7 @@ class ChatTextArea(TextArea):
         """
 
     def action_clipboard_paste(self) -> None:
-        """Handle Ctrl+V / Cmd+V by pasting OS clipboard images or text."""
+        """Handle Ctrl+V by pasting OS clipboard images or text."""
         self.post_message(self.ClipboardPaste(notify_if_empty=True, fallback_to_text=True))
 
     def __init__(self, **kwargs: Any) -> None:
@@ -1158,7 +1161,7 @@ class ChatInput(Vertical):
         Yields:
         Widgets for the input row and completion popup.
         """
-        newline_hint = f"{newline_shortcut()} for new line"
+        newline_hint = f"{newline_shortcut()} for new line · {paste_image_shortcut()} paste image"
         yield CompletionPopup(id="completion-popup")
 
         with Horizontal(classes="input-row"):

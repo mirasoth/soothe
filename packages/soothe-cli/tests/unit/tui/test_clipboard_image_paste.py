@@ -108,7 +108,7 @@ def test_get_images_from_clipboard_caps_at_max_images_per_message() -> None:
     assert len(images) == MAX_IMAGES_PER_MESSAGE
 
 
-def test_cmd_v_binding_registered_for_clipboard_paste() -> None:
+def test_clipboard_paste_binding_keys() -> None:
     from textual.binding import Binding
 
     from soothe_cli.tui.widgets.chat_input import ChatTextArea
@@ -117,7 +117,10 @@ def test_cmd_v_binding_registered_for_clipboard_paste() -> None:
     paste_bindings = [b for b in bindings if b.action == "clipboard_paste"]
     assert paste_bindings, "clipboard_paste binding must exist"
     keys = {key.strip() for b in paste_bindings for key in b.key.split(",")}
-    assert {"ctrl+v", "cmd+v", "super+v"} <= keys
+    # `cmd+v` must NOT be bound: Textual never emits a `cmd+` key name, and
+    # macOS terminals intercept Cmd+V before it can reach the TUI.
+    assert {"ctrl+v", "super+v"} <= keys
+    assert "cmd+v" not in keys
 
 
 @pytest.mark.asyncio

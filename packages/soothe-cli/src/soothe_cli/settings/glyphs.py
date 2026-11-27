@@ -200,6 +200,20 @@ def newline_shortcut() -> str:
     return "Ctrl+J"
 
 
+def paste_image_shortcut() -> str:
+    """Return the platform-native label for the paste-image keyboard shortcut.
+
+    `Ctrl+V` sends a raw 0x16 byte that every terminal forwards to the TUI.
+    `Cmd+V` is not usable on macOS: terminals intercept it as their own
+    paste action, and when the clipboard holds only an image (no text) the
+    paste produces no bytes, so the key event never reaches the app.
+
+    Returns:
+    A human-readable shortcut string, `'Ctrl+V'`.
+    """
+    return "Ctrl+V"
+
+
 _UNICODE_BANNER = """
 ███████╗ ██████╗  ██████╗ ████████╗██╗  ██╗███████╗
 ██╔════╝██╔═══██╗██╔═══██╗╚══██╔══╝██║  ██║██╔════╝

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- TUI image paste: document and use `Ctrl+V` as the paste-image shortcut. `Cmd+V` can never reach the TUI on macOS — terminals intercept it as their own paste action, and an image-only clipboard produces no paste payload, so the unmatchable `cmd+v` binding key was removed from the composer (no user-visible behavior change for `cmd+v`, which previously did nothing) and the composer placeholder, help screens, and attachment hints now say `Ctrl+V`.
+
 ## [v1.3.10] - 2026-11-27
 
 ### Changed
