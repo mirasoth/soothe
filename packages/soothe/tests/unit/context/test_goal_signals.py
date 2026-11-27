@@ -21,6 +21,8 @@ class TestCoverageSignalModel:
         assert CoverageSignal(goal_id="g", kind="coverage_gap", confidence=0.99).requires_audit()
         assert CoverageSignal(goal_id="g", kind="runaway_step", confidence=0.4).requires_audit()
         assert CoverageSignal(goal_id="g", kind="stalled", confidence=0.9).requires_audit()
+        # IG-SLP-015: stalled is a silence heuristic — audit right only above the bar.
+        assert not CoverageSignal(goal_id="g", kind="stalled", confidence=0.68).requires_audit()
         assert CoverageSignal(goal_id="g", kind="scope_drift", confidence=0.6).requires_audit()
         assert not CoverageSignal(
             goal_id="g", kind="goal_likely_complete", confidence=0.85

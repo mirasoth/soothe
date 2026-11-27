@@ -7,6 +7,7 @@ from typing import Any
 
 from soothe_nano.protocols.routing import TaskComplexity
 
+from soothe.context.models import GOAL_LIKELY_COMPLETE_AUDIT_BAR
 from soothe.sloop.orchestrator.node_base import (
     LoopNode,
     NodeResult,
@@ -179,8 +180,27 @@ async def _settle_pce_monitor(ctx: LoopRuntimeContext) -> None:
 
 
 def _pce_audit_signals(goal: Any) -> list[Any]:
-    """Unconsumed PCE signals that force a coverage Eval."""
-    return [s for s in goal.coverage_signals if s.consumed_by is None and s.requires_audit()]
+    """Unconsumed PCE signals that force a coverage Eval.
+
+    A newer unconsumed ``goal_likely_complete`` at or above the audit bar
+    suppresses older ``stalled`` signals (IG-SLP-015): stalled is a silence
+    heuristic and the monitor's later verdict supersedes its earlier noise.
+    Suppressed signals stay unconsumed so they remain envelope evidence.
+    """
+    pending = [s for s in goal.coverage_signals if s.consumed_by is None]
+    newest_complete_at = max(
+        (
+            i
+            for i, s in enumerate(pending)
+            if s.kind == "goal_likely_complete" and s.confidence >= GOAL_LIKELY_COMPLETE_AUDIT_BAR
+        ),
+        default=-1,
+    )
+    return [
+        s
+        for i, s in enumerate(pending)
+        if s.requires_audit() and not (s.kind == "stalled" and i < newest_complete_at)
+    ]
 
 
 def _consume_pce_signals(goal: Any, consumer: str, signals: list[Any]) -> None:
@@ -585,23 +605,44 @@ class RootEvalNode(LoopNode):
                         # should_run_eval=True → fall through to Eval insertion.
 
                     elif not goal.steps.eval_required():
-                        if forced_complexity != TaskComplexity.COMPLEX:
+                        if forced_complexity == TaskComplexity.COMPLEX:
+                            logger.info(
+                                "[root_eval] complex goal ran as single leaf; force Eval (no decomposition)"
+                            )
+                            # Fall through to Eval insertion below.
+                        else:
                             pending_signals = _pce_audit_signals(goal)
-                            if pending_signals:
-                                # RFC-SLP-005: PCE signals force an audit even
-                                # for single-leaf goals; consume on decision.
-                                _consume_pce_signals(goal, "root_eval", pending_signals)
-                                logger.info(
-                                    "[root_eval] %d PCE signal(s) require audit; force Eval",
-                                    len(pending_signals),
-                                )
-                            else:
+                            if not pending_signals:
                                 logger.info("[root_eval] eval skip predicate matched; finalize")
                                 return NodeResult(payload={"root_eval_route": "finalize"})
-                        logger.info(
-                            "[root_eval] complex goal ran as single leaf; force Eval (no decomposition)"
-                        )
-                        # Fall through to Eval insertion below.
+                            # IG-SLP-015 soft gate: audit signals are evidence
+                            # for the decision model, not a hard trigger. The
+                            # fail-safe inside decide_eval_required runs the
+                            # Eval when the model is unavailable or says run.
+                            from soothe.sloop.eval.eval_decision import decide_eval_required
+
+                            decision = await decide_eval_required(
+                                fast_model=ctx.strange_loop._fast_llm,
+                                user_goal=(
+                                    resolve_user_request(ctx.loop_state) or goal.description
+                                ),
+                                step_history=list(goal.steps.nodes.values()),
+                                task_complexity=forced_complexity,
+                                soothe_config=ctx.strange_loop.config,
+                                goal_trace=ctx.goal_trace,
+                                pce_evidence=_pce_signal_lines(goal),
+                            )
+                            _consume_pce_signals(goal, "root_eval", pending_signals)
+                            logger.info(
+                                "[root_eval] soft eval decision: should_run=%s reasoning=%s "
+                                "(%d audit signal(s) as evidence)",
+                                decision.should_run_eval,
+                                decision.reasoning,
+                                len(pending_signals),
+                            )
+                            if not decision.should_run_eval:
+                                return NodeResult(payload={"root_eval_route": "finalize"})
+                            # Fall through to Eval insertion below.
 
                     elif _is_toolless_single_leaf(goal):
                         logger.info("[root_eval] toolless single leaf; skip Eval; finalize")

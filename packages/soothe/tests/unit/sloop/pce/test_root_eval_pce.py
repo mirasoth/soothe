@@ -1,7 +1,11 @@
 """ROOT_EVAL PCE signal consumption tests.
 
-The fourth eval-required condition: unconsumed audit-requiring signals
-force a coverage Eval even for single-leaf goals.
+Audit-requiring signals (`coverage_gap` / `runaway_step` / `scope_drift`
+unconditionally; `stalled` above its confidence bar) enter
+`_pce_audit_signals`, and a newer high-confidence `goal_likely_complete`
+supersedes older `stalled` noise (IG-SLP-015). On the medium single-leaf
+branch they are evidence for the soft decision model, not a hard trigger
+(see `test_root_eval_soft_gate.py`).
 """
 
 from __future__ import annotations
@@ -52,6 +56,43 @@ def test_on_track_never_forces_audit():
 def test_consumed_signals_are_ignored():
     goal = _goal_with_signal("runaway_step", 0.9, consumed_by="root_eval")
     assert re_mod._pce_audit_signals(goal) == []
+
+
+# ── IG-SLP-015: stalled softening ─────────────────────────────
+
+
+def test_stalled_below_bar_does_not_force_audit():
+    goal = _goal_with_signal("stalled", 0.68)
+    assert re_mod._pce_audit_signals(goal) == []
+
+
+def test_stalled_at_or_above_bar_forces_audit():
+    goal = _goal_with_signal("stalled", 0.9)
+    assert len(re_mod._pce_audit_signals(goal)) == 1
+
+
+def test_newer_goal_likely_complete_suppresses_older_stalled():
+    """The monitor's later high-confidence completion verdict supersedes an
+    earlier stalled heuristic (silence during a long tool call)."""
+    goal = GoalNode(description="finish the work", status="active")
+    step = StepNode(id="S1", description="single big leaf", status="completed")
+    goal.steps.nodes[step.id] = step
+    goal.coverage_signals.append(CoverageSignal(goal_id=goal.id, kind="stalled", confidence=0.9))
+    goal.coverage_signals.append(
+        CoverageSignal(goal_id=goal.id, kind="goal_likely_complete", confidence=0.9)
+    )
+    assert re_mod._pce_audit_signals(goal) == []
+
+
+def test_older_stalled_not_suppressed_by_unrelated_later_signal():
+    """A later signal that is not a high-confidence completion does not clear
+    the stalled audit right."""
+    goal = GoalNode(description="finish the work", status="active")
+    step = StepNode(id="S1", description="single big leaf", status="completed")
+    goal.steps.nodes[step.id] = step
+    goal.coverage_signals.append(CoverageSignal(goal_id=goal.id, kind="stalled", confidence=0.9))
+    goal.coverage_signals.append(CoverageSignal(goal_id=goal.id, kind="on_track", confidence=0.9))
+    assert len(re_mod._pce_audit_signals(goal)) == 1
 
 
 def test_consume_marks_signals():

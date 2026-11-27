@@ -7,9 +7,12 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from langchain_core.messages import AIMessage
 
+from soothe.sloop.engine.execute.executor import Executor
 from soothe.sloop.engine.execute.step_completion_report import (
     summarize_step_completion_report,
 )
+from soothe.sloop.engine.execute.step_wave_types import _ExecuteStepResult
+from soothe.sloop.state.schemas import StepAction, StepExecutionRecord
 
 
 @pytest.mark.asyncio
@@ -113,3 +116,68 @@ async def test_summarize_step_completion_report_llm_failure_returns_none() -> No
     )
 
     assert result is None
+
+
+# ── Executor-level kind gating ────────────────────────────────
+
+
+def _make_executor() -> Executor:
+    model = MagicMock()
+    model.ainvoke = AsyncMock(return_value=AIMessage(content="I summarized the step."))
+    config = MagicMock()
+    config.agent.loop.step_completion_report_max_words = 50
+    return Executor(MagicMock(), fast_model=model, config=config)
+
+
+def _step_result(step_id: str) -> _ExecuteStepResult:
+    return _ExecuteStepResult(
+        step_result=StepExecutionRecord(
+            step_id=step_id,
+            success=True,
+            duration_ms=9000,
+            thread_id="thread-1",
+            tool_call_count=1,
+        ),
+        messages=[AIMessage(content="Coverage verdict recorded (complete).")],
+    )
+
+
+@pytest.mark.asyncio
+async def test_executor_skips_summary_for_eval_steps() -> None:
+    """kind="eval" steps skip the summarization call: the coverage_verdict
+    already is the cognition line, and the call sits on the critical path
+    between steps."""
+    executor = _make_executor()
+    step = StepAction(
+        id="EVAL-01",
+        description="Evaluate user-goal coverage",
+        full_description="Assess whether the ORIGINAL USER GOAL is fully achieved.",
+        kind="eval",
+    )
+
+    summary = await executor._summarize_step_completion_report(
+        step, _step_result("EVAL-01"), MagicMock()
+    )
+
+    assert summary is None
+    executor._fast_model.ainvoke.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_executor_summarizes_action_steps_with_tools() -> None:
+    """Negative control: an action step with the same shape goes to the LLM."""
+    executor = _make_executor()
+    executor._compose_execute_step_envelope = lambda step, **_: "EXECUTION TASK:\nDo the work"
+    step = StepAction(
+        id="ACT-01",
+        description="Do the work",
+        full_description="Do the work described.",
+        kind="action",
+    )
+
+    summary = await executor._summarize_step_completion_report(
+        step, _step_result("ACT-01"), MagicMock()
+    )
+
+    assert summary == "I summarized the step."
+    executor._fast_model.ainvoke.assert_awaited_once()

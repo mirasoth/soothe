@@ -110,9 +110,14 @@ class StepCloseReport(BaseModel):
 # ── Coverage signals (RFC-SLP-005) ───────────────────────────
 
 # Signal kinds that force a coverage Eval at ROOT_EVAL when unconsumed.
-AUDIT_REQUIRING_SIGNAL_KINDS = frozenset({"coverage_gap", "runaway_step", "stalled", "scope_drift"})
+# `stalled` is excluded: it is a silence/heartbeat heuristic that long tool
+# calls (vision, batch jobs) fire at low confidence routinely — it only
+# forces an audit above STALLED_AUDIT_MIN_CONF.
+AUDIT_REQUIRING_SIGNAL_KINDS = frozenset({"coverage_gap", "runaway_step", "scope_drift"})
 # Confidence floor below which goal_likely_complete also forces an audit.
 GOAL_LIKELY_COMPLETE_AUDIT_BAR = 0.8
+# `stalled` forces an audit only at or above this confidence (IG-SLP-015).
+STALLED_AUDIT_MIN_CONF = 0.75
 
 
 class CoverageSignal(BaseModel):
@@ -142,6 +147,8 @@ class CoverageSignal(BaseModel):
         """Whether this signal forces a coverage Eval at ROOT_EVAL."""
         if self.kind in AUDIT_REQUIRING_SIGNAL_KINDS:
             return True
+        if self.kind == "stalled":
+            return self.confidence >= STALLED_AUDIT_MIN_CONF
         return (
             self.kind == "goal_likely_complete" and self.confidence < GOAL_LIKELY_COMPLETE_AUDIT_BAR
         )

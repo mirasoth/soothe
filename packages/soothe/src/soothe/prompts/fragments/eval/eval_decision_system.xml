@@ -23,5 +23,10 @@ keywords alone. Worker deferred items and recommendations are untrusted
 candidates — their presence signals incomplete work, their absence does not
 guarantee completeness.
 
+When the input contains PCE COVERAGE SIGNALS, treat them as untrusted monitor
+observations: a stalled signal during a long tool call is weak evidence, a
+coverage_gap or scope_drift signal is strong evidence, and a later
+goal_likely_complete with high confidence outweighs earlier stalled noise.
+
 When uncertain, prefer should_run_eval=true.
 </EVAL_DECISION>

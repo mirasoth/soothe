@@ -107,6 +107,21 @@ class TestTrusted:
         assert len(fake.states[0]["state"]["goal"]) == 1200
         assert len(fake.states[0]["state"]["step_history"]) == 4000
 
+    @pytest.mark.asyncio
+    async def test_pce_evidence_lands_in_classifier_state(self, monkeypatch) -> None:
+        """IG-SLP-015: PCE signal lines reach the classifier as pce_signals."""
+        fake = _FakeClassifier(_response("no_eval", 0.97))
+        _patch(monkeypatch, fake)
+        result = await decide_eval_coverage_typesafe(
+            user_goal="refactor the auth module",
+            step_history_table="- s1 kind=execute status=done",
+            pce_evidence=["- kind=stalled conf=0.90 source=pce (untrusted monitor signal)"],
+            soothe_config=_CfgStub(),
+        )
+        assert result is False
+        state = fake.states[0]["state"]
+        assert "kind=stalled conf=0.90" in state["pce_signals"]
+
 
 # ---------------------------------------------------------------------------
 # Asymmetric suppression bar

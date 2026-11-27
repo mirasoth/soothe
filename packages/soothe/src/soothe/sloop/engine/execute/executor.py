@@ -1917,6 +1917,11 @@ class Executor:
         """Generate a first-person TUI cognition summary from the step human/ai pair."""
         if self._fast_model is None or self._config is None:
             return None
+        # Eval steps close with a structured coverage_verdict that is already
+        # the cognition line; a summarization call would restate it at
+        # fast-model latency on the critical path between steps.
+        if step.kind == "eval":
+            return None
         # A toolless direct reply needs no card line: the streamed answer is
         # already user-visible and there is no work to summarize.
         rec = result.step_result

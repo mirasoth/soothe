@@ -38,12 +38,14 @@ _NO_EVAL = "no_eval"
 
 _GOAL_MAX_CHARS = 1200
 _HISTORY_MAX_CHARS = 4000
+_PCE_EVIDENCE_MAX_CHARS = 800
 
 _INSTRUCTIONS = (
     "Decide whether a coverage audit of the goal is warranted, given the "
     "steps already executed, their reported outcomes, and the structured "
     "completion signals (close_report_requires_eval, step_kind, "
-    "ask_user_interrupt, artifact_produced)."
+    "ask_user_interrupt, artifact_produced, and when present pce_signals "
+    "from the loop monitor)."
 )
 
 _CRITERIA: dict[str, str] = {
@@ -69,6 +71,7 @@ async def decide_eval_coverage_typesafe(
     step_history_table: str,
     task_complexity: str | None = None,
     structured_signals: dict[str, Any] | None = None,
+    pce_evidence: list[str] | None = None,
     soothe_config: Any | None = None,
 ) -> bool | None:
     """Decide whether a coverage Eval is required via TypeSafe.
@@ -83,6 +86,9 @@ async def decide_eval_coverage_typesafe(
             extracted from the step history. Passed to the classifier state
             so it can make a fast categorical decision without an LLM round
             trip.
+        pce_evidence: Unconsumed PCE monitor signal lines rendered as
+            untrusted evidence (IG-SLP-015); added to the classifier state
+            as ``pce_signals``.
         soothe_config: `SootheConfig` providing the classifier provider and
             decision parameters (nano `classifier` block).
 
@@ -111,6 +117,8 @@ async def decide_eval_coverage_typesafe(
         state["task_complexity"] = task_complexity
     if structured_signals:
         state.update(structured_signals)
+    if pce_evidence:
+        state["pce_signals"] = truncate_text("\n".join(pce_evidence), limit=_PCE_EVIDENCE_MAX_CHARS)
 
     try:
         response = await classifier.ainvoke(ClassifierRequest(state=state, questions=questions))

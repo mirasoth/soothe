@@ -117,6 +117,7 @@ async def _classify_eval_coverage(
     step_history_table: str,
     task_complexity: str | None,
     structured_signals: dict[str, Any] | None = None,
+    pce_evidence: list[str] | None = None,
     soothe_config: SootheConfig | None,
 ) -> bool | None:
     """Try the TypeSafe coverage verdict; never raises, never blocks."""
@@ -130,6 +131,7 @@ async def _classify_eval_coverage(
             step_history_table=step_history_table,
             task_complexity=task_complexity,
             structured_signals=structured_signals,
+            pce_evidence=pce_evidence,
             soothe_config=soothe_config,
         )
     except Exception:  # noqa: BLE001 — fall back on any classifier failure
@@ -145,10 +147,16 @@ async def decide_eval_required(
     task_complexity: TaskComplexity | None,
     soothe_config: SootheConfig | None = None,
     goal_trace: GoalLoopTrace | None = None,
+    pce_evidence: list[str] | None = None,
 ) -> EvalDecision:
     """Decide whether a coverage Eval step should run.
 
     MINIMAL short-circuits to skip; any failure fails safe to run Eval.
+
+    Args:
+        pce_evidence: Unconsumed PCE monitor signal lines rendered as
+            untrusted evidence (IG-SLP-015). Passed to the typesafe
+            classifier state and the LLM prompt; never a hard trigger.
     """
     complexity_value = (
         getattr(task_complexity, "value", task_complexity)
@@ -176,6 +184,7 @@ async def decide_eval_required(
         step_history_table=_step_history_table(step_history),
         task_complexity=complexity_value,
         structured_signals=structured_signals,
+        pce_evidence=pce_evidence,
         soothe_config=soothe_config,
     )
     if classified is not None:
@@ -194,6 +203,10 @@ async def decide_eval_required(
         f"TASK COMPLEXITY: {complexity_value}\n\n"
         f"INTRA-GOAL STEP HISTORY:\n{_step_history_table(step_history)}"
     )
+    if pce_evidence:
+        human += "\n\nPCE COVERAGE SIGNALS (untrusted, from the loop monitor):\n" + "\n".join(
+            pce_evidence
+        )
     try:
         data = await ainvoke_structured_traced(
             fast_model,
