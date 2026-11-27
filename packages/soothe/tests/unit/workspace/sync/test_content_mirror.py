@@ -85,7 +85,7 @@ class TestFlatContentPrimitives:
         self, backend: FsspecSyncBackend, sync_fs: MemoryFileSystem
     ) -> None:
         await backend.put_content_file("output/a.md", b"a")
-        sync_fs.pipe("/run/.workspace/manifest.json", b"{}")
+        sync_fs.pipe("/run/.soothe/manifest.json", b"{}")
 
         assert await backend.list_content_files() == ["output/a.md"]
 
@@ -114,7 +114,7 @@ class TestMaterializeContent:
     ) -> None:
         await backend.put_content_file("materials/m1/a.txt", b"same")
         # Engine-private key space (the remote manifest) never lands locally.
-        sync_fs.pipe("/run/.workspace/manifest.json", b"{}")
+        sync_fs.pipe("/run/.soothe/manifest.json", b"{}")
 
         ws = _make_workspace(tmp_path, backend)
         target = ws.root / "materials/m1/a.txt"
@@ -123,7 +123,7 @@ class TestMaterializeContent:
 
         fetched = await ws.materialize_content()
         assert fetched == 0  # unchanged locally + engine dir skipped
-        assert not (ws.root / ".workspace/manifest.json").exists()
+        assert not (ws.root / ".soothe/manifest.json").exists()
 
     async def test_overwrites_diverged_local_copy(
         self, tmp_path: Path, backend: FsspecSyncBackend
@@ -203,15 +203,27 @@ class TestMaterializeContentReconcile:
 
         assert link.is_symlink()  # never followed or deleted
 
-    async def test_skip_dirs_untouched(self, tmp_path: Path, backend: FsspecSyncBackend) -> None:
+    async def test_reconcile_preserves_private_namespace(
+        self, tmp_path: Path, backend: FsspecSyncBackend
+    ) -> None:
+        """.soothe/** survives materialize+reconcile even though it is never synced.
+
+        Framework/engine state (plans, backups, skills mirror, shell logs)
+        is not part of the content tree; the reconcile pass must never
+        treat it as stale local content.
+        """
         ws = _make_workspace(tmp_path, backend)
-        state_db = ws.root / ".workspace/state.db"
-        state_db.parent.mkdir(parents=True)
-        state_db.write_bytes(b"engine state")
+        plan = ws.root / ".soothe/plans/draft.md"
+        plan.parent.mkdir(parents=True)
+        plan.write_bytes(b"framework state")
+        log = ws.root / ".soothe/background/bg-1.log"
+        log.parent.mkdir(parents=True)
+        log.write_bytes(b"process log")
 
-        await ws.materialize_content()
+        await ws.materialize_content()  # reconcile defaults to True
 
-        assert state_db.read_bytes() == b"engine state"
+        assert plan.read_bytes() == b"framework state"
+        assert log.read_bytes() == b"process log"
 
     async def test_reconcile_false_preserves_stale(
         self, tmp_path: Path, backend: FsspecSyncBackend
@@ -236,7 +248,7 @@ class TestMaterializeContentReconcile:
         out = ws.root / "output/result.txt"
         out.parent.mkdir(parents=True)
         out.write_bytes(b"stale output")
-        (ws.root / ".workspace").mkdir(exist_ok=True)  # engine state dir
+        (ws.root / ".soothe").mkdir(exist_ok=True)  # private namespace root
 
         # Backend removes the deep file; output/result.txt is stale & unprotected.
         await backend.delete_content_file("materials/m1/deep/a.txt")
@@ -245,7 +257,7 @@ class TestMaterializeContentReconcile:
         assert not (ws.root / "materials/m1/deep").exists()
         assert not out.exists()
         assert (ws.root / "output").is_dir()  # engine-created top-level dir kept
-        assert (ws.root / ".workspace").is_dir()
+        assert (ws.root / ".soothe").is_dir()
 
 
 # ---------------------------------------------------------------------------
@@ -364,7 +376,7 @@ class TestManagerContentWiring:
         """Materials materialize in; agent outputs mirror out; reopen restores both.
 
         A local-dir recycle (server restart / VM recycle) re-opens the same
-        workspace root: the manifest loads from `.workspace/manifest.json`
+        workspace root: the manifest loads from `.soothe/manifest.json`
         and the content tree re-materializes.
         """
         # Backend uploads a material to the run's content root.
@@ -399,7 +411,7 @@ class TestManagerContentWiring:
         # The single root now holds the material, the mirrored output, and
         # the manifest in the engine key space.
         assert sync_fs.cat("/run/output/analysis.md") == b"agent analysis"
-        assert "/run/.workspace/manifest.json" in sync_fs.store
+        assert "/run/.soothe/manifest.json" in sync_fs.store
 
         # Turn 2: the local dir is wiped (VM recycle); reopening the same
         # run root re-materializes everything.

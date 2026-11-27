@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 
 from soothe.workspace.sync.dirty_tracker import DirtyTracker
 from soothe.workspace.sync.paths import validate_relative_path
+from soothe.workspace.sync.reserved import ENGINE_SKIP_PREFIXES
 from soothe.workspace.sync.streaming import iter_content_chunks, put_content_file_from_file
 from soothe.workspace.sync.workspace_sync import Manifest, ManifestEntry
 
@@ -127,7 +128,7 @@ class Workspace:
         if self._backend is None:
             return 0
 
-        skip_prefixes = (".workspace/", "__pycache__/", ".git/")
+        skip_prefixes = ENGINE_SKIP_PREFIXES
         rel_paths = await self._backend.list_content_files()
         downloaded = 0
         for rel in rel_paths:
@@ -225,11 +226,11 @@ class Workspace:
         Files under the skip prefixes, symlinked paths, and `protected`
         relative paths are never removed. Now-empty parent directories
         are pruned best-effort, except the root and the engine-created
-        top-level dirs (`.workspace`/`input`/`working`/`output`).
+        top-level dirs (`.soothe`/`input`/`working`/`output`).
         """
         keep = set(remote_rel_paths)
         keep.update(protected)
-        keep_roots = {"input", "working", "output", ".workspace"}
+        keep_roots = {"input", "working", "output", ".soothe"}
         # Configured watched subtrees (e.g. "deliverables") are engine-managed
         # roots too — an empty one must survive reconcile pruning.
         watched = getattr(self._dirty_tracker, "watched_subdirs", None)

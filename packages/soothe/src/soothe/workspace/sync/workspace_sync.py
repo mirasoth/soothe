@@ -2,7 +2,7 @@
 
 One per-run backend root holds the plain content tree (the authoritative
 file store) and the engine-private commit record at
-`.workspace/manifest.json`. Concrete transports implement
+`.soothe/manifest.json`. Concrete transports implement
 `WorkspaceSyncBackend`; the workspace and turn facades stay transport-agnostic.
 """
 
@@ -68,7 +68,7 @@ class WorkspaceSyncBackend(Protocol):
 
     * the *content tree* — a plain file tree addressed by relative
       workspace path, holding the authoritative file bytes;
-    * the *engine-private* `.workspace/` key space holding
+    * the *engine-private* `.soothe/` key space holding
       `manifest.json` — the commit record.
 
     Every method is async and idempotent.

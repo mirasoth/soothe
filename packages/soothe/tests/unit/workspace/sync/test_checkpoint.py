@@ -2,7 +2,7 @@
 
 One per-run backend root holds the plain content tree
 (the authoritative file store) and the engine-private manifest
-(`.workspace/manifest.json` — the atomic commit point).  These tests
+(`.soothe/manifest.json` — the atomic commit point).  These tests
 pin:
 
     - First commit creates the manifest at version 1; commits increment.
@@ -60,7 +60,7 @@ def backend(sync_fs: MemoryFileSystem) -> FsspecSyncBackend:
 def workspace_root(tmp_path: Path) -> Path:
     """Temporary workspace with the engine subdirectories."""
     root = tmp_path / "ws"
-    for subdir in ("input", "working", "output", ".workspace"):
+    for subdir in ("input", "working", "output"):
         (root / subdir).mkdir(parents=True)
     return root
 
@@ -114,13 +114,13 @@ class TestCommitBasics:
     async def test_manifest_lives_in_the_engine_key_space(
         self, workspace_root: Path, backend: FsspecSyncBackend, sync_fs: MemoryFileSystem
     ) -> None:
-        """The manifest lands under `.workspace/` — not the content tree."""
+        """The manifest lands under `.soothe/` — not the content tree."""
         ws = _make_workspace(workspace_root, backend)
         ws.start_tracking()
         (workspace_root / "output" / "a.md").write_bytes(b"a")
         await ws.checkpoint()
 
-        assert "/run/.workspace/manifest.json" in sync_fs.store
+        assert "/run/.soothe/manifest.json" in sync_fs.store
         # And the engine key space is excluded from content listings.
         assert await backend.list_content_files() == ["output/a.md"]
 
@@ -405,7 +405,7 @@ class TestRecovery:
         self, tmp_path: Path, backend: FsspecSyncBackend
     ) -> None:
         root1 = tmp_path / "ws1"
-        for subdir in ("input", "working", "output", ".workspace"):
+        for subdir in ("input", "working", "output"):
             (root1 / subdir).mkdir(parents=True)
         ws = _make_workspace(root1, backend)
         ws.start_tracking()
@@ -418,7 +418,7 @@ class TestRecovery:
         # A fresh process opens the run: manifest loads, content tree
         # re-materializes (the tombstoned file must not resurrect).
         root2 = tmp_path / "ws2"
-        for subdir in ("input", "working", "output", ".workspace"):
+        for subdir in ("input", "working", "output"):
             (root2 / subdir).mkdir(parents=True)
         manifest = await backend.get_manifest(RUN_ID)
         ws2 = _make_workspace(root2, backend, manifest=manifest)
@@ -442,7 +442,7 @@ class TestRecovery:
         protection set keeps reconcile from deleting them.
         """
         root = tmp_path / "ws"
-        for subdir in ("input", "working", "output", ".workspace"):
+        for subdir in ("input", "working", "output"):
             (root / subdir).mkdir(parents=True)
         manifest = Manifest(
             run_id=RUN_ID,

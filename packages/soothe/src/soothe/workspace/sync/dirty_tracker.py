@@ -13,8 +13,10 @@ import stat
 import sys
 from collections.abc import Sequence
 from enum import StrEnum
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import TYPE_CHECKING
+
+from soothe.workspace.sync.reserved import ENGINE_SKIP_DIRS, normalize_watched_subdirs
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -23,7 +25,9 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_POLL_INTERVAL = 2.0
 
-_EXCLUDED_DIRS = frozenset({".workspace", "__pycache__", ".git"})
+# Reserved names are pinned in `reserved.py` (single source shared with the
+# materialize/reconcile passes).
+_EXCLUDED_DIRS = ENGINE_SKIP_DIRS
 
 
 def _is_symlink_escaping(symlink: Path, root: Path) -> bool:
@@ -43,47 +47,6 @@ def _is_symlink_escaping(symlink: Path, root: Path) -> bool:
     except (ValueError, OSError):
         return True
     return False
-
-
-_DEFAULT_WATCHED_SUBDIRS = ("input", "working", "output")
-
-
-def _normalize_watched_subdirs(
-    watched_subdirs: Sequence[str] | None,
-) -> tuple[str, ...]:
-    """Normalize configured watched subdirs; `None` keeps the engine defaults.
-
-    Entries are slash-separated workspace-relative paths (e.g. `deliverables`).
-    Blank entries are dropped and duplicates removed (order preserved). Unsafe
-    entries — absolute paths, backslashes, or traversal segments — raise
-    `ValueError` so a bad deployment config fails loud at workspace open.
-
-    Args:
-        watched_subdirs: Configured entries, or `None` for the defaults.
-
-    Returns:
-        Normalized tuple of watched subdir paths.
-    """
-    if watched_subdirs is None:
-        return _DEFAULT_WATCHED_SUBDIRS
-    normalized: list[str] = []
-    seen: set[str] = set()
-    for raw in watched_subdirs:
-        entry = str(raw).strip()
-        if not entry:
-            continue
-        if "\\" in entry or PurePosixPath(entry).is_absolute():
-            raise ValueError(f"unsafe watched subdir: {raw!r}")
-        parts = tuple(p for p in PurePosixPath(entry).parts if p not in ("", "."))
-        if not parts or ".." in parts:
-            raise ValueError(f"unsafe watched subdir: {raw!r}")
-        joined = "/".join(parts)
-        if joined not in seen:
-            seen.add(joined)
-            normalized.append(joined)
-    if not normalized:
-        return _DEFAULT_WATCHED_SUBDIRS
-    return tuple(normalized)
 
 
 class FileEventKind(StrEnum):
@@ -172,7 +135,7 @@ class DirtyTracker:
         self._root = Path(workspace_root).resolve()
         self._poll_interval = poll_interval
         self._on_dirty = on_dirty
-        self._watched_subdirs = _normalize_watched_subdirs(watched_subdirs)
+        self._watched_subdirs = normalize_watched_subdirs(watched_subdirs)
         self._dirty_files: dict[str, FileEvent] = {}
         self._deleted_files: set[str] = set()
         self._running = False

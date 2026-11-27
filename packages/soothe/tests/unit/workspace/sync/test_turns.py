@@ -260,7 +260,7 @@ class TestRoundTrip:
             # Dirty writes mirrored to the content tree; manifest committed
             # under the engine-private key space of the run's own root.
             assert await content_root.get_content_file("output/analysis.md") == b"agent analysis"
-            assert fs.exists("/run/.workspace/manifest.json")
+            assert fs.exists("/run/.soothe/manifest.json")
 
             # A fresh engine (crash/restart) restores both trees.
             engine2 = TurnScopedWorkspaces(

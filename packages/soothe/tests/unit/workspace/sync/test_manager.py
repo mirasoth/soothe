@@ -47,7 +47,6 @@ class TestWorkspaceManager:
         assert (ws.root / "input").exists()
         assert (ws.root / "working").exists()
         assert (ws.root / "output").exists()
-        assert (ws.root / ".workspace").exists()
 
         await ws.close()
 
@@ -111,7 +110,7 @@ class TestWorkspaceManager:
 
     async def test_open_with_unsafe_watched_subdirs_fails_loud(self, tmp_path: Path) -> None:
         """Unsafe watched subdir entries raise at construction (bad config fails fast)."""
-        with pytest.raises(ValueError, match="safe path component"):
+        with pytest.raises(ValueError, match="unsafe watched subdir"):
             WorkspaceManager(
                 workspaces_root=tmp_path / "workspaces",
                 watched_subdirs=("../escape",),

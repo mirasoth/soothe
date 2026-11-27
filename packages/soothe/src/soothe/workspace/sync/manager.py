@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from soothe.workspace.sync.dirty_tracker import DirtyTracker
+from soothe.workspace.sync.reserved import merge_watched_subdirs
 from soothe.workspace.sync.workspace import Workspace
 
 if TYPE_CHECKING:
@@ -26,32 +27,6 @@ logger = logging.getLogger(__name__)
 # Run IDs double as workspace directory names, so they must be one safe
 # path component.
 _RUN_ID_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$")
-
-# Default subtrees pre-created at open and watched by the dirty tracker.
-_DEFAULT_WATCHED_SUBDIRS = ("input", "working", "output")
-
-
-def _normalize_watched_subdirs(
-    watched_subdirs: Sequence[str] | None,
-) -> tuple[str, ...]:
-    """Normalize the watched-subdir configuration.
-
-    Args:
-        watched_subdirs: Configured additional subtrees, or `None`.
-
-    Returns:
-        The full watched-subdir tuple (defaults + configured extras).
-
-    Raises:
-        ValueError: When an entry is not a single safe path component.
-    """
-    subdirs = list(_DEFAULT_WATCHED_SUBDIRS)
-    for entry in watched_subdirs or ():
-        if not isinstance(entry, str) or not _RUN_ID_RE.match(entry) or "/" in entry:
-            raise ValueError(f"watched subdir {entry!r} must be a single safe path component")
-        if entry not in subdirs:
-            subdirs.append(entry)
-    return tuple(subdirs)
 
 
 class WorkspaceManager:
@@ -80,7 +55,7 @@ class WorkspaceManager:
         """Initialize the manager with its root and backend factory."""
         self._workspaces_root = Path(workspaces_root)
         self._backend_factory = backend_factory
-        self._watched_subdirs = _normalize_watched_subdirs(watched_subdirs)
+        self._watched_subdirs = merge_watched_subdirs(watched_subdirs)
         self._workspaces: dict[str, Workspace] = {}
 
     @property
@@ -118,8 +93,7 @@ class WorkspaceManager:
         (root / "input").mkdir(parents=True, exist_ok=True)
         (root / "working").mkdir(parents=True, exist_ok=True)
         (root / "output").mkdir(parents=True, exist_ok=True)
-        (root / ".workspace").mkdir(parents=True, exist_ok=True)
-        for subdir in _normalize_watched_subdirs(self._watched_subdirs):
+        for subdir in self._watched_subdirs:
             (root / subdir).mkdir(parents=True, exist_ok=True)
         return root
 

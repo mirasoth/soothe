@@ -15,11 +15,8 @@ from pathlib import Path
 
 import pytest
 
-from soothe.workspace.sync.dirty_tracker import (
-    DirtyTracker,
-    FileEventKind,
-    _normalize_watched_subdirs,
-)
+from soothe.workspace.sync.dirty_tracker import DirtyTracker, FileEventKind
+from soothe.workspace.sync.reserved import merge_watched_subdirs, normalize_watched_subdirs
 
 
 @pytest.fixture
@@ -141,12 +138,12 @@ class TestDirtyTracker:
     async def test_excluded_dirs_not_watched(
         self, tracker: DirtyTracker, workspace_dir: Path
     ) -> None:
-        """`.workspace/` directory is excluded from tracking."""
-        (workspace_dir / ".workspace").mkdir()
-        (workspace_dir / ".workspace" / "state.db").write_text("state")
+        """`.soothe/` (the private namespace) is excluded from tracking."""
+        (workspace_dir / ".soothe").mkdir()
+        (workspace_dir / ".soothe" / "state.db").write_text("state")
         tracker.start()
 
-        assert all(".workspace/" not in path for path in tracker._baseline)
+        assert all(".soothe/" not in path for path in tracker._baseline)
         await tracker.stop()
 
     @pytest.mark.asyncio
@@ -257,23 +254,39 @@ class TestSymlinkDetection:
 
 
 class TestConfigurableWatchedSubdirs:
-    """Configured watched subdirs replace the engine defaults."""
+    """Configured watched subdirs: tracker normalizes, manager merges."""
 
     def test_normalize_none_keeps_defaults(self) -> None:
-        assert _normalize_watched_subdirs(None) == ("input", "working", "output")
+        assert normalize_watched_subdirs(None) == ("input", "working", "output")
 
     def test_normalize_empty_keeps_defaults(self) -> None:
-        assert _normalize_watched_subdirs([]) == ("input", "working", "output")
-        assert _normalize_watched_subdirs(["", "   "]) == ("input", "working", "output")
+        assert normalize_watched_subdirs([]) == ("input", "working", "output")
+        assert normalize_watched_subdirs(["", "   "]) == ("input", "working", "output")
 
     def test_normalize_replaces_and_dedupes(self) -> None:
-        assert _normalize_watched_subdirs(["deliverables"]) == ("deliverables",)
-        assert _normalize_watched_subdirs(["a", "a", " b ", "./c/"]) == ("a", "b", "c")
+        assert normalize_watched_subdirs(["deliverables"]) == ("deliverables",)
+        assert normalize_watched_subdirs(["a", "a", " b ", "./c/"]) == ("a", "b", "c")
 
     def test_normalize_rejects_unsafe_entries(self) -> None:
         for bad in ("../escape", "/abs", "a/../b", "a\\b", ".."):
             with pytest.raises(ValueError, match="unsafe watched subdir"):
-                _normalize_watched_subdirs([bad])
+                normalize_watched_subdirs([bad])
+
+    def test_merge_keeps_defaults_and_appends_extras(self) -> None:
+        assert merge_watched_subdirs(None) == ("input", "working", "output")
+        assert merge_watched_subdirs(["deliverables"]) == (
+            "input",
+            "working",
+            "output",
+            "deliverables",
+        )
+        # Extras already covered by the defaults are not duplicated.
+        assert merge_watched_subdirs(["input", "docs"]) == (
+            "input",
+            "working",
+            "output",
+            "docs",
+        )
 
     @pytest.mark.asyncio
     async def test_custom_subdir_tracked(self, tmp_path: Path) -> None:

@@ -4,7 +4,7 @@ One adapter supports S3 (`s3fs`), GCS (`gcsfs`), Azure Blob (`adlfs`),
 local, and memory filesystems. All fsspec calls run in a dedicated thread
 pool. One instance serves one per-run root: the plain content tree at
 `<root>/<relative workspace path>` and the commit record at
-`<root>/.workspace/manifest.json`.
+`<root>/.soothe/manifest.json`.
 """
 
 from __future__ import annotations
@@ -54,7 +54,7 @@ class FsspecSyncBackend:
             `S3FileSystem`, `LocalFileSystem`).
         root: Per-run root path within the filesystem — everything the
             engine addresses for that run lives under it (content tree +
-            `.workspace/` commit records).
+            `.soothe/` commit records).
         max_workers: Thread pool size for I/O offloading.
     """
 
@@ -87,7 +87,7 @@ class FsspecSyncBackend:
         """Map a run ID to its manifest storage path.
 
         The backend is per-run rooted, so the manifest lives under the
-        engine-private `.workspace/` key space of the run's own root —
+        engine-private `.soothe/` key space of the run's own root —
         `run_id` is validated for misuse defense but not part of the path.
 
         Args:
@@ -97,7 +97,7 @@ class FsspecSyncBackend:
             The manifest key under this backend's root.
         """
         validate_path_component(run_id, name="run_id")
-        return f"{self._root}/.workspace/manifest.json"
+        return f"{self._root}/.soothe/manifest.json"
 
     def _content_path(self, rel_path: str) -> str:
         """Map a relative workspace path to its content-tree storage path."""
@@ -272,8 +272,8 @@ class FsspecSyncBackend:
         """List all files in the content tree as relative workspace paths.
 
         Returns an empty list when the tree does not exist yet.  The
-        engine-private `.workspace/` key space (commit records) is not
-        part of the content tree and is excluded.
+        engine-private `.soothe/` key space (commit records) is not part
+        of the content tree and is excluded.
         """
         try:
             entries = await self._to_thread(self._fs.find, self._root)
@@ -281,7 +281,7 @@ class FsspecSyncBackend:
             return []
         rel_paths: list[str] = []
         prefix = f"{self._root}/"
-        engine_prefix = f"{self._root}/.workspace/"
+        skip_prefixes = (f"{self._root}/.soothe/",)
         for entry in entries:
             name = entry if isinstance(entry, str) else str(entry.get("name", ""))
             if not name:
@@ -290,7 +290,7 @@ class FsspecSyncBackend:
                 continue
             if not name.startswith(prefix):
                 continue
-            if name.startswith(engine_prefix):
+            if name.startswith(skip_prefixes):
                 continue
             rel = name[len(prefix) :]
             if rel:
