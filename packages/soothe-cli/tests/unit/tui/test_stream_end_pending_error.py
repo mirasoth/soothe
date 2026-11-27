@@ -33,7 +33,7 @@ def test_stream_end_message_prefers_cancellation_notice() -> None:
         last_turn_cancellation_seen=True,
         last_turn_end_state="idle",
     )
-    assert _stream_end_pending_error_message(adapter, session) == "Stream cancelled"
+    assert _stream_end_pending_error_message(adapter, session) == "Cancelled by user"
 
 
 def test_stream_end_message_uses_stopped_state() -> None:
@@ -42,7 +42,7 @@ def test_stream_end_message_uses_stopped_state() -> None:
         last_turn_cancellation_seen=False,
         last_turn_end_state="stopped",
     )
-    assert _stream_end_pending_error_message(adapter, session) == "Stream cancelled"
+    assert _stream_end_pending_error_message(adapter, session) == "Cancelled by user"
 
 
 def test_stream_end_message_reports_connection_loss() -> None:
@@ -163,6 +163,6 @@ def test_finalize_pending_steps_interrupts_running_when_goal_still_open() -> Non
     assert "0/1 steps" in label
     assert "3 tools" in label
     assert "↑800 ↓120" in label
-    assert tree._footer_tone == "error"
+    assert tree._footer_tone == "cancelled"
     assert "Stream ended unexpectedly" in tree._footer_plain
     assert "3 tools" in tree._footer_plain

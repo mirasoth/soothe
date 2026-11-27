@@ -992,7 +992,7 @@ def test_snapshot_round_trips_frozen_interrupt_state() -> None:
     assert restored.loop_elapsed_label() == label
     assert "Stream cancelled" in restored._footer_plain
     assert restored._steps["S-03"].phase == "pending"
-    assert restored._footer_tone == "error"
+    assert restored._footer_tone == "cancelled"
 
 
 def test_new_goal_clears_frozen_interrupt_state() -> None:

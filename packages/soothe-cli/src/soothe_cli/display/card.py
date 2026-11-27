@@ -27,8 +27,11 @@ def _card_dot_tone(
     phase = (status or "pending").strip().lower()
     if phase in ("success", "done", "completed"):
         return colors.card_success
-    if phase in ("error", "failed", "interrupted"):
+    if phase in ("error", "failed"):
         return colors.card_error
+    if phase == "interrupted":
+        # User-cancelled: lavender, clearly distinct from the failure violet.
+        return colors.secondary
     if phase == "running":
         # Yellow flash on every other spinner tick; dim amber in between.
         if animate_running and spinner_position % 2:

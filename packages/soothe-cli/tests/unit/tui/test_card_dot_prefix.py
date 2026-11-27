@@ -67,10 +67,18 @@ def test_card_dot_tone_success_aliases_all_return_card_success() -> None:
 
 
 def test_card_dot_tone_error_aliases_all_return_card_error() -> None:
-    """``error``, ``failed``, ``interrupted`` all map to ``card_error``."""
+    """``error`` and ``failed`` map to ``card_error``; ``interrupted`` does not."""
     colors = DARK_COLORS
-    for phase in ("error", "failed", "interrupted"):
+    for phase in ("error", "failed"):
         assert _card_dot_tone(phase, colors) == colors.card_error, phase
+
+
+def test_card_dot_tone_interrupted_is_distinct_from_failure() -> None:
+    """User-cancelled uses the lavender secondary tone, not the failure violet."""
+    colors = DARK_COLORS
+    assert _card_dot_tone("interrupted", colors) == colors.secondary
+    assert colors.secondary != colors.card_error
+    assert _card_dot_tone("interrupted", LIGHT_COLORS) == LIGHT_COLORS.secondary
 
 
 def test_card_dot_tone_queued_aliases_return_muted() -> None:

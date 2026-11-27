@@ -244,6 +244,8 @@ class CognitionGoalTreeMessage(Vertical):
     def _goal_tree_status(self) -> str:
         """Aggregate lifecycle status for the goal header dot."""
         if self._footer_visible:
+            if self._footer_tone == "cancelled":
+                return "interrupted"
             if self._footer_tone == "error":
                 return "error"
             if self._footer_tone == "success":
@@ -310,9 +312,14 @@ class CognitionGoalTreeMessage(Vertical):
         if self._footer_tone == "success":
             mark = get_glyphs().checkmark
             return Content.styled(f"{gutter}{mark} {plain}", theme.SECONDARY_TEXT_STYLE)
+        if self._footer_tone == "cancelled":
+            # User-initiated cancel: lavender with the stopped glyph —
+            # deliberately distinct from the failure footer below.
+            mark = get_glyphs().interrupted
+            return Content.styled(f"{gutter}{mark} {plain}", colors.secondary)
         if self._footer_tone == "error":
             mark = get_glyphs().error
-            return Content.styled(f"{gutter}{mark} {plain}", colors.error)
+            return Content.styled(f"{gutter}{mark} {plain}", colors.card_error)
         return Content.styled(f"{gutter}{plain}", theme.SECONDARY_TEXT_STYLE)
 
     def loop_elapsed_label(self) -> str | None:
@@ -321,7 +328,7 @@ class CognitionGoalTreeMessage(Vertical):
             return self._goal_elapsed_label()
         if (
             self._footer_visible
-            and self._footer_tone == "error"
+            and self._footer_tone in ("error", "cancelled")
             and self._loop_interrupted_at is not None
         ):
             return self._goal_elapsed_label()
@@ -354,7 +361,7 @@ class CognitionGoalTreeMessage(Vertical):
         return " · ".join(parts)
 
     def interrupted_status_label(self, reason: str) -> str:
-        """Compose `Stream cancelled · 2/5 steps · 7 tools · 12s · ↑1.2K ↓345`."""
+        """Compose `Cancelled by user · 2/5 steps · 7 tools · 12s · ↑1.2K ↓345`."""
         label = self._clip((reason or "Interrupted").strip(), _MAX_INTERRUPT_REASON)
         stats = self.execution_stats_suffix()
         if stats:
@@ -501,7 +508,7 @@ class CognitionGoalTreeMessage(Vertical):
         state_suffix = " · queued" if st.phase == "queued" else ""
         if (
             self._footer_visible
-            and self._footer_tone == "error"
+            and self._footer_tone in ("error", "cancelled")
             and st.phase
             in (
                 "pending",
@@ -721,7 +728,7 @@ class CognitionGoalTreeMessage(Vertical):
         self._footer_plain = str(snap.get("footer_text", ""))
         self._footer_visible = bool(snap.get("footer_visible", False))
         tone = str(snap.get("footer_tone", "muted") or "muted")
-        self._footer_tone = tone if tone in ("success", "error", "muted") else "muted"
+        self._footer_tone = tone if tone in ("success", "error", "cancelled", "muted") else "muted"
         loop_started_raw = snap.get("loop_started_at")
         self._loop_started_at = float(loop_started_raw) if loop_started_raw is not None else None
         interrupted_raw = snap.get("loop_interrupted_at")
@@ -946,5 +953,5 @@ class CognitionGoalTreeMessage(Vertical):
             st.summary = f"{summary} (interrupted)" if summary else "interrupted"
         self._footer_plain = self.interrupted_status_label(msg)
         self._footer_visible = True
-        self._footer_tone = "error"
+        self._footer_tone = "cancelled"
         self._sync_goal_tree_widgets()

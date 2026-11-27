@@ -31,6 +31,7 @@ class Glyphs:
     ellipsis: str  # … vs ...
     checkmark: str  # ✓ vs [OK]
     error: str  # ✗ vs [X]
+    interrupted: str  # ⊘ vs [C] — user-cancelled / stream stopped marker
     circle_empty: str  # ○ vs [ ]
     circle_filled: str  # ● vs [*]
     output_prefix: str  # ⎿ vs L
@@ -69,6 +70,7 @@ UNICODE_GLYPHS = Glyphs(
     ellipsis="…",
     checkmark="✓",
     error="✗",
+    interrupted="⊘",
     circle_empty="○",
     circle_filled="●",
     output_prefix="⎿",
@@ -102,6 +104,7 @@ ASCII_GLYPHS = Glyphs(
     ellipsis="...",
     checkmark="[OK]",
     error="[X]",
+    interrupted="[C]",
     circle_empty="[ ]",
     circle_filled="[*]",
     output_prefix="L",

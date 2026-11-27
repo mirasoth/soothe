@@ -185,7 +185,7 @@ from soothe_cli.ux.subagent_wire_display import (
 
 logger = logging.getLogger(__name__)
 
-STREAM_CANCELLED_MESSAGE = "Stream cancelled"
+STREAM_CANCELLED_MESSAGE = "Cancelled by user"
 
 # LLM call boundary — separates reasoning from different LLM calls
 LLM_CALL_BOUNDARY = "soothe.cognition.llm.call.boundary"

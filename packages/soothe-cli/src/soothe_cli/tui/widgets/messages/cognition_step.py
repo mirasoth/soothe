@@ -613,11 +613,14 @@ class CognitionStepMessage(Vertical):
                 self._update_step_footer_status_line(
                     f"Failed · {dur_str}",
                     success=False,
+                    suffix=self._failure_reason_suffix(),
                 )
             return
         # Expanded: render detail content and full footer.
         if self._interrupt_message:
-            self._detail_widget.update(self._step_branched_error_detail(self._interrupt_message))
+            self._detail_widget.update(
+                self._step_branched_error_detail(self._interrupt_message, cancelled=True)
+            )
             self._detail_widget.display = True
             return
         if self._last_success:
@@ -641,6 +644,7 @@ class CognitionStepMessage(Vertical):
             self._update_step_footer_status_line(
                 f"Failed · {dur_str}",
                 success=False,
+                suffix=self._failure_reason_suffix(),
             )
             self._detail_widget.update(self._step_branched_error_detail(err_text))
             self._detail_widget.display = True
@@ -915,6 +919,27 @@ class CognitionStepMessage(Vertical):
             return f" · {fallback_count} tools"
         return ""
 
+    def _failure_reason_suffix(self, text: str | None = None) -> str:
+        """Clipped first line of the failure summary for footer display.
+
+        Keeps the reason visible even on collapsed cards where the detail
+        body is hidden.
+
+        Args:
+        text: Optional override; defaults to the card's last summary.
+
+        Returns:
+        `" · <reason>"` or `""` when there is no usable reason text.
+        """
+        source = text if text is not None else self._last_summary
+        first_line = (source or "").strip().splitlines()
+        if not first_line or not first_line[0].strip():
+            return ""
+        reason = preview_line(first_line[0].strip(), max_chars=64)
+        if reason.lower() in ("step failed", "interrupted"):
+            return ""
+        return f" · {reason}"
+
     def _update_step_footer_status_line(
         self,
         head: str,
@@ -928,7 +953,7 @@ class CognitionStepMessage(Vertical):
         head: The leading status text (e.g. `"Completed (1.2s)"` or
         `"Failed · 1.2s"`) that gets the prominent success/error tone.
         success: Whether this is a successful completion (dim, like tool
-        activity rows) or a failure (red).
+        activity rows) or a failure (violet).
         suffix: Optional stats tail (tool counts, token budget) that keeps
         the subdued cognition tone so it doesn't drown out the head.
         """
@@ -1007,14 +1032,20 @@ class CognitionStepMessage(Vertical):
             logger.debug("step markdown render failed; falling back to prose", exc_info=True)
             return self._step_branched_execute_body(text, muted=True)
 
-    def _step_branched_error_detail(self, err_text: str) -> Content:
-        """Multiline error body: first line `⎿ ✗ …`; continuations `⎿ ○ …`."""
+    def _step_branched_error_detail(self, err_text: str, *, cancelled: bool = False) -> Content:
+        """Multiline error body: first line `⎿ ✗ …`; continuations `⎿ ○ …`.
+
+        `cancelled=True` renders the user-interrupt family instead: lavender
+        text with the stopped glyph, distinct from the failure violet.
+        """
         g = get_glyphs()
         gutter = self._step_goal_tree_gutter()
         try:
             colors = theme.get_theme_colors(self)
         except Exception:  # noqa: BLE001
             colors = theme.DARK_COLORS
+        tone = colors.secondary if cancelled else colors.card_error
+        mark = g.interrupted if cancelled else g.error
         raw = (err_text or "").strip()
         if not raw:
             return Content("")
@@ -1024,10 +1055,10 @@ class CognitionStepMessage(Vertical):
             if i:
                 parts.append("\n")
             if i == 0:
-                parts.append(Content.styled(f"{gutter}{g.error} {ln}", colors.error))
+                parts.append(Content.styled(f"{gutter}{mark} {ln}", tone))
             else:
                 sub = f"{_card_body_gutter(self._step_header_glyph())}{g.circle_empty} "
-                parts.append(Content.styled(f"{sub}{ln}", colors.error))
+                parts.append(Content.styled(f"{sub}{ln}", tone))
         return Content.assemble(*parts)
 
     def request_tools_display_refresh(self, *, immediate: bool = False) -> None:
@@ -1555,7 +1586,11 @@ class CognitionStepMessage(Vertical):
         failed_head = f"Failed · {dur_str}"
         if self._retry_attempt > 1:
             failed_head = f"Failed after {self._retry_attempt} attempts · {dur_str}"
-        self._update_step_footer_status_line(f"{failed_head}{token_suffix}", success=False)
+        self._update_step_footer_status_line(
+            f"{failed_head}{token_suffix}",
+            success=False,
+            suffix=self._failure_reason_suffix(summary),
+        )
         if prose:
             err_text = f"{err_text}\n\n{prose}"
         self._detail_widget.update(self._step_branched_error_detail(err_text))
@@ -1688,7 +1723,11 @@ class CognitionStepMessage(Vertical):
         except Exception:  # noqa: BLE001  # Unmounted widget (tests / no Textual app)
             colors = theme.DARK_COLORS
         if self._status_widget:
-            self._status_widget.update(Content.styled(message, colors.error))
+            g = get_glyphs()
+            gutter = _card_body_gutter(self._step_header_glyph())
+            self._status_widget.update(
+                Content.styled(f"{gutter}{g.interrupted} {message}", colors.secondary)
+            )
             self._status_widget.display = True
         self._auto_collapse_on_terminal()
 

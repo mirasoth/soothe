@@ -153,11 +153,12 @@ CARD_SUCCESS_DARK = "#9ECE6A"
 CARD_SUCCESS_LIGHT = "#3A7D0A"
 """Success state in light theme — deeper green."""
 
-CARD_ERROR_DARK = "#F7768E"
-"""Error state in dark theme — soft red."""
+CARD_ERROR_DARK = "#8B5CF6"
+"""Error state in dark theme — vivid violet (deliberately not red; the
+user-cancel family uses the softer lavender `secondary` to stay distinct)."""
 
-CARD_ERROR_LIGHT = "#BE185D"
-"""Error state in light theme — deeper red."""
+CARD_ERROR_LIGHT = "#5B21B6"
+"""Error state in light theme — deep violet (deliberately not red)."""
 
 CARD_RUNNING_DARK = "#E0AF68"
 """Running state in dark theme — warm amber/yellow, signals in-flight work."""
@@ -385,7 +386,7 @@ class ThemeColors:
     """Card prefix dot color for successful lifecycle — green header indicator only."""
 
     card_error: str
-    """Error state color — prominent red for visibility."""
+    """Error state color — prominent violet for visibility."""
 
     card_running: str
     """Card prefix dot color for running lifecycle — yellow, flashes to card_running_muted."""

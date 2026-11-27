@@ -39,8 +39,8 @@ async def test_interrupt_cleanup_marks_goal_tree_interrupted() -> None:
         start_time=0.0,
     )
 
-    assert tree._goal_tree_status() == "error"
-    assert "Stream cancelled" in (tree._footer_plain or "")
+    assert tree._goal_tree_status() == "interrupted"
+    assert "Cancelled by user" in (tree._footer_plain or "")
 
 
 @pytest.mark.asyncio
@@ -79,7 +79,7 @@ async def test_interrupt_cleanup_reports_stats_on_step_card() -> None:
     )
 
     label = card.set_interrupted.call_args.args[0]
-    assert label.startswith("Stream cancelled · ")
+    assert label.startswith("Cancelled by user · ")
     assert "2 tools" in label
     assert "9s" in label
     assert "↑500" in label
@@ -103,7 +103,7 @@ async def test_interrupt_daemon_turn_tears_down_ui_before_cancel() -> None:
     app = _AppStub()
     await app._interrupt_daemon_agent_turn(discard_queue=False)
 
-    app._ui_adapter.finalize_pending_steps_with_error.assert_called_once_with("Stream cancelled")
+    app._ui_adapter.finalize_pending_steps_with_error.assert_called_once_with("Cancelled by user")
     app._set_spinner.assert_awaited_once_with(None)
     app._daemon_session.cancel_remote_query.assert_awaited_once()
     app._agent_worker.cancel.assert_not_called()
