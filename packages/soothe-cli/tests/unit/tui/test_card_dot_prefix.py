@@ -431,18 +431,35 @@ def test_stream_cards_use_horizontal_inset_padding() -> None:
     assert "border-left:" not in assistant_root_rule
 
 
-def test_assistant_report_variant_adds_left_range_bar() -> None:
-    """The ``report`` variant draws a solid left bar spanning the card height.
+def test_assistant_report_variant_uses_tree_rail_dot_column() -> None:
+    """The ``report`` variant carries no card-level bar.
 
-    The bar replaces the 1-col left padding (``padding: 0 1 0 0``) so the
-    shared prefix-dot inset is preserved while the bar marks the report's
-    content range.
+    The dot column is redrawn as a tree rail instead: the card rule must stay
+    borderless so the shared prefix-dot inset is preserved, and the rail is
+    drawn by the dot Static (see ``_report_rail_content``).
     """
     assistant_css = AssistantMessage.DEFAULT_CSS
     assert "AssistantMessage.report {" in assistant_css
     report_rule = assistant_css.split("AssistantMessage.report {", 1)[1].split("}", 1)[0]
-    assert "border-left: heavy $accent;" in report_rule
-    assert "padding: 0 1 0 0;" in report_rule
+    assert "border: none;" in report_rule
+    assert "border-left:" not in report_rule
+
+
+def test_report_rail_content_extends_from_dot_to_bottom() -> None:
+    """Rail content: dot on line 1, dim rail line on every body line below."""
+    from textual.content import Content
+
+    from soothe_cli.tui.widgets.messages.assistant import _report_rail_content
+
+    dot = Content.styled("● ", "green")
+    content = _report_rail_content(dot, "│ ", "#4f6b35", 4)
+    lines = content.plain.split("\n")
+    assert lines[0] == "● "
+    assert lines[1:] == ["│ ", "│ ", "│ "]
+
+    # Single-line report: dot only, no rail below.
+    single = _report_rail_content(dot, "│ ", "#4f6b35", 1)
+    assert single.plain == "● "
 
 
 def test_step_status_footer_uses_same_muted_base_as_tool_activity() -> None:

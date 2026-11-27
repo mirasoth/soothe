@@ -13,8 +13,15 @@ from soothe_cli.display import theme
 from soothe_cli.runtime.presentation.duration_format import format_running_elapsed
 from soothe_cli.runtime.state.session_stats import format_token_count
 from soothe_cli.settings import get_glyphs
+from soothe_cli.tui.widgets.slime import (
+    SlimeRunner,
+    SlimeState,
+    run_slime_segment,
+    sleeping_slime_segment,
+)
 
 if TYPE_CHECKING:
+    from textual import events
     from textual.await_remove import AwaitRemove
     from textual.timer import Timer
 
@@ -76,6 +83,7 @@ class LoadingWidget(Static):
         show_interrupt_hint: bool = False,
         hint_extra: str | None = None,
         on_tick: Callable[[], None] | None = None,
+        slime_state: SlimeState | None = None,
     ) -> None:
         """Initialize loading widget.
 
@@ -86,6 +94,8 @@ class LoadingWidget(Static):
         show_interrupt_hint: When `True`, append an esc-to-interrupt hint (off by default).
         hint_extra: Optional hint segment before elapsed time (e.g. `attempt 2/3`).
         on_tick: Optional callback invoked on animation ticks to refresh token display.
+        slime_state: Restored slime position (wakes up where it dozed off), or `None`
+        to let it start from the left edge of the blank area.
         """
         super().__init__()
         self._status = status
@@ -103,6 +113,7 @@ class LoadingWidget(Static):
         self._token_count: int = 0
         self._token_approximate: bool = False
         self._has_laid_out_line: bool = False
+        self._slime = SlimeRunner(slime_state)
 
     @staticmethod
     def _format_token_segment(count: int, *, approximate: bool = False) -> str:
@@ -133,35 +144,48 @@ class LoadingWidget(Static):
             return 0.0
         return float(int(monotonic() - self._turn_start_mono))
 
-    def _build_content(self) -> Content:
+    def _build_content(self, *, advance_slime: bool = False) -> Content:
         colors = theme.get_theme_colors(self)
-        status_part = Content.styled(self._format_status_line(self._status), colors.primary)
         if self._paused:
-            spinner_part = Content.styled(get_glyphs().pause, "dim")
+            spinner_char = get_glyphs().pause
+            status_line = self._format_status_line(self._status)
             paused_duration = format_running_elapsed(float(self._paused_total_elapsed))
             if self._show_interrupt_hint:
-                paused_hint = f" · paused at {paused_duration} · esc to interrupt"
+                hint_line = f" · paused at {paused_duration} · esc to interrupt"
             else:
                 paused_suffix = ""
                 if self._token_count > 0:
                     paused_suffix = f" · {self._format_token_segment(self._token_count, approximate=self._token_approximate)}"
-                paused_hint = f" · paused at {paused_duration}{paused_suffix}"
-            hint_part = Content.styled(paused_hint, colors.muted)
+                hint_line = f" · paused at {paused_duration}{paused_suffix}"
+            spinner_color: str | None = "dim"
         else:
-            spinner_part = Content.styled(self._spinner.current_frame(), colors.primary)
-            hint_part = Content.styled(
-                self._format_hint_line(
-                    self._elapsed_seconds(), include_interrupt=self._show_interrupt_hint
-                ),
-                colors.muted,
+            spinner_char = self._spinner.current_frame()
+            status_line = self._format_status_line(self._status)
+            hint_line = self._format_hint_line(
+                self._elapsed_seconds(), include_interrupt=self._show_interrupt_hint
             )
-        return Content.assemble(spinner_part, status_part, hint_part)
+            spinner_color = None
+        prefix = Content.assemble(
+            Content.styled(spinner_char, spinner_color or colors.primary),
+            Content.styled(status_line, colors.primary),
+            Content.styled(hint_line, colors.muted),
+        )
+        slime = run_slime_segment(
+            self._slime, prefix.cell_length, self.content_size.width, advance=advance_slime
+        )
+        if slime is None:
+            return prefix
+        return Content.assemble(prefix, Content.styled(slime, colors.success))
 
-    def _refresh_line(self) -> None:
-        """Repaint the full status line without triggering sibling relayout."""
+    def _refresh_line(self, *, advance_slime: bool = False) -> None:
+        """Repaint the full status line without triggering sibling relayout.
+
+        Args:
+        advance_slime: When `True`, move the slime one hop before rendering.
+        """
         # First paint must layout so an empty Static does not stay height 0.
         layout = not self._has_laid_out_line
-        self.update(self._build_content(), layout=layout)
+        self.update(self._build_content(advance_slime=advance_slime), layout=layout)
         self._has_laid_out_line = True
 
     def on_mount(self) -> None:
@@ -210,10 +234,12 @@ class LoadingWidget(Static):
         elapsed_int = int(self._elapsed_seconds())
         on_screen = self.is_on_screen
         should_refresh = False
+        advance_slime = False
 
         if on_screen:
             self._spinner.next_frame()
             should_refresh = True
+            advance_slime = True
         elif elapsed_int != self._last_rendered_elapsed:
             # Keep elapsed-time ticks alive even when the row is temporarily off-screen.
             should_refresh = True
@@ -222,7 +248,7 @@ class LoadingWidget(Static):
             self._last_rendered_elapsed = elapsed_int
             if self._on_tick is not None:
                 self._on_tick()
-            self._refresh_line()
+            self._refresh_line(advance_slime=advance_slime)
 
     def set_token_usage(self, count: int, *, approximate: bool = False) -> None:
         """Update the loop token total shown after elapsed time in the hint."""
@@ -302,6 +328,15 @@ class LoadingWidget(Static):
             self._last_rendered_elapsed = int(self._elapsed_seconds())
             self._refresh_line()
 
+    def dormant_slime_state(self) -> SlimeState | None:
+        """Snapshot the slime's position so it can doze off where it stopped.
+
+        Returns:
+        The resting position, or `None` when the slime never had room to
+        appear on the row.
+        """
+        return self._slime.state() if self._slime.placed else None
+
     def stop(self) -> None:
         """Stop the animation (widget will be removed by caller)."""
         self._stop_timer()
@@ -333,6 +368,31 @@ class TipRow(Static):
         super().__init__(*args, **kwargs)
         self._is_notification = False
         self._tip_text: str = ""
+        self._slime_state: SlimeState | None = None
+        """Sleeping-slime resting position, or `None` while the slime is away."""
+
+    def display_sleeping_slime(self, state: SlimeState | None) -> None:
+        """Park the sleeping slime on the tip row (or clear it with `None`).
+
+        Args:
+        state: Resting position captured when the loop ended, or `None`.
+        """
+        self._slime_state = state
+        self._refresh_content()
+
+    def take_slime_state(self) -> SlimeState | None:
+        """Hand the sleeping slime back to a starting loop, clearing it here.
+
+        Returns:
+        The resting position, or `None` when no slime was sleeping here.
+        """
+        state, self._slime_state = self._slime_state, None
+        self._refresh_content()
+        return state
+
+    def on_resize(self, event: events.Resize) -> None:
+        """Repaint so the sleeping slime tracks width changes."""
+        self._refresh_content()
 
     def _render_tip(self, text: str) -> Content:
         colors = theme.get_theme_colors(self)
@@ -351,12 +411,18 @@ class TipRow(Static):
         if not self.is_mounted:
             return
         text = self._tip_text
+        colors = theme.get_theme_colors(self)
         if not text:
-            self.update("")
-        elif self._is_notification:
-            self.update(self._render_notice(text))
+            body: Content = Content("")
+            prefix_cells = 0
         else:
-            self.update(self._render_tip(text))
+            body = self._render_notice(text) if self._is_notification else self._render_tip(text)
+            prefix_cells = body.cell_length
+        if self._slime_state is not None:
+            slime = sleeping_slime_segment(self._slime_state, prefix_cells, self.content_size.width)
+            if slime is not None:
+                body = Content.assemble(body, Content.styled(slime, colors.muted))
+        self.update(body)
 
     def on_mount(self) -> None:
         """Render the initial tip content once the widget is in the DOM."""

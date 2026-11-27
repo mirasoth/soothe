@@ -4,14 +4,19 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from textual.color import Color
 from textual.containers import Horizontal, Vertical
+from textual.content import Content
 from textual.events import Click
 from textual.selection import Selection
 from textual.strip import Strip
 from textual.widgets import Static
 
-from soothe_cli.display.card import _card_dot_prefix_content
+from soothe_cli.display import theme
+from soothe_cli.display.card import _card_dot_prefix_content, _card_prefix_width
 from soothe_cli.display.markdown_theme import ThemedMarkdownRenderer, resolve_markdown_theme_parts
+from soothe_cli.display.tool_display import display_width
+from soothe_cli.settings import get_glyphs
 from soothe_cli.tui.widgets.messages._helpers import _RUNNING_SPINNER_INTERVAL_SECONDS
 
 if TYPE_CHECKING:
@@ -91,7 +96,37 @@ class _SelectableMarkdownBody(Static):
 
 
 REPORT_VARIANT = "report"
-"""CSS class marking a goal-completion report card (solid left-range bar)."""
+"""CSS class marking a goal-completion report card (tree-rail dot column).
+
+The card itself carries no bar; the prefix-dot column is redrawn as a tree
+rail: status dot on the first line, then a dim olive-green vertical line
+extending to the message bottom (see :func:`_report_rail_content`).
+"""
+
+
+_REPORT_RAIL_DIM_FACTOR = 0.55
+"""Fraction blended toward the background when dimming the rail-line color."""
+
+
+def _report_rail_content(
+    dot: Content,
+    rail_line: str,
+    rail_tone: str,
+    body_height: int,
+) -> Content:
+    """Report-card dot column: status dot, then rail lines to the bottom.
+
+    The rail extends from beneath the prefix dot to the message bottom,
+    mirroring the step-tree branch gutter so the report reads as part of the
+    step tree rather than a floating card.
+    """
+    rail = Content.styled(rail_line, rail_tone)
+    parts: list[object] = []
+    for line in range(max(1, body_height)):
+        if line:
+            parts.append("\n")
+        parts.append(dot if line == 0 else rail)
+    return Content.assemble(*parts)
 
 
 class AssistantMessage(Vertical):
@@ -103,9 +138,10 @@ class AssistantMessage(Vertical):
     When disabled, output is shown verbatim. This avoids the heavy widget tree
     that `textual.widgets.Markdown` creates (one child widget per block).
 
-    Pass `variant=REPORT_VARIANT` for goal-completion report cards; the card
-    then renders a solid accent bar along its left edge spanning the full
-    message height.
+    Pass `variant=REPORT_VARIANT` for goal-completion report cards; the dot
+    column then becomes a tree rail — status dot on the first line, then a
+    dim olive-green vertical line extending to the message bottom, matching
+    the step-tree branch style.
     """
 
     ALLOW_SELECT = True
@@ -121,11 +157,11 @@ class AssistantMessage(Vertical):
     }
 
     AssistantMessage.report {
-        /* Goal-completion report: solid accent bar on the left edge spans the
-           full card height so the report's content range is scannable. The
-           border replaces the 1-col left padding, keeping the shared inset. */
-        border-left: heavy $accent;
-        padding: 0 1 0 0;
+        /* Goal-completion report: no card-level bar. The dot column is
+           redrawn as a tree rail (dot, then a dim olive-green vertical line
+           to the message bottom — see _report_rail_content), matching the
+           step-tree branch style. */
+        border: none;
     }
 
     AssistantMessage .assistant-row {
@@ -224,8 +260,42 @@ class AssistantMessage(Vertical):
     def _assistant_card_status(self) -> str:
         return "running" if self._streaming_active else "success"
 
+    def _report_rail_line(self) -> str:
+        """Padded rail-line string aligned under the prefix dot column."""
+        glyph = get_glyphs().box_vertical
+        pad = max(0, _card_prefix_width() - display_width(glyph))
+        return f"{glyph}{' ' * pad}"
+
+    def _report_rail_tone(self) -> str:
+        """Dim olive-green tone for the rail line (success blended to background)."""
+        try:
+            colors = theme.get_theme_colors(self)
+        except Exception:  # noqa: BLE001
+            colors = theme.DARK_COLORS
+        return (
+            Color.parse(colors.card_success)
+            .blend(Color.parse(colors.background), _REPORT_RAIL_DIM_FACTOR)
+            .hex
+        )
+
     def _refresh_assistant_dot(self) -> None:
         if self._dot is None:
+            return
+        if REPORT_VARIANT in self.classes:
+            body_height = self._body.size.height if self._body is not None else 1
+            self._dot.update(
+                _report_rail_content(
+                    _card_dot_prefix_content(
+                        self,
+                        self._assistant_card_status(),
+                        spinner_position=self._dot_spinner_position,
+                        animate_running=self._streaming_active,
+                    ),
+                    self._report_rail_line(),
+                    self._report_rail_tone(),
+                    body_height,
+                )
+            )
             return
         self._dot.update(
             _card_dot_prefix_content(
@@ -303,6 +373,10 @@ class AssistantMessage(Vertical):
             self._body.update(Text.from_ansi(self._content))
         else:
             self._body.update(self._content)
+        if REPORT_VARIANT in self.classes and getattr(self, "is_mounted", False):
+            # The rail length follows the body height; re-sync once layout
+            # has settled on the content just rendered.
+            self.call_after_refresh(self._refresh_assistant_dot)
 
     def on_click(self, event: Click) -> None:
         """Handle click on assistant message."""

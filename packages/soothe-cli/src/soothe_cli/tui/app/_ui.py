@@ -400,11 +400,15 @@ class _UIMixin:
             status = mode_aware_spinner_label(status, getattr(adapter, "interaction_mode", None))
 
         if status is None:
-            # Hide
+            # Hide — park the slime asleep on the tip row where it stopped.
+            slime_state = None
             if self._loading_widget:
+                slime_state = self._loading_widget.dormant_slime_state()
                 await self._loading_widget.remove()
                 self._loading_widget = None
             self._connect_spinner_start_mono = None
+            if self._tip_row is not None:
+                self._tip_row.display_sleeping_slime(slime_state)
             self._show_tip_row()
             return
 
@@ -431,6 +435,10 @@ class _UIMixin:
                 show_interrupt_hint=show_interrupt_hint,
                 hint_extra=hint_extra,
                 on_tick=self._refresh_token_displays,
+                # Wake the slime up where it dozed off (if it was sleeping).
+                slime_state=(
+                    self._tip_row.take_slime_state() if self._tip_row is not None else None
+                ),
             )
             await thinking_status.mount(self._loading_widget)
         else:

@@ -13,6 +13,7 @@ from soothe_client.ux.task_namespace import (
     normalize_step_task_tool_call_id,
     parse_unified_tool_call_id,
 )
+from textual.color import Color
 from textual.content import Content
 
 from soothe_cli.commands.subagent_routing import get_subagent_display_name
@@ -901,6 +902,27 @@ def _bold(color: str) -> str:
     return f"bold {color}"
 
 
+_PANE_HEADER_DIM_FACTOR = 0.45
+"""Fraction blended toward the background when dimming pane header rules.
+
+Slightly gentler than the report rail's dim factor (0.55): the header also
+carries the bold label and counters, which must stay readable.
+"""
+
+
+def _dim_tone(tone: str, colors: Any) -> str:
+    """Blend a tone toward the background: same hue, dim and unsaturated.
+
+    Falls back to the input tone when the palette lacks a usable background
+    (pure-render callers may pass partial palettes).
+    """
+    try:
+        background = _safe_colors(colors).background
+        return Color.parse(tone).blend(Color.parse(background), _PANE_HEADER_DIM_FACTOR).hex
+    except Exception:  # noqa: BLE001
+        return tone
+
+
 def _thinking_tone(colors: Any) -> str:
     """Muted foreground for captured reasoning (draft-grade content).
 
@@ -924,19 +946,22 @@ def _pane_header_line(
 
     `──── todo ──────────────────────────────── 3/7 ────`
 
-    The whole rule renders in the pane's own color (lead/fill regular, label
-    and counter bold) so each section title is visually distinct at a glance.
+    The whole rule renders in the pane's own color, dimmed toward the
+    background (same hue, unsaturated — see `_dim_tone`; lead/fill regular,
+    label and counter bold) so each section title reads as a quiet divider
+    instead of a loud accent.
     """
     rule = g.box_horizontal
+    header_color = _dim_tone(color, colors)
     lead = f"{rule * STEP_CARD_PANE_LEAD_RULE_CHARS} "
     counter_w = display_width(counter) if counter else 0
     fill = max(0, width - display_width(lead) - display_width(label) - 1 - counter_w - 1)
     segs = [
-        (lead, color),
-        (f"{label} ", _bold(color)),
-        (rule * fill, color),
+        (lead, header_color),
+        (f"{label} ", _bold(header_color)),
+        (rule * fill, header_color),
     ]
-    meta = [(counter, _bold(color))] if counter else []
+    meta = [(counter, _bold(header_color))] if counter else []
     return PaneLine(segs=segs, meta=meta)
 
 
@@ -1149,7 +1174,10 @@ class StepActivityTree:
                 panes.append(
                     ActivityPane(
                         label="todo",
-                        color=colors.cognition,
+                        # `primary` (soft blue) instead of `cognition`: the
+                        # cognition slate-gray is nearly invisible once the
+                        # header is dimmed toward the background.
+                        color=colors.primary,
                         lines=todo_lines,
                         counter=f"{done}/{len(todo_items)}",
                     )
