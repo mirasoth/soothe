@@ -65,11 +65,6 @@ DEFAULT_MAX_DESCRIPTION_CHARS: int = 2000
 
 _EVIDENCE_SUMMARY_MAX_CHARS: int = 2000
 
-# ── Vision context brief ────────────────────────────────────────────────────
-
-VISION_CONTEXT_MAX_CHARS: int = 4000
-VISION_BRIEF_IMAGE_FACTS_MAX_CHARS: int = 4000
-
 # ── Continuation & predecessor context ──────────────────────────────────────
 
 CONTINUATION_ASSESS_REASONING_MAX_CHARS: int = 240

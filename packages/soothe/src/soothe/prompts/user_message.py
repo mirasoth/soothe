@@ -5,8 +5,6 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from soothe.sloop.utils.vision_context import merge_vision_instructions
-
 # Strip StrangeLoop suffix accidentally baked into goal text or stored checkpoints.
 _GOAL_ITERATION_SUFFIX_RE = re.compile(
     r"\s*\(iteration\s+\d+/\d+\)\s*$",
@@ -101,7 +99,6 @@ class UserMessageBuilder:
         expected_output: str | None = None,
         instructions: str | None = None,
         prior_steps: str | None = None,
-        vision_context: str | None = None,
         workspace_state: str | None = None,
         skill_context: str | None = None,
         mcp_resource_blocks: list[str] | None = None,
@@ -118,8 +115,6 @@ class UserMessageBuilder:
             instructions: Bullet-list execution instructions (INSTRUCTIONS section).
             prior_steps: Transitive predecessor step descriptions and statuses
                 (fallback only when predecessor ledger pairs are not projected).
-            vision_context: Daemon vision-preflight summary body ; subordinate
-                to EXECUTION TASK — never a peer GOAL section.
             workspace_state: Optional lightweight workspace diff summary.
             skill_context: Skill reference only (SKILL.md).
             mcp_resource_blocks: Optional pre-resolved MCP resource blocks.
@@ -129,17 +124,11 @@ class UserMessageBuilder:
         Returns:
             Structured text message for the execute-step LoopHumanMessage.
         """
-        vision = (vision_context or "").strip()
         instr = (instructions or "").strip()
-        if vision:
-            instr = merge_vision_instructions(instr or None)
 
         sections: list[tuple[str, str]] = [
             (EXECUTION_TASK_LABEL, _goal_text(step_description)),
         ]
-
-        if vision:
-            sections.append(("VISION CONTEXT", vision))
 
         if (prior_steps or "").strip():
             sections.append(("PRIOR STEPS", prior_steps.strip()))

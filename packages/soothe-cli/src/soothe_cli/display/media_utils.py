@@ -79,7 +79,7 @@ _WIRE_SAFE_IMAGE_FORMATS: frozenset[str] = frozenset(
 """Image formats whose `image/{format}` MIME is accepted by the daemon wire.
 
 Other readable formats (tiff, ico, …) are re-encoded to PNG on attach so the
-vision preflight never sees a MIME outside the daemon allowlist.
+daemon attachment validation never sees a MIME outside the allowlist.
 """
 
 
@@ -150,7 +150,7 @@ def image_data_from_bytes(
             if image_format not in _WIRE_SAFE_IMAGE_FORMATS:
                 # TIFF/ICO/etc. produce `image/{format}` MIME values outside
                 # the daemon allowlist; re-encode to PNG so the wire payload
-                # is always valid for vision preflight.
+                # is always valid for daemon attachment validation.
                 buf = io.BytesIO()
                 image.save(buf, format="PNG")
                 image_bytes = buf.getvalue()

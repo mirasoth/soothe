@@ -17,6 +17,7 @@ from soothe.events import ERROR
 from soothe.logging import ThreadLogger, set_thread_id
 from soothe.wire.codec import prepare_stream_data_for_wire
 from soothe.wire.protocol import _serialize_for_json
+from soothe.workspace.attachments import land_attachments, landed_paths_note
 from soothe_nano.wire.stream_tool_wire import (
     TOOL_CALL_UPDATES_BATCH,
     extract_tool_call_updates_from_wire_message,
@@ -26,7 +27,6 @@ from soothe_daemon.bootstrap.logging import set_client_id, set_loop_id
 from soothe_daemon.protocol.intent_hints import is_daemon_intent_hint
 from soothe_daemon.query.error_format import emit_error_event
 from soothe_daemon.query.stream_delivery import StreamDeliveryCoalescer
-from soothe_daemon.services.image_understanding import enrich_user_text_with_vision
 from soothe_daemon.services.intent_hint_turn import run_intent_hint_turn
 
 logger = logging.getLogger(__name__)
@@ -905,25 +905,45 @@ class QueryEngine:
             )
             return 0
 
-    async def _enrich_with_vision_throttled(
+    async def _land_query_attachments(
         self,
-        config: Any,
-        text: str,
-        attachments: list[dict[str, str]],
         *,
-        session_id: str | None = None,
-    ) -> str:
-        """Run vision preflight under daemon-wide concurrency cap when configured."""
+        effective_loop_id: str | None,
+        thread_id: str,
+        attachments: list[dict[str, str]],
+    ) -> list[str]:
+        """Land wire attachments into the turn workspace.
+
+        Files are content-addressed and idempotent, so a re-send of the same
+        image overwrites nothing. Landing failures degrade to an empty list
+        (the turn runs without the landed-paths note).
+        """
         d = self._daemon
-        sem = getattr(d, "_vision_preflight_semaphore", None)
-        if sem is None:
-            return await enrich_user_text_with_vision(
-                config, text, attachments, session_id=session_id
+        loop_meta: dict[str, Any] = {}
+        if effective_loop_id:
+            loop_meta = await d._persistence_manager.get_loop_metadata(effective_loop_id) or {}
+        try:
+            from soothe.workspace.loop_workspace import resolve_loop_workspace
+
+            workspace = resolve_loop_workspace(
+                loop_id=effective_loop_id or thread_id,
+                client_workspace=loop_meta.get("current_workspace")
+                or loop_meta.get("client_workspace"),
+                user_id=loop_meta.get("user_id") or loop_meta.get("user"),
+                client_workspace_id=loop_meta.get("client_workspace_id"),
+                workspace_mapping=loop_meta.get("workspace_mapping"),
             )
-        async with sem:
-            return await enrich_user_text_with_vision(
-                config, text, attachments, session_id=session_id
+        except Exception:
+            logger.exception(
+                "Attachment landing skipped: workspace resolution failed (loop=%s)",
+                effective_loop_id or "?",
             )
+            return []
+        try:
+            return await asyncio.to_thread(land_attachments, Path(workspace), attachments)
+        except Exception:
+            logger.exception("Attachment landing failed (loop=%s)", effective_loop_id or "?")
+            return []
 
     async def _resolve_query_checkpoint_thread_id(
         self,
@@ -1019,7 +1039,7 @@ class QueryEngine:
             )
         thread_logger = d._thread_logger  # local ref — safe against concurrent overwrites
 
-        # Admit before vision preflight to avoid wasted image API calls.
+        # Admit before any attachment landing or turn work.
         profile_name = (
             router_profile.strip()
             if isinstance(router_profile, str) and router_profile.strip()
@@ -1098,34 +1118,14 @@ class QueryEngine:
 
         effective_text = text
         if attachments:
-            try:
-                effective_text = await self._enrich_with_vision_throttled(
-                    d._config, text, attachments, session_id=thread_id
-                )
-            except Exception as exc:
-                logger.exception(
-                    "Vision preflight failed (loop=%s checkpoint=%s)",
-                    effective_loop_id or "?",
-                    thread_id[:16] if thread_id else "?",
-                )
-                if effective_loop_id:
-                    await self._broadcast_loop_message(
-                        effective_loop_id,
-                        {
-                            "type": "event",
-                            "namespace": [],
-                            "mode": "custom",
-                            "data": emit_error_event(exc),
-                        },
-                    )
-                    await self._broadcast_loop_message(
-                        effective_loop_id,
-                        {"type": "status", "state": "idle"},
-                    )
-                await self._release_query_admission(effective_loop_id)
-                if client_id:
-                    await d._session_manager.release_loop_ownership(client_id)
-                return
+            landed_paths = await self._land_query_attachments(
+                effective_loop_id=effective_loop_id,
+                thread_id=thread_id,
+                attachments=attachments,
+            )
+            if landed_paths:
+                note = landed_paths_note(landed_paths)
+                effective_text = f"{text}\n\n{note}" if text.strip() else note
 
         thread_logger.log_user_input(effective_text)
 

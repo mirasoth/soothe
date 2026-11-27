@@ -1,4 +1,4 @@
-"""Vision preflight for daemon input with image attachments."""
+"""Wire validation for daemon image attachments and workspace landing re-exports."""
 
 from __future__ import annotations
 
@@ -7,7 +7,8 @@ import binascii
 import logging
 from typing import Any
 
-from langchain_core.messages import HumanMessage
+from soothe.workspace.attachments import ATTACHMENTS_DIR as ATTACHMENTS_DIR
+from soothe.workspace.attachments import land_attachments as land_attachments
 
 logger = logging.getLogger(__name__)
 
@@ -81,101 +82,3 @@ def validate_and_normalize_image_attachments(raw: Any) -> tuple[list[dict[str, s
         out.append({"mime_type": mime, "data": data_raw.strip()})
 
     return out, None
-
-
-_VISION_INSTRUCTION_SINGLE = (
-    "Describe this image concisely for another assistant that will handle the user's "
-    "request. Focus on: visible objects, text content, charts/diagrams, and the likely "
-    "user intent. Be specific about any text, numbers, or labels visible in the image. "
-    "The image is attached inline to this message; it is NOT a file on the user's disk, "
-    "so never suggest or attempt to locate it in the workspace."
-)
-
-_VISION_INSTRUCTION_MULTI = (
-    "You have {count} images attached. Describe each image separately using this format:\n\n"
-    "**Image {{i}}:** [Description]\n\n"
-    "For each image, focus on: visible objects, text content, charts/diagrams, and "
-    "labels. Be specific about any text, numbers, or distinguishing features. "
-    "If the images appear related (e.g., before/after, comparison, sequence), "
-    "note the relationship in a final **Relationship:** section. "
-    "The images are attached inline to this message; they are NOT files on the user's "
-    "disk, so never suggest or attempt to locate them in the workspace."
-)
-
-
-def _build_vision_instruction(attachment_count: int) -> str:
-    """Build appropriate vision instruction based on image count."""
-    if attachment_count == 1:
-        return _VISION_INSTRUCTION_SINGLE
-    return _VISION_INSTRUCTION_MULTI.format(count=attachment_count)
-
-
-async def enrich_user_text_with_vision(
-    config: Any,
-    text: str,
-    attachments: list[dict[str, str]],
-    *,
-    session_id: str | None = None,
-) -> str:
-    """Run the configured image-role model on images and merge output into user text.
-
-    Args:
-        config: `SootheConfig` with providers for role `image`.
-        text: User text (may be empty).
-        attachments: Normalized list from `validate_and_normalize_image_attachments`.
-        session_id: Thread id for Langfuse session correlation.
-
-    Returns:
-        Text passed to `SootheRunner.astream` (user text plus vision block).
-
-    Raises:
-        Exception: Propagated from the vision model if the call fails.
-    """
-    if not attachments:
-        return text
-
-    model = config.create_chat_model("image")
-    instruction = _build_vision_instruction(len(attachments))
-    blocks: list[str | dict[str, Any]] = [
-        {"type": "text", "text": instruction},
-    ]
-    for att in attachments:
-        mime = att["mime_type"]
-        b64 = att["data"]
-        blocks.append(
-            {
-                "type": "image_url",
-                "image_url": {"url": f"data:{mime};base64,{b64}"},
-            }
-        )
-
-    msg = HumanMessage(content=blocks)
-
-    from soothe_nano.llm import ainvoke_traced
-
-    response = await ainvoke_traced(
-        model,
-        [msg],
-        soothe_config=config,
-        purpose="vision_preflight",
-        component="daemon.vision",
-        phase="pre-stream",
-        session_id=session_id,
-        run_name="soothe:vision-preflight",
-    )
-    summary = str(response.content).strip()
-    if not summary:
-        summary = "(Vision model returned empty content.)"
-
-    user_part = text.strip()
-    agent_note = (
-        "Note: the image(s) referenced by the `[image N: ...]` placeholders above are "
-        "attached inline to this message; they are NOT files in the workspace or on "
-        "disk, and the filenames in the placeholders are display labels only. Analyze "
-        "them from the vision summary above — do not search for, locate, or read the "
-        "referenced filenames."
-    )
-    vision_block = f"--- Vision summary ---\n{summary}\n---\n{agent_note}"
-    if user_part:
-        return f"{user_part}\n\n{vision_block}\n"
-    return f"{vision_block}\n"

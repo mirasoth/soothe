@@ -169,7 +169,7 @@ Soothe:
 | **Execution** | `run_command`, `run_python`, `run_background`, `tail_background_log`, `kill_process` |
 | **Web** | `wizsearch_search`, `wizsearch_crawl`, `requests_get` |
 | **Documents** | `extract_text`, `inspect_data`, `summarize_data` |
-| **Media** | `analyze_image`, `transcribe_audio`, `analyze_video` |
+| **Media** | `analyze_image`, `extract_text_from_image` |
 | **Research** | `deepxiv_search`, `deepxiv_paper_brief` |
 | **Task Management** | `write_todos`, `task` (subagent spawning) |
 

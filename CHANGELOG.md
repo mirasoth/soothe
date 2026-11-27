@@ -19,6 +19,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - TUI attach observability: clipboard and drag/drop path attaches now log source name, format, approximate size and per-message-limit skips at INFO level in the TUI log, so wrong-image diagnoses no longer require daemon-side inference.
 - TUI media placeholders now show their source: drag/drop attachments render as `[image 1: photo.jpg]` / `[video 1: clip.mp4]` and clipboard pastes as `[image 1: clipboard]`, so wrong-source mistakes (e.g. a stale clipboard bitmap attached instead of the intended file) are visible before submit. Legacy `[image N]` placeholders remain supported everywhere.
 - TUI multi-image clipboard paste: `Cmd+V` joins `Ctrl+V` as a clipboard-image paste binding (for terminals that deliver Cmd+V as a key event), and multi-image clipboards (e.g. Finder multi-file copy) attach one `[image N]` placeholder per image instead of only the first.
+- `soothe.workspace.attachments`: shared attachment-landing helpers (`land_attachments`, `attachment_rel_path`, `landed_paths_note`, `ATTACHMENTS_DIR`) used by hosts to land wire image attachments into turn workspaces at `input/attachments/<sha256[:16]>.<ext>` (content-addressed, idempotent).
+
+### Changed
+
+- Tool display registry: media tools now match the real vision toolkit — `analyze_image` added, `extract_text_from_image` retained as a real implementation, and the never-shipped display-only entries (`analyze_video`, `transcribe_audio`, `audio_qa`) removed from the `soothe_client.tools` / `soothe_nano.tools` twins (IG-CORE-012 S4). The capabilities wiki is synced.
+- **Daemon image attachments land in the workspace and go through the vision toolkit instead of the legacy preflight (IG-CORE-012).** Image-bearing input no longer runs a daemon-side image-role preflight call: `QueryEngine` lands validated attachments into the loop workspace under `input/attachments/` (content-addressed, idempotent — shared helper in the new `soothe.workspace.attachments` module, also consumed by flowjet) and appends the landed paths plus `analyze_image` / `extract_text_from_image` tool guidance to the input text. The agent does its own targeted vision reads with the nano vision tools. The `enrich_user_text_with_vision` preflight service, its instruction templates, the `max_concurrent_vision_preflight` setting (`SOOTHE_DAEMON_MAX_CONCURRENT_VISION_PREFLIGHT`, also removed from the daemon config template), and the preflight semaphore are removed; `validate_and_normalize_image_attachments` (wire validation) stays. The StrangeLoop vision-context chain that parsed the removed `--- Vision summary ---` blocks (`sloop/utils/vision_context.py`, the executor's `vision_context` plumbing, the `VISION CONTEXT` prompt section and its scope-guard instructions, the step-brief "Vision summary" hint, and the `VISION_CONTEXT_MAX_CHARS` / `VISION_BRIEF_IMAGE_FACTS_MAX_CHARS` constants) is removed with it, and the intent-hint image turns now build their multimodal messages through the shared `build_image_message` instead of a local hand-rolled copy.
+
+### Removed
+
+- Daemon setting `max_concurrent_vision_preflight` (and the `max_concurrent_vision_preflight` key in `setup/templates/daemon.yml`): it only throttled the removed vision preflight.
 
 ### Fixed
 

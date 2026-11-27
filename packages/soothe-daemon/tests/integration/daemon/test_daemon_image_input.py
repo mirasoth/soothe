@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import base64
 from pathlib import Path
-from typing import Any
 
 import pytest
 import pytest_asyncio
@@ -64,27 +63,13 @@ def _build_daemon_config(tmp_path: Path, port: int) -> tuple[SootheConfig, Sooth
     return build_daemon_config(tmp_path=tmp_path, websocket_port=port)
 
 
+def _landed_files(tmp_path: Path) -> list[Path]:
+    return list((tmp_path / "soothe-home").rglob("input/attachments/*"))
+
+
 @pytest_asyncio.fixture
-async def websocket_daemon_patched(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Start daemon with vision preflight stubbed (no image-model API call)."""
-    vision_calls: list[dict[str, Any]] = []
-
-    async def _fake_enrich(
-        config: Any,
-        text: str,
-        attachments: list[dict[str, str]],
-        *,
-        session_id: str | None = None,
-    ) -> str:
-        vision_calls.append({"text": text, "n": len(attachments), "session_id": session_id})
-        return f"{text}\n--- Vision summary ---\nstub-vision\n---\n"
-
-    monkeypatch.setattr(
-        "soothe_daemon.query.engine.enrich_user_text_with_vision",
-        _fake_enrich,
-        raising=True,
-    )
-
+async def websocket_daemon(tmp_path: Path):
+    """Start an isolated daemon for attachment-input integration tests."""
     force_isolated_home(tmp_path / "soothe-home")
     port = alloc_ephemeral_port()
     config, daemon_cfg = _build_daemon_config(tmp_path, port)
@@ -92,7 +77,7 @@ async def websocket_daemon_patched(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     await daemon.start()
     await asyncio.sleep(0.2)
     try:
-        yield daemon, port, vision_calls
+        yield daemon, port
     finally:
         await stop_daemon_safely(daemon)
 
@@ -100,9 +85,11 @@ async def websocket_daemon_patched(tmp_path: Path, monkeypatch: pytest.MonkeyPat
 @pytest.mark.asyncio
 @pytest.mark.integration
 async def test_websocket_input_with_image_runs_turn(
-    websocket_daemon_patched: tuple[SootheDaemon, int, list[dict[str, Any]]], requires_llm_api
+    websocket_daemon: tuple[SootheDaemon, int],
+    requires_llm_api,
+    tmp_path: Path,
 ) -> None:
-    daemon, port, vision_calls = websocket_daemon_patched
+    daemon, port = websocket_daemon
     _ = daemon
 
     client = WebSocketClient(url=f"ws://127.0.0.1:{port}")
@@ -124,9 +111,10 @@ async def test_websocket_input_with_image_runs_turn(
         assert running.get("state") == "running"
         await await_status_state(client.read_event, "idle", timeout=integration_llm_idle_timeout())
 
-        assert len(vision_calls) == 1
-        assert vision_calls[0]["text"] == "ack"
-        assert vision_calls[0]["n"] == 1
+        # Attachments are landed in the turn workspace before the turn runs.
+        landed_files = _landed_files(tmp_path)
+        assert len(landed_files) == 1
+        assert landed_files[0].read_bytes() == base64.b64decode(TINY_PNG_B64)
     finally:
         await close_client_safely(client)
 
@@ -169,10 +157,12 @@ async def test_websocket_input_invalid_attachment_returns_error(
 @pytest.mark.asyncio
 @pytest.mark.integration
 async def test_websocket_input_with_real_image_attachment(
-    websocket_daemon_patched: tuple[SootheDaemon, int, list[dict[str, Any]]], requires_llm_api
+    websocket_daemon: tuple[SootheDaemon, int],
+    requires_llm_api,
+    tmp_path: Path,
 ) -> None:
     """Test agent task execution with a real image file (soothe-logo.png)."""
-    daemon, port, vision_calls = websocket_daemon_patched
+    daemon, port = websocket_daemon
     _ = daemon
 
     soothe_logo_b64 = _get_soothe_logo_b64()
@@ -196,12 +186,9 @@ async def test_websocket_input_with_real_image_attachment(
         assert running.get("state") == "running"
         await await_status_state(client.read_event, "idle", timeout=integration_llm_idle_timeout())
 
-        assert len(vision_calls) == 1
-        assert (
-            "image" in vision_calls[0]["text"].lower()
-            or vision_calls[0]["text"] == "Describe what you see in this image"
-        )
-        assert vision_calls[0]["n"] == 1
+        landed_files = _landed_files(tmp_path)
+        assert len(landed_files) == 1
+        assert landed_files[0].read_bytes() == base64.b64decode(soothe_logo_b64)
     finally:
         await close_client_safely(client)
 
@@ -209,10 +196,12 @@ async def test_websocket_input_with_real_image_attachment(
 @pytest.mark.asyncio
 @pytest.mark.integration
 async def test_websocket_input_with_multi_image_attachments(
-    websocket_daemon_patched: tuple[SootheDaemon, int, list[dict[str, Any]]], requires_llm_api
+    websocket_daemon: tuple[SootheDaemon, int],
+    requires_llm_api,
+    tmp_path: Path,
 ) -> None:
     """Test agent task execution with multiple image files (soothe-logo.png + logical-arch.jpg)."""
-    daemon, port, vision_calls = websocket_daemon_patched
+    daemon, port = websocket_daemon
     _ = daemon
 
     soothe_logo_b64 = _get_soothe_logo_b64()
@@ -240,7 +229,13 @@ async def test_websocket_input_with_multi_image_attachments(
         assert running.get("state") == "running"
         await await_status_state(client.read_event, "idle", timeout=integration_llm_idle_timeout())
 
-        assert len(vision_calls) == 1
-        assert vision_calls[0]["n"] == 2
+        # Two distinct payloads land as two content-addressed files.
+        landed_files = _landed_files(tmp_path)
+        assert len(landed_files) == 2
+        landed_bytes = {f.read_bytes() for f in landed_files}
+        assert landed_bytes == {
+            base64.b64decode(soothe_logo_b64),
+            base64.b64decode(logical_arch_b64),
+        }
     finally:
         await close_client_safely(client)

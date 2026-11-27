@@ -124,6 +124,13 @@ persistence machinery:
 - flowjet initially has no preflight: the agent learns image paths directly from the input
   text and calls the tools itself; the same fast path can be added later if needed.
 
+**Amended (2026-11-27, user decision)**: the daemon preflight is **removed entirely**,
+not kept as a hybrid. The daemon lands attachments and merges the landed-paths note
+(shared `landed_paths_note` helper) into the input text; the agent performs all vision
+reads through the toolkit. The `enrich_user_text_with_vision` service, its instruction
+templates, the `max_concurrent_vision_preflight` setting, and the preflight semaphore
+are gone; wire validation (`validate_and_normalize_image_attachments`) stays.
+
 ## 3. Implementation Slices
 
 | Slice | Repo | Contents |
@@ -135,6 +142,49 @@ persistence machinery:
 
 No blocking between slices (S1 first; S2/S3 each consume the released S1, or validate
 locally via PYTHONPATH).
+
+**Implementation status (2026-11-27, all uncommitted)**:
+
+- **S1 (nano) done.** `toolkits/vision.py` (AnalyzeImageTool / ExtractTextFromImageTool /
+  VisionToolkit / VisionPlugin), `llm/multimodal.py` (`build_image_message` / `ImageBytes` /
+  `sniff_image_mime`), `VisionToolsConfig` + defaults in `config/models.py`, `"vision"`
+  group in resolver + builtin plugins table. Tests 39 new; nano suite 2241 passed.
+- **S2 (daemon) done — amended: preflight removed.** `QueryEngine._land_query_attachments`
+  resolves the loop workspace (early loop-metadata fetch, failure degrades to a text-only
+  turn) and lands attachments before the turn; the landed-paths note (shared
+  `landed_paths_note`) is merged into the input text. Per the D3 amendment the legacy
+  preflight (`enrich_user_text_with_vision`, instruction templates,
+  `max_concurrent_vision_preflight`, the throttle semaphore, and its test file) is
+  deleted; `validate_and_normalize_image_attachments` stays as the wire gate. The
+  StrangeLoop vision-context chain that consumed the removed `--- Vision summary ---`
+  blocks is deleted with it (`sloop/utils/vision_context.py`, the executor `vision_context`
+  plumbing, the `VISION CONTEXT` prompt section, the step-brief hint, and the two
+  vision constants); the intent-hint image turns reuse `build_image_message`. The TUI
+  placeholder→path closure (stopgap removal) is **not** done — it needs a
+  daemon→client landed-path feedback design; `_strip_stale_media_placeholders` stays.
+  Daemon suite green (1451 after the removals); `test_daemon_image_input.py` rewritten to
+  assert real landed bytes (LLM-gated, skipped locally).
+- **S3 (flowjet) done.** `RunRequest.attachments`; extraction in
+  `openai_compat/schemas.py` (data-URL only, MIME allowlist/aliases, 20 MiB / 8-image
+  limits, chat + responses shapes) and `_extract_prompt_attachments` for ACP image
+  blocks; the isolating backend lands after `open_session` (materialized tree + dirty
+  tracking) and appends the landed-paths note; landing failure degrades to text-only.
+  flowjet suite 698+8 passed (the one failure, `test_workspace_sync.py:387`'s legacy
+  `.workspace/manifest.json` pin, is the documented IG-CORE-013 interaction and passes
+  against the installed soothe).
+- **S4 (client axis) done.** `analyze_image` added, zombies
+  (`analyze_video`/`transcribe_audio`/`audio_qa`) removed, `extract_text_from_image`
+  retained; metadata twins byte-synced with hash bumps on both sides; wiki
+  (`capabilities/tools.md` incl. ecosystem-source table, `Basic-Concepts.md`) synced.
+  `get_video_info` kept (not in the IG's zombie list). Client suite 334 passed.
+- **Deviation from D2 (stronger)**: the landing helper lives once in
+  `soothe.workspace.attachments` (`land_attachments` / `attachment_rel_path` /
+  `landed_paths_note` / `ATTACHMENTS_DIR`) and both hosts import it — a single
+  definition replaces the planned per-host constants + twin tests (the literal pin test
+  lives in `packages/soothe/tests/unit/workspace/test_attachments.py`). flowjet writes
+  the local materialized tree (picked up by the turn's dirty-tracker commit) rather than
+  calling the backend's `put_content_file` directly — same persistence channel, and it
+  stays resolver-agnostic (local-only / sync / sandbox all work).
 
 **Sequencing vs IG-CORE-013 (workspace directory normalization)**: IG-CORE-013 lands
 first. It owns the nano release train touching the same surfaces (glob excludes, security

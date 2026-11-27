@@ -1,14 +1,14 @@
-"""Unit tests for image attachment validation and vision preflight."""
+"""Unit tests for image attachment validation and workspace landing."""
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
-
-import pytest
-from langchain_core.messages import AIMessage
+import base64
+import hashlib
+from pathlib import Path
 
 from soothe_daemon.services.image_understanding import (
-    enrich_user_text_with_vision,
+    ATTACHMENTS_DIR,
+    land_attachments,
     normalize_mime_type,
     validate_and_normalize_image_attachments,
 )
@@ -51,34 +51,19 @@ def test_validate_attachments_bad_base64() -> None:
     assert "base64" in (err or "").lower()
 
 
-@pytest.mark.asyncio
-async def test_enrich_user_text_with_vision_invokes_image_model() -> None:
-    fake_model = MagicMock()
-    fake_model.ainvoke = AsyncMock(return_value=AIMessage(content="saw a red square"))
+def test_land_attachments_is_content_addressed_and_idempotent(tmp_path: Path) -> None:
+    raw = base64.b64decode(TINY_PNG_B64)
+    digest = hashlib.sha256(raw).hexdigest()[:16]
+    attachments = [
+        {"mime_type": "image/png", "data": TINY_PNG_B64},
+        {"mime_type": "image/jpeg", "data": TINY_PNG_B64},
+    ]
 
-    cfg = MagicMock()
-    cfg.create_chat_model = MagicMock(return_value=fake_model)
+    paths = land_attachments(tmp_path, attachments)
+    assert paths[0] == f"{ATTACHMENTS_DIR}/{digest}.png"
+    assert paths[1] == f"{ATTACHMENTS_DIR}/{digest}.jpg"
+    for rel in paths:
+        assert (tmp_path / rel).read_bytes() == raw
 
-    out = await enrich_user_text_with_vision(
-        cfg,
-        "what is it?",
-        [{"mime_type": "image/png", "data": TINY_PNG_B64}],
-    )
-    assert "what is it?" in out
-    assert "saw a red square" in out
-    assert "Vision summary" in out
-    cfg.create_chat_model.assert_called_once_with("image")
-    fake_model.ainvoke.assert_awaited_once()
-
-    # The prompt tells the model the image is inline, so the downstream agent
-    # does not go hunting for a file named like the attachment on disk.
-    prompt_text = fake_model.ainvoke.await_args.args[0][0].content
-    instruction = prompt_text[0]["text"]
-    assert "attached inline" in instruction
-    assert "NOT a file on the user's disk" in instruction
-
-    # The agent-facing merged text carries the same guidance: the summary is
-    # the analysis source, placeholder filenames are display labels only.
-    assert "attached inline to this message" in out
-    assert "NOT files in the workspace or on disk" in out
-    assert "do not search for, locate, or read" in out
+    # Re-landing the same payloads is a no-op that returns the same paths.
+    assert land_attachments(tmp_path, attachments) == paths

@@ -37,7 +37,6 @@ channels:
 # Concurrency
 max_concurrent_threads: 100
 max_concurrent_dispatches: 50
-max_concurrent_vision_preflight: 8  # 0 = unlimited
 max_in_flight_broadcasts_per_loop: 80  # 0 = unlimited
 card_ingest_queue_maxsize: 2000
 card_flush_debounce_ms: 200

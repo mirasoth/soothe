@@ -33,7 +33,7 @@ Soothe organizes tools into domain-specific **toolkits** — modules of related 
 | **file_ops** | File I/O & editing | `read_file`, `write_file`, `edit_file`, `glob`, `grep`, `ls` |
 | **wizsearch** | Web search (tarzi backend) | `wizsearch_search`, `wizsearch_crawl` |
 | **deepxiv** | Academic papers | `deepxiv_search`, `deepxiv_paper_brief`, `deepxiv_read_section` |
-| **audio/video/image** | Media analysis | `transcribe_audio`, `analyze_video`, `analyze_image` |
+| **vision** | Image understanding & OCR | `analyze_image`, `extract_text_from_image` |
 | **data** | Data inspection | `inspect_data`, `summarize_data`, `check_data_quality` |
 | **http_requests** | HTTP operations | `requests_get`, `requests_post`, `requests_delete` |
 | **datetime** | Time utilities | `current_datetime` |
@@ -50,7 +50,7 @@ A defining design decision: **Soothe only builds tools that the langchain ecosys
 | `run_python` | custom persistent in-process REPL (`BaseTool`) |
 | `read_file`, `write_file`, `glob`, `grep`, `ls` | from `deepagents.FilesystemMiddleware` |
 | `wizsearch_search` | from `tarzi` library (tool name kept for config/wire compat) |
-| `transcribe_audio` | OpenAI Whisper |
+| `analyze_image`, `extract_text_from_image` | custom `BaseTool` (vision/OCR model roles + workspace-anchored read-only access) |
 
 Soothe's custom additions — `edit_lines`, `insert_lines`, `delete_lines`, `apply_diff` — extend langchain's file tools with **surgical editing** capabilities that don't exist in the ecosystem. These enable precise line-range edits instead of full-file rewrites, which is critical for large files where token efficiency matters.
 

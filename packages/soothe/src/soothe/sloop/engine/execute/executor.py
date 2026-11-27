@@ -137,7 +137,6 @@ from soothe.sloop.utils.network_errors import (
 from soothe.sloop.utils.network_errors import (
     is_recoverable_tool_network_error as _is_recoverable_tool_network_error,
 )
-from soothe.sloop.utils.vision_context import extract_vision_summary
 from soothe.utils.messages import (
     extract_text_from_message_content,
     join_text_fragments,
@@ -927,11 +926,6 @@ class Executor:
                 expected_output=step.expected_output,
                 task_complexity=task_complexity,
             )
-        vision_context = (
-            extract_vision_summary(resolve_user_request(loop_state))
-            if loop_state is not None
-            else None
-        )
         from soothe.sloop.plans.grounding import peek_approved_plan_from_state
 
         approved_md, approved_path = peek_approved_plan_from_state(loop_state)
@@ -942,7 +936,6 @@ class Executor:
             expected_output=envelope_body.expected_output,
             instructions=envelope_body.instructions,
             prior_steps=prior_steps or None,
-            vision_context=vision_context,
             skill_context=loop_state.skill_context if loop_state else None,
             approved_plan_path=approved_path,
             approved_plan_markdown=approved_md,

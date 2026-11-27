@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 from typing import Any
@@ -13,6 +14,7 @@ from soothe_nano.llm import (
     ainvoke_structured_traced,
     ainvoke_traced,
 )
+from soothe_nano.llm.multimodal import ImageBytes, build_image_message
 from soothe_nano.utils.text_preview import log_preview
 
 from soothe_daemon.protocol.intent_hints import (
@@ -37,12 +39,11 @@ def _build_multimodal_message(
     default_instruction: str,
 ) -> HumanMessage:
     instruction = (user_text or "").strip() or default_instruction
-    blocks: list[str | dict[str, Any]] = [{"type": "text", "text": instruction}]
-    for att in attachments:
-        mime = att["mime_type"]
-        b64 = att["data"]
-        blocks.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}})
-    return HumanMessage(content=blocks)
+    images = [
+        ImageBytes(mime_type=att["mime_type"], data=base64.b64decode(att["data"]))
+        for att in attachments
+    ]
+    return build_image_message(instruction, images)
 
 
 async def _invoke_chat_turn(

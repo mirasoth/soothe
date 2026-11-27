@@ -104,14 +104,6 @@ class SootheDaemonConfig(BaseSettings):
     max_concurrent_dispatches: int = Field(
         default=50, ge=1, description="Maximum concurrent message handlers"
     )
-    max_concurrent_vision_preflight: int = Field(
-        default=8,
-        ge=0,
-        description=(
-            "Maximum concurrent vision preflight calls on the daemon (0 = unlimited). "
-            "Caps parallel image-role LLM requests before loop execution."
-        ),
-    )
     max_in_flight_broadcasts_per_loop: int = Field(
         default=80,
         ge=0,
