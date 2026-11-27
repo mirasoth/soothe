@@ -7,20 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.3.10] - 2026-11-27
+
 ### Changed
 
-- Eval steps (`kind="eval"`) skip the step-completion cognition summary: their structured `coverage_verdict` already is the cognition line, and the summarization call sat on the critical path between steps at fast-model latency (measured 3.4–5.8s per call).
-- Soft coverage-eval gate (IG-SLP-015): PCE `stalled` signals lose their unconditional audit right — they force an Eval only at confidence ≥ 0.75, and a newer high-confidence `goal_likely_complete` supersedes older `stalled` noise. On the medium/unknown single-leaf branch, surviving audit signals no longer hard-force the Eval: they become evidence (`pce_evidence`) for the existing typesafe → LLM `decide_eval_required` soft chain (fail-safe still runs the Eval). COMPLEX single-leaf goals keep the hard force; the multi-leaf `eval_required()` path is unchanged.
+- Eval steps skip the step-completion cognition summary: their structured coverage verdict already is that line, cutting a 3–5 s summarization call from the critical path between steps.
+- Soften the coverage-eval gate: stalled progress signals no longer unconditionally force an evaluation — they force one only at high confidence, a newer confident completion signal supersedes stale stall noise, and remaining signals become evidence for the model-side evaluation decision (the fail-safe still runs the evaluation; complex goals keep the hard force).
+- Make `StepCloseReport.goal_portion_complete` / `early_exit` required so structured-output hallucinations are rejected immediately instead of yielding default-filled reports.
+- Bound `assess_step_close` with a 120 s deadline (requires soothe-nano ≥ 2.1.1): the assessment stays advisory with a fail-closed fallback and can no longer hold the loop hostage behind a slow thinking model.
+- Raise the `soothe-nano` floor to 2.1.2 so `analyze_image` / `extract_text_from_image` get a 180 s per-tool timeout instead of the 60 s default (both wrap a full multimodal model call that routinely exceeds 60 s on large images).
 
 ### Fixed
 
-- `root_eval` no longer logs "complex goal ran as single leaf; force Eval" when the Eval was actually forced by pending PCE audit signals on a non-complex goal.
+- Stop `root_eval` from logging "complex goal ran as single leaf; force Eval" when the evaluation was actually forced by pending progress signals on a non-complex goal.
 
-### Changed
-
-- `StepCloseReport` (`soothe.context.models`) makes `goal_portion_complete` / `early_exit` required (previously defaulted). All-default schemas give structured-output post-validation an empty `required` set, so hallucinated payloads passed validation and yielded default-filled garbage; required fields make the rejection immediate and give the model a concrete field-name repair hint. Stored close reports always carried complete field dumps, so checkpoint deserialization is unaffected.
-- `assess_step_close` passes a 120 s `deadline_s` to the structured call (requires soothe-nano ≥ 2.1.1). The assessment is advisory with a fail-closed fallback; it must never hold the loop hostage behind a slow thinking model — the original incident was a 9-minute structured retry storm inside one assessment. The `soothe-nano` floor bump lands together with the nano 2.1.1 release.
-- Raise the `soothe-nano` floor to 2.1.2 so `analyze_image` / `extract_text_from_image` get a 180 s per-tool timeout instead of the 60 s default (both wrap a full multimodal model call that routinely exceeds 60 s on large images).
+[Compare with previous version]: https://github.com/mirasoth/soothe/compare/v1.3.9...v1.3.10
 
 ## [v1.3.9] - 2026-11-27
 
