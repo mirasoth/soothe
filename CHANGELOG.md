@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.3.11] - 2026-11-27
+
 ### Changed
 
 - Replace goal display snapshot freezing with goal boundary markers: the turn-terminal commit now appends a `goal_boundary` mutation (carrying goal text, status, and the full goal completion report body) to the durable per-loop mutation log, and `fetch_loop_history` folds segments from that log with read-repair — a completed goal's segment is guaranteed to end on the full report card. No more frozen-snapshot table, live-tail reset, or best-effort freeze that could silently drop the report (resumed transcripts ending on the coverage-eval card).
@@ -19,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - TUI image paste: document and use `Ctrl+V` as the paste-image shortcut. `Cmd+V` can never reach the TUI on macOS — terminals intercept it as their own paste action, and an image-only clipboard produces no paste payload, so the unmatchable `cmd+v` binding key was removed from the composer (no user-visible behavior change for `cmd+v`, which previously did nothing) and the composer placeholder, help screens, and attachment hints now say `Ctrl+V`.
+
+[Compare with previous version]: https://github.com/mirasoth/soothe/compare/v1.3.10...v1.3.11
 
 ## [v1.3.10] - 2026-11-27
 
