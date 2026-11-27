@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `StepCloseReport` (`soothe.context.models`) makes `goal_portion_complete` / `early_exit` required (previously defaulted). All-default schemas give structured-output post-validation an empty `required` set, so hallucinated payloads passed validation and yielded default-filled garbage; required fields make the rejection immediate and give the model a concrete field-name repair hint. Stored close reports always carried complete field dumps, so checkpoint deserialization is unaffected.
 - `assess_step_close` passes a 120 s `deadline_s` to the structured call (requires soothe-nano ≥ 2.1.1). The assessment is advisory with a fail-closed fallback; it must never hold the loop hostage behind a slow thinking model — the original incident was a 9-minute structured retry storm inside one assessment. The `soothe-nano` floor bump lands together with the nano 2.1.1 release.
+- Raise the `soothe-nano` floor to 2.1.2 so `analyze_image` / `extract_text_from_image` get a 180 s per-tool timeout instead of the 60 s default (both wrap a full multimodal model call that routinely exceeds 60 s on large images).
 
 ## [v1.3.9] - 2026-11-27
 
