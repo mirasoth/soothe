@@ -27,7 +27,7 @@ def _node(
             outcome={"type": "llm_call"},
             tool_call_count=tool_call_count,
         ),
-        close_report=StepCloseReport(),
+        close_report=StepCloseReport(goal_portion_complete=True, early_exit=False),
         kind=kind,
     )
 

@@ -28,6 +28,7 @@ def message_to_widget(data: MessageData) -> Widget:
     """
     # Import here to avoid circular imports
     from soothe_cli.tui.widgets.messages import (
+        REPORT_VARIANT,
         AppMessage,
         AssistantMessage,
         CognitionGoalTreeMessage,
@@ -46,7 +47,11 @@ def message_to_widget(data: MessageData) -> Widget:
             return UserMessage(data.content, id=data.id)
 
         case MessageType.ASSISTANT:
-            return AssistantMessage(data.content, id=data.id)
+            return AssistantMessage(
+                data.content,
+                id=data.id,
+                variant=REPORT_VARIANT if data.loop_output_phase == "goal_completion" else None,
+            )
 
         case MessageType.SKILL:
             widget = SkillMessage(
@@ -197,6 +202,7 @@ def message_from_widget(widget: Widget) -> MessageData:
     # Deferred: prevents import-order issue — both modules live in the
     # widgets package, and messages is re-exported from widgets/__init__.
     from soothe_cli.tui.widgets.messages import (
+        REPORT_VARIANT,
         AppMessage,
         AssistantMessage,
         CognitionGoalTreeMessage,
@@ -373,6 +379,7 @@ def message_from_widget(widget: Widget) -> MessageData:
             content=widget._content,
             id=widget_id,
             is_streaming=widget._streaming_active,
+            loop_output_phase=("goal_completion" if REPORT_VARIANT in widget.classes else None),
         )
 
     if isinstance(widget, ErrorMessage):

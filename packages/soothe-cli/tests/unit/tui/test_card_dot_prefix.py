@@ -411,7 +411,9 @@ def test_stream_cards_use_horizontal_inset_padding() -> None:
 
     Step, assistant (AI message) and clarification cards all use ``padding: 0 1``
     from the chat edges, keeping the dot column identical across card types. All
-    three remain borderless.
+    three root rules remain borderless. The assistant ``report`` variant may add
+    a left range bar, but must replace (not stack on) the 1-col left padding so
+    the dot column stays put.
     """
     step_css = CognitionStepMessage.DEFAULT_CSS
     assistant_css = AssistantMessage.DEFAULT_CSS
@@ -420,12 +422,27 @@ def test_stream_cards_use_horizontal_inset_padding() -> None:
     assert "padding: 0 1;" in assistant_css
     assert "padding: 0 1;" in clarification_css
     assert "border-left:" not in step_css
-    assert "border-left:" not in assistant_css
-    # The card *root* rule stays borderless so the prefix dot column aligns
+    # The card *root* rules stay borderless so the prefix dot column aligns
     # across card types. Inner blocks may carry borders — the submit-review
     # recap uses a left accent rule as its review-phase visual cue.
     root_rule = clarification_css.split("StructuredAskUserWidget {", 1)[1].split("}", 1)[0]
     assert "border-left:" not in root_rule
+    assistant_root_rule = assistant_css.split("AssistantMessage {", 1)[1].split("}", 1)[0]
+    assert "border-left:" not in assistant_root_rule
+
+
+def test_assistant_report_variant_adds_left_range_bar() -> None:
+    """The ``report`` variant draws a solid left bar spanning the card height.
+
+    The bar replaces the 1-col left padding (``padding: 0 1 0 0``) so the
+    shared prefix-dot inset is preserved while the bar marks the report's
+    content range.
+    """
+    assistant_css = AssistantMessage.DEFAULT_CSS
+    assert "AssistantMessage.report {" in assistant_css
+    report_rule = assistant_css.split("AssistantMessage.report {", 1)[1].split("}", 1)[0]
+    assert "border-left: heavy $accent;" in report_rule
+    assert "padding: 0 1 0 0;" in report_rule
 
 
 def test_step_status_footer_uses_same_muted_base_as_tool_activity() -> None:

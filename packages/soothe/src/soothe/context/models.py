@@ -93,8 +93,11 @@ class DeferredItem(BaseModel):
 class StepCloseReport(BaseModel):
     """Structured action-thread close assessment."""
 
-    goal_portion_complete: bool = True
-    early_exit: bool = False
+    # Required (no defaults): the structured-output post-validation relies on
+    # `required` to reject hallucinated field names, and repair hints quote
+    # the missing-field message back to the model.
+    goal_portion_complete: bool
+    early_exit: bool
     deferred_items: list[DeferredItem] = Field(default_factory=list)
     recommendations: list[str] = Field(default_factory=list)
 

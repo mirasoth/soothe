@@ -48,3 +48,48 @@ class TestLastLedgerAIContent:
             ]
         )
         assert last_ledger_ai_content(state) == ""
+
+    def test_eval_step_output_excluded(self) -> None:
+        """Coverage-audit step outputs must not surface as the final answer."""
+        state = _state_with(
+            [
+                LoopAIMessage(
+                    content="step deliverable text",
+                    phase="execute_step",
+                    step_id="s1",
+                    step_kind="execute",
+                ),
+                LoopAIMessage(
+                    content="Coverage audit complete — the goal was fully achieved.",
+                    phase="execute_step",
+                    step_id="s2",
+                    step_kind="eval",
+                ),
+            ]
+        )
+        assert last_ledger_ai_content(state) == "step deliverable text"
+
+    def test_eval_step_output_excluded_via_additional_kwargs(self) -> None:
+        """Serialized round-trip form (step_kind in additional_kwargs) is honored."""
+        msg = LoopAIMessage(
+            content="eval verdict narration",
+            phase="execute_step",
+            step_id="s2",
+        )
+        msg.additional_kwargs["step_kind"] = "eval"
+        state = _state_with([msg])
+        assert last_ledger_ai_content(state) == ""
+
+    def test_eval_only_ledger_returns_empty(self) -> None:
+        """When only eval-tagged AI rows exist, nothing is surfaced."""
+        state = _state_with(
+            [
+                LoopAIMessage(
+                    content="I assessed the evidence.",
+                    phase="execute_step",
+                    step_id="s2",
+                    step_kind="eval",
+                ),
+            ]
+        )
+        assert last_ledger_ai_content(state) == ""

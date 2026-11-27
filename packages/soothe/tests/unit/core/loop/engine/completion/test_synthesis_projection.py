@@ -84,6 +84,65 @@ def test_projection_excludes_plan_phases_from_ledger() -> None:
     assert "Plan assess context" not in human
 
 
+def test_projection_excludes_eval_step_rows_from_ledger() -> None:
+    """Coverage-audit (eval) step ledger rows must not enter synthesis evidence.
+
+    The eval narration ("I assessed the evidence...", "Coverage audit
+    complete — ...") is audit bookkeeping, not the deliverable; mixing it
+    into the synthesis ledger makes the goal-completion report narrate the
+    audit instead of presenting the requested content.
+    """
+    execute_human = LoopHumanMessage(
+        content="Execute user goal: read 10 lines of readme",
+        thread_id="t",
+        iteration=0,
+        phase="execute_step",
+        step_id="s1",
+        step_kind="execute",
+    )
+    execute_ai = LoopAIMessage(
+        content="I read and returned the first 10 lines of README.md.",
+        thread_id="t",
+        iteration=0,
+        phase="execute_step",
+        step_id="s1",
+        step_kind="execute",
+    )
+    eval_human = LoopHumanMessage(
+        content="Evaluate user-goal coverage",
+        thread_id="t",
+        iteration=0,
+        phase="execute_step",
+        step_id="s2",
+        step_kind="eval",
+    )
+    eval_ai = LoopAIMessage(
+        content="Coverage audit complete — the goal was fully achieved.",
+        thread_id="t",
+        iteration=0,
+        phase="execute_step",
+        step_id="s2",
+        step_kind="eval",
+    )
+    state = LoopState(
+        goal="read 10 lines of readme",
+        thread_id="t",
+        loop_messages=[execute_human, execute_ai, eval_human, eval_ai],
+    )
+    classification = ScenarioClassification(
+        scenario="general_summary",
+        sections=["Summary"],
+        contextual_focus=["Outcomes"],
+        evidence_emphasis="Group by theme",
+    )
+    msgs = build_synthesis_messages(state, classification, max_chars=50_000)
+    bodies = "\n".join(str(getattr(m, "content", "")) for m in msgs)
+    assert "Execute user goal: read 10 lines of readme" in bodies
+    assert "I read and returned the first 10 lines of README.md." in bodies
+    assert "Evaluate user-goal coverage" not in bodies
+    assert "Coverage audit complete" not in bodies
+
+
 def test_system_prompt_includes_user_goal_and_focus() -> None:
     classification = ScenarioClassification(
         scenario="general_summary",
@@ -252,6 +311,8 @@ def test_system_prompt_uses_synthesis_instructions_wrapper_and_anti_echo_rules()
     assert "Required sections" not in text
     assert "Multi-goal loops" in text
     assert "at most one short" in text
+    assert "never narrate coverage audits" in text
+    assert "include that content itself" in text
 
 
 def test_system_prompt_empty_sections_asks_model_to_design_outline() -> None:

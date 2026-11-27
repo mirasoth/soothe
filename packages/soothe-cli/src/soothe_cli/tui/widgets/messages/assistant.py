@@ -90,6 +90,10 @@ class _SelectableMarkdownBody(Static):
         return super().get_selection(selection)
 
 
+REPORT_VARIANT = "report"
+"""CSS class marking a goal-completion report card (solid left-range bar)."""
+
+
 class AssistantMessage(Vertical):
     """Assistant reply card: markdown or plain text body with inline status dot.
 
@@ -98,6 +102,10 @@ class AssistantMessage(Vertical):
     `Static` widget.
     When disabled, output is shown verbatim. This avoids the heavy widget tree
     that `textual.widgets.Markdown` creates (one child widget per block).
+
+    Pass `variant=REPORT_VARIANT` for goal-completion report cards; the card
+    then renders a solid accent bar along its left edge spanning the full
+    message height.
     """
 
     ALLOW_SELECT = True
@@ -110,6 +118,14 @@ class AssistantMessage(Vertical):
         padding: 0 1;
         margin: 0 0 1 0;
         background: transparent;
+    }
+
+    AssistantMessage.report {
+        /* Goal-completion report: solid accent bar on the left edge spans the
+           full card height so the report's content range is scannable. The
+           border replaces the 1-col left padding, keeping the shared inset. */
+        border-left: heavy $accent;
+        padding: 0 1 0 0;
     }
 
     AssistantMessage .assistant-row {
@@ -143,6 +159,7 @@ class AssistantMessage(Vertical):
         *,
         render_markdown: bool | None = None,
         render_ansi: bool = False,
+        variant: str | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize an assistant message.
@@ -153,9 +170,13 @@ class AssistantMessage(Vertical):
         this card (e.g. simple-bypass `plan_direct` next-action lines).
         render_ansi: When True and markdown is disabled, parse ANSI escape
         sequences in `content` via Rich (e.g. TUI shell command output).
+        variant: Optional CSS-class variant (currently `REPORT_VARIANT` for
+        goal-completion report cards).
         **kwargs: Additional arguments passed to parent.
         """
         super().__init__(**kwargs)
+        if variant:
+            self.add_class(variant)
         self._content = content
         self._body: Static | None = None
         self._dot: Static | None = None

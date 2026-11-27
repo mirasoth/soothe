@@ -1779,6 +1779,7 @@ class Executor:
                 workspace=state.workspace,
                 phase="execute_step",
                 step_id=step.id,
+                step_kind=step.kind,
                 core_agent_message_id=(
                     None
                     if wave_gather_failed(raw)
@@ -1792,6 +1793,7 @@ class Executor:
                     iteration=state.iteration,
                     phase="execute_step",
                     step_id=step.id,
+                    step_kind=step.kind,
                 )
                 _record_ledger_message(self._context_engine, human_msg, "execute_step")
                 _record_ledger_message(self._context_engine, ai_err_msg, "execute_step")
@@ -1825,6 +1827,7 @@ class Executor:
                 iteration=state.iteration,
                 phase="execute_step",
                 step_id=step.id,
+                step_kind=step.kind,
                 response_metadata=meta,
                 core_agent_message_id=result.ai_core_agent_message_id,
             )

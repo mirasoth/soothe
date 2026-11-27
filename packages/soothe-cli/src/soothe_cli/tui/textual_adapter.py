@@ -161,6 +161,7 @@ from soothe_cli.tui.file_change_notify import (
 )
 from soothe_cli.tui.input import MediaTracker, parse_file_mentions
 from soothe_cli.tui.widgets.messages import (
+    REPORT_VARIANT,
     AppMessage,
     AssistantMessage,
     CognitionGoalTreeMessage,
@@ -3704,7 +3705,7 @@ async def execute_task_textual(
                                     msg_id = f"asst-{uuid.uuid4().hex[:8]}"
                                     if adapter._set_active_message:
                                         adapter._set_active_message(msg_id)
-                                    stream_msg = AssistantMessage(id=msg_id)
+                                    stream_msg = AssistantMessage(id=msg_id, variant=REPORT_VARIANT)
                                     await adapter._mount_message(stream_msg)
                                     goal_completion_stream_by_namespace[ns_key] = stream_msg
 
@@ -3748,6 +3749,7 @@ async def execute_task_textual(
                             output_widget = AssistantMessage(
                                 repaired_output,
                                 id=f"asst-{uuid.uuid4().hex[:8]}",
+                                variant=REPORT_VARIANT,
                             )
                             await adapter._mount_message(output_widget)
                             await output_widget.write_initial_content()

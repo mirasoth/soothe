@@ -99,6 +99,24 @@ def _message_step_id(msg: BaseMessage) -> str | None:
     return None
 
 
+def _eval_step_ids(loop_messages: list[BaseMessage]) -> frozenset[str]:
+    """Return step ids tagged as coverage-audit (eval) steps in the ledger.
+
+    Eval-step ledger rows carry a coverage verdict narration, not the
+    deliverable; synthesis evidence must exclude them so the goal-completion
+    report is not dominated by audit bookkeeping.
+    """
+    from soothe.sloop.utils.messages import message_step_kind
+
+    ids: set[str] = set()
+    for msg in loop_messages:
+        if message_step_kind(msg) == "eval":
+            sid = _message_step_id(msg)
+            if sid:
+                ids.add(sid)
+    return frozenset(ids)
+
+
 def _message_text_len(msg: BaseMessage) -> int:
     return len(extract_text_from_message_content(getattr(msg, "content", "")))
 
@@ -998,7 +1016,9 @@ def project_loop_messages_for_synthesis(
 
     Unlike plan-assess / plan-generate, synthesis injects only `execute_step`
     human/AI turns from the **current goal segment** — plan-phase reasoning and
-    prior-goal execute rows are excluded. When prior terminals exist on the
+    prior-goal execute rows are excluded. Coverage-audit (eval) step rows are
+    excluded too: their verdict narration is not deliverable evidence. When
+    prior terminals exist on the
     same loop, up to `prior_goal_tail` compacted prior completion/interrupted
     units are prepended as brief status reference (not full prior execute evidence).
 
@@ -1016,6 +1036,9 @@ def project_loop_messages_for_synthesis(
     """
     seg_start = _current_goal_segment_start(loop_messages)
     current_segment = loop_messages[seg_start:]
+    eval_step_ids = _eval_step_ids(current_segment)
+    if eval_step_ids:
+        current_segment = [m for m in current_segment if _message_step_id(m) not in eval_step_ids]
     execute_only = project_loop_messages_for_core_agent(current_segment)
 
     prior_msgs: list[BaseMessage] = []

@@ -7,6 +7,7 @@ from soothe_cli.tui.widgets.messages._helpers import (
 )
 from soothe_cli.tui.widgets.messages.app import AppMessage, SummarizationMessage
 from soothe_cli.tui.widgets.messages.assistant import (
+    REPORT_VARIANT,
     AssistantMessage,
     _rich_style_with_textual_selection,
     _SelectableMarkdownBody,
@@ -36,6 +37,7 @@ __all__ = [
     "reset_turn_tool_refresh_state",
     # Assistant
     "AssistantMessage",
+    "REPORT_VARIANT",
     "_SelectableMarkdownBody",
     "_rich_style_with_textual_selection",
     # App / system

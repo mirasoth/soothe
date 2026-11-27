@@ -1415,12 +1415,13 @@ class _ExecutionMixin:
         if not loop_id:
             return
         try:
+            from soothe_cli.tui.widgets.messages import REPORT_VARIANT
             from soothe_cli.tui.widgets.messages.assistant import AssistantMessage
 
             text = await session.fetch_goal_completion_text(loop_id)
             if not text:
                 return
-            msg = AssistantMessage(text, id=f"asst-recovered-{loop_id[:8]}")
+            msg = AssistantMessage(text, id=f"asst-recovered-{loop_id[:8]}", variant=REPORT_VARIANT)
             await self._mount_message(msg)
             await msg.write_initial_content()
             adapter._goal_completion_mounted_this_turn = True

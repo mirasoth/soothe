@@ -8,6 +8,7 @@ import pytest
 
 from soothe_cli.display.markdown_theme import ThemedMarkdownRenderer
 from soothe_cli.tui.widgets.messages import (
+    REPORT_VARIANT,
     AssistantMessage,
     _rich_style_with_textual_selection,
     _SelectableMarkdownBody,
@@ -28,6 +29,14 @@ def test_rich_style_with_textual_selection_blends_backgrounds() -> None:
     assert merged.bgcolor is not None
     assert naive.bgcolor is not None
     assert merged.bgcolor != naive.bgcolor
+
+
+def test_report_variant_applies_css_class() -> None:
+    """``variant=REPORT_VARIANT`` marks the widget with the report CSS class."""
+    report = AssistantMessage(id="asst-report", variant=REPORT_VARIANT)
+    plain = AssistantMessage(id="asst-plain")
+    assert REPORT_VARIANT in report.classes
+    assert REPORT_VARIANT not in plain.classes
 
 
 @pytest.mark.asyncio

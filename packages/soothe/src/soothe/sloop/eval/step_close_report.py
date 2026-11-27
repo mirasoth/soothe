@@ -15,6 +15,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Total wall-clock budget for the close-assessment structured call. The
+# assessment is advisory (a fail-closed fallback exists); it must never hold
+# the loop hostage behind a slow thinking model.
+_ASSESS_DEADLINE_S = 120.0
+
 
 def _fail_closed_report() -> StepCloseReport:
     """Require Eval when the structured close assessment is unavailable."""
@@ -59,6 +64,7 @@ async def assess_step_close(
             component="sloop.eval.step_close_report",
             phase="execute_step",
             goal_trace=goal_trace,
+            deadline_s=_ASSESS_DEADLINE_S,
         )
         return StepCloseReport.model_validate(data)
     except Exception:

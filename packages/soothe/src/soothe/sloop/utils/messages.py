@@ -89,6 +89,29 @@ def _record_ledger_message(
         )
 
 
+def message_step_kind(msg: Any) -> str | None:
+    """Return the executing step's kind tagged on a ledger message, if any.
+
+    Mirrors the `step_id` tagging convention: the attribute is read directly
+    first, then from `additional_kwargs` (the serialized round-trip form).
+
+    Args:
+        msg: Ledger message (`BaseMessage` or dict-backed equivalent).
+
+    Returns:
+        The tagged step kind (e.g. ``"eval"`` for coverage-audit steps) or None.
+    """
+    kind = getattr(msg, "step_kind", None)
+    if isinstance(kind, str) and kind.strip():
+        return kind.strip()
+    add = getattr(msg, "additional_kwargs", None) or {}
+    if isinstance(add, dict):
+        v = add.get("step_kind")
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    return None
+
+
 def last_ledger_ai_content(state: LoopState) -> str:
     """Return content of the last non-planning `LoopAIMessage` in ledger.
 
@@ -96,6 +119,8 @@ def last_ledger_ai_content(state: LoopState) -> str:
     the user with the most recent non-planning assistant response from the
     ledger. Historical plan-spine ledger turns (and intake/preamble) must not
     be surfaced as final user output in `ledger_direct` completion mode.
+    Coverage-audit step outputs (`step_kind="eval"`) are skipped too: they
+    carry a verdict narration, not the user-facing deliverable.
 
     Args:
         state: LoopState with populated `loop_messages`.
@@ -110,6 +135,7 @@ def last_ledger_ai_content(state: LoopState) -> str:
             isinstance(msg, LoopAIMessage)
             and msg.content
             and (getattr(msg, "phase", None) not in planning_phases)
+            and message_step_kind(msg) != "eval"
         ):
             text = msg.content.strip()
             if text:

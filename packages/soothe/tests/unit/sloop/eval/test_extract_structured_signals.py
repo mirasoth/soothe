@@ -36,12 +36,16 @@ class TestExtractStructuredSignals:
         assert signals["artifact_produced"] is False
 
     def test_close_report_requires_eval_false(self) -> None:
-        step = _step(close_report=StepCloseReport(early_exit=False, deferred_items=[]))
+        step = _step(
+            close_report=StepCloseReport(
+                goal_portion_complete=True, early_exit=False, deferred_items=[]
+            )
+        )
         signals = _extract_structured_signals([step])
         assert signals["close_report_requires_eval"] is False
 
     def test_close_report_requires_eval_true_when_early_exit(self) -> None:
-        step = _step(close_report=StepCloseReport(early_exit=True))
+        step = _step(close_report=StepCloseReport(goal_portion_complete=False, early_exit=True))
         signals = _extract_structured_signals([step])
         assert signals["close_report_requires_eval"] is True
 
@@ -99,7 +103,9 @@ class TestExtractStructuredSignals:
         """Loop 46a7 scenario: action step with artifact + ask_user + no requires_eval."""
         step = _step(
             kind="action",
-            close_report=StepCloseReport(early_exit=False, deferred_items=[]),
+            close_report=StepCloseReport(
+                goal_portion_complete=True, early_exit=False, deferred_items=[]
+            ),
             output_messages=[
                 {
                     "role": "assistant",

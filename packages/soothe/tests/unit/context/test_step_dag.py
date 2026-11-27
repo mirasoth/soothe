@@ -259,6 +259,7 @@ class TestStepDAGDecomposeStatuses:
                     description="root",
                     status="completed",
                     close_report=StepCloseReport(
+                        goal_portion_complete=False,
                         early_exit=True,
                         deferred_items=[
                             DeferredItem(description="finish verification", claimed_in_scope=True)
