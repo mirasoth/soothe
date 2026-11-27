@@ -46,27 +46,6 @@ _MAX_FULL_RESPONSE_CHARS = 100_000
 _TOOL_BATCH_TICK_S = 0.05
 
 
-async def _peek_goal_completion_from_ledger(card_manager: Any, loop_id: str) -> str:
-    """Return the best assistant completion body from the live display ledger."""
-    from soothe.display.transcript_types import MessageType
-
-    ledger = await card_manager.ensure_for_loop(loop_id)
-    cards = ledger.snapshot()
-    for card in reversed(cards):
-        if card.type != MessageType.ASSISTANT:
-            continue
-        if card.loop_output_phase == "goal_completion":
-            content = (card.content or "").strip()
-            if content:
-                return content
-    for card in reversed(cards):
-        if card.type == MessageType.ASSISTANT:
-            content = (card.content or "").strip()
-            if content:
-                return content
-    return ""
-
-
 class QueryAdmission(StrEnum):
     """Result of daemon query admission under `_query_state_lock`."""
 
@@ -1804,23 +1783,19 @@ class QueryEngine:
                                 effective_loop_id,
                                 reason="user_cancelled",
                             )
-                        # RFC-631: freeze live card tail into a goal snapshot before idle.
+                        # RFC-631 successor: commit the goal boundary marker
+                        # (carrying the streamed report text) before idle.
                         card_manager = getattr(d, "_card_manager", None)
                         if card_manager is not None:
                             try:
-                                # Cancelled turns should not infer a synthetic "completion"
-                                # summary from the live ledger.
+                                # Cancelled turns carry no completion summary;
+                                # the text comes from the engine's accumulated
+                                # goal_completion stream, never from the
+                                # display ledger (card-ingest may lag).
                                 goal_completion_text = ""
                                 if not turn_cancelled:
                                     goal_completion_text = "".join(goal_completion_response).strip()
-                                    if not goal_completion_text:
-                                        goal_completion_text = (
-                                            await _peek_goal_completion_from_ledger(
-                                                card_manager,
-                                                effective_loop_id,
-                                            )
-                                        )
-                                await card_manager.freeze_goal_display(
+                                await card_manager.commit_goal_boundary(
                                     effective_loop_id,
                                     goal_text=effective_text,
                                     goal_completion=goal_completion_text,
@@ -1828,7 +1803,7 @@ class QueryEngine:
                                 )
                             except Exception:
                                 logger.warning(
-                                    "Goal display snapshot freeze failed for loop %s",
+                                    "Goal boundary commit failed for loop %s",
                                     effective_loop_id[:16],
                                     exc_info=True,
                                 )

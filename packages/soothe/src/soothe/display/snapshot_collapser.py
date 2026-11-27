@@ -1,11 +1,9 @@
-"""Collapse live card lists into goal-bound display snapshots."""
+"""Fold live card lists and repair goal segments against boundary markers."""
 
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
 
-from soothe.display.snapshot_types import GoalDisplaySnapshot
 from soothe.display.transcript_types import MessageData, MessageType
 
 
@@ -31,6 +29,54 @@ def fold_display_cards(cards: list[MessageData]) -> list[MessageData]:
     return merge_consecutive_assistant_cards(_last_card_per_id(cards))
 
 
+def repair_goal_segment_cards(
+    cards: list[MessageData],
+    *,
+    goal_text: str,
+    goal_completion: str,
+    status: str,
+    report_card_id: str,
+) -> list[MessageData]:
+    """Read-repair one folded goal segment against its boundary marker.
+
+    Guarantees:
+
+    * the segment opens with a user card carrying the goal text (synthesized
+      when the bound projection lacks one);
+    * a completed segment with a non-empty completion body ends on the full
+      report card — truncated streaming report cards are replaced by the
+      marker text, not merely supplemented.
+
+    Cancelled segments (``status != "completed"`` or empty completion body)
+    keep their folded cards as-is.
+    """
+    cards = _ensure_user_card(cards, goal_text)
+    text = goal_completion.strip()
+    if not text or status != "completed":
+        return cards
+    last = cards[-1] if cards else None
+    if (
+        last is not None
+        and last.type == MessageType.ASSISTANT
+        and last.loop_output_phase == "goal_completion"
+        and (last.content or "").strip() == text
+    ):
+        return cards
+    kept = [
+        card
+        for card in cards
+        if not (card.type == MessageType.ASSISTANT and card.loop_output_phase == "goal_completion")
+    ]
+    report = MessageData(
+        type=MessageType.ASSISTANT,
+        content=text,
+        id=report_card_id,
+        is_streaming=False,
+        loop_output_phase="goal_completion",
+    )
+    return [*kept, report]
+
+
 def _ensure_user_card(cards: list[MessageData], goal_text: str) -> list[MessageData]:
     text = goal_text.strip()
     if not text:
@@ -42,77 +88,7 @@ def _ensure_user_card(cards: list[MessageData], goal_text: str) -> list[MessageD
     return [user, *cards]
 
 
-def _ensure_assistant_card(cards: list[MessageData], goal_completion: str) -> list[MessageData]:
-    text = goal_completion.strip()
-    if not text:
-        return cards
-    for card in reversed(cards):
-        if card.type == MessageType.ASSISTANT and card.content.strip():
-            return cards
-    assistant = MessageData(
-        type=MessageType.ASSISTANT,
-        content=text,
-        id=f"msg-{uuid.uuid4().hex[:8]}",
-        is_streaming=False,
-    )
-    return [*cards, assistant]
-
-
-def build_goal_snapshot(
-    *,
-    goal_id: str,
-    goal_index: int,
-    goal_text: str,
-    status: str,
-    started_at: str,
-    completed_at: str | None,
-    duration_ms: int,
-    tokens_used: int,
-    goal_completion: str,
-    live_cards: list[MessageData],
-    plan_summary: dict | None = None,
-    step_outcomes: list[dict] | None = None,
-) -> GoalDisplaySnapshot:
-    """Build a frozen snapshot from live cards and execution metadata."""
-    display = fold_display_cards(live_cards)
-    display = _ensure_user_card(display, goal_text)
-    display = _ensure_assistant_card(display, goal_completion)
-    return GoalDisplaySnapshot(
-        goal_id=goal_id,
-        goal_index=goal_index,
-        goal_text=goal_text.strip(),
-        status=status,
-        started_at=started_at or datetime.now(UTC).isoformat(),
-        completed_at=completed_at,
-        duration_ms=max(0, duration_ms),
-        tokens_used=max(0, tokens_used),
-        plan_summary=plan_summary,
-        step_outcomes=list(step_outcomes or []),
-        goal_completion=goal_completion.strip(),
-        display_cards=display,
-        card_count=len(display),
-    )
-
-
-def split_cards_by_user_segments(cards: list[MessageData]) -> list[list[MessageData]]:
-    """Split a flat card list into per-goal segments at user message boundaries."""
-    if not cards:
-        return []
-    segments: list[list[MessageData]] = []
-    current: list[MessageData] = []
-    for card in cards:
-        if card.type == MessageType.USER and current:
-            segments.append(current)
-            current = [card]
-        else:
-            current.append(card)
-    if current:
-        segments.append(current)
-    return segments
-
-
 __all__ = [
-    "build_goal_snapshot",
     "fold_display_cards",
-    "split_cards_by_user_segments",
+    "repair_goal_segment_cards",
 ]

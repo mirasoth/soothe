@@ -30,17 +30,21 @@ from soothe.display.transcript_types import (
 
 CARD_SCHEMA_VERSION = 1
 
-CardOp = Literal["header", "create", "update", "finalize"]
+CardOp = Literal["header", "create", "update", "finalize", "goal_boundary"]
 """Mutation operations recorded in the display card store.
 
 * ``header`` — segment header; carries schema version and loop id.
 * ``create`` — full ``MessageData`` payload for a new card.
 * ``update`` — partial diff against an existing card (live structural updates).
 * ``finalize`` — terminal state (success/error/duration).
+* ``goal_boundary`` — terminates one goal's display segment; carries the
+  goal text, status, and the full goal completion report body. Applying a
+  boundary starts a new segment in the in-memory fold.
 """
 
 _HEADER_CARD_ID = "__header__"
 _HEADER_KIND = "header"
+_GOAL_BOUNDARY_KIND = "goal_boundary"
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,6 +59,9 @@ class CardMutation:
       ``card_to_wire_dict``).
     * ``op="update"`` / ``op="finalize"`` → subset of ``MessageData`` fields,
       restricted to ``UPDATABLE_FIELDS``.
+    * ``op="goal_boundary"`` → ``{"goal_id": str, "goal_text": str,
+      "status": str, "goal_completion_text": str, "started_at": str,
+      "completed_at": str, "duration_ms": int, "tokens_used": int}``.
     """
 
     seq: int
@@ -145,6 +152,46 @@ def build_header_mutation(*, loop_id: str, created_by: str) -> CardMutation:
     )
 
 
+def build_goal_boundary_mutation(
+    *,
+    seq: int,
+    goal_index: int,
+    goal_id: str = "",
+    goal_text: str,
+    status: str,
+    goal_completion_text: str,
+    started_at: str = "",
+    completed_at: str = "",
+    duration_ms: int = 0,
+    tokens_used: int = 0,
+) -> CardMutation:
+    """Make the marker that terminates one goal's display segment.
+
+    The marker is the durable record of the goal completion report: its
+    ``goal_completion_text`` carries the same bytes the client saw streamed,
+    written synchronously at turn terminal so resume never depends on
+    card-ingest timing.
+    """
+    return CardMutation(
+        seq=seq,
+        ts=utc_now_iso(),
+        op="goal_boundary",
+        card_id=f"__goal__:{goal_index}",
+        kind=_GOAL_BOUNDARY_KIND,
+        data={
+            "goal_index": goal_index,
+            "goal_id": goal_id,
+            "goal_text": goal_text,
+            "status": status,
+            "goal_completion_text": goal_completion_text,
+            "started_at": started_at,
+            "completed_at": completed_at,
+            "duration_ms": duration_ms,
+            "tokens_used": tokens_used,
+        },
+    )
+
+
 @dataclass
 class InMemoryCardLedger:
     """Latest-state-per-``card_id`` projection of a mutation stream.
@@ -153,18 +200,25 @@ class InMemoryCardLedger:
     they were first created. ``apply()`` is the only mutation entry point;
     ``next_seq`` is the sequence number to assign to the next produced
     mutation.
+
+    Applying a ``goal_boundary`` mutation starts a new segment: the card
+    fold resets while boundary records accumulate in ``boundaries``, so
+    ``snapshot()`` after a fold of a full log returns the live (last)
+    segment's cards.
     """
 
     loop_id: str = ""
     next_seq: int = 1
     header: _LedgerHeader = field(default_factory=_LedgerHeader)
     _cards: dict[str, MessageData] = field(default_factory=dict)
+    _boundary_records: list[CardMutation] = field(default_factory=list)
 
     def apply(self, mutation: CardMutation) -> None:
         """Fold one mutation into the in-memory state.
 
         Args:
-            mutation: A ``header``/``create``/``update``/``finalize`` record.
+            mutation: A ``header``/``create``/``update``/``finalize``/
+                ``goal_boundary`` record.
 
         Raises:
             ValueError: For unknown ``op`` values, missing ``card_id`` on
@@ -189,6 +243,16 @@ class InMemoryCardLedger:
         if not mutation.card_id:
             msg = f"non-header mutation must carry a card_id (got op={op!r})"
             raise ValueError(msg)
+
+        if op == "goal_boundary":
+            # A boundary terminates the current segment: the card fold
+            # restarts empty while the boundary records accumulate, so
+            # folding a full log yields the live (last) segment plus the
+            # ordered boundary history.
+            self._boundary_records.append(mutation)
+            self._cards = {}
+            self.next_seq = max(self.next_seq, mutation.seq + 1)
+            return
 
         if op == "create":
             self._cards[mutation.card_id] = card_from_wire_dict(mutation.data)
@@ -223,6 +287,11 @@ class InMemoryCardLedger:
     def get(self, card_id: str) -> MessageData | None:
         """Return one card by id, or ``None`` if not present."""
         return self._cards.get(card_id)
+
+    @property
+    def boundaries(self) -> list[CardMutation]:
+        """Goal boundary markers applied so far, in commit order."""
+        return list(self._boundary_records)
 
     def to_mutations(self, *, start_seq: int = 1) -> list[CardMutation]:
         """Produce a ``create``-only mutation stream for the current snapshot.
@@ -459,6 +528,7 @@ __all__ = [
     "InMemoryCardLedger",
     "align_cards_preserving_ids",
     "assign_card_stable_keys",
+    "build_goal_boundary_mutation",
     "build_header_mutation",
     "card_from_wire_dict",
     "card_stable_key",

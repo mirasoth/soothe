@@ -238,8 +238,8 @@ async def test_cancelled_query_suspends_context_goals_for_resume(
     runner = _FakeRunner()
     daemon = _daemon_factory(runner=runner, broadcasts=broadcasts)
     daemon._thread_registry = _RegistryMapsThreadLoop({"thread-1": "loop-cancel"})
-    freeze_goal_display = AsyncMock(return_value=None)
-    daemon._card_manager = SimpleNamespace(freeze_goal_display=freeze_goal_display)
+    commit_goal_boundary = AsyncMock(return_value=None)
+    daemon._card_manager = SimpleNamespace(commit_goal_boundary=commit_goal_boundary)
 
     engine = QueryEngine(daemon)
     suspend_ce_goals = AsyncMock(return_value=1)
@@ -256,10 +256,10 @@ async def test_cancelled_query_suspends_context_goals_for_resume(
         "loop-cancel",
         reason="user_cancelled",
     )
-    freeze_goal_display.assert_awaited_once()
-    freeze_kwargs = freeze_goal_display.await_args.kwargs
-    assert freeze_kwargs["status"] == "cancelled"
-    assert freeze_kwargs["goal_completion"] == ""
+    commit_goal_boundary.assert_awaited_once()
+    boundary_kwargs = commit_goal_boundary.await_args.kwargs
+    assert boundary_kwargs["status"] == "cancelled"
+    assert boundary_kwargs["goal_completion"] == ""
 
 
 def _daemon_factory(

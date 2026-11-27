@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import logging
 import threading
-from datetime import UTC, datetime
 from typing import Any
 
 from soothe.display.card_ledger import CardMutation
@@ -25,17 +24,7 @@ CREATE TABLE IF NOT EXISTS display_card_mutations (
 );
 CREATE INDEX IF NOT EXISTS idx_display_cards_loop
     ON display_card_mutations(loop_id, seq);
-CREATE TABLE IF NOT EXISTS goal_display_snapshots (
-    loop_id TEXT NOT NULL,
-    goal_index INTEGER NOT NULL,
-    goal_id TEXT NOT NULL,
-    frozen_at TEXT NOT NULL,
-    snapshot_json JSONB NOT NULL,
-    card_count INTEGER NOT NULL,
-    PRIMARY KEY (loop_id, goal_index)
-);
-CREATE INDEX IF NOT EXISTS idx_goal_snapshots_loop
-    ON goal_display_snapshots(loop_id, goal_index);
+DROP TABLE IF EXISTS goal_display_snapshots;
 """
 
 
@@ -183,7 +172,7 @@ class PostgresDisplayCardStore:
                 conn.commit()
 
     def delete_loop(self, loop_id: str) -> None:
-        """Delete all card mutations and goal snapshots for a loop."""
+        """Delete all card mutations for a loop."""
         pool = self._ensure_pool()
         with self._lock:
             with pool.connection() as conn:
@@ -191,135 +180,6 @@ class PostgresDisplayCardStore:
                     cur.execute(
                         "DELETE FROM display_card_mutations WHERE loop_id = %s",
                         (loop_id,),
-                    )
-                    cur.execute(
-                        "DELETE FROM goal_display_snapshots WHERE loop_id = %s",
-                        (loop_id,),
-                    )
-                conn.commit()
-
-    def list_goal_snapshots(self, loop_id: str) -> list[dict[str, Any]]:
-        """Load goal display snapshots ordered by `goal_index`."""
-        pool = self._ensure_pool()
-        with pool.connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT snapshot_json
-                    FROM goal_display_snapshots
-                    WHERE loop_id = %s
-                    ORDER BY goal_index ASC
-                    """,
-                    (loop_id,),
-                )
-                rows = cur.fetchall()
-        out: list[dict[str, Any]] = []
-        for row in rows:
-            data = row[0]
-            if isinstance(data, str):
-                try:
-                    data = json.loads(data)
-                except json.JSONDecodeError:
-                    continue
-            if isinstance(data, dict):
-                out.append(data)
-        return out
-
-    def goal_snapshot_count(self, loop_id: str) -> int:
-        """Return number of stored goal snapshots for a loop."""
-        pool = self._ensure_pool()
-        with pool.connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT COUNT(*) FROM goal_display_snapshots WHERE loop_id = %s",
-                    (loop_id,),
-                )
-                row = cur.fetchone()
-        return int(row[0]) if row else 0
-
-    def insert_goal_snapshot_with_auto_index(
-        self,
-        loop_id: str,
-        *,
-        goal_id: str | None,
-        snapshot: dict[str, Any],
-    ) -> tuple[int, str]:
-        """Reserve `goal_index` and insert the snapshot in one critical section."""
-        pool = self._ensure_pool()
-        with self._lock:
-            with pool.connection() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        """
-                        SELECT COALESCE(MAX(goal_index), -1) + 1
-                        FROM goal_display_snapshots
-                        WHERE loop_id = %s
-                        """,
-                        (loop_id,),
-                    )
-                    row = cur.fetchone()
-                    goal_index = int(row[0]) if row else 0
-                    resolved_goal_id = goal_id or f"{loop_id}_goal_{goal_index}"
-                    snapshot_body = dict(snapshot)
-                    snapshot_body["goal_index"] = goal_index
-                    snapshot_body["goal_id"] = resolved_goal_id
-                    card_count = int(snapshot_body.get("card_count") or 0)
-                    frozen_at = str(
-                        snapshot_body.get("completed_at") or snapshot_body.get("started_at") or ""
-                    )
-                    if not frozen_at:
-                        frozen_at = datetime.now(UTC).isoformat()
-                    cur.execute(
-                        """
-                        INSERT INTO goal_display_snapshots
-                        (loop_id, goal_index, goal_id, frozen_at, snapshot_json, card_count)
-                        VALUES (%s, %s, %s, %s, %s::jsonb, %s)
-                        ON CONFLICT (loop_id, goal_index) DO NOTHING
-                        """,
-                        (
-                            loop_id,
-                            goal_index,
-                            resolved_goal_id,
-                            frozen_at,
-                            json.dumps(snapshot_body, default=str),
-                            card_count,
-                        ),
-                    )
-                conn.commit()
-            return goal_index, resolved_goal_id
-
-    def insert_goal_snapshot(
-        self,
-        loop_id: str,
-        *,
-        goal_index: int,
-        goal_id: str,
-        snapshot: dict[str, Any],
-    ) -> None:
-        """Insert one immutable goal snapshot (ignore duplicate goal_index)."""
-        pool = self._ensure_pool()
-        card_count = int(snapshot.get("card_count") or 0)
-        frozen_at = str(snapshot.get("completed_at") or snapshot.get("started_at") or "")
-        if not frozen_at:
-            frozen_at = datetime.now(UTC).isoformat()
-        with self._lock:
-            with pool.connection() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        """
-                        INSERT INTO goal_display_snapshots
-                        (loop_id, goal_index, goal_id, frozen_at, snapshot_json, card_count)
-                        VALUES (%s, %s, %s, %s, %s::jsonb, %s)
-                        ON CONFLICT (loop_id, goal_index) DO NOTHING
-                        """,
-                        (
-                            loop_id,
-                            goal_index,
-                            goal_id,
-                            frozen_at,
-                            json.dumps(snapshot, default=str),
-                            card_count,
-                        ),
                     )
                 conn.commit()
 

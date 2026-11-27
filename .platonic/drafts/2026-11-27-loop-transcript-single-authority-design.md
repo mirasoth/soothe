@@ -1,6 +1,6 @@
 # Loop Transcript Single Authority — Marker-Segmented Mutation Log
 
-**Status**: Draft
+**Status**: Draft (implemented 2026-11-27; see "Implementation Status")
 **Date**: 2026-11-27
 **Origin**: Loop `01a21cb0` resume diagnosis (goal completion report absent from resumed transcript; transcript ends on the "Evaluate user-goal coverage" eval card)
 
@@ -268,3 +268,57 @@ Slices 1-2 alone fix the reported bug (marker carries the report text even
 before the read path stops trusting snapshots — the snapshot table can be
 deleted only after slice 3, so slices 2 and 3 ship together in one release;
 slice 4 is UI polish and can trail).
+
+## Implementation Status (2026-11-27)
+
+Slices 1–3 landed; slice 4 (TUI stable-id dedup) deferred as planned.
+
+- `goal_boundary` mutation: `CardOp` extension + `build_goal_boundary_mutation`
+  in `soothe/display/card_ledger.py`; `InMemoryCardLedger.apply` treats a
+  boundary as a segment terminator (fold resets cards, boundary records
+  accumulate), so folding a full log yields the live segment.
+- Daemon ledger (`loop_card_ledger.py`) rewritten around the full persisted
+  log; `replace_with` preserves the archived prefix (mutations up to and
+  including the last boundary) verbatim and re-seqs only live-segment items.
+  `reset_for_next_goal` deleted. New `history_segments()` folds the log at
+  mutation level into per-boundary segments plus the live tail.
+- Manager (`loop_card_manager.py`): `freeze_goal_display` →
+  `commit_goal_boundary` (bounded ingest quiesce that cancels the debounced
+  flush and binds the tail immediately, then one synchronous
+  persist-before-apply marker append); `fetch_loop_history` folds segments
+  and read-repairs each completed goal's terminal report card from the
+  marker text (truncated streaming report cards are replaced). Wire
+  response shape unchanged.
+- Engine: turn-terminal block commits the marker with the accumulated
+  `goal_completion_response` text (cancelled turns carry none);
+  `_peek_goal_completion_from_ledger` deleted.
+- Store: `goal_display_snapshots` table and its API removed from both
+  SQLite and PostgreSQL backends; the schema script drops the table (clean
+  cutover, no migration job).
+- Tests: host `tests/unit/wire/test_card_ledger_goal_boundary.py` (builder,
+  fold segmentation, cross-segment id independence, card_id validation);
+  daemon `test_loop_card_manager.py` rewritten freeze tests → boundary
+  commit, cold-reload replay, multi-goal segmentation, ingest-race
+  (drain disabled), cancelled-goal replay; `test_step_card_reconcile.py`
+  archived-goal case reseeded via boundary commit; `test_engine_cancel.py`
+  mocks `commit_goal_boundary`; `test_goal_snapshot_auto_index.py` deleted.
+
+### Deviations from the draft
+
+1. **Mutation-level segmentation, not folded-card counts.** The draft's
+   read step split a *folded* card list by marker counts; implementation
+   splits the *mutation* stream and folds each segment independently.
+   Reason: stable binder card ids repeat across goals (per-segment
+   ordinals), so a single fold over the whole log would collapse goal 2's
+   card onto goal 1's slot. Mutation-level splitting makes each segment
+   fold self-contained.
+2. **`replace_with` is segment-scoped, not full-log.** The flush path
+   rewrites the card projection on structural changes; the implementation
+   rewrites only the live segment's mutations (archived prefix verbatim)
+   instead of the whole log, which is what keeps the log append-only in
+   effect.
+3. **Report invariant source.** The engine passes the accumulated stream
+   text (as designed) but with zero-valued timing/token metadata — the old
+   freeze also defaulted these; wiring real values is engine bookkeeping
+   left for a follow-up.
+

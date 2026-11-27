@@ -80,13 +80,7 @@ class GoalDisplaySnapshot:
         )
 
 
-def snapshot_from_dataclass_dict(data: dict[str, Any]) -> GoalDisplaySnapshot:
-    """Alias for ``from_wire_dict`` used by persistence layer."""
-    return GoalDisplaySnapshot.from_wire_dict(data)
-
-
 __all__ = [
     "GOAL_DISPLAY_SNAPSHOT_SCHEMA_VERSION",
     "GoalDisplaySnapshot",
-    "snapshot_from_dataclass_dict",
 ]

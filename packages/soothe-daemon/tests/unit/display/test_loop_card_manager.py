@@ -103,12 +103,6 @@ async def test_ensure_for_loop_returns_empty_when_no_data(isolated_display_db) -
 
 
 @pytest.mark.asyncio
-async def test_is_display_empty_uses_db_only() -> None:
-    manager = LoopCardManager(SimpleNamespace(_runner=MagicMock()))
-    assert await manager.is_display_empty("loop_fast") is True
-
-
-@pytest.mark.asyncio
 async def test_replay_to_client_empty_loop() -> None:
     manager = LoopCardManager(SimpleNamespace(_runner=None))
     sent: list[dict] = []
@@ -381,76 +375,159 @@ async def test_ensure_for_loop_without_runner_still_opens_ledger(isolated_displa
 
 
 @pytest.mark.asyncio
-async def test_freeze_goal_display_prefers_goal_completion_phase_text(
+async def test_commit_goal_boundary_preserves_report_across_reload(
     isolated_display_db,
 ) -> None:
-    """RFC-631 freeze must use goal_completion wire text, not mixed full_response."""
-    from langchain_core.messages import AIMessage, HumanMessage
-
+    """The boundary marker carries the report; a fresh manager replays it."""
     manager = LoopCardManager(SimpleNamespace(_runner=MagicMock()))
     await _seed_messages(
         manager,
-        "loop_gc",
+        "loop_boundary",
         [
             HumanMessage(content="count files"),
-            AIMessage(
-                content="**Total file count in packages: 3632**",
-                phase="goal_completion",
-            ),
-            AIMessage(
-                content="I'll count all files in the packages directory.",
-                phase="plan_direct",
-            ),
+            AIMessage(content="partial report", phase="goal_completion"),
         ],
     )
-    await manager.freeze_goal_display(
-        "loop_gc",
-        goal_id="goal_0",
+    await manager.commit_goal_boundary(
+        "loop_boundary",
         goal_text="count files",
         goal_completion="**Total file count in packages: 3632**",
     )
-    snapshots = isolated_display_db.list_goal_snapshots("loop_gc")
-    assert len(snapshots) == 1
-    assert snapshots[0]["goal_completion"] == "**Total file count in packages: 3632**"
-    assistants = [c for c in snapshots[0].get("display_cards", []) if c.get("type") == "assistant"]
-    assert len(assistants) == 2
+
+    # Fresh manager = cold read from the persisted mutation log.
+    resumed = LoopCardManager(SimpleNamespace(_runner=MagicMock()))
+    payload = await resumed.fetch_loop_history("loop_boundary")
+
+    [goal] = payload["goals"]
+    assert goal["goal_text"] == "count files"
+    assert goal["status"] == "completed"
+    assert goal["goal_completion"] == "**Total file count in packages: 3632**"
+    cards = goal["display_cards"]
+    last = cards[-1]
+    assert str(last["type"]) == "assistant"
+    assert last["content"] == "**Total file count in packages: 3632**"
+    assert last["loop_output_phase"] == "goal_completion"
+    # A truncated streaming report card is replaced, not supplemented.
+    assert "partial report" not in [str(c.get("content")) for c in cards]
 
 
 @pytest.mark.asyncio
-async def test_freeze_goal_display_snapshots_current_user_segment_only(
+async def test_fetch_loop_history_segments_goals_and_keeps_live_tail(
     isolated_display_db,
 ) -> None:
-    """RFC-631: freeze must not bleed prior goal cards into the new snapshot."""
+    """Multiple boundaries split the transcript; the live tail stays separate."""
     manager = LoopCardManager(SimpleNamespace(_runner=MagicMock()))
     await _seed_messages(
         manager,
-        "loop_freeze",
+        "loop_multi",
         [
             HumanMessage(content="how are u"),
             AIMessage(content="Hey there!"),
+        ],
+    )
+    await manager.commit_goal_boundary(
+        "loop_multi",
+        goal_text="how are u",
+        goal_completion="Hey there!",
+    )
+    await _seed_messages(
+        manager,
+        "loop_multi",
+        [
             HumanMessage(content="shanghai weather"),
             AIMessage(content="It is rainy."),
         ],
     )
-    await manager.freeze_goal_display(
-        "loop_freeze",
-        goal_id="goal_1",
+
+    payload = await manager.fetch_loop_history("loop_multi")
+
+    goals = payload["goals"]
+    assert len(goals) == 1
+    goal_texts = " ".join(str(c.get("content")) for c in goals[0]["display_cards"])
+    assert "Hey there!" in goal_texts
+    assert "rainy" not in goal_texts
+    live_texts = " ".join(str(c.get("content")) for c in payload["live_cards"])
+    assert "shanghai weather" in live_texts
+    assert "It is rainy." in live_texts
+
+    # Second goal completes → two segments, live tail empty.
+    await manager.commit_goal_boundary(
+        "loop_multi",
         goal_text="shanghai weather",
         goal_completion="It is rainy.",
     )
-    snapshots = isolated_display_db.list_goal_snapshots("loop_freeze")
-    assert len(snapshots) == 1
-    assistant_text = " ".join(
-        c.get("content", "")
-        for c in snapshots[0].get("display_cards", [])
-        if c.get("type") == "assistant"
+    payload = await manager.fetch_loop_history("loop_multi")
+    assert len(payload["goals"]) == 2
+    assert payload["goals"][1]["goal_completion"] == "It is rainy."
+    assert payload["live_cards"] == []
+
+
+@pytest.mark.asyncio
+async def test_commit_goal_boundary_survives_ingest_race(
+    isolated_display_db,
+    monkeypatch,
+) -> None:
+    """Report invariant holds even when the final chunks never bind to cards."""
+    manager = LoopCardManager(
+        SimpleNamespace(_runner=MagicMock()),
+        flush_debounce_ms=10_000,  # debounce far beyond the test window
     )
-    assert "Hey there!" not in assistant_text
-    assert "rainy" in assistant_text
-    state = manager._buffers.get("loop_freeze")  # noqa: SLF001
-    assert state is not None
-    assert state.messages == []
-    assert state.log_events == []
+
+    # Simulate the ingest pipeline stalling past the boundary: drain is a
+    # no-op so nothing reaches the ledger before the marker commits.
+    async def _no_drain(loop_id: str, **_kwargs: Any) -> None:
+        return None
+
+    monkeypatch.setattr(manager, "_drain_ingest", _no_drain)
+    wire = {"type": "human", "content": "deploy chirpy"}
+    await manager.ingest_stream_tuple("loop_race", (), "messages", (wire, {}))
+    await manager.commit_goal_boundary(
+        "loop_race",
+        goal_text="deploy chirpy",
+        goal_completion="I deployed and verified the Chirpy Helm stack.",
+    )
+
+    payload = await manager.fetch_loop_history("loop_race")
+
+    [goal] = payload["goals"]
+    cards = goal["display_cards"]
+    assert str(cards[0]["type"]) == "user"
+    assert cards[0]["content"] == "deploy chirpy"
+    last = cards[-1]
+    assert str(last["type"]) == "assistant"
+    assert last["content"] == "I deployed and verified the Chirpy Helm stack."
+    await manager.stop_for_loop("loop_race")
+
+
+@pytest.mark.asyncio
+async def test_cancelled_goal_boundary_replays_without_report_card(
+    isolated_display_db,
+) -> None:
+    """Cancelled boundaries carry no completion body; no card is synthesized."""
+    manager = LoopCardManager(SimpleNamespace(_runner=MagicMock()))
+    await _seed_messages(
+        manager,
+        "loop_cancelled",
+        [
+            HumanMessage(content="stop this"),
+            AIMessage(content="working on it"),
+        ],
+    )
+    await manager.commit_goal_boundary(
+        "loop_cancelled",
+        goal_text="stop this",
+        goal_completion="",
+        status="cancelled",
+    )
+
+    payload = await manager.fetch_loop_history("loop_cancelled")
+
+    [goal] = payload["goals"]
+    assert goal["status"] == "cancelled"
+    assert goal["goal_completion"] == ""
+    contents = [str(c.get("content")) for c in goal["display_cards"]]
+    assert "stop this" in contents
+    assert "working on it" in contents
 
 
 @pytest.mark.asyncio

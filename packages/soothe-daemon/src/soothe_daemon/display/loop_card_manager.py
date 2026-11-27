@@ -19,9 +19,8 @@ from soothe.display.card_ledger import (
     diff_card_snapshots,
 )
 from soothe.display.snapshot_collapser import (
-    build_goal_snapshot,
     fold_display_cards,
-    split_cards_by_user_segments,
+    repair_goal_segment_cards,
 )
 from soothe.display.snapshot_types import GoalDisplaySnapshot
 from soothe.display.transcript_types import MessageData
@@ -206,11 +205,6 @@ class LoopCardManager:
     async def ensure_for_loop(self, loop_id: str) -> LoopCardLedger:
         """Return the ledger for `loop_id`, loading persisted mutations from DB."""
         return await self._open_ledger(loop_id)
-
-    async def is_display_empty(self, loop_id: str) -> bool:
-        """Return True when the persisted ledger has no display cards."""
-        ledger = await self._open_ledger(loop_id)
-        return ledger.card_count() == 0
 
     async def record_user_prompt(self, loop_id: str, prompt: str) -> None:
         """Bind the initial user prompt card when a loop turn starts."""
@@ -605,68 +599,91 @@ class LoopCardManager:
             return card_binder.convert_loop_events_to_data(log_events)
         return []
 
-    async def freeze_goal_display(
+    async def commit_goal_boundary(
         self,
         loop_id: str,
         *,
-        goal_id: str | None = None,
         goal_text: str,
         goal_completion: str,
         status: str = "completed",
+        goal_id: str | None = None,
         started_at: str | None = None,
         completed_at: str | None = None,
         duration_ms: int = 0,
         tokens_used: int = 0,
     ) -> None:
-        """Fold the live ledger into an immutable goal snapshot."""
+        """Append the goal boundary marker that terminates the live segment.
+
+        The marker carries the full goal completion text streamed to the
+        client (RFC-631 successor), so the report survives daemon restarts
+        regardless of card-ingest lag. The write is a single synchronous
+        ledger append (persist-before-apply).
+        """
         from datetime import UTC, datetime
 
-        from soothe_daemon.display.display_store import get_display_card_store
+        from soothe.display.card_ledger import build_goal_boundary_mutation
 
-        try:
-            state = self._buffers.get(loop_id)
-            if state is not None and (state.messages or state.log_events):
+        await self._drain_ingest(loop_id)
+        ledger = await self.ensure_for_loop(loop_id)
+        goal_index = len(ledger.boundaries)
+        marker = build_goal_boundary_mutation(
+            seq=ledger.next_seq(),
+            goal_index=goal_index,
+            goal_id=goal_id or "",
+            goal_text=goal_text,
+            status=status,
+            goal_completion_text=goal_completion,
+            started_at=started_at or "",
+            completed_at=completed_at or datetime.now(UTC).isoformat(),
+            duration_ms=duration_ms,
+            tokens_used=tokens_used,
+        )
+        await ledger.append(marker)
+        # Straggler buffer entries belong to the finished goal; drop them so
+        # the next segment starts clean (the marker text already guarantees
+        # the report).
+        state = self._buffers.get(loop_id)
+        if state is not None:
+            state.messages.clear()
+            state.log_events.clear()
+        logger.info(
+            "Committed goal boundary loop=%s goal_index=%d cards=%d status=%s",
+            loop_id[:16],
+            goal_index,
+            ledger.card_count(),
+            status,
+        )
+
+    async def _drain_ingest(self, loop_id: str, *, timeout_s: float = 2.0) -> None:
+        """Best-effort quiesce of the card ingest pipeline before a boundary.
+
+        Bounded: stragglers that outlive the window bind into the next
+        segment; the marker's completion text keeps the report durable
+        either way.
+        """
+        from time import monotonic
+
+        deadline = monotonic() + timeout_s
+        while True:
+            worker = self._ingest_workers.get(loop_id)
+            pending = 0 if worker is None else worker.queue.qsize() + len(worker.overflow)
+            if pending == 0:
+                break
+            if monotonic() >= deadline:
+                logger.info(
+                    "Card ingest not quiescent at goal boundary for loop %s (pending=%d)",
+                    loop_id[:16],
+                    pending,
+                )
+                break
+            await asyncio.sleep(0.02)
+        # The debounced flush would wait out its window; the boundary wants
+        # the tail bound now, so cancel it and flush immediately.
+        await self._cancel_debounced_flush(loop_id)
+        state = self._buffers.get(loop_id)
+        if state is not None and (state.messages or state.log_events):
+            with contextlib.suppress(Exception):
                 await self._flush_buffers_to_ledger(loop_id, state)
-            ledger = await self.ensure_for_loop(loop_id)
-            live_cards = ledger.snapshot()
-            segments = split_cards_by_user_segments(live_cards)
-            goal_cards = segments[-1] if segments else list(live_cards)
-            store = get_display_card_store()
-            now_iso = datetime.now(UTC).isoformat()
-            snapshot = build_goal_snapshot(
-                goal_id=goal_id or "",
-                goal_index=-1,
-                goal_text=goal_text,
-                status=status,
-                started_at=started_at or now_iso,
-                completed_at=completed_at or now_iso,
-                duration_ms=duration_ms,
-                tokens_used=tokens_used,
-                goal_completion=goal_completion,
-                live_cards=goal_cards,
-            )
-            goal_index, resolved_goal_id = await asyncio.to_thread(
-                store.insert_goal_snapshot_with_auto_index,
-                loop_id,
-                goal_id=goal_id,
-                snapshot=snapshot.to_wire_dict(),
-            )
-            await ledger.reset_for_next_goal()
-            if state is not None:
-                state.messages.clear()
-                state.log_events.clear()
-            logger.info(
-                "Froze goal display snapshot loop=%s goal_index=%d cards=%d",
-                loop_id[:16],
-                goal_index,
-                snapshot.card_count,
-            )
-        except Exception:
-            logger.warning(
-                "Failed to freeze goal display snapshot for loop %s",
-                loop_id,
-                exc_info=True,
-            )
 
     async def fetch_loop_history(
         self,
@@ -674,16 +691,51 @@ class LoopCardManager:
         *,
         loop_status: str | None = None,
     ) -> dict[str, Any]:
-        """Return frozen goal snapshots plus the live card tail with verified step phases."""
+        """Return marker-segmented goal history plus the live card tail.
+
+        Segments fold from the persisted mutation log at goal boundaries;
+        each completed segment is read-repaired so its terminal card is the
+        full goal completion report carried by the boundary marker.
+        """
         from soothe.display.card_ledger import card_to_wire_dict
 
-        from soothe_daemon.display.display_store import get_display_card_store
-
-        store = get_display_card_store()
-        raw_goals = await asyncio.to_thread(store.list_goal_snapshots, loop_id)
-        goals = [GoalDisplaySnapshot.from_wire_dict(raw) for raw in raw_goals]
         ledger = await self.ensure_for_loop(loop_id)
-        live_cards = fold_display_cards(ledger.snapshot())
+        segments, live_cards = ledger.history_segments()
+
+        goals: list[GoalDisplaySnapshot] = []
+        for ordinal, (marker, segment_cards) in enumerate(segments):
+            data = marker.data
+            goal_text = str(data.get("goal_text") or "")
+            completion = str(data.get("goal_completion_text") or "")
+            status = str(data.get("status") or "completed")
+            cards = fold_display_cards(segment_cards)
+            cards = repair_goal_segment_cards(
+                cards,
+                goal_text=goal_text,
+                goal_completion=completion,
+                status=status,
+                report_card_id=f"goal-report-{loop_id[:12]}-{ordinal}",
+            )
+            resolved_goal_id = str(data.get("goal_id") or "") or f"{loop_id}_goal_{ordinal}"
+            goals.append(
+                GoalDisplaySnapshot(
+                    goal_id=resolved_goal_id,
+                    goal_index=ordinal,
+                    goal_text=goal_text,
+                    status=status,
+                    started_at=str(data.get("started_at") or ""),
+                    completed_at=str(data.get("completed_at") or "") or None,
+                    duration_ms=int(data.get("duration_ms") or 0),
+                    tokens_used=int(data.get("tokens_used") or 0),
+                    plan_summary=None,
+                    step_outcomes=[],
+                    goal_completion=completion,
+                    display_cards=cards,
+                    card_count=len(cards),
+                )
+            )
+
+        live_cards = fold_display_cards(live_cards)
         live_goal_index: int | None = None
         if live_cards and (loop_status or "").strip().lower() == "running":
             live_goal_index = len(goals)

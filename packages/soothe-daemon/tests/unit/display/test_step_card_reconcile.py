@@ -7,7 +7,6 @@ from typing import Any
 
 import pytest
 from soothe.display.card_ledger import CardMutation, card_to_wire_dict, utc_now_iso
-from soothe.display.snapshot_types import GoalDisplaySnapshot
 from soothe.display.transcript_types import MessageData, MessageType
 from soothe_nano.core.events import CARD_CREATED
 
@@ -369,28 +368,16 @@ async def test_fetch_loop_history_keeps_a_live_step_running(
 
 
 @pytest.mark.asyncio
-async def test_fetch_loop_history_closes_running_step_in_frozen_goal(
+async def test_fetch_loop_history_closes_running_step_in_archived_goal(
     isolated_display_db, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    snapshot = GoalDisplaySnapshot(
-        goal_id="g1",
-        goal_index=0,
-        goal_text="old goal",
-        status="completed",
-        started_at="2026-11-09T00:00:00+00:00",
-        completed_at="2026-11-09T00:01:00+00:00",
-        duration_ms=60000,
-        tokens_used=0,
-        plan_summary=None,
-        step_outcomes=[],
-        goal_completion="done",
-        display_cards=[_step_card("s_old")],
-        card_count=1,
-    )
-    isolated_display_db.insert_goal_snapshot_with_auto_index(
-        "loop_frozen", goal_id="g1", snapshot=snapshot.to_wire_dict()
-    )
     manager = LoopCardManager(SimpleNamespace(_runner=None))
+    await _seed_running_step(manager, "loop_frozen", "s_old")
+    await manager.commit_goal_boundary(
+        "loop_frozen",
+        goal_text="old goal",
+        goal_completion="done",
+    )
     monkeypatch.setattr(
         step_card_reconcile,
         "load_step_status_context",
@@ -400,8 +387,15 @@ async def test_fetch_loop_history_closes_running_step_in_frozen_goal(
     payload = await manager.fetch_loop_history("loop_frozen", loop_status="running")
 
     [goal] = payload["goals"]
-    [card] = goal["display_cards"]
-    assert card["step_progress_phase"] == "interrupted"
+    step_cards = [
+        card for card in goal["display_cards"] if str(card.get("type")) == "step_progress"
+    ]
+    assert step_cards
+    assert step_cards[0]["step_progress_phase"] == "interrupted"
+    # The boundary marker's completion text read-repairs a terminal report
+    # card even when the folded segment ended on a step card.
+    assert str(goal["display_cards"][-1]["type"]) == "assistant"
+    assert goal["display_cards"][-1]["content"] == "done"
 
 
 @pytest.mark.asyncio

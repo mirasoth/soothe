@@ -37,6 +37,7 @@ from soothe.display.card_ledger import (
     CardOp,
     InMemoryCardLedger,
     align_cards_preserving_ids,
+    build_goal_boundary_mutation,
     build_header_mutation,
     card_from_wire_dict,
     card_to_wire_dict,
@@ -49,14 +50,12 @@ from soothe.display.card_wire import (
     parse_card_custom_payload,
 )
 from soothe.display.snapshot_collapser import (
-    build_goal_snapshot,
     fold_display_cards,
-    split_cards_by_user_segments,
+    repair_goal_segment_cards,
 )
 from soothe.display.snapshot_types import (
     GOAL_DISPLAY_SNAPSHOT_SCHEMA_VERSION,
     GoalDisplaySnapshot,
-    snapshot_from_dataclass_dict,
 )
 from soothe.display.text_extract import (
     extract_ai_text_for_display,
@@ -100,6 +99,7 @@ __all__ = [
     "CardMutation",
     "CardOp",
     "InMemoryCardLedger",
+    "build_goal_boundary_mutation",
     "build_header_mutation",
     "card_from_wire_dict",
     "card_to_wire_dict",
@@ -110,11 +110,9 @@ __all__ = [
     # Card wire
     "CardProjection",
     "parse_card_custom_payload",
-    # Goal display snapshots
+    # Goal display segments
     "GOAL_DISPLAY_SNAPSHOT_SCHEMA_VERSION",
     "GoalDisplaySnapshot",
-    "build_goal_snapshot",
     "fold_display_cards",
-    "snapshot_from_dataclass_dict",
-    "split_cards_by_user_segments",
+    "repair_goal_segment_cards",
 ]

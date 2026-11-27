@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Replace goal display snapshot freezing with goal boundary markers: the turn-terminal commit now appends a `goal_boundary` mutation (carrying goal text, status, and the full goal completion report body) to the durable per-loop mutation log, and `fetch_loop_history` folds segments from that log with read-repair — a completed goal's segment is guaranteed to end on the full report card. No more frozen-snapshot table, live-tail reset, or best-effort freeze that could silently drop the report (resumed transcripts ending on the coverage-eval card).
+- Make loop resume read the single authoritative transcript (the persisted card mutation log) instead of frozen snapshots plus a live tail; card ingest lag can no longer erase history because the log is never reset.
+
+### Removed
+
+- Remove the `goal_display_snapshots` store table and API (SQLite and PostgreSQL backends) and the write-time snapshot collapser repair (`build_goal_snapshot`, `_ensure_assistant_card`, `split_cards_by_user_segments`); display cards and goal segments are now projections of the mutation log.
+
 ### Fixed
 
 - TUI image paste: document and use `Ctrl+V` as the paste-image shortcut. `Cmd+V` can never reach the TUI on macOS — terminals intercept it as their own paste action, and an image-only clipboard produces no paste payload, so the unmatchable `cmd+v` binding key was removed from the composer (no user-visible behavior change for `cmd+v`, which previously did nothing) and the composer placeholder, help screens, and attachment hints now say `Ctrl+V`.

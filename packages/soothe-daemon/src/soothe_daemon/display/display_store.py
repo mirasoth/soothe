@@ -29,17 +29,7 @@ CREATE TABLE IF NOT EXISTS display_card_mutations (
 );
 CREATE INDEX IF NOT EXISTS idx_display_cards_loop
     ON display_card_mutations(loop_id, seq);
-CREATE TABLE IF NOT EXISTS goal_display_snapshots (
-    loop_id TEXT NOT NULL,
-    goal_index INTEGER NOT NULL,
-    goal_id TEXT NOT NULL,
-    frozen_at TEXT NOT NULL,
-    snapshot_json TEXT NOT NULL,
-    card_count INTEGER NOT NULL,
-    PRIMARY KEY (loop_id, goal_index)
-);
-CREATE INDEX IF NOT EXISTS idx_goal_snapshots_loop
-    ON goal_display_snapshots(loop_id, goal_index);
+DROP TABLE IF EXISTS goal_display_snapshots;
 """
 
 
@@ -54,27 +44,6 @@ class DisplayCardStoreProtocol(Protocol):
     def replace_mutations(self, loop_id: str, mutations: list[CardMutation]) -> None: ...
 
     def delete_loop(self, loop_id: str) -> None: ...
-
-    def list_goal_snapshots(self, loop_id: str) -> list[dict[str, Any]]: ...
-
-    def goal_snapshot_count(self, loop_id: str) -> int: ...
-
-    def insert_goal_snapshot_with_auto_index(
-        self,
-        loop_id: str,
-        *,
-        goal_id: str | None,
-        snapshot: dict[str, Any],
-    ) -> tuple[int, str]: ...
-
-    def insert_goal_snapshot(
-        self,
-        loop_id: str,
-        *,
-        goal_index: int,
-        goal_id: str,
-        snapshot: dict[str, Any],
-    ) -> None: ...
 
     def peek_user_prompt(self, loop_id: str, *, max_chars: int = 120) -> str | None: ...
 
@@ -191,139 +160,12 @@ class DisplayCardStore:
         self._runtime.run_write_sync(_write)
 
     def delete_loop(self, loop_id: str) -> None:
-        """Delete all card mutations and goal snapshots for a loop."""
+        """Delete all card mutations for a loop."""
 
         def _write(conn: Any) -> None:
             conn.execute(
                 "DELETE FROM display_card_mutations WHERE loop_id = ?",
                 (loop_id,),
-            )
-            conn.execute(
-                "DELETE FROM goal_display_snapshots WHERE loop_id = ?",
-                (loop_id,),
-            )
-
-        self._runtime.run_write_sync(_write)
-
-    def list_goal_snapshots(self, loop_id: str) -> list[dict[str, Any]]:
-        """Load goal display snapshots ordered by `goal_index`."""
-
-        def _read(conn: Any) -> list[dict[str, Any]]:
-            cursor = conn.execute(
-                """
-                SELECT snapshot_json
-                FROM goal_display_snapshots
-                WHERE loop_id = ?
-                ORDER BY goal_index ASC
-                """,
-                (loop_id,),
-            )
-            out: list[dict[str, Any]] = []
-            for row in cursor.fetchall():
-                try:
-                    data = json.loads(row[0])
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(data, dict):
-                    out.append(data)
-            return out
-
-        return self._runtime.run_read_sync(_read)
-
-    def goal_snapshot_count(self, loop_id: str) -> int:
-        """Return number of stored goal snapshots for a loop."""
-
-        def _read(conn: Any) -> int:
-            row = conn.execute(
-                "SELECT COUNT(*) FROM goal_display_snapshots WHERE loop_id = ?",
-                (loop_id,),
-            ).fetchone()
-            return int(row[0]) if row else 0
-
-        return self._runtime.run_read_sync(_read)
-
-    def insert_goal_snapshot_with_auto_index(
-        self,
-        loop_id: str,
-        *,
-        goal_id: str | None,
-        snapshot: dict[str, Any],
-    ) -> tuple[int, str]:
-        """Reserve `goal_index` and insert the snapshot in one critical section."""
-
-        def _write(conn: Any) -> tuple[int, str]:
-            row = conn.execute(
-                """
-                SELECT COALESCE(MAX(goal_index), -1) + 1
-                FROM goal_display_snapshots
-                WHERE loop_id = ?
-                """,
-                (loop_id,),
-            ).fetchone()
-            goal_index = int(row[0]) if row else 0
-            resolved_goal_id = goal_id or f"{loop_id}_goal_{goal_index}"
-            snapshot_body = dict(snapshot)
-            snapshot_body["goal_index"] = goal_index
-            snapshot_body["goal_id"] = resolved_goal_id
-            card_count = int(snapshot_body.get("card_count") or 0)
-            frozen_at = str(
-                snapshot_body.get("completed_at") or snapshot_body.get("started_at") or ""
-            )
-            if not frozen_at:
-                from datetime import UTC, datetime
-
-                frozen_at = datetime.now(UTC).isoformat()
-            conn.execute(
-                """
-                INSERT OR IGNORE INTO goal_display_snapshots
-                (loop_id, goal_index, goal_id, frozen_at, snapshot_json, card_count)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    loop_id,
-                    goal_index,
-                    resolved_goal_id,
-                    frozen_at,
-                    json.dumps(snapshot_body, default=str),
-                    card_count,
-                ),
-            )
-            return goal_index, resolved_goal_id
-
-        return self._runtime.run_write_sync(_write)
-
-    def insert_goal_snapshot(
-        self,
-        loop_id: str,
-        *,
-        goal_index: int,
-        goal_id: str,
-        snapshot: dict[str, Any],
-    ) -> None:
-        """Insert one immutable goal snapshot (ignore duplicate goal_index)."""
-        card_count = int(snapshot.get("card_count") or 0)
-        frozen_at = str(snapshot.get("completed_at") or snapshot.get("started_at") or "")
-        if not frozen_at:
-            from datetime import UTC, datetime
-
-            frozen_at = datetime.now(UTC).isoformat()
-        payload = (
-            loop_id,
-            goal_index,
-            goal_id,
-            frozen_at,
-            json.dumps(snapshot, default=str),
-            card_count,
-        )
-
-        def _write(conn: Any) -> None:
-            conn.execute(
-                """
-                INSERT OR IGNORE INTO goal_display_snapshots
-                (loop_id, goal_index, goal_id, frozen_at, snapshot_json, card_count)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                payload,
             )
 
         self._runtime.run_write_sync(_write)
