@@ -168,7 +168,14 @@ async def enrich_user_text_with_vision(
         summary = "(Vision model returned empty content.)"
 
     user_part = text.strip()
-    vision_block = f"--- Vision summary ---\n{summary}\n---"
+    agent_note = (
+        "Note: the image(s) referenced by the `[image N: ...]` placeholders above are "
+        "attached inline to this message; they are NOT files in the workspace or on "
+        "disk, and the filenames in the placeholders are display labels only. Analyze "
+        "them from the vision summary above — do not search for, locate, or read the "
+        "referenced filenames."
+    )
+    vision_block = f"--- Vision summary ---\n{summary}\n---\n{agent_note}"
     if user_part:
         return f"{user_part}\n\n{vision_block}\n"
     return f"{vision_block}\n"

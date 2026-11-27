@@ -5,7 +5,7 @@ from __future__ import annotations
 import base64
 import io
 from pathlib import Path
-from unittest.mock import MagicMock, PropertyMock, patch
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 
@@ -108,16 +108,112 @@ def test_get_images_from_clipboard_caps_at_max_images_per_message() -> None:
     assert len(images) == MAX_IMAGES_PER_MESSAGE
 
 
-def test_cmd_v_binding_registered_for_clipboard_image_paste() -> None:
+def test_cmd_v_binding_registered_for_clipboard_paste() -> None:
     from textual.binding import Binding
 
     from soothe_cli.tui.widgets.chat_input import ChatTextArea
 
     bindings = [b for b in ChatTextArea.BINDINGS if isinstance(b, Binding)]
-    paste_bindings = [b for b in bindings if b.action == "clipboard_image_paste"]
-    assert paste_bindings, "clipboard_image_paste binding must exist"
+    paste_bindings = [b for b in bindings if b.action == "clipboard_paste"]
+    assert paste_bindings, "clipboard_paste binding must exist"
     keys = {key.strip() for b in paste_bindings for key in b.key.split(",")}
-    assert {"ctrl+v", "cmd+v"} <= keys
+    assert {"ctrl+v", "cmd+v", "super+v"} <= keys
+
+
+@pytest.mark.asyncio
+async def test_clipboard_paste_falls_back_to_text_when_no_image() -> None:
+    """Cmd/Ctrl+V pastes clipboard text when the clipboard has no image."""
+    from textual.events import Paste
+
+    from soothe_cli.tui.widgets.chat_input import ChatInput, ChatTextArea
+
+    chat = ChatInput.__new__(ChatInput)
+    text_area = MagicMock()
+    chat._text_area = text_area
+
+    with (
+        patch.object(
+            ChatInput, "attach_clipboard_images", new_callable=AsyncMock, return_value=False
+        ),
+        patch(
+            "soothe_cli.display.media_utils.get_text_from_clipboard",
+            return_value="hello from clipboard",
+        ),
+    ):
+        await chat.on_chat_text_area_clipboard_paste(
+            ChatTextArea.ClipboardPaste(notify_if_empty=True, fallback_to_text=True)
+        )
+
+    posted = text_area.post_message.call_args.args[0]
+    assert isinstance(posted, Paste)
+    assert posted.text == "hello from clipboard"
+
+
+@pytest.mark.asyncio
+async def test_clipboard_paste_empty_bracketed_does_not_repaste_text() -> None:
+    """Empty bracketed pastes (image-only clipboards) must not re-paste text."""
+    from soothe_cli.tui.widgets.chat_input import ChatInput, ChatTextArea
+
+    chat = ChatInput.__new__(ChatInput)
+    text_area = MagicMock()
+    chat._text_area = text_area
+
+    with (
+        patch.object(
+            ChatInput, "attach_clipboard_images", new_callable=AsyncMock, return_value=False
+        ),
+        patch("soothe_cli.display.media_utils.get_text_from_clipboard") as mock_get_text,
+        patch.object(ChatInput, "app", new_callable=PropertyMock) as mock_app,
+    ):
+        app = MagicMock()
+        mock_app.return_value = app
+        await chat.on_chat_text_area_clipboard_paste(
+            ChatTextArea.ClipboardPaste(notify_if_empty=False)
+        )
+
+    mock_get_text.assert_not_called()
+    text_area.post_message.assert_not_called()
+    app.notify.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_clipboard_paste_notifies_when_clipboard_empty() -> None:
+    from soothe_cli.tui.widgets.chat_input import ChatInput, ChatTextArea
+
+    chat = ChatInput.__new__(ChatInput)
+    text_area = MagicMock()
+    chat._text_area = text_area
+
+    with (
+        patch.object(
+            ChatInput, "attach_clipboard_images", new_callable=AsyncMock, return_value=False
+        ),
+        patch("soothe_cli.display.media_utils.get_text_from_clipboard", return_value=None),
+        patch.object(ChatInput, "app", new_callable=PropertyMock) as mock_app,
+    ):
+        app = MagicMock()
+        mock_app.return_value = app
+        await chat.on_chat_text_area_clipboard_paste(
+            ChatTextArea.ClipboardPaste(notify_if_empty=True, fallback_to_text=True)
+        )
+
+    text_area.post_message.assert_not_called()
+    app.notify.assert_called_once()
+    assert "no image or text" in app.notify.call_args.args[0].lower()
+
+
+@pytest.mark.asyncio
+async def test_get_text_from_clipboard_prefers_first_non_empty_reader() -> None:
+    from soothe_cli.display import media_utils
+
+    with (
+        patch.object(media_utils, "_read_clipboard_text_macos", return_value=None),
+        patch.object(media_utils, "_read_clipboard_text_wsl", return_value="  "),
+        patch.object(media_utils, "_read_clipboard_text_wayland", return_value="wayland text"),
+        patch.object(media_utils, "_read_clipboard_text_x11") as mock_x11,
+    ):
+        assert media_utils.get_text_from_clipboard() == "wayland text"
+    mock_x11.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -423,3 +519,72 @@ async def test_clipboard_attach_logs_event(caplog: pytest.LogCaptureFixture) -> 
 
     assert "Clipboard attach: 1 image(s)" in caplog.text
     assert "png" in caplog.text
+
+
+def test_stale_media_placeholders_stripped_and_notified() -> None:
+    """History-recalled placeholder text without tracker data is stripped."""
+    from soothe_cli.tui.widgets.chat_input import ChatInput
+
+    chat = ChatInput.__new__(ChatInput)
+    chat._image_tracker = MediaTracker()
+
+    value = "[image 1: a.jpg] [image 2: b.jpg] analyze"
+    with patch.object(ChatInput, "app", new_callable=PropertyMock) as mock_app:
+        app = MagicMock()
+        mock_app.return_value = app
+        result = chat._strip_stale_media_placeholders(value)
+
+    assert result == "analyze"
+    app.notify.assert_called_once()
+    assert "Re-attach the files" in app.notify.call_args.args[0]
+
+
+def test_live_media_placeholders_kept_on_submit() -> None:
+    """Placeholders backed by tracker data pass through untouched."""
+    from soothe_cli.tui.widgets.chat_input import ChatInput
+
+    tracker = MediaTracker()
+    placeholder = tracker.add_media(_make_image_data(1), "image", source_name="photo.jpg")
+
+    chat = ChatInput.__new__(ChatInput)
+    chat._image_tracker = tracker
+
+    value = f"{placeholder} analyze this"
+    with patch.object(ChatInput, "app", new_callable=PropertyMock) as mock_app:
+        app = MagicMock()
+        mock_app.return_value = app
+        result = chat._strip_stale_media_placeholders(value)
+
+    assert result == value
+    app.notify.assert_not_called()
+
+
+def test_partially_stale_media_placeholders_pruned() -> None:
+    """Only placeholders without tracker data are removed; live ones survive."""
+    from soothe_cli.tui.widgets.chat_input import ChatInput
+
+    tracker = MediaTracker()
+    live = tracker.add_media(_make_image_data(1), "image", source_name="live.jpg")
+
+    chat = ChatInput.__new__(ChatInput)
+    chat._image_tracker = tracker
+
+    value = f"{live} [image 2: gone.jpg]"
+    with patch.object(ChatInput, "app", new_callable=PropertyMock) as mock_app:
+        app = MagicMock()
+        mock_app.return_value = app
+        result = chat._strip_stale_media_placeholders(value)
+
+    assert result == live
+    app.notify.assert_called_once()
+
+
+def test_stale_strip_noop_without_tracker() -> None:
+    """Without a tracker the submitted text is returned unchanged."""
+    from soothe_cli.tui.widgets.chat_input import ChatInput
+
+    chat = ChatInput.__new__(ChatInput)
+    chat._image_tracker = None
+
+    value = "[image 1: a.jpg] analyze"
+    assert chat._strip_stale_media_placeholders(value) == value

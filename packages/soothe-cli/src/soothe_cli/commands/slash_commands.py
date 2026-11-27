@@ -151,7 +151,9 @@ KEYBOARD_SHORTCUTS: dict[str, str] = {
     "Ctrl+C": "Clear input or interrupt running agent/shell",
     "Ctrl+X": "Open prompt in external editor ($VISUAL/$EDITOR)",
     "Ctrl+Y": "Copy selected text to clipboard (or show hint if none)",
-    "Ctrl+V / Cmd+V": "Paste image(s) from clipboard as [image N] attachments",
+    "Ctrl+V / Cmd+V": (
+        "Paste clipboard image(s) as [image N] attachments, or clipboard text if no image"
+    ),
     "Ctrl+T": "Toggle plan panel above thinking row",
     "Ctrl+O": "Toggle expand/collapse of the most recent skill or tool card",
     "Shift+Tab": "Cycle composer mode (Auto → Bypass → Manual → Plan → Ask)",

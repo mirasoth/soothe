@@ -184,13 +184,17 @@ def is_ascii_mode() -> bool:
 def newline_shortcut() -> str:
     """Return the platform-native label for the newline keyboard shortcut.
 
-    macOS labels the modifier "Option" while other platforms use Ctrl+J
-    as the most reliable cross-terminal shortcut.
+    `Ctrl+J` is the only newline shortcut that works in every terminal: it
+    sends a bare LF byte in both legacy mode and under the kitty keyboard
+    protocol. `Shift+Enter`/`Alt+Enter`/`Ctrl+Enter` also insert newlines but
+    only where the terminal reports modifier+Enter as a distinct escape
+    sequence (kitty protocol); on legacy terminals they are delivered as
+    plain Enter and submit instead.
 
     Returns:
-    A human-readable shortcut string, e.g. `'Option+Enter'` or `'Ctrl+J'`.
+    A human-readable shortcut string, `'Ctrl+J'`.
     """
-    return "Option+Enter" if sys.platform == "darwin" else "Ctrl+J"
+    return "Ctrl+J"
 
 
 _UNICODE_BANNER = """

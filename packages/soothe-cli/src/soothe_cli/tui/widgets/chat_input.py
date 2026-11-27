@@ -346,16 +346,16 @@ class ChatTextArea(TextArea):
 
     BINDINGS: ClassVar[list[Binding]] = [
         Binding(
-            "shift+enter,alt+enter,ctrl+enter",
+            "shift+enter,alt+enter,ctrl+enter,ctrl+j",
             "insert_newline",
             "New Line",
             show=False,
             priority=True,
         ),
         Binding(
-            "ctrl+v,cmd+v",
-            "clipboard_image_paste",
-            "Paste clipboard image",
+            "ctrl+v,cmd+v,super+v",
+            "clipboard_paste",
+            "Paste from clipboard",
             show=False,
             priority=True,
         ),
@@ -424,16 +424,26 @@ class ChatTextArea(TextArea):
             self.full_text = full_text
             super().__init__()
 
-    class ClipboardImagePaste(Message):
-        """Request attaching images from the OS clipboard into the input."""
+    class ClipboardPaste(Message):
+        """Request pasting the OS clipboard into the input.
 
-        def __init__(self, *, notify_if_empty: bool = True) -> None:
-            """Initialize clipboard-image paste request.
+        Images are attached as placeholders first; when the clipboard holds
+        no image, its plain text is pasted instead. Terminals that do not
+        support bracketed paste deliver Cmd/Ctrl+V as a key event, which is
+        the only signal this request can be built from.
+        """
+
+        def __init__(self, *, notify_if_empty: bool = True, fallback_to_text: bool = False) -> None:
+            """Initialize clipboard paste request.
 
             Args:
-            notify_if_empty: Whether to toast when no image is available.
+            notify_if_empty: Whether to toast when the clipboard is empty.
+            fallback_to_text: Whether to paste clipboard text when no image
+                is found. Key-binding requests enable this; empty bracketed
+                pastes (image-only clipboards) do not, to avoid re-pasting.
             """
             self.notify_if_empty = notify_if_empty
+            self.fallback_to_text = fallback_to_text
             super().__init__()
 
     class Typing(Message):
@@ -443,9 +453,9 @@ class ChatTextArea(TextArea):
         typing activity.
         """
 
-    def action_clipboard_image_paste(self) -> None:
-        """Handle Ctrl+V / Cmd+V by requesting an OS clipboard image attach."""
-        self.post_message(self.ClipboardImagePaste(notify_if_empty=True))
+    def action_clipboard_paste(self) -> None:
+        """Handle Ctrl+V / Cmd+V by pasting OS clipboard images or text."""
+        self.post_message(self.ClipboardPaste(notify_if_empty=True, fallback_to_text=True))
 
     def __init__(self, **kwargs: Any) -> None:
         """Initialize the chat text area."""
@@ -729,7 +739,10 @@ class ChatTextArea(TextArea):
         if event.key == "backslash" and event.character == "\\":
             self._backslash_pending_time = now
 
-        # Modifier+Enter inserts newline — keys derived from BINDINGS
+        # Modifier+Enter inserts newline — keys derived from BINDINGS.
+        # ctrl+j covers terminals that cannot report modifier+Enter as a
+        # distinct sequence (legacy Shift+Enter bytes are identical to plain
+        # Enter and would submit); Ctrl+J always sends a bare LF.
         if event.key in self._NEWLINE_KEYS:
             event.prevent_default()
             event.stop()
@@ -879,7 +892,7 @@ class ChatTextArea(TextArea):
         if not event.text.strip():
             event.prevent_default()
             event.stop()
-            self.post_message(self.ClipboardImagePaste(notify_if_empty=False))
+            self.post_message(self.ClipboardPaste(notify_if_empty=False))
             return
 
         from soothe_cli.tui.input import parse_pasted_path_payload
@@ -1517,6 +1530,7 @@ class ChatInput(Vertical):
             self._completion_manager.reset()
 
         value = self._replace_submitted_paths_with_images(value)
+        value = self._strip_stale_media_placeholders(value)
 
         # Prepend mode prefix so the app layer receives the original trigger
         # form (e.g. "!ls", "/help"). The value may already contain the prefix
@@ -1614,11 +1628,34 @@ class ChatInput(Vertical):
         """Handle large paste payloads with abbreviated on-screen preview."""
         self._apply_abbreviated_paste_display(event.full_text)
 
-    async def on_chat_text_area_clipboard_image_paste(
-        self, event: ChatTextArea.ClipboardImagePaste
-    ) -> None:
-        """Handle Ctrl+V / Cmd+V / empty-paste requests for OS clipboard images."""
-        await self.attach_clipboard_images(notify_if_empty=event.notify_if_empty)
+    async def on_chat_text_area_clipboard_paste(self, event: ChatTextArea.ClipboardPaste) -> None:
+        """Paste OS clipboard images, falling back to text for key-driven pastes."""
+        attached = await self.attach_clipboard_images(notify_if_empty=False)
+        if attached:
+            return
+
+        if event.fallback_to_text and self._text_area:
+            from textual.events import Paste
+
+            from soothe_cli.display.media_utils import get_text_from_clipboard
+
+            text = await asyncio.to_thread(get_text_from_clipboard)
+            if text:
+                self._text_area.post_message(Paste(text))
+                return
+
+        if event.notify_if_empty:
+            message = (
+                "Clipboard has no image or text"
+                if event.fallback_to_text
+                else "No image in clipboard"
+            )
+            self.app.notify(
+                message,
+                severity="warning",
+                timeout=4,
+                markup=False,
+            )
 
     async def attach_clipboard_images(self, *, notify_if_empty: bool = True) -> bool:
         """Attach images from the OS clipboard as `[image N]` placeholders.
@@ -1757,7 +1794,7 @@ class ChatInput(Vertical):
             return False
 
         if not pasted.strip():
-            self._text_area.post_message(ChatTextArea.ClipboardImagePaste(notify_if_empty=False))
+            self._text_area.post_message(ChatTextArea.ClipboardPaste(notify_if_empty=False))
             self._text_area.focus()
             return True
 
@@ -1970,6 +2007,54 @@ class ChatInput(Vertical):
             if suffix:
                 return f"{replacement.strip()} {suffix}".strip()
             return replacement.strip()
+        return value
+
+    def _strip_stale_media_placeholders(self, value: str) -> str:
+        """Drop placeholder tokens whose media data is no longer tracked.
+
+        History recall (Up + Enter) restores placeholder text but not the
+        image bytes: `MediaTracker` is cleared once the original turn starts.
+        Submitting such text would send phantom `[image N: file.jpg]` tokens
+        to the agent, which then searches the workspace for files that were
+        never on disk. Strip the stale tokens, notify the user, and let the
+        remaining text through.
+
+        Args:
+        value: Stripped submitted text (after path replacement).
+
+        Returns:
+        Submitted text with stale placeholder tokens removed.
+        """
+        if not self._image_tracker:
+            return value
+        known = {img.placeholder for img in self._image_tracker.get_images()}
+        known.update(video.placeholder for video in self._image_tracker.get_videos())
+        stale: list[str] = []
+        for pattern in (IMAGE_PLACEHOLDER_PATTERN, VIDEO_PLACEHOLDER_PATTERN):
+            for match in pattern.finditer(value):
+                token = match.group(0)
+                if token not in known and token not in stale:
+                    stale.append(token)
+        if not stale:
+            return value
+        for token in stale:
+            value = value.replace(token, " ")
+        value = "\n".join(
+            re.sub(r"  +", " ", re.sub(r"[ \t]+", " ", line)).strip(" \t")
+            for line in value.splitlines()
+        ).strip()
+        logger.info(
+            "Stale media placeholder(s) dropped on submit (no attachment data): %s",
+            ", ".join(stale),
+        )
+        self.app.notify(
+            "Image placeholders without attachment data were removed "
+            "(attachments are not restored from history). "
+            "Re-attach the files and send again.",
+            severity="warning",
+            timeout=6,
+            markup=False,
+        )
         return value
 
     @staticmethod

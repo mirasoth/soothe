@@ -76,3 +76,9 @@ async def test_enrich_user_text_with_vision_invokes_image_model() -> None:
     instruction = prompt_text[0]["text"]
     assert "attached inline" in instruction
     assert "NOT a file on the user's disk" in instruction
+
+    # The agent-facing merged text carries the same guidance: the summary is
+    # the analysis source, placeholder filenames are display labels only.
+    assert "attached inline to this message" in out
+    assert "NOT files in the workspace or on disk" in out
+    assert "do not search for, locate, or read" in out

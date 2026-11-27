@@ -239,6 +239,100 @@ def get_images_from_clipboard() -> list[ImageData]:
     return images
 
 
+def get_text_from_clipboard() -> str | None:
+    """Read plain text from the OS clipboard when present.
+
+    Terminals that report Cmd/Ctrl+V as a key event (instead of a bracketed
+    paste) require the app to read the OS clipboard itself. Platform helpers
+    are tried in order; the first non-empty result wins.
+
+    Returns:
+        Clipboard text, or `None` when empty or unavailable.
+    """
+    for reader in (
+        _read_clipboard_text_macos,
+        _read_clipboard_text_wsl,
+        _read_clipboard_text_wayland,
+        _read_clipboard_text_x11,
+    ):
+        try:
+            text = reader()
+        except Exception:  # noqa: BLE001  # Clipboard helpers must never crash paste
+            logger.debug("Clipboard text reader %s failed", reader.__name__, exc_info=True)
+            continue
+        if text is not None and text.strip():
+            return text
+    return None
+
+
+def _clipboard_text_from_proc(proc: subprocess.CompletedProcess[bytes] | None) -> str | None:
+    """Decode stdout of a clipboard reader subprocess as UTF-8 text.
+
+    Args:
+    proc: Completed process, or `None` when the helper could not run.
+
+    Returns:
+        Decoded text, or `None` on failure / non-UTF-8 payload.
+    """
+    if proc is None or proc.returncode != 0 or not proc.stdout:
+        return None
+    try:
+        return proc.stdout.decode("utf-8")
+    except UnicodeDecodeError:
+        logger.debug("Clipboard text payload is not valid UTF-8")
+        return None
+
+
+def _read_clipboard_text_macos() -> str | None:
+    """Read clipboard text on macOS via `pbpaste`.
+
+    Returns:
+        Clipboard text when available on Darwin, else `None`.
+    """
+    if sys.platform != "darwin" or not shutil.which("pbpaste"):
+        return None
+    return _clipboard_text_from_proc(_run_clipboard_command(["pbpaste"]))
+
+
+def _read_clipboard_text_wsl() -> str | None:
+    """Read clipboard text from WSL via PowerShell.
+
+    Returns:
+        Clipboard text when WSL interop succeeds, else `None`.
+    """
+    if not _is_wsl() or not shutil.which("powershell.exe"):
+        return None
+    return _clipboard_text_from_proc(
+        _run_clipboard_command(["powershell.exe", "-NoProfile", "-Command", "Get-Clipboard -Raw"])
+    )
+
+
+def _read_clipboard_text_wayland() -> str | None:
+    """Read clipboard text on Wayland via `wl-paste`.
+
+    Returns:
+        Clipboard text when available, else `None`.
+    """
+    if not shutil.which("wl-paste"):
+        return None
+    return _clipboard_text_from_proc(
+        _run_clipboard_command(["wl-paste", "--type", "text/plain", "--no-newline"])
+    )
+
+
+def _read_clipboard_text_x11() -> str | None:
+    """Read clipboard text on X11 via `xclip`.
+
+    Returns:
+        Clipboard text when available, else `None`.
+    """
+    if not shutil.which("xclip"):
+        return None
+    return _clipboard_text_from_proc(
+        _run_clipboard_command(["xclip", "-selection", "clipboard", "-o"])
+    )
+
+
 def _read_clipboard_image_payloads() -> list[bytes]:
     """Return raw image payloads from the OS clipboard, if any.
 

@@ -63,7 +63,10 @@ def build_keyboard_shortcut_rows() -> list[tuple[str, str]]:
         ),
         ("Ctrl+X", "Open prompt in external editor ($VISUAL/$EDITOR)"),
         ("Ctrl+Y", "Copy selected text to clipboard"),
-        ("Ctrl+V", "Paste image from clipboard as [image N] attachment"),
+        (
+            "Ctrl+V / Cmd+V",
+            "Paste clipboard image(s) as [image N], or clipboard text when no image",
+        ),
         (
             "Ctrl+T",
             "Toggle plan panel (shown by default; --no-plan-panel disables auto-show)",
