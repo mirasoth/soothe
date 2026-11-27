@@ -181,7 +181,8 @@ class TestSootheConfig:
     def test_checkpoint_defaults(self) -> None:
         cfg = SootheConfig()
         assert cfg.agent.loop.checkpoint.progressive is True
-        assert cfg.agent.loop.checkpoint.auto_resume_on_start is False
+        # IG-DAEM-004: on by default so restarts re-enter incomplete loops.
+        assert cfg.agent.loop.checkpoint.auto_resume_on_start is True
         assert cfg.agent.loop.checkpoint.auto_resume_max_loops == 16
         assert cfg.agent.loop.checkpoint.auto_resume_max_age_hours == 24.0
         assert cfg.agent.loop.checkpoint.auto_resume_clarifications == "skip"

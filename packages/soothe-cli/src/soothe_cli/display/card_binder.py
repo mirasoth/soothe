@@ -328,7 +328,7 @@ def convert_event_to_message_data(event: dict[str, Any]) -> MessageData | None:
 
     if kind == "conversation":
         role = str(event.get("role") or metadata.get("role") or "").strip().lower()
-        # ThreadLogger writes the body as ``text``; the host's normalization
+        # ThreadAuditLogger writes the body as ``text``; the host's normalization
         # step copies it into ``content`` on ``ThreadMessage``. Accept both
         # spellings so raw JSONL rows and normalized rows produce the same card.
         content = str(
@@ -526,7 +526,7 @@ def collect_cognition_card_replay(events: list[dict[str, Any]]) -> list[MessageD
     present (it carries duration, summary, tool-count), otherwise the
     started card so the step still appears in the transcript.
 
-    Assistant conversation rows persisted by ``ThreadLogger`` (the
+    Assistant conversation rows persisted by ``ThreadAuditLogger`` (the
     ``loop_assistant_messages_chunk`` text for ``plan_direct`` /
     ``goal_completion`` / synthesis output) are also surfaced here as
     ``ASSISTANT`` cards. Without this, resume drops the final answer text

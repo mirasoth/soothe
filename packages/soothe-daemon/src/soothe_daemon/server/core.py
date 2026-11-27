@@ -13,7 +13,7 @@ from typing import Any
 
 from soothe.config import SootheConfig
 from soothe.config.reload import ConfigReloadEvent, ConfigWatcher
-from soothe.logging import ThreadLogger
+from soothe.logging import ThreadAuditLogger
 from soothe.sloop.checkpoints.manager import (
     StrangeLoopCheckpointPersistenceManager,
 )
@@ -128,7 +128,7 @@ class SootheDaemon(DaemonHandlersMixin):
             self._daemon_config.max_concurrent_dispatches
         )
         self._dispatch_tasks: dict[str, set[asyncio.Task]] = {}  # client_id -> in-flight tasks
-        self._thread_logger: ThreadLogger | None = None
+        self._thread_logger: ThreadAuditLogger | None = None
         self._pid_lock_fd: int | None = None
         # Channel manager for multi-channel support (RFC-620)
         self._channel_manager: ChannelManager | None = None
@@ -525,6 +525,15 @@ class SootheDaemon(DaemonHandlersMixin):
                     exc_info=True,
                 )
             try:
+                from soothe.logging.audit_store import configure_audit_store
+
+                configure_audit_store(self._config)
+            except Exception:
+                logger.warning(
+                    "Failed to configure audit store; falling back to SQLite default",
+                    exc_info=True,
+                )
+            try:
                 from soothe_daemon.display.display_store import configure_display_card_store
 
                 configure_display_card_store(self._config)
@@ -756,6 +765,16 @@ class SootheDaemon(DaemonHandlersMixin):
             if self._event_size_stats is not None:
                 self._event_size_stats_task = asyncio.create_task(self._periodic_event_size_stats())
 
+            # IG-DAEM-004: re-enqueue durable loop inputs that never reached a
+            # worker in the previous run, before auto-resume classification so
+            # real user intent runs ahead of the synthetic resume prompt.
+            try:
+                recovered = await self._loop_input_dispatcher.recover_pending_inputs()
+                if recovered:
+                    logger.info("Re-enqueued %d persisted loop input(s)", recovered)
+            except Exception:
+                logger.warning("Durable loop-input recovery failed", exc_info=True)
+
             # Detect / optionally auto-resume incomplete loops from previous daemon run
             await self._detect_incomplete_threads()
 
@@ -804,6 +823,24 @@ class SootheDaemon(DaemonHandlersMixin):
                 cleanup_pid()
 
             raise
+
+    def daemon_info(self) -> dict[str, Any]:
+        """Build the `daemon_info` RPC result (IG-DAEM-004).
+
+        `daemon_id` is stable for one daemon process lifetime (`pid:start_time`)
+        so clients can detect a daemon restart by comparing it across
+        connections.
+        """
+        from soothe_daemon import __version__
+
+        started_at = self._started_at or "unknown"
+        return {
+            "daemon_id": f"{os.getpid()}:{started_at}",
+            "pid": os.getpid(),
+            "started_at": started_at,
+            "version": __version__,
+            "readiness_state": self._readiness_state,
+        }
 
     def build_connection_ack(
         self,
@@ -974,7 +1011,7 @@ class SootheDaemon(DaemonHandlersMixin):
 
     async def _periodic_cleanup(self) -> None:
         """Run cleanup every 24 hours."""
-        from soothe.logging.thread_logger import cleanup_stale_thread_logs
+        from soothe.logging.audit_store import get_audit_store
 
         while self._running:
             await asyncio.sleep(24 * 3600)
@@ -984,12 +1021,12 @@ class SootheDaemon(DaemonHandlersMixin):
                 retention_days = self._thread_logger._retention_days
                 max_size_mb = self._thread_logger._max_size_mb
             try:
-                deleted = cleanup_stale_thread_logs(
+                purged = get_audit_store().run_retention(
                     retention_days=retention_days,
                     max_size_mb=max_size_mb,
                 )
-                if deleted > 0:
-                    logger.info("Cleaned up %d old thread logs", deleted)
+                if purged > 0:
+                    logger.info("Audit retention purged %d threads", purged)
             except Exception:
                 logger.warning("Periodic cleanup failed", exc_info=True)
 
@@ -1463,6 +1500,13 @@ class SootheDaemon(DaemonHandlersMixin):
                 logger.warning("[Cron] stop raised during shutdown", exc_info=True)
 
         await self._loop_input_dispatcher.shutdown()
+
+        # IG-DAEM-004: persist per-loop outbound event seq so the counter does
+        # not rewind across restarts (client seq floors are process-local).
+        try:
+            await self._query_engine.flush_loop_seqs()
+        except Exception:
+            logger.debug("Loop event-seq flush on shutdown failed", exc_info=True)
 
         # Cancel background tasks
         if self._cleanup_task and not self._cleanup_task.done():

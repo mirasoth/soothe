@@ -25,7 +25,7 @@ class TestThreadDeletion:
 
         # Create some artifacts
         (runs_dir / "checkpoint.json").write_text('{"status": "completed"}')
-        (runs_dir / "conversation.jsonl").write_text('{"role": "user", "text": "test"}\n')
+        (runs_dir / "manifest.json").write_text('{"status": "completed"}')
         goals_dir = runs_dir / "goals" / "g1" / "steps" / "s1"
         goals_dir.mkdir(parents=True, exist_ok=True)
         (goals_dir / "report.json").write_text('{"step_id": "s1", "status": "completed"}')
@@ -33,7 +33,7 @@ class TestThreadDeletion:
         # Verify artifacts exist
         assert runs_dir.exists()
         assert (runs_dir / "checkpoint.json").exists()
-        assert (runs_dir / "conversation.jsonl").exists()
+        assert (runs_dir / "manifest.json").exists()
         assert (goals_dir / "report.json").exists()
 
         # Simulate thread deletion (same logic as in main.py)
@@ -52,7 +52,6 @@ class TestThreadDeletion:
         # Verify runs directory is gone
         assert not runs_dir.exists()
         assert not (runs_dir / "checkpoint.json").exists()
-        assert not (runs_dir / "conversation.jsonl").exists()
 
     @pytest.mark.asyncio
     async def test_thread_delete_handles_missing_directory(self, tmp_path: Path) -> None:

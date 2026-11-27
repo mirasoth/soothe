@@ -42,7 +42,7 @@ from soothe.sloop.utils.messages import (
 )
 from soothe.sloop.utils.plan_action_text import resolve_plan_action_text
 from soothe.sloop.utils.routing_scope import build_routing_classification, parse_intake_scope
-from soothe.sloop.utils.step_title import preview_step_title
+from soothe.sloop.utils.step_title import preview_step_title, step_title_with_goal
 from soothe.sloop.utils.token_usage_breakdown import TokenUsageAccumulator
 from soothe.utils.messages import extract_text_from_message_content
 
@@ -725,11 +725,13 @@ class StrangeLoopMixin:
                     )
 
                 elif event_type == "step_started":
-                    # Step description: one-line preview (never echo a long brief)
+                    # Step description: one-line preview (never echo a long brief).
+                    # The generic root title carries the goal text so the card
+                    # reads `Execute user goal: <goal>` in the TUI.
                     yield custom_event(
                         StrangeLoopStepStartedEvent(
                             step_id=str(event_data.get("step_id", "")),
-                            description=preview_step_title(event_data["description"]),
+                            description=step_title_with_goal(event_data["description"], user_input),
                         ).to_dict()
                     )
 
@@ -737,7 +739,7 @@ class StrangeLoopMixin:
                     yield custom_event(
                         StrangeLoopStepQueuedEvent(
                             step_id=str(event_data.get("step_id", "")),
-                            description=preview_step_title(event_data["description"]),
+                            description=step_title_with_goal(event_data["description"], user_input),
                         ).to_dict()
                     )
 

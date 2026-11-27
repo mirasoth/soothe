@@ -104,6 +104,15 @@ class SootheDaemonConfig(BaseSettings):
     max_concurrent_dispatches: int = Field(
         default=50, ge=1, description="Maximum concurrent message handlers"
     )
+    attachment_ttl_s: int = Field(
+        default=7 * 24 * 60 * 60,
+        ge=0,
+        description=(
+            "Age (seconds) after which landed image attachments are pruned from the "
+            "workspace before new ones land (0 = never prune). Deletions of "
+            "previously committed files propagate through the turn's sync commit."
+        ),
+    )
     max_in_flight_broadcasts_per_loop: int = Field(
         default=80,
         ge=0,

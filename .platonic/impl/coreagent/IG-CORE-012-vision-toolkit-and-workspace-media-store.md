@@ -149,6 +149,13 @@ locally via PYTHONPATH).
   VisionToolkit / VisionPlugin), `llm/multimodal.py` (`build_image_message` / `ImageBytes` /
   `sniff_image_mime`), `VisionToolsConfig` + defaults in `config/models.py`, `"vision"`
   group in resolver + builtin plugins table. Tests 39 new; nano suite 2241 passed.
+  **Amended (2026-11-27)**: no toolkit-level workspace boundary — the tools are
+  classified as filesystem-read policy tools (`path_arg_keys` + `outcome_type="file_read"`
+  in the metadata twins), so `image_path` goes through the shared operation-security
+  middleware chain (sensitive/denied/allowed paths, boundary +
+  `security.allow_paths_outside_workspace` + `require_approval_for_outside_paths`),
+  identical to other read tools. `build_image_message` emits dict-form text parts
+  (bare strings crash litellm's OpenAI transform — shipped as 2.0.16 and fixed).
 - **S2 (daemon) done — amended: preflight removed.** `QueryEngine._land_query_attachments`
   resolves the loop workspace (early loop-metadata fetch, failure degrades to a text-only
   turn) and lands attachments before the turn; the landed-paths note (shared
@@ -185,6 +192,12 @@ locally via PYTHONPATH).
   the local materialized tree (picked up by the turn's dirty-tracker commit) rather than
   calling the backend's `put_content_file` directly — same persistence channel, and it
   stays resolver-agnostic (local-only / sync / sandbox all work).
+- **方案 A adopted (2026-11-27, user decision)**: media eviction happens at the
+  persistence layer, not by relocating media into `.soothe`. `prune_attachments`
+  (age-based TTL; daemon `attachment_ttl_s` default 7 days / `0` disables, flowjet uses
+  the shared 7-day default) runs before landing; deletions of previously committed
+  files mirror back through the turn's sync commit. Media stays in `input/attachments/`
+  — tracked, synced, addressable.
 
 **Sequencing vs IG-CORE-013 (workspace directory normalization)**: IG-CORE-013 lands
 first. It owns the nano release train touching the same surfaces (glob excludes, security

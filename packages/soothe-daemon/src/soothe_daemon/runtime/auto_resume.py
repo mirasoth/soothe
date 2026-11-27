@@ -157,7 +157,9 @@ async def peek_strange_loop_checkpoint(daemon: Any, loop_id: str) -> Any | None:
         sm = StrangeLoopStateManager(loop_id, config=daemon._config, shared_pool=shared_pool)
         return await sm.load()
     except Exception:
-        logger.debug("auto_resume checkpoint peek failed loop=%s", loop_id, exc_info=True)
+        # IG-DAEM-004: fail loud — a broken persistence layer must not silently
+        # degrade recovery to "not resumable".
+        logger.warning("auto_resume checkpoint peek failed loop=%s", loop_id, exc_info=True)
         return None
     finally:
         if sm is not None:
@@ -199,7 +201,8 @@ async def peek_clarification_pending(daemon: Any, loop_id: str) -> bool | None:
         else:
             tup = await get_tuple(config)
     except Exception:
-        logger.debug(
+        # IG-DAEM-004: fail loud — see peek_strange_loop_checkpoint.
+        logger.warning(
             "peek_clarification_pending: checkpoint load failed loop=%s",
             loop_id,
             exc_info=True,
@@ -267,7 +270,7 @@ async def recover_incomplete_loops(daemon: Any) -> list[AutoResumeClassification
     try:
         rows = await daemon._persistence_manager.list_loops(status_filter="running")
     except Exception:
-        logger.debug("Incomplete loop list failed", exc_info=True)
+        logger.warning("Incomplete loop list failed", exc_info=True)
         return []
 
     results: list[AutoResumeClassification] = []

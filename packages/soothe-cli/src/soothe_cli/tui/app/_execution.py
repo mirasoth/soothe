@@ -1041,6 +1041,105 @@ class _ExecutionMixin:
         else:
             await self._mount_message(AppMessage("Agent not configured for this session."))
 
+    async def _refresh_daemon_epoch(self) -> bool:
+        """Re-read the daemon identity; mount a banner on restart detection.
+
+        Returns True when a daemon restart was detected. Unknown epochs (RPC
+        failure, older daemon) never count as a restart (IG-DAEM-004).
+        """
+        from soothe_cli.runtime.state.daemon_restart import daemon_epoch, restart_detected
+
+        session = self._daemon_session
+        if session is None:
+            return False
+        info = await session.fetch_daemon_info()
+        current = daemon_epoch(info)
+        if current is None:
+            return False
+        previous = getattr(self, "_daemon_epoch", None)
+        self._daemon_epoch = current
+        if not restart_detected(previous, current):
+            return False
+        logger.warning("Daemon restart detected (epoch %s → %s)", previous, current)
+        # The daemon seq namespace rewound: stale stream-resume cursors would
+        # make every future resume report "up to date", so clear them.
+        reset_cursor = getattr(session, "reset_stream_seq_tracking", None)
+        if callable(reset_cursor):
+            with suppress(Exception):
+                reset_cursor()
+        await self._mount_message(
+            AppMessage(
+                "Daemon restarted — reattached to loop state. "
+                "Queued input was preserved server-side and will resume."
+            )
+        )
+        return True
+
+    def _requeue_message_after_connection_failure(self, message: str) -> bool:
+        """Park a user turn locally after a daemon connection failure.
+
+        Reuses the queued-goals machinery (`_pending_messages`), so the message
+        stays visible in the queue bar and is sent once the daemon is reachable
+        again. Command-shaped input is never re-queued blindly.
+        """
+        text = message.strip()
+        if not text or text.startswith("/"):
+            return False
+        from soothe_cli.tui.app._types import QueuedMessage
+
+        self._pending_messages.appendleft(QueuedMessage(text=text, mode="normal"))
+        self._refresh_queued_goal_tips()
+        return True
+
+    async def _replay_missed_stream_frames(self) -> int:
+        """Replay daemon-buffered stream frames missed while disconnected.
+
+        Uses the `stream_resume` RPC (IG-DAEM-004 follow-up): the daemon keeps
+        a bounded per-loop ring of recent seq-stamped frames; we apply the
+        card-bearing ones through the same wire pipeline as live frames. When
+        the daemon reports a gap (older frames evicted) we only log — the
+        card-ledger reattach replay remains authoritative for the full state.
+        Returns the number of card frames applied.
+        """
+        session = self._daemon_session
+        if session is None:
+            return 0
+        loop_id = str(getattr(self, "_lc_loop_id", "") or "").strip()
+        if not loop_id:
+            return 0
+        cursor_getter = getattr(session, "last_stream_seq", None)
+        if not callable(cursor_getter):
+            return 0  # older client API without the resume cursor
+        result = await session.resume_stream(loop_id, cursor_getter(loop_id))
+        if not isinstance(result, dict):
+            return 0
+        applied = 0
+        for frame in result.get("frames") or []:
+            if not isinstance(frame, dict):
+                continue
+            seq = frame.get("seq")
+            if isinstance(seq, int) and not isinstance(seq, bool):
+                note = getattr(session, "_note_stream_seq", None)
+                if callable(note):
+                    note(loop_id, seq)
+            if frame.get("mode") == "custom" and await self._apply_card_wire_frame(
+                frame.get("data")
+            ):
+                applied += 1
+        if applied:
+            logger.info(
+                "Replayed %d buffered stream frame(s) for loop %s after reconnect",
+                applied,
+                loop_id[:16],
+            )
+        if result.get("gap"):
+            logger.warning(
+                "Stream replay gap for loop %s (daemon buffer evicted frames); "
+                "card-ledger reattach replay remains authoritative for the span",
+                loop_id[:16],
+            )
+        return applied
+
     async def _daemon_loop_is_live(self) -> bool:
         """Return True when the subscribed daemon loop has a live runner now.
 
@@ -1178,6 +1277,8 @@ class _ExecutionMixin:
                     ):
                         try:
                             await self._daemon_session.ensure_connected()
+                            with suppress(Exception):
+                                await self._refresh_daemon_epoch()
                             logger.info("Retrying turn after daemon reconnect")
                             skip_daemon_send_turn = False
                             continue
@@ -1224,6 +1325,17 @@ class _ExecutionMixin:
                     await self._mount_message(ErrorMessage(f"{error_title}. {display_err}"))
                 except Exception:
                     logger.debug("Could not mount error message (app closing?)", exc_info=True)
+                # IG-DAEM-004: keep a real user turn that died with the daemon
+                # connection parked in the local queue instead of dropping it.
+                # Attach-only turns are skipped — their prompt is already
+                # queued server-side and re-sending would duplicate it.
+                if is_daemon_connection_error(e) and not skip_daemon_send_turn:
+                    if self._requeue_message_after_connection_failure(message):
+                        self.notify(
+                            "Daemon unreachable — message re-queued; "
+                            "it will be sent once the daemon responds.",
+                            timeout=4,
+                        )
         finally:
             # Merge turn stats before cleanup — _cleanup_agent_task may raise
             # during teardown (widget removal on a torn-down DOM), and stats

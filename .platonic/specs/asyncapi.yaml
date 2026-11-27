@@ -81,7 +81,9 @@ channels:
           - $ref: '#/components/messages/cronCancelRequest'
           # Daemon & config requests
           - $ref: '#/components/messages/daemonStatusRequest'
+          - $ref: '#/components/messages/daemonInfoRequest'
           - $ref: '#/components/messages/daemonShutdownRequest'
+          - $ref: '#/components/messages/streamResumeRequest'
           - $ref: '#/components/messages/configGetRequest'
           - $ref: '#/components/messages/configReloadRequest'
           # Skills & models requests
@@ -579,6 +581,67 @@ components:
     daemonStatusParams:
       type: object
       description: No required fields
+
+    daemonInfoParams:
+      type: object
+      description: No required fields (IG-DAEM-004)
+
+    daemonInfoResult:
+      type: object
+      required: [daemon_id, pid, started_at, version, readiness_state]
+      properties:
+        daemon_id:
+          type: string
+          description: Stable per-process identity `"<pid>:<started_at>"` — clients compare it across (re)connections to detect a daemon restart (IG-DAEM-004)
+        pid:
+          type: integer
+        started_at:
+          type: string
+        version:
+          type: string
+        readiness_state:
+          type: string
+          description: Daemon readiness state (e.g. `ready`)
+
+    streamResumeParams:
+      type: object
+      required: [loop_id, last_seq]
+      properties:
+        loop_id:
+          type: string
+          minLength: 1
+          description: Loop whose stream to resume
+        last_seq:
+          type: integer
+          minimum: 0
+          description: Last outbound frame `seq` the client has seen
+
+    streamResumeResult:
+      type: object
+      required: [loop_id, last_seq, frames, oldest_seq, newest_seq, gap]
+      properties:
+        loop_id:
+          type: string
+        last_seq:
+          type: integer
+        frames:
+          type: array
+          description: Buffered loop-scoped frames with `seq` greater than `last_seq`, in seq order
+          items:
+            type: object
+        oldest_seq:
+          type: [integer, 'null']
+          description: Oldest `seq` still in the replay buffer (null when empty)
+        newest_seq:
+          type: [integer, 'null']
+          description: Newest `seq` still in the replay buffer (null when empty)
+        gap:
+          type: boolean
+          description: >-
+            True when frames between `last_seq` and `oldest_seq` were evicted —
+            the consumer must fall back to the card-ledger reattach replay for
+            the missing span. The buffer is process-local, so a daemon restart
+            clears it (restart recovery uses auto-resume + card replay).
 
     daemonShutdownParams:
       type: object
@@ -1342,6 +1405,42 @@ components:
                 const: daemon_shutdown
               params:
                 $ref: '#/components/schemas/daemonShutdownParams'
+              id:
+                type: string
+
+    daemonInfoRequest:
+      title: Query daemon identity
+      correlationId:
+        $ref: '#/components/correlationIds/operationId'
+      payload:
+        allOf:
+          - $ref: '#/components/schemas/baseEnvelope'
+          - type: object
+            properties:
+              type:
+                const: request
+              method:
+                const: daemon_info
+              params:
+                $ref: '#/components/schemas/daemonInfoParams'
+              id:
+                type: string
+
+    streamResumeRequest:
+      title: Resume a loop stream from the replay buffer
+      correlationId:
+        $ref: '#/components/correlationIds/operationId'
+      payload:
+        allOf:
+          - $ref: '#/components/schemas/baseEnvelope'
+          - type: object
+            properties:
+              type:
+                const: request
+              method:
+                const: stream_resume
+              params:
+                $ref: '#/components/schemas/streamResumeParams'
               id:
                 type: string
 

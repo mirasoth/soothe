@@ -260,6 +260,12 @@ class _HistoryMixin:
             if self._daemon_session is not None:
                 try:
                     await self._daemon_session.ensure_connected()
+                    with suppress(Exception):
+                        await self._refresh_daemon_epoch()
+                    with suppress(Exception):
+                        # IG-DAEM-004 follow-up: apply buffered frames missed
+                        # while the connection was down (card-bearing only).
+                        await self._replay_missed_stream_frames()
                     logger.info("Daemon session reconnected after background consumer disconnect")
                 except Exception:
                     logger.debug(

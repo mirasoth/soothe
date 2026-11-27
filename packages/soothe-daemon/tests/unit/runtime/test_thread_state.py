@@ -160,14 +160,14 @@ async def test_get_thread_stats(mock_durability, mock_config):
 
     manager = ThreadContextManager(mock_durability, mock_config)
 
-    # Mock ThreadLogger
-    with patch("soothe.runner._thread_manager.ThreadLogger") as mock_logger_class:
-        mock_logger = MagicMock()
-        mock_logger.read_recent_records.return_value = [
+    # Mock the audit store backing ThreadAuditLogger reads
+    with patch("soothe.runner._thread_manager.get_audit_store") as mock_store_factory:
+        mock_store = MagicMock()
+        mock_store.fetch_recent.return_value = [
             {"kind": "conversation", "text": "Hello"},
             {"kind": "event", "data": {}},
         ]
-        mock_logger_class.return_value = mock_logger
+        mock_store_factory.return_value = mock_store
 
         stats = await manager.get_thread_stats("test123")
 

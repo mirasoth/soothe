@@ -564,6 +564,10 @@ class _StartupMixin:
         self.call_after_refresh(lambda: asyncio.create_task(self._set_spinner(None)))
         self._daemon_session = event.session
 
+        # IG-DAEM-004: record the daemon identity so later reconnects can
+        # detect a restart (banner) instead of silently resuming.
+        self.call_after_refresh(lambda: asyncio.create_task(self._refresh_daemon_epoch()))
+
         status_loop_id = event.status_event.get("loop_id")
         if isinstance(status_loop_id, str) and status_loop_id:
             self._lc_loop_id = status_loop_id

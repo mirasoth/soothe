@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from typing import Any
 
@@ -142,6 +143,10 @@ class DaemonHandlersMixin:
         # stamping the prior generation would poison the client's expected_turn_id.
         # run_query emits the authoritative running frame after admit.
         if self._query_engine is not None:
+            # IG-DAEM-004: restore the persisted outbound seq before the turn's
+            # first frame so the seq namespace does not rewind after a restart.
+            with contextlib.suppress(Exception):
+                await self._query_engine.hydrate_loop_seq(loop_id)
             self._query_engine.mark_loop_turn_starting(loop_id)
             await self._broadcast(
                 self._query_engine._loop_scoped_client_message(

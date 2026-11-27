@@ -29,10 +29,16 @@ class UserMessage(Static):
         padding: 0 1;
         margin: 1 0;
         background: $surface;
-        border: none;
+        border-left: thick $primary;
+    }
+
+    UserMessage.-ascii {
+        border-left: ascii $primary;
     }
     """
-    """Surface block (no border) echoing ChatInput so submitted prompts stand out in the flow."""
+    """Quoted-block card: surface fill with a primary left accent bar, so the
+    user's query reads as a distinct quote in the message flow instead of
+    blending into the surrounding step/assistant cards."""
 
     def __init__(self, content: str, **kwargs: Any) -> None:
         """Initialize a user message.

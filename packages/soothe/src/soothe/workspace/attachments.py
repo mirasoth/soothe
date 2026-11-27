@@ -10,19 +10,25 @@ from __future__ import annotations
 import base64
 import hashlib
 import logging
+import time
 from pathlib import Path
 
 __all__ = [
     "ATTACHMENTS_DIR",
+    "DEFAULT_ATTACHMENT_TTL_S",
     "attachment_rel_path",
     "land_attachments",
     "landed_paths_note",
+    "prune_attachments",
 ]
 
 logger = logging.getLogger(__name__)
 
 ATTACHMENTS_DIR = "input/attachments"
 """Workspace-relative directory where wire attachments are landed."""
+
+DEFAULT_ATTACHMENT_TTL_S = 7 * 24 * 60 * 60
+"""Default age after which landed attachments are pruned (7 days)."""
 
 _MIME_EXT: dict[str, str] = {
     "image/png": "png",
@@ -85,3 +91,44 @@ def landed_paths_note(paths: list[str]) -> str:
     """Agent-facing note listing the landed attachment paths."""
     rendered = "\n".join(f"- {path}" for path in paths)
     return _LANDED_NOTE.format(paths=rendered)
+
+
+def prune_attachments(workspace_root: Path, *, max_age_s: int | None) -> list[str]:
+    """Delete attachments older than *max_age_s* from the landed directory.
+
+    Run before landing new attachments: previously committed files deleted
+    here are mirrored back as deletions by the turn's sync commit, keeping
+    the object store from accumulating stale media.
+
+    Args:
+        workspace_root: Agent workspace root.
+        max_age_s: Maximum file age in seconds; `None` or ``<= 0`` disables
+            pruning.
+
+    Returns:
+        Workspace-relative paths that were removed.
+    """
+    if not max_age_s or max_age_s <= 0:
+        return []
+    attachments_dir = workspace_root / ATTACHMENTS_DIR
+    if not attachments_dir.is_dir():
+        return []
+    now = time.time()
+    removed: list[str] = []
+    for file in attachments_dir.iterdir():
+        if not file.is_file():
+            continue
+        try:
+            age = now - file.stat().st_mtime
+        except OSError:
+            continue
+        if age > max_age_s:
+            try:
+                file.unlink()
+            except OSError:
+                logger.warning("Could not prune stale attachment %s", file, exc_info=True)
+                continue
+            removed.append(f"{ATTACHMENTS_DIR}/{file.name}")
+    if removed:
+        logger.info("Pruned %d stale attachment(s)", len(removed))
+    return removed

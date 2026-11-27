@@ -7,43 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.3.9] - 2026-11-27
+
 ### Added
 
-- `/ask` slash command (headless CLI and TUI), symmetric with `/plan`: sends the input in ask mode (read-only, answer-only).
-- TUI: one-shot mode prefix — a leading `/plan `/`/ask ` token in the composer now overrides the sticky composer mode for that turn and is stripped from the wire text (`composer_mode.parse_mode_prefix_from_input`); previously the literal `/plan …` text reached the daemon as a regular agent-mode turn.
-- TUI: Shift+Tab toggling to Plan/Ask while a goal is running now shows a "applies to the next turn" notice; approving a plan review shows an "executing in agent mode" notice.
-- TUI: plan/ask turns get mode-aware spinner labels — execution-flavored phase words become "Planning (read-only)" / "Researching (read-only)" so a read-only turn no longer looks like a mutating agent turn.
-- TUI: completed ask-mode turns surface an inline follow-up bar under the answer ("Draft a plan" / "Execute in agent mode") — transitions that set the sticky composer mode instead of requiring a manual Shift+Tab. Styled like the plan-review card: numbered options with a `❯` keyboard highlight (click an option to apply it, or click the card and use ↑/↓, Enter or `1`/`2` to apply, Esc to dismiss) instead of buttons; the bar never steals focus from the chat input on mount.
-- Contract test pinning the repo-side plan/ask declarations (decompose addenda, `request_plan_mode` description, policy profiles, subagent allowlists) to the installed soothe-nano read-only surface, so prompt/allowlist drift fails loudly.
-- TUI `/attachments` slash command: lists media attached to the composer with source, format and approximate size (`/attachments`), and removes them all (`/attachments clear`); deleting a placeholder token in the input also removes that attachment as before.
-- TUI attach observability: clipboard and drag/drop path attaches now log source name, format, approximate size and per-message-limit skips at INFO level in the TUI log, so wrong-image diagnoses no longer require daemon-side inference.
-- TUI media placeholders now show their source: drag/drop attachments render as `[image 1: photo.jpg]` / `[video 1: clip.mp4]` and clipboard pastes as `[image 1: clipboard]`, so wrong-source mistakes (e.g. a stale clipboard bitmap attached instead of the intended file) are visible before submit. Legacy `[image N]` placeholders remain supported everywhere.
-- TUI multi-image clipboard paste: `Cmd+V` joins `Ctrl+V` as a clipboard-image paste binding (for terminals that deliver Cmd+V as a key event), and multi-image clipboards (e.g. Finder multi-file copy) attach one `[image N]` placeholder per image instead of only the first.
-- `soothe.workspace.attachments`: shared attachment-landing helpers (`land_attachments`, `attachment_rel_path`, `landed_paths_note`, `ATTACHMENTS_DIR`) used by hosts to land wire image attachments into turn workspaces at `input/attachments/<sha256[:16]>.<ext>` (content-addressed, idempotent).
+- Add `analyze_image` and `extract_text_from_image` tools for workspace-anchored image understanding and OCR, enabled when the `image` / `ocr` model roles are configured.
+- Add `/ask` slash command (CLI and TUI) for read-only, answer-only turns.
+- Add TUI `/attachments` command to list or clear media attached to the composer.
+- Add `stream_resume` RPC so the TUI replays missed stream frames after reconnect and reports evicted gaps.
+- Add structured per-thread audit store selected by `persistence.default_backend`, replacing `conversation.jsonl`.
+- Persist queued user turns across daemon restarts and show a reconnect banner when the daemon changes.
 
 ### Changed
 
-- Tool display registry: media tools now match the real vision toolkit — `analyze_image` added, `extract_text_from_image` retained as a real implementation, and the never-shipped display-only entries (`analyze_video`, `transcribe_audio`, `audio_qa`) removed from the `soothe_client.tools` / `soothe_nano.tools` twins (IG-CORE-012 S4). The capabilities wiki is synced.
-- **Daemon image attachments land in the workspace and go through the vision toolkit instead of the legacy preflight (IG-CORE-012).** Image-bearing input no longer runs a daemon-side image-role preflight call: `QueryEngine` lands validated attachments into the loop workspace under `input/attachments/` (content-addressed, idempotent — shared helper in the new `soothe.workspace.attachments` module, also consumed by flowjet) and appends the landed paths plus `analyze_image` / `extract_text_from_image` tool guidance to the input text. The agent does its own targeted vision reads with the nano vision tools. The `enrich_user_text_with_vision` preflight service, its instruction templates, the `max_concurrent_vision_preflight` setting (`SOOTHE_DAEMON_MAX_CONCURRENT_VISION_PREFLIGHT`, also removed from the daemon config template), and the preflight semaphore are removed; `validate_and_normalize_image_attachments` (wire validation) stays. The StrangeLoop vision-context chain that parsed the removed `--- Vision summary ---` blocks (`sloop/utils/vision_context.py`, the executor's `vision_context` plumbing, the `VISION CONTEXT` prompt section and its scope-guard instructions, the step-brief "Vision summary" hint, and the `VISION_CONTEXT_MAX_CHARS` / `VISION_BRIEF_IMAGE_FACTS_MAX_CHARS` constants) is removed with it, and the intent-hint image turns now build their multimodal messages through the shared `build_image_message` instead of a local hand-rolled copy.
+- Replace daemon vision preflight with on-demand vision tools; remove the preflight service and its prompt chain.
+- Default `agent.loop.checkpoint.auto_resume_on_start` to `true` so restarts re-enter incomplete loops.
+- Land daemon image attachments in the turn workspace with age-based pruning.
+- Show attachment sources and support multi-image paste, image re-encoding, and overflow toasts in the TUI composer.
 
 ### Removed
 
-- Daemon setting `max_concurrent_vision_preflight` (and the `max_concurrent_vision_preflight` key in `setup/templates/daemon.yml`): it only throttled the removed vision preflight.
+- Remove daemon setting `max_concurrent_vision_preflight` (and its `daemon.yml` template key).
 
 ### Fixed
 
-- Workspace sync: the reconcile pass no longer deletes `.soothe/**` framework/engine state (plans, backups, skills mirror, shell logs) on every materialize — reserved-name skipping is now a single source (`soothe.workspace.sync.reserved`) shared by the materialize, reconcile, and dirty-tracker passes. The engine-private manifest moves from `.workspace/manifest.json` to `.soothe/manifest.json` (clean cutover — the content tree is authoritative; stale `.workspace` backend keys are not migrated and can be deleted). The local `.workspace/` placeholder directory is no longer created. Watched-subdir configuration now has one normalizer with explicit merge semantics (defaults + extras) instead of two conflicting definitions.
-- TUI: Cmd/Ctrl+V now pastes clipboard text when the clipboard has no image. Previously the key event was bound exclusively to image attachment, so terminals that report Cmd+V as a key (rather than a bracketed paste) produced only a "No image in clipboard" toast and never inserted text; the binding also now matches `super+v`, the key name real terminals emit for the Command modifier. Clipboard text is inserted through the normal paste pipeline, so file-path detection and long-paste abbreviation still apply.
-- Daemon vision preflight instructions now state that attached images are inline to the message and not files on disk (single- and multi-image variants), so the agent no longer wastes tool calls globbing the workspace for a file named like the attachment.
-- Daemon: the agent-facing vision block now also carries the inline-attachment guidance ("do not search for, locate, or read the referenced filenames"). Previously that instruction only reached the vision model's prompt, so the agent merged with the summary still chose to `find`/`ReadFile` the placeholder filenames from disk before analyzing.
-- TUI: history-recalled submissions no longer carry phantom media placeholders. Media attachment data is cleared when a turn starts, but placeholder tokens persist in input history — re-sending a recalled message (Up + Enter) used to submit `[image N: file.jpg]` tokens with no image bytes, so the daemon ran no vision preflight and the agent searched the workspace for files that were never on disk. Submit now detects placeholders without tracked attachment data, strips them from the wire text, and shows a toast telling the user to re-attach the files.
+- Stop workspace sync from deleting `.soothe/**` engine state during reconcile.
+- Keep stream event sequence numbers from rewinding across daemon restarts.
+- Strip phantom media placeholders from history-recalled TUI submissions.
+- Paste clipboard text with Cmd/Ctrl+V when the clipboard has no image.
+- Keep plan-review approval controls reachable in bounded-height cards.
+- Prevent plan-mode goals from reaching mutating dispatch via root evaluation.
 
-- TUI plan-review card in the approval dock: the plan-body preview is now a bounded, internally scrollable region (visible scrollbar) instead of growing with the plan, which used to push the Approve/Reject/Refine option rows below the dock's visible region where they were unreachable (global stylesheet hides scrollbars). The approval dock also caps itself in absolute rows with a live viewport clamp (`on_resize` + card push) instead of `max-height: 40vh` — vh caps do not resolve while the auto-height docked bottom container measures its children, which inflated the container by the card's unclamped height and left the chat input floating above dead space instead of sticking to the screen bottom. Card chrome margins tightened so the full interactive card fits typical terminals.
-- Ask-mode prompt addendum no longer advertises a conditional `decompose_task` escape hatch — the tool is stripped and hard-blocked in ask mode, so the addendum now states it is unavailable outright.
-- `route_after_root_eval` checks plan mode before a dispatch route, so a plan-mode goal can never reach mutating DISPATCH through the root-eval edge (plan review remains the only gate to execution).
-- `request_plan_mode` is no longer injected into the ask/plan graphs — the tool is an agent-mode affordance and was meaningless (and duplicative of the read-only tool list) in read-only modes.
-- Image attachments honor the daemon's per-message limit (8) at attach time — overflow images are skipped with a toast (drag/drop keeps the file path as text) instead of the daemon rejecting the entire message.
-- TIFF/ICO (and any other non wire-safe format) images are re-encoded to PNG on attach; previously `image/tiff`/`image/ico` failed the daemon MIME allowlist and broke the whole turn's image understanding.
+[Compare with previous version]: https://github.com/mirasoth/soothe/compare/v1.3.8...v1.3.9
 
 ## [v1.3.8] - 2026-11-26
 

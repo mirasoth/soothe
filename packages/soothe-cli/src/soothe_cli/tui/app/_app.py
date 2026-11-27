@@ -319,6 +319,13 @@ class SootheApp(
         self._pending_messages: deque[QueuedMessage] = deque()
         """User message queue for sequential processing."""
 
+        self._daemon_epoch: str | None = None
+        """Stable per-process daemon identity (`daemon_info.daemon_id`).
+
+        Compared across (re)connections to detect a daemon restart
+        (IG-DAEM-004). None = unknown (never observed or RPC unavailable).
+        """
+
         self._processing_pending = False
 
         self._loop_switching = False

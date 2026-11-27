@@ -205,7 +205,7 @@ workflow YAML validate, and RFC metadata. Passing locally with
 |----------|---------|
 | `~/.soothe/logs/soothed.log` | Daemon backend (agent execution, protocols, tools) |
 | `~/.soothe/logs/soothe-cli.log` | CLI client (connection, UI, event handling) |
-| `~/.soothe/data/threads/{thread_id}/logs/` | Thread conversation audit (when `thread_logging.enabled`) |
+| `~/.soothe/data/databases/audit.db` | Thread audit trace (when `thread_logging_enabled`) |
 | `~/.soothe/data/databases/checkpoints.db` | StrangeLoop + LangGraph checkpoints |
 | `~/.soothe/data/databases/metadata.db` | Metadata / durability |
 
@@ -221,8 +221,8 @@ soothe
 ```
 
 **Persistent (config):** set `debug: true` and `logging.file.level: DEBUG` in
-`~/.soothe/config/nano.yml`; optionally enable `thread_logging` for per-thread
-audit. Restart the daemon to pick up config changes. CLI picks up
+`~/.soothe/config/nano.yml`; optionally enable `thread_logging_enabled` for the per-thread
+audit trace. Restart the daemon to pick up config changes. CLI picks up
 `--log-level` / `SOOTHE_LOG_LEVEL` on every invocation, no restart needed.
 
 > **Verbosity vs log level**: TUI progress verbosity is a client-side

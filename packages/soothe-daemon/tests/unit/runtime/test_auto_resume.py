@@ -442,3 +442,10 @@ async def test_peek_clarification_pending_swallows_checkpointer_errors() -> None
 
     daemon = _make_daemon_with_checkpointer(_Boom())
     assert await peek_clarification_pending(daemon, "loop-1") is None
+
+
+def test_auto_resume_on_start_defaults_true() -> None:
+    """IG-DAEM-004: restarted daemons resume incomplete loops without opt-in."""
+    from soothe.config.models import LoopCheckpointConfig
+
+    assert LoopCheckpointConfig().auto_resume_on_start is True

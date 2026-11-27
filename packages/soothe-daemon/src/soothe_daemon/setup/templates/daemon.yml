@@ -37,6 +37,9 @@ channels:
 # Concurrency
 max_concurrent_threads: 100
 max_concurrent_dispatches: 50
+# Age (seconds) after which landed image attachments are pruned before new
+# ones land; deletions propagate through the turn's sync commit. 0 = never.
+attachment_ttl_s: 604800
 max_in_flight_broadcasts_per_loop: 80  # 0 = unlimited
 card_ingest_queue_maxsize: 2000
 card_flush_debounce_ms: 200

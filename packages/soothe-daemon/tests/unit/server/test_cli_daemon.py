@@ -420,8 +420,9 @@ async def test_non_cancel_command_still_enqueues() -> None:
 
 @pytest.mark.asyncio
 async def test_daemon_logs_thread_to_file(tmp_path: Any) -> None:
-    """Test that daemon logs user input and assistant responses to thread file."""
-    from soothe.logging import ThreadLogger
+    """Test that daemon logs user input and assistant responses to the audit store."""
+    from soothe.logging import ThreadAuditLogger
+    from soothe.logging.audit_store import SqliteAuditStore
 
     daemon = SootheDaemon(SootheConfig())
     fake_runner = _FakeRunnerWithMessages()
@@ -445,8 +446,9 @@ async def test_daemon_logs_thread_to_file(tmp_path: Any) -> None:
 
     daemon._broadcast = _fake_broadcast  # type: ignore[method-assign]
 
-    # Create a thread logger with temp directory
-    thread_logger = ThreadLogger(thread_dir=str(tmp_path), thread_id="thread-test")
+    # Create a thread logger against an isolated audit store
+    audit_store = SqliteAuditStore(db_path=tmp_path / "audit.db")
+    thread_logger = ThreadAuditLogger(thread_id="thread-test", store=audit_store)
     daemon._thread_logger = thread_logger
 
     # Run a query
@@ -458,7 +460,7 @@ async def test_daemon_logs_thread_to_file(tmp_path: Any) -> None:
     thread_logger.flush()
 
     # Verify thread was logged
-    records = thread_logger.read_recent_records(limit=20)
+    records = audit_store.fetch_recent("thread-test", limit=20)
 
     # Should have: user input, custom event, assistant response
     user_inputs = [
@@ -476,6 +478,8 @@ async def test_daemon_logs_thread_to_file(tmp_path: Any) -> None:
     assert "Hello from assistant" in assistant_responses[0].get("text", "")
 
     assert len(events) >= 1  # At least the thread.started event
+
+    audit_store.close()
 
 
 @pytest.mark.asyncio

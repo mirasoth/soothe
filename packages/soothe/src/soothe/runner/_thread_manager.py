@@ -12,7 +12,8 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 from pydantic import BaseModel, Field
 
 from soothe.config import SOOTHE_HOME
-from soothe.logging import ThreadLogger
+from soothe.logging import ThreadAuditLogger
+from soothe.logging.audit_store import get_audit_store
 
 if TYPE_CHECKING:
     from soothe_nano.mcp.mcp_registry import MCPRegistry
@@ -58,7 +59,7 @@ class ThreadMessage(BaseModel):
     """Single message in thread conversation."""
 
     timestamp: datetime
-    kind: Literal["conversation", "event", "tool_call", "tool_result"]
+    kind: Literal["conversation", "event", "tool_call", "tool_result", "thinking"]
     role: Literal["user", "assistant", "system"] | None = None
     content: str
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -86,7 +87,7 @@ class ThreadContextManager:
     - DurabilityProtocol (metadata)
     - MCP session lifecycle
     - LangGraph checkpointer (chat history)
-    - ThreadLogger (conversation logs)
+    - ThreadAuditLogger (audit trace store)
     - RunArtifactStore (artifacts)
     """
 
@@ -136,8 +137,8 @@ class ThreadContextManager:
 
         await self._ensure_mcp_session(thread_info.thread_id)
 
-        # Initialize ThreadLogger
-        ThreadLogger(thread_id=thread_info.thread_id)
+        # Initialize audit trace writer
+        ThreadAuditLogger(thread_id=thread_info.thread_id)
 
         # Note: LangGraph checkpointer will be initialized on first query
 
@@ -484,8 +485,7 @@ class ThreadContextManager:
         Returns:
             List of ThreadMessage
         """
-        logger_instance = ThreadLogger(thread_id=thread_id)
-        records = logger_instance.read_recent_records(limit=limit + offset)
+        records = get_audit_store().fetch_recent(thread_id, limit=limit + offset)
 
         # Convert to ThreadMessage format
         if include_events:
@@ -538,7 +538,7 @@ class ThreadContextManager:
         artifacts = []
         for file_path in await asyncio.to_thread(list, run_dir.iterdir()):
             is_file = await asyncio.to_thread(file_path.is_file)
-            if is_file and not file_path.name.endswith(".jsonl"):
+            if is_file:
                 stat = await asyncio.to_thread(file_path.stat)
                 artifacts.append(
                     ArtifactEntry(
@@ -560,8 +560,7 @@ class ThreadContextManager:
         Returns:
             ThreadStats with calculated values
         """
-        logger_instance = ThreadLogger(thread_id=thread_id)
-        records = logger_instance.read_recent_records(limit=10000)  # Large limit for accuracy
+        records = get_audit_store().fetch_recent(thread_id, limit=10000)  # Large limit for accuracy
 
         # Count messages and events
         message_count = sum(1 for r in records if r.get("kind") == "conversation")
@@ -635,8 +634,7 @@ class ThreadContextManager:
         Returns:
             Last human message text or None if not found
         """
-        logger_instance = ThreadLogger(thread_id=thread_id)
-        records = logger_instance.read_recent_records(limit=100)
+        records = get_audit_store().fetch_recent(thread_id, limit=100)
 
         # Find last human message in reverse order
         for record in reversed(records):

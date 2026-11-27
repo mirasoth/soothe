@@ -22,7 +22,8 @@ Soothe maintains multiple log files in `~/.soothe/` for different purposes:
 |----------|---------|
 | `~/.soothe/logs/soothed.log` | Daemon backend (agent execution, protocols, tools) |
 | `~/.soothe/logs/soothe-cli.log` | CLI client (connection, UI, event handling) |
-| `~/.soothe/data/threads/{thread_id}/logs/` | Thread conversation audit (when `thread_logging.enabled`) |
+| `~/.soothe/data/threads/{thread_id}/` | Thread run directory (manifest, artifacts) |
+| `~/.soothe/data/databases/audit.db` | Thread audit trace database (when `thread_logging_enabled`) |
 | `~/.soothe/data/databases/checkpoints.db` | StrangeLoop + LangGraph checkpoint database |
 | `~/.soothe/data/databases/metadata.db` | Metadata / durability database |
 | `~/.soothe/data/databases/` | Other purpose DBs (`context.db`, `display.db`, `cron.db`, `identity.db`, `persist.db`, `vectors.db`) |
@@ -180,30 +181,36 @@ grep -i "websocket\|connection\|timeout" ~/.soothe/logs/soothe-cli.log
 grep -i "event.*error\|event.*failed" ~/.soothe/logs/soothe-cli.log
 ```
 
-### 3. Inspect Thread Conversation Logs
+### 3. Inspect the Thread Audit Trace
 
-Thread logs provide audit trail for specific conversations:
+The audit trace is a structured store (SQLite under `$SOOTHE_DATA_DIR/databases/audit.db`,
+PostgreSQL `audit` database in postgres mode). Query it directly:
 
 ```bash
-# List thread directories
-ls -la ~/.soothe/data/threads/
+sqlite3 ~/.soothe/data/databases/audit.db
 
-# Inspect specific thread logs
-cat ~/.soothe/data/threads/{thread_id}/logs/conversation.jsonl
+# Most recent records for a thread (chronological)
+SELECT seq, ts, kind, payload FROM audit_records
+WHERE thread_id = '{thread_id}' ORDER BY seq DESC LIMIT 50;
 
-# Find issues in specific thread
-grep -i "error\|exception" ~/.soothe/data/threads/{thread_id}/logs/conversation.jsonl
+# Tool calls with full args
+SELECT ts, payload FROM audit_records
+WHERE thread_id = '{thread_id}' AND kind = 'tool_call' ORDER BY seq;
+
+# Find issues in a specific thread
+SELECT ts, payload FROM audit_records
+WHERE thread_id = '{thread_id}' AND payload LIKE '%error%';
 
 # Check thread metadata
 cat ~/.soothe/data/threads/{thread_id}/manifest.json
 ```
 
-**What thread logs contain**:
-- Complete conversation history
+**What the audit trace contains**:
+- Complete conversation history (user turns, phase-tagged assistant output)
 - Goal progression
-- Step execution details
-- Tool call audit trail
-- Subagent delegation records
+- Step execution details (thinking captured from `reasoning_content`)
+- Tool call audit trail with **full args** (results truncated to 2000 chars —
+  full tool output lives in the LangGraph checkpoints)
 - Timestamps for all events
 
 ---
@@ -408,23 +415,23 @@ Configure `observability.langfuse` in daemon config and open the Langfuse UI for
 
 ### Thread-Level Conversation Auditing
 
-Enable thread-specific logs for conversation audit trails:
+Enable the thread audit trace for conversation audit trails:
 
 ```yaml
-logging:
-  thread_logging:
-    enabled: true
-    dir: ""             # Empty = ~/.soothe/data/threads/{thread_id}/logs/
-    retention_days: 30  # Auto-delete old threads
+observability:
+  thread_logging_enabled: true
+  thread_logging_retention_days: 30  # Auto-delete old records
+  thread_logging_max_size_mb: 100    # Total store size budget
 ```
 
-**Thread log structure**:
+**Audit trace structure** (SQLite mode):
 ```
-~/.soothe/data/threads/{thread_id}/
-├── logs/
-│   └── conversation.jsonl  # Full conversation history (JSONL format)
-├── manifest.json           # Thread metadata (query, status, artifacts)
+~/.soothe/data/databases/audit.db   # audit_records table: (thread_id, seq, ts, kind, payload)
 ```
+
+In PostgreSQL mode the trace lives in the database registered under
+`persistence.postgres_databases["audit"]` (the operator adds this key; the database is
+provisioned automatically at startup).
 
 **Use cases**:
 - Post-mortem analysis of failed conversations
@@ -503,9 +510,9 @@ Soothe automatically rotates log files to prevent disk space issues:
 **CLI logs** (`soothe-cli.log`):
 - Same rotation policy as daemon logs
 
-**Thread logs** (`data/threads/{thread_id}/logs/conversation.jsonl`):
-- Auto-deleted after `retention_days` (default: 30 days)
-- Max size limit configurable via `logging.thread_logging.max_size_mb`
+**Thread audit trace** (`data/databases/audit.db`, or the `audit` PostgreSQL database):
+- Records auto-deleted after `retention_days` (default: 30 days)
+- Total size budget configurable via `thread_logging_max_size_mb` (0 disables the size sweep)
 
 ### Clearing Logs
 
@@ -516,8 +523,10 @@ rm ~/.soothe/logs/soothed.log*
 # Clear CLI logs
 rm ~/.soothe/logs/soothe-cli.log*
 
-# Clear old thread logs (automatically done by retention policy)
-find ~/.soothe/data/threads -mtime +30 -type d -exec rm -rf {} +
+# Clear old audit records (automatically done by retention policy)
+#   - manual: sqlite3 ~/.soothe/data/databases/audit.db 'DELETE FROM audit_records WHERE ts < "2026-01-01"'
+#   - or remove the whole store for a fresh start
+rm ~/.soothe/data/databases/audit.db
 
 # Clear all logs (fresh start)
 rm -rf ~/.soothe/logs/*

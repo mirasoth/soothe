@@ -573,7 +573,9 @@ class LoopCheckpointConfig(BaseModel):
     """
 
     progressive: bool = True
-    auto_resume_on_start: bool = False
+    # IG-DAEM-004: on by default so a restarted daemon re-enters incomplete
+    # loops from checkpoint instead of parking them for a manual continue.
+    auto_resume_on_start: bool = True
     auto_resume_max_loops: int = Field(default=16, ge=1, le=64)
     auto_resume_max_age_hours: float = Field(default=24.0, ge=0.0, le=720.0)
     auto_resume_clarifications: Literal["skip", "reannounce"] = "skip"

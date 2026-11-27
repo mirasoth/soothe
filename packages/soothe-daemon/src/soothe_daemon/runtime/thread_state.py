@@ -20,7 +20,7 @@ class ThreadState:
 
     thread_id: str
     workspace: Path | None = None
-    thread_logger: Any = None  # ThreadLogger | None
+    thread_logger: Any = None  # ThreadAuditLogger | None
     is_draft: bool = False
     query_running: bool = False
     query_task: asyncio.Task | None = None

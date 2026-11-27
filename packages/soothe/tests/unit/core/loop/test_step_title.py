@@ -6,6 +6,7 @@ from soothe.sloop.utils.step_title import (
     ROOT_STEP_TITLE,
     STEP_TITLE_PREVIEW_MAX_CHARS,
     preview_step_title,
+    step_title_with_goal,
 )
 
 
@@ -31,3 +32,26 @@ def test_long_description_is_clipped_with_ellipsis() -> None:
 def test_root_title_is_short_and_stable() -> None:
     assert ROOT_STEP_TITLE == "Execute user goal"
     assert len(ROOT_STEP_TITLE) < STEP_TITLE_PREVIEW_MAX_CHARS
+
+
+def test_root_step_title_appends_short_goal() -> None:
+    out = step_title_with_goal(ROOT_STEP_TITLE, "analyze veritas arch")
+    assert out == "Execute user goal: analyze veritas arch"
+
+
+def test_root_step_title_clips_long_goal_to_one_line() -> None:
+    out = step_title_with_goal(ROOT_STEP_TITLE, "very long goal " * 200)
+    assert out.startswith("Execute user goal: very long goal")
+    assert out.endswith("…")
+    assert len(out) <= STEP_TITLE_PREVIEW_MAX_CHARS
+    assert "\n" not in out
+
+
+def test_root_step_title_without_goal_stays_generic() -> None:
+    assert step_title_with_goal(ROOT_STEP_TITLE, "") == ROOT_STEP_TITLE
+    assert step_title_with_goal(ROOT_STEP_TITLE, None) == ROOT_STEP_TITLE
+
+
+def test_non_root_description_passes_through() -> None:
+    desc = "Refactor the persistence module"
+    assert step_title_with_goal(desc, "analyze veritas arch") == desc

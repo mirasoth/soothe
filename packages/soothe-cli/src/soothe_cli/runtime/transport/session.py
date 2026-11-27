@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from soothe_client.appkit import DaemonSession
@@ -9,6 +10,8 @@ from soothe_client.helpers import websocket_url_from_config
 
 from soothe_cli.runtime.state.session_stats import TurnEventStats
 from soothe_cli.runtime.wire.chunk_filter import should_drop_stream_chunk_early
+
+logger = logging.getLogger(__name__)
 
 # Match headless daemon client post-idle drain window.
 _POST_IDLE_DRAIN_DEADLINE_S = 0.5
@@ -65,6 +68,21 @@ class TuiDaemonSession(DaemonSession):
         async with self._rpc_lock:
             await self._ensure_rpc_connected()
             return await self._rpc_client.request("loop_list", params, timeout=15.0)
+
+    async def fetch_daemon_info(self) -> dict[str, Any] | None:
+        """Fetch daemon identity for restart detection (IG-DAEM-004).
+
+        Returns None when the RPC fails (older daemon without the method,
+        transport issues) so callers treat the epoch as unknown rather than as
+        a restart.
+        """
+        async with self._rpc_lock:
+            try:
+                await self._ensure_rpc_connected()
+                return await self._rpc_client.request("daemon_info", {}, timeout=5.0)
+            except Exception:
+                logger.debug("daemon_info RPC failed", exc_info=True)
+                return None
 
 
 __all__ = [

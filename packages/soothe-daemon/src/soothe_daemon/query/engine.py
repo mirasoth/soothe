@@ -14,10 +14,10 @@ from typing import Any
 from langchain_core.messages import AIMessage, AIMessageChunk
 from soothe.display.text_extract import extract_text_from_ai_message
 from soothe.events import ERROR
-from soothe.logging import ThreadLogger, set_thread_id
+from soothe.logging import ThreadAuditLogger, set_thread_id
 from soothe.wire.codec import prepare_stream_data_for_wire
 from soothe.wire.protocol import _serialize_for_json
-from soothe.workspace.attachments import land_attachments, landed_paths_note
+from soothe.workspace.attachments import land_attachments, landed_paths_note, prune_attachments
 from soothe_nano.wire.stream_tool_wire import (
     TOOL_CALL_UPDATES_BATCH,
     extract_tool_call_updates_from_wire_message,
@@ -326,6 +326,15 @@ class QueryEngine:
         self._loop_turn_generation: dict[str, int] = {}
         # monotonic outbound seq per loop for client stale-drop.
         self._loop_event_seq: dict[str, int] = {}
+        # IG-DAEM-004: loops whose seq counter has been hydrated from the
+        # durable runtime store (one-shot per process) + in-flight persist tasks.
+        self._loop_seq_hydrated: set[str] = set()
+        self._seq_persist_tasks: set[asyncio.Task[None]] = set()
+        # IG-DAEM-004 follow-up: bounded per-loop replay of recent client
+        # frames for the `stream_resume` reconnect path.
+        from soothe_daemon.query.stream_replay import StreamReplayBuffer
+
+        self._stream_replay = StreamReplayBuffer()
         # phase 4: loops still emitting prior-turn terminals after
         # admission release — next admit must wait.
         self._loops_finalizing: set[str] = set()
@@ -482,6 +491,100 @@ class QueryEngine:
         self._loop_event_seq[lid] = nxt
         return nxt
 
+    def _durable_store(self) -> Any | None:
+        """Return the daemon durable loop-input store, or None."""
+        dispatcher = getattr(self._daemon, "_loop_input_dispatcher", None)
+        getter = getattr(dispatcher, "_durable_store", None)
+        if not callable(getter):
+            return None
+        try:
+            return getter()
+        except Exception:
+            logger.debug("durable store access failed", exc_info=True)
+            return None
+
+    @staticmethod
+    def _event_seq_meta_key(loop_id: str) -> str:
+        return f"event_seq:{loop_id}"
+
+    async def hydrate_loop_seq(self, loop_id: str) -> None:
+        """Restore the persisted outbound seq for `loop_id` (one-shot per process).
+
+        Called from the loop-input worker path before the turn's first frame so
+        the seq namespace does not rewind after a daemon restart (IG-DAEM-004).
+        """
+        lid = str(loop_id or "").strip()
+        if not lid or lid in self._loop_seq_hydrated:
+            return
+        self._loop_seq_hydrated.add(lid)
+        store = self._durable_store()
+        if store is None:
+            return
+        try:
+            raw = await store.get_meta(self._event_seq_meta_key(lid))
+        except Exception:
+            logger.debug("loop seq hydrate read failed loop=%s", lid, exc_info=True)
+            return
+        raw_str = str(raw or "").strip()
+        if not raw_str.isdigit():
+            return
+        stored = int(raw_str)
+        if stored > self._loop_event_seq.get(lid, 0):
+            self._loop_event_seq[lid] = stored
+            logger.debug("loop seq hydrated loop=%s seq=%d", lid[:16], stored)
+
+    def _schedule_seq_persist(self, loop_id: str) -> None:
+        """Fire-and-forget persist of the current outbound seq for `loop_id`."""
+        lid = str(loop_id or "").strip()
+        if not lid or lid not in self._loop_seq_hydrated:
+            return
+        value = self._loop_event_seq.get(lid, 0)
+        if value <= 0:
+            return
+        store = self._durable_store()
+        if store is None:
+            return
+        key = self._event_seq_meta_key(lid)
+
+        async def _write() -> None:
+            try:
+                await store.set_meta(key, str(value))
+            except Exception:
+                logger.debug("loop seq persist failed loop=%s", lid[:16], exc_info=True)
+
+        task = asyncio.create_task(_write())
+        self._seq_persist_tasks.add(task)
+        task.add_done_callback(self._seq_persist_tasks.discard)
+
+    async def flush_loop_seqs(self) -> None:
+        """Persist all known loop seq counters (daemon stop)."""
+        if self._seq_persist_tasks:
+            await asyncio.gather(*list(self._seq_persist_tasks), return_exceptions=True)
+            self._seq_persist_tasks.clear()
+        store = self._durable_store()
+        if store is None:
+            return
+        for lid, value in list(self._loop_event_seq.items()):
+            if value <= 0:
+                continue
+            try:
+                await store.set_meta(self._event_seq_meta_key(lid), str(value))
+            except Exception:
+                logger.debug("loop seq flush failed loop=%s", lid[:16], exc_info=True)
+
+    def stream_resume(self, loop_id: str, last_seq: int) -> dict[str, Any]:
+        """Replay buffered stream frames after `last_seq` (IG-DAEM-004 follow-up).
+
+        Frames come from the process-local `StreamReplayBuffer`; `gap=True`
+        means older frames were evicted and the consumer must fall back to the
+        card-ledger reattach replay for the missing span.
+        """
+        try:
+            last = int(last_seq)
+        except (TypeError, ValueError):
+            last = 0
+        return self._stream_replay.resume(loop_id, max(0, last))
+
     def _resolve_broadcast_generation(
         self, loop_id: str, turn_generation: int | None = None
     ) -> int:
@@ -549,6 +652,7 @@ class QueryEngine:
         """Broadcast one loop-scoped frame with per-loop in-flight budget (2.2)."""
         d = self._daemon
         scoped = self._loop_scoped_client_message(loop_id, payload, turn_generation=turn_generation)
+        self._stream_replay.record(loop_id, scoped)
         budget = getattr(d, "_loop_broadcast_budget", None)
         if budget is not None:
             async with budget.slot(loop_id):
@@ -585,6 +689,9 @@ class QueryEngine:
             },
             turn_generation=turn_generation,
         )
+        # IG-DAEM-004: persist the outbound seq at every turn terminal so it
+        # does not rewind across daemon restarts.
+        self._schedule_seq_persist(loop_id)
 
     async def _admit_query(
         self,
@@ -940,6 +1047,13 @@ class QueryEngine:
             )
             return []
         try:
+            ttl = int(getattr(d._daemon_config, "attachment_ttl_s", 0) or 0)
+            await asyncio.to_thread(prune_attachments, Path(workspace), max_age_s=ttl)
+        except Exception:
+            logger.debug(
+                "Attachment pruning failed (loop=%s)", effective_loop_id or "?", exc_info=True
+            )
+        try:
             return await asyncio.to_thread(land_attachments, Path(workspace), attachments)
         except Exception:
             logger.exception("Attachment landing failed (loop=%s)", effective_loop_id or "?")
@@ -1032,7 +1146,7 @@ class QueryEngine:
             st.is_draft = False
 
         if not d._thread_logger or d._thread_logger._thread_id != thread_id:
-            d._thread_logger = ThreadLogger(
+            d._thread_logger = ThreadAuditLogger(
                 thread_id=thread_id,
                 retention_days=d._config.observability.thread_logging_retention_days,
                 max_size_mb=d._config.observability.thread_logging_max_size_mb,
@@ -1622,7 +1736,7 @@ class QueryEngine:
 
                     # Moved post-query logic here since we don't await task
                     final_thread_id = d._runner.current_thread_id or ""
-                    final_logger_handle: ThreadLogger | None = None
+                    final_logger_handle: ThreadAuditLogger | None = None
                     # Phase-tagged conversation rows (plan_direct, goal_completion,
                     # etc.) written by ``_log_message_event`` are the canonical
                     # record of the assistant's user-visible output. The legacy
@@ -1635,7 +1749,7 @@ class QueryEngine:
                         bool(full_response) and not phase_tagged_assistant_written[0]
                     )
                     if final_thread_id and final_thread_id != thread_id:
-                        final_logger = ThreadLogger(
+                        final_logger = ThreadAuditLogger(
                             thread_id=final_thread_id,
                             retention_days=d._config.observability.thread_logging_retention_days,
                             max_size_mb=d._config.observability.thread_logging_max_size_mb,
@@ -1803,7 +1917,7 @@ class QueryEngine:
         model: str | None,
         model_params: dict[str, Any] | None,
         attachments: list[dict[str, str]] | None,
-        thread_logger: ThreadLogger,
+        thread_logger: ThreadAuditLogger,
         response_schema: dict[str, Any] | None = None,
         response_schema_name: str | None = None,
         response_schema_strict: bool | None = None,
@@ -1856,7 +1970,7 @@ class QueryEngine:
         model: str | None,
         model_params: dict[str, Any] | None,
         attachments: list[dict[str, str]] | None,
-        thread_logger: ThreadLogger,
+        thread_logger: ThreadAuditLogger,
         response_schema: dict[str, Any] | None = None,
         response_schema_name: str | None = None,
         response_schema_strict: bool | None = None,

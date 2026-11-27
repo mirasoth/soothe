@@ -2138,6 +2138,51 @@ class MessageRouter:
             }
         await self._send_response(client_id, request_id, result)
 
+    async def _handle_daemon_info(self, client_id: Any, msg: dict[str, Any]) -> None:
+        """Handle `daemon_info` RPC: daemon identity for client-side restart detection."""
+        d = self._daemon
+        await self._send_response(client_id, msg.get("request_id"), d.daemon_info())
+
+    async def _handle_stream_resume(self, client_id: Any, msg: dict[str, Any]) -> None:
+        """Handle `stream_resume` RPC: replay buffered frames after `last_seq`."""
+        d = self._daemon
+        request_id = msg.get("request_id")
+        raw_loop_id = msg.get("loop_id")
+        if not isinstance(raw_loop_id, str) or not raw_loop_id.strip():
+            await d._send_client_message(
+                client_id,
+                build_error_response(
+                    ErrorCode.INVALID_PARAMS,
+                    "stream_resume requires non-empty string field: loop_id",
+                    request_id=request_id,
+                ),
+            )
+            return
+        raw_last_seq = msg.get("last_seq")
+        if not isinstance(raw_last_seq, int) or isinstance(raw_last_seq, bool) or raw_last_seq < 0:
+            await d._send_client_message(
+                client_id,
+                build_error_response(
+                    ErrorCode.INVALID_PARAMS,
+                    "stream_resume requires non-negative integer field: last_seq",
+                    request_id=request_id,
+                ),
+            )
+            return
+        engine = getattr(d, "_query_engine", None)
+        if engine is None or not hasattr(engine, "stream_resume"):
+            await d._send_client_message(
+                client_id,
+                build_error_response(
+                    ErrorCode.DAEMON_STARTING,
+                    "Query engine not ready",
+                    request_id=request_id,
+                ),
+            )
+            return
+        result = engine.stream_resume(raw_loop_id, raw_last_seq)
+        await self._send_response(client_id, request_id, result)
+
     async def _handle_loop_input(self, client_id: Any, msg: dict[str, Any]) -> None:
         """Handle loop_input RPC: authorize, then enqueue to the loop's isolated input queue."""
         d = self._daemon
@@ -2288,7 +2333,7 @@ class MessageRouter:
         """Return persisted conversation / activity rows for a loop.
 
         Resolves the loop's bound LangGraph checkpoint id from metadata, then reads
-        ThreadLogger rows via the runner (same storage as `get_persisted_thread_messages`).
+        ThreadAuditLogger rows via the runner (same storage as `get_persisted_thread_messages`).
         """
         d = self._daemon
         request_id = msg.get("request_id")

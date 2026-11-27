@@ -8,22 +8,27 @@ from soothe_cli.display import theme
 from soothe_cli.tui.widgets.messages.user import UserMessage
 
 
-def test_user_message_echoes_chat_input_surface_block() -> None:
-    """UserMessage uses the same surface fill as ChatInput, with no border."""
+def test_user_message_is_quoted_block_with_primary_accent_bar() -> None:
+    """UserMessage is a surface block with a primary left accent bar (quote style)."""
     css = UserMessage.DEFAULT_CSS
     assert "background: $surface" in css
-    assert "border: none" in css
-    assert "border: solid" not in css
-    assert "border-left:" not in css
+    assert "border-left: thick $primary" in css
+
+
+def test_user_message_ascii_mode_uses_ascii_accent_bar() -> None:
+    """The -ascii variant swaps the thick accent bar for the ascii border type."""
+    css = UserMessage.DEFAULT_CSS
+    assert "UserMessage.-ascii" in css
+    assert "border-left: ascii $primary" in css
 
 
 def test_user_message_has_no_mode_border_rules() -> None:
-    """Sent user messages carry no border, so no mode border overrides exist."""
+    """The accent bar is theme-primary only — no per-mode border overrides exist."""
     css = UserMessage.DEFAULT_CSS
     assert "UserMessage.-mode-shell" not in css
     assert "UserMessage.-mode-command" not in css
-    assert "border: solid $mode-bash" not in css
-    assert "border: solid $mode-command" not in css
+    assert "$mode-bash" not in css
+    assert "$mode-command" not in css
 
 
 def _render_user_message(content: str) -> tuple[object, theme.ThemeColors]:

@@ -1,4 +1,4 @@
-"""Logging package: nano helpers + host GlobalInputHistory + ThreadLogger."""
+"""Logging package: nano helpers + host GlobalInputHistory + audit trace."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from soothe_nano.logging.context import get_thread_id, set_thread_id
 from soothe_nano.logging.setup import COMMUNITY_LOGGER_NAME, ThreadFormatter
 
 from soothe.logging.global_history import GlobalInputHistory
-from soothe.logging.thread_logger import ThreadLogger
+from soothe.logging.thread_audit_logger import ThreadAuditLogger
 
 if TYPE_CHECKING:
     from soothe_nano.config import SootheConfig
@@ -48,8 +48,8 @@ __all__ = [
     "HOST_LOGGER_NAME",
     "NANO_PACKAGE_LOGGER_NAMES",
     "PACKAGE_LOGGER_NAMES",
+    "ThreadAuditLogger",
     "ThreadFormatter",
-    "ThreadLogger",
     "get_thread_id",
     "set_thread_id",
     "setup_logging",

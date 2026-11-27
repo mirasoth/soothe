@@ -238,6 +238,7 @@ persistence:
     metadata: soothe_metadata
     vectors: soothe_vectors
     memory: soothe_memory
+    audit: soothe_audit
   soothe_postgres_dsn: "${SOOTHE_POSTGRES_DSN}"
   postgres:
     pool_min_size: 4

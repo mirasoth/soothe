@@ -389,11 +389,14 @@ docker compose exec soothe-pgvector psql -U postgres -c "
 
 Soothe maintains detailed logs for each thread/goal execution.
 
-### Thread Log Location
+### Thread Audit Trace Location
 
 ```bash
-~/.soothe/data/threads/<thread-id>/logs/conversation.jsonl
-~/.soothe/data/threads/<thread-id>/goal_log.json
+# SQLite mode
+~/.soothe/data/databases/audit.db
+
+# PostgreSQL mode: the database registered under
+# persistence.postgres_databases["audit"] (table audit_records)
 ```
 
 ### Thread Log Configuration
@@ -411,27 +414,28 @@ observability:
     retention_days: 90
 ```
 
-### Thread Log Structure
+### Thread Audit Trace Structure
 
-**`conversation.json`**: Full conversation history
+**`audit_records` table** (per-thread append-only rows; `payload` is JSON):
 ```json
 {
   "thread_id": "thread-xyz789",
-  "created_at": "2026-06-06T02:40:00Z",
-  "messages": [
-    {
-      "role": "user",
-      "content": "List Python files",
-      "timestamp": "2026-06-06T02:40:05Z"
-    },
-    {
-      "role": "assistant",
-      "content": "Found 15 Python files...",
-      "timestamp": "2026-06-06T02:40:30Z"
-    }
-  ]
+  "seq": 42,
+  "ts": "2026-06-06T02:40:05Z",
+  "kind": "tool_call",
+  "payload": {
+    "kind": "tool_call",
+    "tool_name": "read_file",
+    "args": {"path": "src/main.py"},
+    "args_truncated": false,
+    "timestamp": "2026-06-06T02:40:05Z"
+  }
 }
 ```
+
+Record kinds: `conversation` (user/assistant turns), `tool_call` (full args),
+`tool_result` (content truncated to 2000 chars — full output lives in the
+LangGraph checkpoints), `thinking` (model reasoning), `event`.
 
 **`goal_log.json`**: Goal execution phases
 ```json
@@ -476,7 +480,8 @@ cat ~/.soothe/data/threads/*/goal_log.json | \
 **Error investigation**:
 ```bash
 # Find failed goals
-grep -r "ERROR" ~/.soothe/data/threads/*/logs/conversation.jsonl
+sqlite3 ~/.soothe/data/databases/audit.db \
+  "SELECT ts, thread_id, payload FROM audit_records WHERE payload LIKE '%error%' ORDER BY ts DESC LIMIT 50"
 ```
 
 ## Metrics and Performance Monitoring
