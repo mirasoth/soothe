@@ -8,7 +8,7 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.containers import Vertical
 
-from soothe_cli.tui.app._messages_mixin import _MessagesMixin
+from soothe_cli.tui.focus import FocusCoordinator
 from soothe_cli.tui.widgets.approval_dock import ApprovalDockBar
 from soothe_cli.tui.widgets.messages.structured_ask_user import StructuredAskUserWidget
 
@@ -31,11 +31,12 @@ def _card(name: str, idx: int = 0, origin: str = "tool_approval") -> StructuredA
 
 
 class _DockApp(App[None]):
-    """Minimal harness hosting the approval dock."""
+    """Minimal harness hosting the approval dock (coordinator bound like SootheApp)."""
 
     def __init__(self) -> None:
         super().__init__()
         self.dock = ApprovalDockBar(id="approval-dock")
+        self._focus_coordinator = FocusCoordinator(self)
         self._composer_mode = "auto"
 
     def compose(self) -> ComposeResult:
@@ -272,13 +273,12 @@ class _FakeAdapter:
 
 
 class _StealApp(App[None]):
-    """Harness binding the real app helper + a real ChatTextArea."""
-
-    _manual_tool_approval_pending = _MessagesMixin._manual_tool_approval_pending
+    """Harness with a real ChatTextArea + coordinator-bound approval dock."""
 
     def __init__(self) -> None:
         super().__init__()
         self.dock = ApprovalDockBar(id="approval-dock")
+        self._focus_coordinator = FocusCoordinator(self)
         self._composer_mode = "auto"
         self._ui_adapter = _FakeAdapter(self.dock)
 
@@ -308,6 +308,30 @@ async def test_cursor_reactivation_keeps_manual_approval_focus() -> None:
         text_area = app.query_one("#chat-input", ChatTextArea)
         text_area.set_app_focus(has_focus=True)
         await pilot.pause()
+        assert app.focused is card
+
+
+@pytest.mark.asyncio
+async def test_chat_refocus_loses_when_it_races_card_convergence() -> None:
+    """Cursor reactivation racing the card's convergence request cannot win.
+
+    This is the reported failure mode: the teardown refocus used to land after
+    the card's fire-once autofocus and steal focus back. The card's protected
+    region claim drops the weaker CHAT_INPUT request outright.
+    """
+    from soothe_cli.tui.widgets.chat_input import ChatTextArea
+
+    app = _StealApp()
+    app._composer_mode = "manual"
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        dock = app.dock
+        card = _card("run_command", 0)
+        await dock.push_card(card)
+        text_area = app.query_one("#chat-input", ChatTextArea)
+        text_area.set_app_focus(has_focus=True)
+        for _ in range(4):
+            await pilot.pause(0.05)
         assert app.focused is card
 
 

@@ -20,6 +20,8 @@ from textual import events
 from textual.containers import Vertical
 from textual.widgets import Static
 
+from soothe_cli.tui.focus import FocusCoordinator, FocusPriority
+
 __all__ = ["ApprovalDockBar"]
 
 _MIN_DOCK_ROWS = 8
@@ -151,6 +153,7 @@ class ApprovalDockBar(Vertical):
         for i, card in enumerate(self._cards):
             if card is widget:
                 del self._cards[i]
+                self._release_claims()
                 row = self._rows.pop(id(widget), None)
                 if row is not None:
                     await row.remove()
@@ -192,6 +195,7 @@ class ApprovalDockBar(Vertical):
         Sync entry point (called from `clear_live_session_ui`); the DOM
         removal is scheduled on the app's message loop.
         """
+        self._release_claims()
         self._cards.clear()
         self._rows.clear()
         with suppress(Exception):
@@ -253,9 +257,13 @@ class ApprovalDockBar(Vertical):
 
         In manual mode the operator is the sole decision maker, so a tool
         approval card becomes the focused region the moment it lands (and
-        again on promote). Clicking the chat input or Tab moves focus back —
-        the standard focus chain applies. Auto/bypass/plan/ask and ask_user
-        clarifications never steal focus (IG-CLNT-005 contract unchanged).
+        again on promote). The request is arbitrated by the app's focus
+        coordinator: convergence retries cover the mount/layout window, and
+        the head card is claimed as a protected region so weaker automatic
+        requests (turn teardown chat-input refocus) cannot steal focus back
+        until the card is answered (IG-CLNT-005). Clicking the chat input or
+        Tab moves focus back — user moves always win. Auto/bypass/plan/ask
+        and ask_user clarifications never claim or steal focus.
         """
         if not self._cards:
             return
@@ -264,8 +272,29 @@ class ApprovalDockBar(Vertical):
             return
         if str(getattr(self.app, "_composer_mode", "auto") or "") != "manual":
             return
-        with suppress(Exception):
-            head.focus(scroll_visible=False)
+        coordinator = self._coordinator()
+        if coordinator is None:
+            with suppress(Exception):
+                head.focus(scroll_visible=False)
+            return
+        coordinator.claim_region(
+            head, FocusPriority.APPROVAL_HEAD, reason="manual tool approval head"
+        )
+        coordinator.request_focus(
+            head, FocusPriority.APPROVAL_HEAD, reason="manual tool approval head"
+        )
+
+    def _coordinator(self) -> FocusCoordinator | None:
+        """The app's focus coordinator, or None in harnesses without one."""
+        return getattr(self.app, "_focus_coordinator", None)
+
+    def _release_claims(self) -> None:
+        """Release every protected-region claim this dock holds."""
+        coordinator = self._coordinator()
+        if coordinator is None:
+            return
+        for card in self._cards:
+            coordinator.release_region(card)
 
     def _sync(self) -> None:
         """Refresh the header label and empty-state visibility."""

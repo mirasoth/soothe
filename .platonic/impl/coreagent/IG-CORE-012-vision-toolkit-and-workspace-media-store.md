@@ -79,35 +79,57 @@ trust_level="built-in")`):
 
 ### D2 — Media store = the workspace content tree's `input/attachments/` (no new storage subsystem)
 
+> **2026-11-27 amendment (owner decision): attachments are engine-local cache.** The
+> landing location moved from `input/attachments/` to `.soothe/cache/attachments/`,
+> reversing the placement constraint below. Rationale: wire attachments are per-turn
+> binary blobs, not user content — they need no durability, no sync, and no remote
+> visibility. Under the new semantics: the dirty tracker never uploads them, prune is
+> pure local GC (no deletion mirroring), materialize/reconcile leave them alone, and
+> nano's `ESSENTIAL_GLOB_EXCLUDES` hides the cache from agent listings (the
+> landed-paths note provides explicit paths; the vision tools read real paths in the
+> host process). Trade-offs accepted: cache is lost on host switch / fresh workspace
+> clone (dangling paths in older turns), and sandboxed agent runtimes that read the
+> workspace via a sync mount cannot see the cache (see the flowjet note below).
+
 **Core principle: images are workspace files.** No CAS, no session store, no new key
 namespace — each host lands attachments into the run workspace using its existing
 persistence machinery:
 
-- Layout: `input/attachments/<sha256[:16]>.<ext>` (content-addressed dedup; the `input/`
-  prefix is inside the workspace sync's tracked scope). Dedup semantics are **per-run
+- Layout (amended 2026-11-27): `.soothe/cache/attachments/<sha256[:16]>.<ext>`
+  (content-addressed dedup; the `.soothe/` prefix is the engine-private namespace
+  excluded from sync). Dedup semantics are **per-run
   workspace** (IG-CORE-011 C single root — each run has its own content tree); cross-run
   dedup is intentionally not pursued.
-- **Hard placement constraint (pinned by IG-CORE-013 D2)**: media files and any derived
-  state MUST NOT land under `.soothe/` — that prefix is the framework-private namespace
-  excluded from sync and hidden from LLM listings (nano `ESSENTIAL_GLOB_EXCLUDES`), so
-  anything placed there becomes invisible and unsynced. Media stays in `input/` where it
-  is tracked, synced, and addressable; this also bars the temptation of stashing tool
-  artifacts under `.soothe/` (the vision tool is read-only anyway).
-- The literal `input/attachments` prefix is a cross-host contract: each host repo
-  (soothe daemon / flowjet) defines a module-level constant and pins it with a contract
-  test (twin-test pattern, same as IG-CORE-013's `.soothe` literal pinning), preventing
-  drift into divergent prefixes like `input/images/`.
-- **Persistence rationale**: attachments are ordinary content-tree files, so they ride
-  the manifest commit — under IG-CORE-011 C, a failed commit keeps the workspace open
-  with the dirty set alive, and a completed commit persists them across restarts and
-  history recall. No extra lifecycle code.
+- ~~**Hard placement constraint (pinned by IG-CORE-013 D2)**: media files and any derived
+  state MUST NOT land under `.soothe/`~~ — **superseded by the 2026-11-27 amendment**.
+  Original constraint: that prefix is the framework-private namespace excluded from
+  sync and hidden from LLM listings (nano `ESSENTIAL_GLOB_EXCLUDES`), so media was kept
+  in `input/` where it is tracked, synced, and addressable; it also barred stashing
+  tool artifacts under `.soothe/` (the vision tool is read-only anyway — no tool
+  artifacts land in the cache).
+- The literal `.soothe/cache/attachments` prefix is a cross-host contract: each host
+  repo (soothe daemon / flowjet) defines a module-level constant and pins it with a
+  contract test (twin-test pattern, same as IG-CORE-013's `.soothe` literal pinning),
+  preventing drift into divergent prefixes.
+- **Persistence rationale (superseded by the 2026-11-27 amendment)**: was "attachments
+  ride the manifest commit and persist across restarts and history recall"; now they
+  are engine-local cache outside the tracked tree — restarts on the same host keep
+  them (materialize/reconcile never touch `.soothe/`), host switch or fresh clone
+  does not.
 - **flowjet (no daemon — this IG's direct answer)**: the three entry flatten points are
   changed to collect image blocks (data-URL / base64) → before building the turn payload,
   write them into the run workspace via the per-run workspace backend's `put_content_file`
   → paths are merged into the input text as
-  `[image 1: input/attachments/ab12cd34.png]` → atomically committed with the manifest at
-  `close_turn`. Addressable across restarts and history recall; synced to S3 with zero
-  extra code.
+  `[image 1: .soothe/cache/attachments/ab12cd34.png]` → atomically committed with the manifest at
+  `close_turn`. **2026-11-27 note**: flowjet imports the shared helper so the location
+  follows automatically, but the flowjet arcbox tool sandbox stages the
+  workspace host↔guest with `_PUSH_SKIP_DIRS`/`_PULL_SKIP_DIRS` skipping
+  `.soothe/` (`flowjet/core/sandbox/arbox.py`), so guest-side file tools
+  can no longer see the engine-local cache. Accepted: the vision tools
+  execute in the host process (S1) and read real workspace paths, so the
+  primary image-analysis path is unaffected — only guest-side generic file
+  tools lose visibility, which is acceptable (agent addresses cache files
+  via the landed-paths note + vision tools, not shell `cat`).
 - **daemon (later slice)**: `QueryEngine` lands the wire attachments into the agent
   workspace at the same path before preflight; the enrichment text appends the paths and
   instructs the agent to use the tool for deep reads; the TUI `MediaTracker` placeholders

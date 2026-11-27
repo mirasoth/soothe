@@ -421,7 +421,11 @@ def test_stream_cards_use_horizontal_inset_padding() -> None:
     assert "padding: 0 1;" in clarification_css
     assert "border-left:" not in step_css
     assert "border-left:" not in assistant_css
-    assert "border-left:" not in clarification_css
+    # The card *root* rule stays borderless so the prefix dot column aligns
+    # across card types. Inner blocks may carry borders — the submit-review
+    # recap uses a left accent rule as its review-phase visual cue.
+    root_rule = clarification_css.split("StructuredAskUserWidget {", 1)[1].split("}", 1)[0]
+    assert "border-left:" not in root_rule
 
 
 def test_step_status_footer_uses_same_muted_base_as_tool_activity() -> None:

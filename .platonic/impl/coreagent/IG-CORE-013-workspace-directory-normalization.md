@@ -79,12 +79,13 @@ Reserved names inside the local agent workspace today, with owners:
 
 ```
 <workspace>/
-├── input/            # tracked — host-provided inputs (materials, attachments)
+├── input/            # tracked — host-provided inputs (materials)
 ├── working/          # tracked — agent working artifacts
 ├── output/           # tracked — final deliverables
 ├── .soothe/          # SINGLE private namespace (never synced, hidden from LLM listings)
 │   ├── backups/  background/  foreground/  agents/<name>/  skills/
 │   ├── plans/  rails/  large_tool_results/  conversation_history/
+│   ├── cache/attachments/  # engine-local wire-attachment cache (IG-CORE-012 D2 amendment, 2026-11-27)
 │   └── AGENTS.md
 └── <user content>
 ```

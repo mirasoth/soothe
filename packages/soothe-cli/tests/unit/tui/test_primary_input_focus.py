@@ -93,13 +93,13 @@ def test_primary_text_input_none_when_ambiguous() -> None:
 
 
 def test_focus_primary_input_falls_back_to_chat() -> None:
-    """Idle main screen keeps focus on the chat prompt."""
+    """Idle main screen keeps focus on the chat prompt (coordinator-routed)."""
     app = _FocusAppStub()
     app.screen.query.return_value = []
 
     app.focus_primary_input()
 
-    app._chat_input.focus_input.assert_called_once()
+    app._chat_input.request_input_focus.assert_called_once()
 
 
 def test_focus_primary_input_targets_clarification_input() -> None:
@@ -174,9 +174,10 @@ def test_focus_primary_input_falls_through_for_tool_approval() -> None:
 
     app.focus_primary_input()
 
-    # No app-level set_focus on a phantom Approve; chat prompt focused.
+    # No app-level set_focus on a phantom Approve; chat prompt focused via
+    # the coordinator route (a manual-approval protected region can veto it).
     app.set_focus.assert_not_called()
-    app._chat_input.focus_input.assert_called_once()
+    app._chat_input.request_input_focus.assert_called_once()
 
 
 def test_has_active_qa_widget_true_when_unsubmitted() -> None:

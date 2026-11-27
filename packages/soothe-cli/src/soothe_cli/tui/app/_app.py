@@ -39,6 +39,7 @@ from soothe_cli.tui.app._types import (
 )
 from soothe_cli.tui.app._ui import _UIMixin
 from soothe_cli.tui.composer_mode import normalize_composer_mode
+from soothe_cli.tui.focus import FocusCoordinator
 from soothe_cli.tui.widgets.approval_dock import ApprovalDockBar
 from soothe_cli.tui.widgets.chat_input import ChatInput
 from soothe_cli.tui.widgets.loading import LoadingWidget, TipRow
@@ -249,6 +250,13 @@ class SootheApp(
 
         self._chat_input: ChatInput | None = None
         self._plan_quick_view_overlay: PlanQuickViewOverlay | None = None
+
+        self._focus_coordinator = FocusCoordinator(self)
+        """Single arbiter for automatic focus requests (soothe_cli.tui.focus).
+
+        Instantiated in ``__init__`` — earlier than ``_post_paint_init`` — so
+        every focus request source (dock, cards, chat input) can reach it from
+        the first mount onward."""
 
         self._session_state: TextualSessionState | None = None
 

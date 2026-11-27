@@ -50,8 +50,13 @@ def test_landed_paths_note_lists_paths_and_tool_hint() -> None:
 
 
 def test_attachments_dir_literal_is_pinned() -> None:
-    """Cross-host contract: the layout literal must not drift (IG-CORE-012 D2)."""
-    assert ATTACHMENTS_DIR == "input/attachments"
+    """Cross-host contract: the layout literal must not drift (IG-CORE-012 D2).
+
+    The cache lives in the engine-private `.soothe/` namespace so it is
+    excluded from workspace sync (`ENGINE_SKIP_PREFIXES`) and hidden from
+    agent file listings — attachments are local cache, not content-tree data.
+    """
+    assert ATTACHMENTS_DIR == ".soothe/cache/attachments"
 
 
 def test_prune_attachments_removes_only_stale_files(tmp_path: Path) -> None:

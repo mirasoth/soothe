@@ -25,6 +25,7 @@ from soothe_cli.tui.app._types import (
     DeferredAction,
     _LoopHistoryPayload,
 )
+from soothe_cli.tui.focus import FocusPriority
 from soothe_cli.tui.widgets.file_change_preview import FileChangePreviewWidget
 from soothe_cli.tui.widgets.messages import (
     AppMessage,
@@ -1283,25 +1284,6 @@ class _MessagesMixin:
                 inputs.append(inp)
         return inputs
 
-    def _manual_tool_approval_pending(self) -> bool:
-        """True when a manual-mode tool approval card awaits a decision.
-
-        The approval dock autofocuses its head card in manual mode; while one
-        is pending, cursor reactivation (turn teardown, shell cleanup) must
-        not reclaim focus for the chat input — focus returns to the input via
-        answering the card, a click, or Tab, per the IG-CLNT-005 contract.
-        """
-        if str(getattr(self, "_composer_mode", "auto") or "") != "manual":
-            return False
-        adapter = getattr(self, "_ui_adapter", None)
-        dock = getattr(adapter, "_approval_dock", None) if adapter is not None else None
-        if dock is None:
-            return False
-        head = getattr(dock, "head_widget", None)
-        if head is None or getattr(head, "_submitted", False):
-            return False
-        return str(getattr(head, "_origin_node", "") or "") == "tool_approval"
-
     def _active_plan_review_widget(self) -> Widget | None:
         """Return the active unsubmitted HITL review card, if any."""
         adapter = getattr(self, "_ui_adapter", None)
@@ -1346,8 +1328,21 @@ class _MessagesMixin:
 
         return None
 
-    def _schedule_widget_focus(self, widget: Widget) -> None:
-        """Focus `widget` after layout settles, winning races with chat refocus."""
+    def _schedule_widget_focus(
+        self, widget: Widget, *, priority: FocusPriority = FocusPriority.PRIMARY_INPUT
+    ) -> None:
+        """Focus `widget` through the app's focus coordinator.
+
+        The coordinator arbitrates against other automatic focus movers (a
+        converging stronger request blocks this one; the manual tool-approval
+        protected region blocks weaker ones), and converges over the uncertain
+        mount/layout window instead of firing on a fixed delay. Without a
+        coordinator (bare harnesses) falls back to the legacy delayed focus.
+        """
+        coordinator = getattr(self, "_focus_coordinator", None)
+        if coordinator is not None:
+            coordinator.request_focus(widget, priority, reason="primary input focus")
+            return
 
         def _focus() -> None:
             try:
@@ -1362,14 +1357,24 @@ class _MessagesMixin:
         with suppress(Exception):
             self.set_timer(0.05, _focus)
 
+    def _focus_priority_for(self, widget: Widget) -> FocusPriority:
+        """Authority for an auto-focus request, derived from the widget's role."""
+        for clar_input in self._active_clarification_inputs():
+            with suppress(Exception):
+                if widget is clar_input or widget in clar_input.walk_children(with_self=True):
+                    return FocusPriority.CLARIFICATION_INPUT
+        return FocusPriority.PRIMARY_INPUT
+
     def focus_primary_input(self) -> None:
         """Focus the user's primary text input when it is unambiguous."""
         target = self._primary_text_input()
         if target is not None:
-            self._schedule_widget_focus(target)
+            self._schedule_widget_focus(target, priority=self._focus_priority_for(target))
             return
         if self._chat_input and not self.screen.is_modal:
-            self._chat_input.focus_input()
+            # Coordinator-routed: a manual tool-approval protected region
+            # blocks this weakest request (IG-CLNT-005 contract).
+            self._chat_input.request_input_focus(reason="primary input fallback")
 
     def _is_input_focused(self) -> bool:
         """Check if a primary text input widget currently has focus.

@@ -64,7 +64,7 @@ def _build_daemon_config(tmp_path: Path, port: int) -> tuple[SootheConfig, Sooth
 
 
 def _landed_files(tmp_path: Path) -> list[Path]:
-    return list((tmp_path / "soothe-home").rglob("input/attachments/*"))
+    return list((tmp_path / "soothe-home").rglob(".soothe/cache/attachments/*"))
 
 
 @pytest_asyncio.fixture

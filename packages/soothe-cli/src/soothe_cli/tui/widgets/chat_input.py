@@ -30,6 +30,7 @@ from soothe_cli.settings import (
     is_ascii_mode,
     newline_shortcut,
 )
+from soothe_cli.tui.focus import FocusPriority
 from soothe_cli.tui.input import (
     IMAGE_PLACEHOLDER_PATTERN,
     VIDEO_PLACEHOLDER_PATTERN,
@@ -506,22 +507,30 @@ class ChatTextArea(TextArea):
         Args:
             has_focus: Whether the app input should be focused.
 
-        A manual-mode tool approval owns focus until answered, so cursor
-        reactivation (turn teardown, shell cleanup) must not steal it back
-        for the chat input (IG-CLNT-005 autofocus contract).
+        Focus moves through the app's focus coordinator (weakest CHAT_INPUT
+        authority), so a manual-mode tool approval card — which holds focus
+        until answered (IG-CLNT-005 autofocus contract) — blocks cursor
+        reactivation (turn teardown, shell cleanup) from stealing it back.
         """
         self._backslash_pending_time = None
         if has_focus and not self.has_focus:
-            if self._manual_approval_holds_focus():
-                return
-            self.call_after_refresh(self.focus)
+            self.request_input_focus(reason="cursor reactivation")
 
-    def _manual_approval_holds_focus(self) -> bool:
-        """True while a manual-mode tool approval card awaits a decision."""
-        with contextlib.suppress(Exception):
-            pending = getattr(self.app, "_manual_tool_approval_pending", None)
-            return bool(callable(pending) and pending())
-        return False
+    def request_input_focus(self, *, reason: str = "") -> bool:
+        """Ask the focus coordinator to move keyboard focus to this area.
+
+        Returns True when the area holds focus (immediately or the request
+        was accepted for convergence) and False when the request was dropped
+        by a stronger pending request or protected region. Without a
+        coordinator (bare harnesses) falls back to a direct focus.
+        """
+        coordinator = getattr(self.app, "_focus_coordinator", None)
+        if coordinator is None:
+            self.focus()
+            return True
+        return coordinator.request_focus(
+            self, FocusPriority.CHAT_INPUT, reason=reason or "chat input"
+        )
 
     def set_completion_active(self, *, active: bool) -> None:
         """Set whether completion suggestions are visible."""
@@ -2171,6 +2180,17 @@ class ChatInput(Vertical):
         """Focus the input field."""
         if self._text_area:
             self._text_area.focus()
+
+    def request_input_focus(self, *, reason: str = "") -> bool:
+        """Coordinator-routed focus for the chat text area (CHAT_INPUT authority).
+
+        Returns True when the text area holds focus (immediately or the
+        request was accepted for convergence) and False when a stronger
+        pending request or protected region dropped it.
+        """
+        if self._text_area is None:
+            return False
+        return self._text_area.request_input_focus(reason=reason)
 
     @property
     def value(self) -> str:

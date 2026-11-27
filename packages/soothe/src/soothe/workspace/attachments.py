@@ -2,7 +2,12 @@
 
 Hosts (soothe-daemon, flowjet) land wire-format image attachments into the
 turn workspace at a content-addressed path before the agent runs, so the
-vision tools can address them and the files persist with the workspace.
+vision tools can address them. Attachments are engine-local cache: they land
+under the `.soothe/` private namespace, so they are never tracked by the
+workspace sync (no upload, no deletion mirroring) and are hidden from agent
+file listings — the landed-paths note gives the agent explicit paths, which
+the vision tools read directly. Retention is TTL pruning only (7-day
+default, `0` disables).
 """
 
 from __future__ import annotations
@@ -24,8 +29,13 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
-ATTACHMENTS_DIR = "input/attachments"
-"""Workspace-relative directory where wire attachments are landed."""
+ATTACHMENTS_DIR = ".soothe/cache/attachments"
+"""Workspace-relative directory where wire attachments are landed.
+
+Engine-local cache under the `.soothe/` private namespace (IG-CORE-013):
+excluded from workspace sync (`ENGINE_SKIP_PREFIXES`) and hidden from agent
+file listings; TTL pruning is the only GC.
+"""
 
 DEFAULT_ATTACHMENT_TTL_S = 7 * 24 * 60 * 60
 """Default age after which landed attachments are pruned (7 days)."""
@@ -56,7 +66,7 @@ def attachment_rel_path(data: bytes, mime_type: str) -> str:
         mime_type: Normalized MIME type (extension derived from it).
 
     Returns:
-        ``input/attachments/<sha256[:16]>.<ext>`` path relative to the workspace.
+        ``.soothe/cache/attachments/<sha256[:16]>.<ext>`` path relative to the workspace.
     """
     digest = hashlib.sha256(data).hexdigest()[:16]
     ext = _MIME_EXT.get(mime_type, "bin")
@@ -64,7 +74,7 @@ def attachment_rel_path(data: bytes, mime_type: str) -> str:
 
 
 def land_attachments(workspace_root: Path, attachments: list[dict[str, str]]) -> list[str]:
-    """Write attachments into ``<workspace>/input/attachments/`` (idempotent).
+    """Write attachments into ``<workspace>/.soothe/cache/attachments/`` (idempotent).
 
     Args:
         workspace_root: Agent workspace root for the turn.
@@ -96,9 +106,8 @@ def landed_paths_note(paths: list[str]) -> str:
 def prune_attachments(workspace_root: Path, *, max_age_s: int | None) -> list[str]:
     """Delete attachments older than *max_age_s* from the landed directory.
 
-    Run before landing new attachments: previously committed files deleted
-    here are mirrored back as deletions by the turn's sync commit, keeping
-    the object store from accumulating stale media.
+    Run before landing new attachments. The cache is engine-local (never
+    synced), so pruning is pure local GC — no deletion mirroring.
 
     Args:
         workspace_root: Agent workspace root.

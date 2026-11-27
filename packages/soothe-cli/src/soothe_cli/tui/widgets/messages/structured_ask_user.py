@@ -31,6 +31,7 @@ from soothe_cli.display.markdown_theme import (
     resolve_markdown_theme_parts,
 )
 from soothe_cli.settings import get_glyphs
+from soothe_cli.tui.focus import FocusPriority
 from soothe_cli.tui.widgets.clipboard import screen_has_text_selection
 
 logger = logging.getLogger(__name__)
@@ -287,6 +288,10 @@ class StructuredAskUserWidget(Vertical):
         display: block;
     }
 
+    StructuredAskUserWidget.is-reviewing .saq-enter-hint {
+        color: $accent;
+    }
+
     StructuredAskUserWidget .saq-footer Button {
         margin: 0;
         min-width: 0;
@@ -319,10 +324,24 @@ class StructuredAskUserWidget(Vertical):
         display: block;
     }
 
+    /* Review phase (two-phase submit): while the recap is open the card
+    shifts into a distinct "confirm" look — accent-tinted recap block with
+    a left accent rule — so the user can tell at a glance that Enter now
+    commits instead of editing. */
+    StructuredAskUserWidget.is-reviewing .saq-recap.is-visible {
+        background: $accent 15%;
+        border-left: thick $accent;
+        padding: 0 0 0 1;
+    }
+
     StructuredAskUserWidget .saq-recap-title {
         text-style: bold;
         color: $text-muted;
         margin: 0 0 0 0;
+    }
+
+    StructuredAskUserWidget.is-reviewing .saq-recap-title {
+        color: $accent;
     }
 
     StructuredAskUserWidget .saq-recap-row {
@@ -633,11 +652,18 @@ class StructuredAskUserWidget(Vertical):
             title = self._tool_approval_title()
         elif self._submitted and self._answers:
             title = "Answered (from human)"
+        elif self._submit_review_open:
+            title = "Review your answers"
         else:
             title = "Awaiting your answer"
         if self._submitted:
             return _assemble_card_header(self, title, status="success")
         colors = theme.get_theme_colors(self)
+        if self._submit_review_open:
+            # Phase 2 of the two-phase submit: recap open, awaiting the
+            # final commit. A distinct accent dot separates this "confirm"
+            # state from the answering (warning) state above.
+            return _assemble_card_header(self, title, status="review", accent=colors.accent)
         return _assemble_card_header(self, title, status="pending", accent=colors.warning)
 
     def _tool_approval_title(self) -> str:
@@ -1394,12 +1420,21 @@ class StructuredAskUserWidget(Vertical):
     def _open_submit_review(self) -> None:
         """Render the recap block above the footer."""
         self._submit_review_open = True
+        # Review-phase visual distinction: the whole card shifts into a
+        # distinct "confirm" look until the review closes or commits.
+        self.add_class("is-reviewing")
         try:
             recap_box = self.query_one("#saq-recap-box", Vertical)
             # Clear title and populate rows
             for child in list(recap_box.children):
                 child.remove()
-            recap_box.mount(Static("Review:", classes="saq-recap-title", markup=False))
+            recap_box.mount(
+                Static(
+                    "Review — Enter to confirm · Esc to edit",
+                    classes="saq-recap-title",
+                    markup=False,
+                )
+            )
             for i in range(self._num_questions):
                 answer = self._answer_text(i)
                 label = answer if answer else "—"
@@ -1413,15 +1448,26 @@ class StructuredAskUserWidget(Vertical):
             recap_box.add_class("is-visible")
         except Exception:  # noqa: BLE001
             pass
+        self._refresh_title()
+        self._set_enter_hint_text("← Enter to confirm")
 
     def _close_submit_review(self) -> None:
         self._submit_review_open = False
+        self.remove_class("is-reviewing")
         try:
             recap_box = self.query_one("#saq-recap-box", Vertical)
             for child in list(recap_box.children):
                 child.remove()
             recap_box.mount(Static("Review:", classes="saq-recap-title", markup=False))
             recap_box.remove_class("is-visible")
+        except Exception:  # noqa: BLE001
+            pass
+        self._refresh_title()
+        self._set_enter_hint_text("← Enter to submit")
+
+    def _set_enter_hint_text(self, text: str) -> None:
+        try:
+            self.query_one("#saq-enter-hint", Static).update(text)
         except Exception:  # noqa: BLE001
             pass
 
@@ -1432,6 +1478,7 @@ class StructuredAskUserWidget(Vertical):
         if self._submitted:
             return
         self._submitted = True
+        self.remove_class("is-reviewing")
         self.add_class("is-submitted")
         self._answers = self._answers_collected()
         self._refresh_title()
@@ -1451,6 +1498,7 @@ class StructuredAskUserWidget(Vertical):
         if self._submitted:
             return
         self._submitted = True
+        self.remove_class("is-reviewing")
         self.add_class("is-submitted")
         self._answers = []
         self._refresh_title()
@@ -1600,6 +1648,20 @@ class StructuredAskUserWidget(Vertical):
     # ── Focus management ───────────────────────────────────────────
 
     def _schedule_focus(self, widget: Any) -> None:
+        """Move focus for intra-card navigation (options, footer, inputs).
+
+        Routes through the app's focus coordinator so this request is
+        arbitrated against other automatic focus movers; the coordinator's
+        convergence retries also cover widgets that are still mounting.
+        Without a coordinator (bare harnesses) falls back to the legacy
+        delayed focus.
+        """
+        coordinator = getattr(self.app, "_focus_coordinator", None)
+        if coordinator is not None:
+            coordinator.request_focus(
+                widget, FocusPriority.CLARIFICATION_INPUT, reason="structured ask navigation"
+            )
+            return
         app = self.app
 
         def _focus() -> None:

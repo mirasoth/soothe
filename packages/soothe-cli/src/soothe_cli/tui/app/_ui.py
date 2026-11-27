@@ -527,7 +527,8 @@ class _UIMixin:
         Mirrors ``action_focus_queued_goals``: jumps keyboard focus to the
         interactive head card so the user can answer with ↑/↓/Enter without
         the dock ever having stolen focus. No-op when the dock is empty or a
-        modal is open.
+        modal is open. The user's explicit move cancels any pending automatic
+        focus request first so it cannot yank focus back afterwards.
         """
         if self.screen.is_modal:
             return
@@ -538,6 +539,9 @@ class _UIMixin:
         head = dock.head_widget
         if head is None:
             return
+        coordinator = getattr(self, "_focus_coordinator", None)
+        if coordinator is not None:
+            coordinator.cancel_pending(reason="user requested approval focus")
         with suppress(Exception):
             head.focus(scroll_visible=False)
 

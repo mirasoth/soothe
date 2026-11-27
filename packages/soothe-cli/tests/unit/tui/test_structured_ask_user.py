@@ -540,6 +540,70 @@ async def test_submit_opens_recap_then_finalizes() -> None:
 
 
 @pytest.mark.asyncio
+async def test_review_phase_sets_is_reviewing_visual_state() -> None:
+    """The review phase is visually distinct: is-reviewing class, accent
+    recap title with key hints, updated footer hint, and a "Review your
+    answers" card title."""
+    app = _WidgetApp(_make_widget(questions=_questions(2)))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        w = pilot.app.query_one("#test-widget", StructuredAskUserWidget)
+        w.action_confirm()
+        w.action_confirm()
+        await pilot.pause()
+        assert w._submit_review_open is True
+        assert "is-reviewing" in w.classes
+        recap = w.query_one("#saq-recap-box")
+        assert "is-visible" in recap.classes
+        title = w.query_one(".saq-recap-title")
+        assert "Enter to confirm" in str(title.render())
+        hint = w.query_one("#saq-enter-hint")
+        assert "Enter to confirm" in str(hint.render())
+        card_title = w.query_one(".saq-title")
+        assert "Review your answers" in str(card_title.render())
+        # Answering state is gone.
+        assert "Awaiting your answer" not in str(card_title.render())
+
+
+@pytest.mark.asyncio
+async def test_closing_review_restores_answering_visual_state() -> None:
+    """Escape from review drops the review look and restores editing."""
+    app = _WidgetApp(_make_widget(questions=_questions(2)))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        w = pilot.app.query_one("#test-widget", StructuredAskUserWidget)
+        w.action_confirm()
+        w.action_confirm()
+        await pilot.pause()
+        w.action_abandon()  # first Escape closes the review
+        await pilot.pause()
+        assert w._submit_review_open is False
+        assert w._submitted is False
+        assert "is-reviewing" not in w.classes
+        recap = w.query_one("#saq-recap-box")
+        assert "is-visible" not in recap.classes
+        card_title = w.query_one(".saq-title")
+        assert "Awaiting your answer" in str(card_title.render())
+
+
+@pytest.mark.asyncio
+async def test_finalizing_removes_review_visual_state() -> None:
+    """Committing clears is-reviewing; the collapsed is-submitted view applies."""
+    app = _WidgetApp(_make_widget(questions=_questions(2)))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        w = pilot.app.query_one("#test-widget", StructuredAskUserWidget)
+        w.action_confirm()
+        w.action_confirm()
+        await pilot.pause()
+        w.action_confirm()  # Enter on the recap finalizes
+        await pilot.pause()
+        assert w._submitted is True
+        assert "is-reviewing" not in w.classes
+        assert "is-submitted" in w.classes
+
+
+@pytest.mark.asyncio
 async def test_submit_button_does_nothing_when_not_all_answered() -> None:
     app = _WidgetApp(_make_widget(questions=_questions(2)))
     async with app.run_test() as pilot:
