@@ -7,11 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-
-- Landed image attachments from `input/attachments/` to `.soothe/cache/attachments/`: attachments are now engine-local cache (excluded from workspace sync, hidden from agent listings, TTL-pruned locally) instead of synced content-tree files.
-- TUI automatic focus moves route through a single focus coordinator (`soothe_cli.tui.focus`): prioritized requests (manual tool-approval head card > clarification/plan-review inputs > lone primary input > chat prompt) with confirm-and-retry convergence replace the scattered fixed-delay autofocus attempts, so a manual-mode tool approval reliably takes focus and turn-teardown chat refocus can no longer race it back.
-
 ## [v1.3.9] - 2026-11-27
 
 ### Added
@@ -29,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Default `agent.loop.checkpoint.auto_resume_on_start` to `true` so restarts re-enter incomplete loops.
 - Land daemon image attachments in the turn workspace with age-based pruning.
 - Show attachment sources and support multi-image paste, image re-encoding, and overflow toasts in the TUI composer.
+- Landed image attachments from `input/attachments/` to `.soothe/cache/attachments/`: attachments are now engine-local cache (excluded from workspace sync, hidden from agent listings, TTL-pruned locally) instead of synced content-tree files.
+- TUI automatic focus moves route through a single focus coordinator (`soothe_cli.tui.focus`): prioritized requests (manual tool-approval head card > clarification/plan-review inputs > lone primary input > chat prompt) with confirm-and-retry convergence replace the scattered fixed-delay autofocus attempts, so a manual-mode tool approval reliably takes focus and turn-teardown chat refocus can no longer race it back.
 
 ### Removed
 
